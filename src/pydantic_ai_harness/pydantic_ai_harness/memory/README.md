@@ -15,7 +15,7 @@ The model gets four tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run and tool call. |
+| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
 | `read_memory` | Read a bounded prefix of one memory file. |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
@@ -41,7 +41,7 @@ The namespace is resolved by application code, not supplied to the tools. The mo
 
 ## Injection modes and limits
 
-Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
+Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`. The default guidance uses about 200 of those tokens; when the guidance fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
@@ -71,7 +71,7 @@ from pydantic_ai_harness.memory import FileStore
 memory = Memory(FileStore('.agent-memory'), inject_memory=False)
 ```
 
-With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts, and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. Tool failures are still returned as tool errors; this setting controls automatic injection only.
+With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts, and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. This setting controls automatic injection only: in the tools, workspace failures are returned as tool errors and other store errors end the run.
 
 ## Persistence and concurrency
 
@@ -81,10 +81,10 @@ Every `MemoryStore.read` call includes a finite `max_chars`, and every `list_pat
 
 | Store | Persistence and concurrency boundary |
 | --- | --- |
-| `InMemoryStore()` | Process lifetime; atomic across tasks using that store instance. |
+| `InMemoryStore()` | Process lifetime; atomic across tasks using that store instance. Receipts for the 1,024 most recent mutations are kept. |
 | `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
-| `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. |
-| `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. The caller owns the pool lifecycle. |
+| `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `memory_operations` table until you delete old rows. |
+| `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `{table}_operations` table until you delete old rows. The caller owns the pool lifecycle. |
 
 ```python
 from pydantic_ai_harness import Memory
@@ -98,7 +98,7 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 
 If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
 
-`FileStore` keeps receipts for its most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict.
+`FileStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict.
 
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
@@ -166,8 +166,9 @@ A namespace is one or more `/`-separated segments of letters, digits, `_`, `-`, 
 
 ## Multiple memories on one agent
 
-An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Three constraints apply:
+An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Four constraints apply:
 
+- Give each instance a distinct `id`. Instances that share the default `id='memory'` are one capability to the agent: if their configurations differ, constructing the agent raises `UserError`.
 - Give each instance a distinct `agent_name` or `namespace`. Injected blocks are tracked by their resolved scope, so instances that differ only in their store resolve the same scope and replace each other's injection.
 - All instances define the same tool names, so wrap every instance but one in `prefix_tools` to keep the tool schemas distinct.
 - Set a distinct `heading` on each instance so the model sees the blocks as separate sections. `agent_name` is a storage key and never appears in the prompt, so it can't label them.
@@ -183,7 +184,7 @@ agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[
         Memory(store, heading='Your notes'),
-        Memory(store, agent_name='org', heading='Org notes').prefix_tools('org'),
+        Memory(store, agent_name='org', heading='Org notes', id='org_memory').prefix_tools('org'),
     ],
     defer_model_check=True,
 )

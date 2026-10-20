@@ -607,7 +607,8 @@ def _operation(
     run_id = ctx.run_id
     if not run_id:
         raise RuntimeError('memory mutations require a stable run_id')
-    operation_id = _digest({'scope': scope, 'run_id': run_id, 'tool_call_id': tool_call_id})
+    # Ids are unique within one model response, not across a run's responses, so the step is part of the key.
+    operation_id = _digest({'scope': scope, 'run_id': run_id, 'run_step': ctx.run_step, 'tool_call_id': tool_call_id})
     fingerprint = _digest({'kind': kind, 'path': path, 'model_args': model_args})
     return MemoryOperation(id=operation_id, fingerprint=fingerprint)
 

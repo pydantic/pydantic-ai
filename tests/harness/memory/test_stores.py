@@ -123,6 +123,18 @@ async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int
     ]
 
 
+async def test_in_memory_store_keeps_the_most_recent_receipts() -> None:
+    store = InMemoryStore()
+    version = None
+    operations = [MemoryOperation(id=f'op-{index}', fingerprint='write') for index in range(1_025)]
+    for operation in operations:
+        version = (await store.write('main.md', operation.id, expected_version=version, operation=operation)).version
+
+    assert await store.get_operation(operations[0]) is None
+    assert await store.get_operation(operations[1]) is not None
+    assert await store.get_operation(operations[-1]) is not None
+
+
 @pytest.mark.parametrize('path', ['./main.md', 'tenant/./main.md', 'tenant/.'])
 async def test_store_paths_reject_dot_segments(path: str) -> None:
     with pytest.raises(ValueError, match='invalid memory path'):

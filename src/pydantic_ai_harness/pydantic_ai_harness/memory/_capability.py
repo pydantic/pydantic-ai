@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Literal
@@ -16,6 +16,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, T
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
@@ -162,6 +163,14 @@ class Memory(AbstractCapability[AgentDepsT]):
         validate_store_path(scope)
         return store, scope
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one notebook stated twice; two that disagree raise rather than merge.
+
+        A field-by-field merge of two notebooks would keep one and drop the other.
+        """
+        return one_per_id(capabilities)
+
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the stable `memory` toolset, shared with every per-run copy."""
         return self._memory_toolset
@@ -271,7 +280,8 @@ class Memory(AbstractCapability[AgentDepsT]):
             content_budget = (
                 self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
             )
-            if content_budget > 0 and (main_content or subfiles or files_truncated):
+            has_memory = bool(main_content or subfiles or files_truncated)
+            if content_budget > 0 and has_memory:
                 rendered = render_memory_prompt(
                     main_content,
                     subfiles,
@@ -292,7 +302,8 @@ class Memory(AbstractCapability[AgentDepsT]):
             if span.is_recording():
                 span.set_attributes(
                     {
-                        'memory.outcome': 'ok',
+                        # The guidance can fill the whole budget, leaving no room to inject what is stored.
+                        'memory.outcome': 'ok' if rendered or not has_memory else 'budget_exhausted',
                         'memory.main_chars': 0 if main is None else len(main.content),
                         'memory.files': len(subfiles),
                         'memory.files_truncated': files_truncated,

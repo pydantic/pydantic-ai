@@ -299,6 +299,12 @@ class InMemoryStore:
         self._generation += 1
         return self._generation
 
+    def _keep_receipt(self, operation: MemoryOperation, mutation: MemoryMutation) -> None:
+        """Record a receipt, keeping only the most recent ones, as `FileStore` does."""
+        self._receipts[operation.id] = (operation.fingerprint, mutation)
+        if len(self._receipts) > _MAX_RECEIPTS:
+            del self._receipts[next(iter(self._receipts))]
+
     def _current(self, path: str, max_chars: int | None = None) -> MemoryFile | None:
         content = self._files.get(path)
         if content is None:
@@ -349,7 +355,7 @@ class InMemoryStore:
             self._operation_ids[path] = operation.id if operation else None
             mutation = MemoryMutation(version=str(version), replayed=False, existed=current is not None)
             if operation is not None:
-                self._receipts[operation.id] = (operation.fingerprint, mutation)
+                self._keep_receipt(operation, mutation)
             return mutation
 
     async def delete(
@@ -375,7 +381,7 @@ class InMemoryStore:
             self._next_generation()
             mutation = MemoryMutation(version=None, replayed=False, existed=existed)
             if operation is not None:
-                self._receipts[operation.id] = (operation.fingerprint, mutation)
+                self._keep_receipt(operation, mutation)
             return mutation
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:

@@ -559,6 +559,23 @@ class TestWriteMemory:
         subfile_replay = await toolset.write_memory(subfile_context, 'topic', file='topic')
         assert subfile_replay['replayed'] is True
 
+    async def test_tool_call_id_reused_in_a_later_response_is_a_new_write(self) -> None:
+        store = InMemoryStore()
+        responses = 0
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal responses
+            responses += 1
+            if responses <= 2:
+                # Some providers number calls per response, so `call_0` recurs across responses.
+                return ModelResponse(
+                    parts=[ToolCallPart('write_memory', {'content': f'- fact {responses}'}, tool_call_id='call_0')]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        await Agent(FunctionModel(model), capabilities=[Memory(store=store)]).run('remember')
+        assert store.files['main/MEMORY.md'] == '- fact 1\n- fact 2\n'
+
     @pytest.mark.parametrize('tool_call_id,run_id', [('', 'run'), ('call', '')])
     async def test_mutation_requires_stable_ids(self, tool_call_id: str, run_id: str) -> None:
         with pytest.raises(RuntimeError, match='stable'):
@@ -825,6 +842,13 @@ class TestInjection:
         assert captured[0].startswith('<memory>\n')
         assert len(captured[0]) <= 20
         assert 'H' * 50 not in captured[0]
+
+    def test_instances_sharing_the_default_id_must_agree(self) -> None:
+        store = InMemoryStore()
+        with pytest.raises(UserError, match="multiple Memory capabilities that disagree on 'agent_name'"):
+            Agent(TestModel(), capabilities=[Memory(store=store), Memory(store=store, agent_name='org')])
+        # The same configuration stated twice is one notebook.
+        Agent(TestModel(), capabilities=[Memory(store=store), Memory(store=store)])
 
     async def test_composed_instances_render_distinct_headings(self) -> None:
         store = InMemoryStore()
@@ -1572,6 +1596,27 @@ class TestConfigurationAndSpecs:
 
 
 class TestTelemetryAndComposition:
+    async def test_guidance_filling_the_budget_is_recorded(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- important fact')
+        captured: list[str] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(_latest_memory_context(messages))
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store, max_tokens=200)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
+        await agent.run('go')
+
+        assert captured == ['']
+        span = next(span for span in exporter.get_finished_spans() if span.name == 'memory.inject')
+        assert span.attributes is not None
+        assert span.attributes['memory.outcome'] == 'budget_exhausted'
+
     async def test_content_safe_injection_and_tool_spans(self) -> None:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
