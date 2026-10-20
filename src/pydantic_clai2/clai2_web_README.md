@@ -6,7 +6,7 @@
 Run `/web` in a session to open it in your browser: a local web app with a sessions sidebar,
 streaming Markdown answers, collapsible tool calls (shell output, diffs, searches), thinking
 blocks, live token counts while a turn streams, a Monty panel with code mode's `run_code` cells, and a composer with `/` command completion, a
-model picker, and a stop button. Scrolling up while output streams keeps your place; **Jump to latest** follows
+model picker, pasted or dropped images, and a stop button. Scrolling up while output streams keeps your place; **Jump to latest** follows
 it again. The terminal and the browser drive the same session: a prompt typed in either runs once, and both
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
 ends the web UI; `/web status` shows its address.
@@ -318,6 +318,7 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 | Route | Does |
 |---|---|
 | `GET /api/sessions/{id}/state` | its `snapshot` |
+| `GET /api/sessions/{id}/images/{image_id}` | an image of a prompt in its transcript, by an ID its `user` item lists in `images` (the SHA-256 of the bytes); 404 for one it does not hold |
 | `POST /api/sessions/{id}/input` | enter a prompt or `/command`, body `{"text": "…"}`, as `/api/input` |
 | `POST /api/sessions/{id}/interrupt` | interrupt its turn only |
 | `GET /api/sessions/{id}/complete?text=…` | Tab completions |
@@ -342,7 +343,7 @@ choosing a model in session B's `/model` menu switches B alone, and B's `/effort
 CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
 (`/api/plugins/…`) and dialogs belong to the page.
 
-The unprefixed routes (`/api/state`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
+The unprefixed routes (`/api/state`, `/api/images/…`, `/api/input`, `/api/interrupt`, `/api/complete`, `/api/model`,
 `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
