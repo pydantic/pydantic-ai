@@ -24,9 +24,10 @@ agent cannot author that extension during a run and make it available to the nex
 - `author_capability(name, code)` -- write `code` to `<directory>/<name>.py`, import it,
   and validate it. Validation requires exactly one
   `pydantic_ai.capabilities.AbstractCapability` subclass that constructs with no
-  arguments; the side-effect-free static getters (`get_instructions`, `get_toolset`,
-  `get_native_tools`, `get_model_settings`, `get_serialization_name`) are exercised. The
-  async lifecycle hooks are not run -- they need a live `RunContext`.
+  arguments. It calls the static getters (`get_instructions`, `get_toolset`,
+  `get_native_tools`, `get_model_settings`, `get_serialization_name`) and checks that the
+  agent can use what they return. The async lifecycle hooks are not run -- they need a
+  live `RunContext`.
 - `list_authored_capabilities()` -- list authored capabilities with status and any
   validation error.
 - `disable_authored_capability(name)` -- mark a capability disabled, so `load_active()`
@@ -59,11 +60,9 @@ Writing and validation happen in the current run; activation happens on the next
 A capability **cannot** be added to a live, already-executing run. pydantic-ai resolves
 the effective capability set once at the start of each run (the run's `root_capability`
 is fixed; there is no setter). So an authored capability is live on the **next**
-`agent.run(...)`, not the run that authored it. This mirrors Loopy's runtime personas,
-which are usable on the next delegate call rather than mid-execution -- but one notch
-coarser: a persona adds no tools or hooks (it rides a single generic `delegate` tool), so
-it is usable later in the same run, whereas a full capability contributes tools and hooks
-that only exist once the run's toolset and capability chain are assembled at run start.
+`agent.run(...)`, not the run that authored it. Authoring writes and validates the
+capability immediately, but its tools and hooks only exist once the next run's toolset and
+capability chain are assembled at run start.
 
 ### Integration contract
 
@@ -94,15 +93,29 @@ while not done:
     # ... decide `next_prompt` and `done` from `result` ...
 ```
 
+`store.load_active()` re-imports every active authored capability and runs the same checks
+as `author_capability` before returning it. An entry that fails (corrupt source,
+construction error, a getter with a wrong return type) is skipped rather than raised, and
+its error is recorded in the manifest, so one bad capability does not block the others.
+
 Because the capabilities also persist to disk (`<directory>/<name>.py` plus a
 `manifest.json` index), a fresh process picks them up by constructing a new
 `CapabilityCreation` over the same `directory` and calling `store.load_active()`.
 
 `manifest.json` records each capability's name, module file, class name, status, and last
-validation error -- the surface a UI can read to show what the agent has authored.
+validation error -- the surface a UI can read to show what the agent has authored. The
+manifest is written atomically. A manifest that cannot be read (malformed JSON, or a field
+value this version does not accept) is read as empty, and `author_capability` and
+`disable_authored_capability` raise `UserError` instead of replacing it, so its entries are
+kept until you repair or remove it.
 
-Capability names must be lowercase letters, digits, and underscores, starting with a
-letter; reusing a name replaces the previous capability of that name.
+The store serializes its own tool calls, but not other processes or agents: point each
+`directory` at one agent at a time, or concurrent authoring can lose manifest updates.
+
+Capability names are at most 64 lowercase letters, digits, and underscores, starting with a
+letter; reusing a name replaces the previous capability of that name. Code that fails
+validation is still written to disk (so it can be inspected) and recorded with its
+`last_error` set; `load_active()` skips it.
 
 ## Durable execution
 
@@ -114,6 +127,12 @@ workflow code, so there the store call runs as its own step.
 
 The records are named after the capability's `id`, which defaults to
 `capability_creation`, so durable execution needs no configuration.
+
+Inside a Temporal, DBOS, or Prefect workflow, a run refuses capabilities passed with
+`agent.run(..., capabilities=...)`, because durable execution registers a capability's
+activities, tasks, or steps when the capability is bound to the agent. The integration
+contract above therefore cannot activate authored capabilities inside a workflow. The
+authoring tools still work there.
 
 ## Trust boundary
 
@@ -129,14 +148,22 @@ operates under, which is the deliberate choice here. Do not point it at a direct
 contents you would not run yourself, and treat authored capabilities as code the agent is
 executing on your host.
 
+Authored code first runs when the model calls `author_capability`, not on the next run:
+validation executes the module body, the constructor, and the static getters in the current
+run, with the agent process's environment and permissions, even when validation then
+rejects the code. Validation waits for that code to return, so authored code that blocks
+also blocks the tool call, and cancelling the run does not interrupt it.
+
+Keep `directory` out of reach of the agent's file tools if you want every authored file to
+pass through validation. With `LocalWorkspace('.')` and `directory=Path('.authored')`, the
+agent can also edit authored files and `manifest.json` directly.
+
 Because authored capabilities hold live code, they are not spec-serializable
 (`get_serialization_name()` returns `None`) and are persisted as source rather than as an
 agent spec.
 
-## Typing
+## Telemetry
 
-Imported authored code is dynamic, but nothing typed `Any` crosses back into the harness:
-every value pulled from an authored module is narrowed with `isinstance`/`issubclass`
-before use, and loaded instances are typed `AbstractCapability[object]`. Because
-`AgentDepsT` is contravariant, an `AbstractCapability[object]` is accepted by any agent's
-`capabilities=` parameter.
+`CapabilityCreation` emits no spans of its own. Core's tool spans record each
+`author_capability`, `list_authored_capabilities`, and `disable_authored_capability` call,
+and authoring and validation run inside the `author_capability` span.

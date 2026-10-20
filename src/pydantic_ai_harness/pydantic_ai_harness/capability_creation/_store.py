@@ -2,9 +2,10 @@
 
 Each authored capability is one `<name>.py` file under `directory`; a sibling
 `manifest.json` indexes them (name, module file, class, status, last validation
-error) and is the surface a UI can read. The store mirrors Loopy's persona
-persistence: a read-modify-write upsert keyed by name, fail-soft loading that
-skips corrupt entries rather than raising.
+error) and is the surface a UI can read. Updates are a read-modify-write upsert
+keyed by name. Reads are fail-soft: a broken entry is skipped rather than raised.
+Writes refuse an unreadable manifest rather than replacing it, so its entries
+are not lost.
 """
 
 from __future__ import annotations
@@ -19,13 +20,14 @@ from typing import Literal
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.capability_creation._validate import (
     CapabilityValidationError,
     load_capability_instance,
     validate_capability_file,
 )
 
-_NAME_RE = re.compile(r'^[a-z][a-z0-9_]*$')
+_NAME_RE = re.compile(r'[a-z][a-z0-9_]{0,63}')
 
 
 class AuthoredCapability(BaseModel):
@@ -52,13 +54,26 @@ class CapabilityStore:
     def _manifest_path(self) -> Path:
         return self.directory / 'manifest.json'
 
-    def _load_manifest(self) -> _Manifest:
+    def _module_path(self, record: AuthoredCapability) -> Path:
+        """The record's module file, refused unless it is a `.py` file directly in `directory`."""
+        path = self.directory / record.module_file
+        if path.parent != self.directory or path.suffix != '.py':
+            raise CapabilityValidationError(f'module file {record.module_file!r} is not a `.py` file in the directory')
+        return path
+
+    def _load_manifest(self, *, for_update: bool = False) -> _Manifest:
+        """Read the manifest; an unreadable one reads as empty, or raises `UserError` when `for_update` is set."""
         path = self._manifest_path
         if not path.exists():
             return _Manifest()
         try:
             return _Manifest.model_validate_json(path.read_text(encoding='utf-8'))
-        except (OSError, ValidationError, ValueError):
+        except (OSError, ValidationError, ValueError) as exc:
+            if for_update:
+                raise UserError(
+                    f'The capability manifest {str(path)!r} cannot be read ({type(exc).__name__}), so it was left '
+                    'unchanged. Repair or remove it before authoring or disabling capabilities.'
+                ) from exc
             return _Manifest()
 
     def _save_manifest(self, manifest: _Manifest) -> None:
@@ -76,7 +91,7 @@ class CapabilityStore:
             raise
 
     def _upsert(self, record: AuthoredCapability) -> None:
-        manifest = self._load_manifest()
+        manifest = self._load_manifest(for_update=True)
         for index, existing in enumerate(manifest.capabilities):
             if existing.name == record.name:
                 manifest.capabilities[index] = record
@@ -88,15 +103,17 @@ class CapabilityStore:
     def write(self, name: str, code: str) -> AuthoredCapability:
         """Write `code` to `<name>.py`, validate it, and upsert the manifest entry.
 
-        Raises `ValueError` for an invalid name (before writing anything). A code
-        that imports but fails validation is still written (so it can be
-        inspected) and recorded with `last_error` set; `load_active` skips it.
+        Raises `ValueError` for an invalid name and `UserError` for an unreadable
+        manifest, both before writing anything. Code that fails validation is
+        still written (so it can be inspected) and recorded with `last_error` set;
+        `load_active` skips it.
         """
-        if not _NAME_RE.match(name):
+        if not _NAME_RE.fullmatch(name):
             raise ValueError(
-                f'invalid capability name {name!r}: use lowercase letters, digits, and underscores, '
+                f'invalid capability name {name!r}: use at most 64 lowercase letters, digits, and underscores, '
                 f'starting with a letter'
             )
+        self._load_manifest(for_update=True)
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self.directory / f'{name}.py'
         path.write_text(code, encoding='utf-8')
@@ -110,7 +127,7 @@ class CapabilityStore:
 
     def disable(self, name: str) -> bool:
         """Mark the named capability disabled so `load_active` stops returning it. Returns whether it existed."""
-        manifest = self._load_manifest()
+        manifest = self._load_manifest(for_update=True)
         found = False
         for record in manifest.capabilities:
             if record.name == name:
@@ -127,12 +144,13 @@ class CapabilityStore:
     def load_active(self) -> list[AbstractCapability[object]]:
         """Construct every active authored capability for per-run injection.
 
-        Re-imports and re-constructs each active entry. Entries that fail to load
-        (corrupt source, construction error) are skipped, not raised, so one bad
-        capability never blocks the rest. A load outcome that disagrees with the
-        record's `last_error` is persisted back to the manifest: a newly broken
-        entry records its error, a re-fixed entry clears it, so the manifest stays
-        truthful about which capabilities are actually active.
+        Re-imports, re-constructs, and re-validates each active entry with the same
+        checks as `write`. Entries that fail (corrupt source, construction error, a
+        getter with a wrong return type, a module file outside `directory`) are
+        skipped, not raised. A load outcome that disagrees with the record's
+        `last_error` is persisted back to the manifest: a newly broken entry records
+        its error, a re-fixed entry clears it, so the manifest stays truthful about
+        which capabilities are actually active.
         """
         manifest = self._load_manifest()
         instances: list[AbstractCapability[object]] = []
@@ -141,7 +159,7 @@ class CapabilityStore:
             if record.status != 'active':
                 continue
             try:
-                instances.append(load_capability_instance(self.directory / record.module_file))
+                instances.append(load_capability_instance(self._module_path(record)))
             except CapabilityValidationError as exc:
                 if record.last_error != str(exc):
                     record.last_error = str(exc)

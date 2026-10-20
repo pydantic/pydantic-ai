@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
+import sys
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import anyio.to_thread
@@ -98,6 +97,17 @@ class BadGetter(AbstractCapability):
 
 SYNTAX_ERROR_CODE = 'def (:\n'
 
+BAD_TOOLSET_RETURN_CODE = """
+from dataclasses import dataclass
+
+from pydantic_ai.capabilities import AbstractCapability
+
+@dataclass
+class BadToolset(AbstractCapability):
+    def get_toolset(self):
+        return 42
+"""
+
 
 def _marker_code(class_name: str, instruction: str) -> str:
     """A valid capability whose class name and static instructions are controllable."""
@@ -142,14 +152,6 @@ def _write(directory: Path, name: str, code: str) -> Path:
     return path
 
 
-def _return_none(*args: object, **kwargs: object) -> None:
-    return None
-
-
-def _return_spec_without_loader(*args: object, **kwargs: object) -> SimpleNamespace:
-    return SimpleNamespace(loader=None)
-
-
 class TestValidate:
     def test_valid_returns_class_name(self, tmp_path: Path) -> None:
         assert validate_capability_file(_write(tmp_path, 'm', VALID_CODE)) == 'MarkerCapability'
@@ -183,17 +185,26 @@ class TestValidate:
         with pytest.raises(CapabilityValidationError):
             validate_capability_file(_write(tmp_path, 'm', SYNTAX_ERROR_CODE))
 
-    def test_load_module_no_spec(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        path = _write(tmp_path, 'm', VALID_CODE)
-        monkeypatch.setattr(importlib.util, 'spec_from_file_location', _return_none)
-        with pytest.raises(CapabilityValidationError, match='import spec'):
-            validate_capability_file(path)
+    def test_bad_toolset_return_rejected(self, tmp_path: Path) -> None:
+        with pytest.raises(CapabilityValidationError, match='get_toolset\\(\\) returned int'):
+            validate_capability_file(_write(tmp_path, 'm', BAD_TOOLSET_RETURN_CODE))
 
-    def test_load_module_no_loader(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        path = _write(tmp_path, 'm', VALID_CODE)
-        monkeypatch.setattr(importlib.util, 'spec_from_file_location', _return_spec_without_loader)
-        with pytest.raises(CapabilityValidationError, match='import spec'):
-            validate_capability_file(path)
+    def test_system_exit_wrapped(self, tmp_path: Path) -> None:
+        # Authored code that exits must fail validation, not end the host process.
+        with pytest.raises(CapabilityValidationError, match='SystemExit'):
+            validate_capability_file(_write(tmp_path, 'm', 'raise SystemExit(0)\n'))
+
+    def test_future_annotations_dataclass_field(self, tmp_path: Path) -> None:
+        # `dataclasses` resolves string annotations through `sys.modules`, so the authored module must be findable there.
+        code = 'from __future__ import annotations\n' + _marker_code('WithField', 'X') + '    value: int = 0\n'
+        assert validate_capability_file(_write(tmp_path, 'm', code)) == 'WithField'
+        assert not any(name.startswith('_authored_capability_') for name in sys.modules)
+
+    def test_load_leaves_bytecode_settings_and_cache_alone(self, tmp_path: Path) -> None:
+        before = sys.dont_write_bytecode
+        validate_capability_file(_write(tmp_path, 'm', VALID_CODE))
+        assert sys.dont_write_bytecode is before
+        assert not (tmp_path / '__pycache__').exists()
 
     def test_load_instance_success(self, tmp_path: Path) -> None:
         instance = load_capability_instance(_write(tmp_path, 'm', VALID_CODE))
@@ -207,6 +218,11 @@ class TestValidate:
         with pytest.raises(CapabilityValidationError, match='TypeError'):
             load_capability_instance(_write(tmp_path, 'm', CONSTRUCT_FAILS_CODE))
 
+    def test_load_instance_checks_getter_returns(self, tmp_path: Path) -> None:
+        # Loading runs the same checks as authoring, so a capability that failed validation stays out.
+        with pytest.raises(CapabilityValidationError, match='ModelSettings mapping'):
+            load_capability_instance(_write(tmp_path, 'm', BAD_MODEL_SETTINGS_RETURN_CODE))
+
 
 class TestCapabilityStore:
     def test_write_valid(self, tmp_path: Path) -> None:
@@ -218,10 +234,24 @@ class TestCapabilityStore:
         assert (tmp_path / 'manifest.json').exists()
         assert [r.name for r in store.list_all()] == ['marker']
 
-    def test_write_invalid_name_raises(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize('name', ['Bad-Name', 'trailing_newline\n', 'a' * 65])
+    def test_write_invalid_name_raises(self, tmp_path: Path, name: str) -> None:
         store = CapabilityStore(tmp_path)
         with pytest.raises(ValueError, match='invalid capability name'):
-            store.write('Bad-Name', VALID_CODE)
+            store.write(name, VALID_CODE)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_write_longest_name(self, tmp_path: Path) -> None:
+        assert CapabilityStore(tmp_path).write('a' * 64, VALID_CODE).last_error is None
+
+    def test_write_system_exit_records_error(self, tmp_path: Path) -> None:
+        # Re-authoring with code that exits records the failure instead of leaving the old entry marked healthy.
+        store = CapabilityStore(tmp_path)
+        store.write('cap', VALID_CODE)
+        record = store.write('cap', 'raise SystemExit(0)\n')
+        assert record.last_error == 'SystemExit: 0'
+        assert store.list_all() == [record]
+        assert store.load_active() == []
 
     def test_write_validation_failure_records_error(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
@@ -277,6 +307,25 @@ class TestCapabilityStore:
     def test_load_manifest_corrupt_returns_empty(self, tmp_path: Path) -> None:
         (tmp_path / 'manifest.json').write_text('not json{', encoding='utf-8')
         assert CapabilityStore(tmp_path).list_all() == []
+        assert CapabilityStore(tmp_path).load_active() == []
+
+    @pytest.mark.parametrize(
+        'manifest',
+        [
+            '{"capabilities": [',
+            '{"capabilities": [{"name": "a", "module_file": "a.py", "class_name": "A", "status": "paused"}]}',
+        ],
+    )
+    def test_unreadable_manifest_is_not_replaced(self, tmp_path: Path, manifest: str) -> None:
+        # Overwriting a manifest this version cannot read would drop every entry it lists.
+        (tmp_path / 'manifest.json').write_text(manifest, encoding='utf-8')
+        store = CapabilityStore(tmp_path)
+        with pytest.raises(UserError, match='cannot be read'):
+            store.write('marker', VALID_CODE)
+        with pytest.raises(UserError, match='cannot be read'):
+            store.disable('a')
+        assert (tmp_path / 'manifest.json').read_text(encoding='utf-8') == manifest
+        assert not (tmp_path / 'marker.py').exists()
 
     def test_load_active_returns_instances(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
@@ -298,16 +347,6 @@ class TestCapabilityStore:
         (tmp_path / 'marker.py').write_text(NO_SUBCLASS_CODE, encoding='utf-8')
         assert store.load_active() == []
 
-    def test_save_manifest_atomic_over_partial_prior_file(self, tmp_path: Path) -> None:
-        # A prior interrupted save left a partial/corrupt manifest; the next save
-        # must replace it atomically, leaving a valid manifest and no temp files.
-        (tmp_path / 'manifest.json').write_text('{"capabilities": [', encoding='utf-8')
-        store = CapabilityStore(tmp_path)
-        store.write('marker', VALID_CODE)
-        assert [r.name for r in store.list_all()] == ['marker']
-        leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith('manifest.') and p.name.endswith('.tmp')]
-        assert leftovers == []
-
     def test_save_manifest_cleans_temp_on_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # If the atomic replace fails, the temp file must not be left behind.
         store = CapabilityStore(tmp_path)
@@ -321,6 +360,27 @@ class TestCapabilityStore:
             store.write('second', VALID_CODE)
         leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith('manifest.') and p.name.endswith('.tmp')]
         assert leftovers == []
+
+    def test_load_active_skips_entry_that_failed_validation(self, tmp_path: Path) -> None:
+        # A getter with a wrong return type fails at authoring and must not be loaded into the next run.
+        store = CapabilityStore(tmp_path)
+        assert store.write('bad', BAD_INSTRUCTIONS_RETURN_CODE).last_error is not None
+        assert store.load_active() == []
+        assert store.list_all()[0].last_error is not None
+
+    @pytest.mark.parametrize('module_file', ['../outside.py', 'sub/inner.py', 'marker.txt'])
+    def test_load_active_refuses_module_file_outside_directory(self, tmp_path: Path, module_file: str) -> None:
+        directory = tmp_path / 'authored'
+        (directory / 'sub').mkdir(parents=True)
+        for path in (tmp_path / 'outside.py', directory / 'sub' / 'inner.py', directory / 'marker.txt'):
+            path.write_text(VALID_CODE, encoding='utf-8')
+        manifest = f'{{"capabilities": [{{"name": "x", "module_file": "{module_file}", "class_name": "M"}}]}}'
+        (directory / 'manifest.json').write_text(manifest, encoding='utf-8')
+        store = CapabilityStore(directory)
+        assert store.load_active() == []
+        last_error = store.list_all()[0].last_error
+        assert last_error is not None
+        assert 'is not a `.py` file in the directory' in last_error
 
     def test_load_active_persists_new_error(self, tmp_path: Path) -> None:
         # A capability that validated once but later fails to load gets its error

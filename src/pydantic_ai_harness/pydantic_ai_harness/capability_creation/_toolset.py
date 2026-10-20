@@ -44,8 +44,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         super().__init__(id=id)
         self._store = store
         self._operations = operations
-        # Parallel tool calls would otherwise overlap the manifest's read-modify-write cycles
-        # (losing an update) and the import's process-global `sys.dont_write_bytecode` toggle.
+        # Parallel tool calls would otherwise overlap the manifest's read-modify-write cycles,
+        # losing an update.
         self._store_lock = anyio.Lock()
         self.add_function(
             self.author_capability,

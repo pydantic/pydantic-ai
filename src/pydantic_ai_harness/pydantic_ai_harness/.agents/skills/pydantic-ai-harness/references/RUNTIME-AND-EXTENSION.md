@@ -141,7 +141,7 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
 `PrefectDurability` (`pydantic_ai.durable_exec.*`), but support is per capability:
 
 - `Agent(...)` with `TemporalDurability` raises `UserError` ("Toolsets that are 'leaves' ... need to
-  have a unique id") for `AskUser`, `CapabilityCreation`, `ExaSearch`, `ExaAgent`, `YouSearch`,
+  have a unique id") for `AskUser`, `ExaSearch`, `ExaAgent`, `YouSearch`,
   `YouResearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
@@ -428,9 +428,10 @@ async def main():
 
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
 authored code executes in your process and would bypass a sandbox. Only use it where you would run the
-model's code yourself. `load_active()` skips entries that fail to load. Under durable execution
-`capabilities=` on a run is refused, and `CapabilityCreation` itself does not build under
-`TemporalDurability` (see the durable execution section). `guidance=''` drops the
+model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+`load_active()` runs the same checks and skips entries that fail them. Inside a durable workflow,
+`capabilities=` on a run is refused, so authored capabilities cannot be activated there; the
+authoring tools still work. `guidance=''` drops the
 built-in system-prompt guidance. `CapabilityCreation` is not spec-serializable.
 
 ## Harness capabilities in agent specs
