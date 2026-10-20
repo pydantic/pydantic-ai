@@ -133,7 +133,7 @@ Inside a Temporal or DBOS workflow, a run refuses capabilities passed with
 activities or steps when the capability is bound to the agent. The integration contract
 above therefore cannot activate authored capabilities there. A Prefect flow accepts an
 authored capability that only adds hooks, instructions, or model settings, and refuses one
-whose `get_toolset()` contributes tools. The authoring tools work under all three.
+whose `get_toolset()` contributes a function, MCP, or dynamic toolset. The authoring tools work under all three.
 
 ## Trust boundary
 
