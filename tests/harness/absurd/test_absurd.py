@@ -891,14 +891,17 @@ class TestClaim:
 class TestTracing:
     async def test_replayed_steps_emit_the_same_spans(self, absurd: AsyncAbsurd, capfire: CaptureLogfire) -> None:
         # `AbsurdDurability` adds no spans; a step served from its checkpoint still gets core's span.
+        model_calls = {'calls': 0}
+        tool_calls = {'calls': 0}
         toolset = FunctionToolset(id='tools')
 
         @toolset.tool_plain
         def ping() -> str:
+            tool_calls['calls'] += 1
             return 'pong'
 
         agent = Agent(
-            _tool_calling_model(ToolCallPart('ping')),
+            _tool_calling_model(ToolCallPart('ping'), counter=model_calls),
             name='traced',
             toolsets=[toolset],
             capabilities=[Instrumentation(), AbsurdDurability()],
@@ -915,6 +918,8 @@ class TestTracing:
             await agent.run('go')
 
         assert span_names() == first == snapshot(['chat fn', 'execute_tool ping', 'chat fn', 'invoke_agent traced'])
+        # The replay was served from checkpoints.
+        assert (model_calls['calls'], tool_calls['calls']) == (2, 1)
 
 
 class TestCheckpointFormat:
