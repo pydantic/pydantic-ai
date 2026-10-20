@@ -263,13 +263,17 @@ class SqliteSearchIndex:
 
     def _sync_replace(self, run_id: str, state: tuple[int, int], messages: list[IndexedMessage]) -> None:
         with self._connect() as conn, _transaction(conn, 'BEGIN IMMEDIATE'):
-            # Another process may have indexed this state meanwhile, or deleted the run; a
-            # deleted run's text must not come back through the index.
+            # Another process may have indexed this state, or a newer one that is now current,
+            # while `messages` loaded; or deleted the run, whose text must not come back.
             indexed = conn.execute(
                 'SELECT snapshot_seq, snapshot_count, format_version FROM conversation_search_runs WHERE run_id = ?',
                 (run_id,),
             ).fetchone()
-            if indexed == (*state, _FORMAT_VERSION):
+            current = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0), COUNT(*) FROM snapshots WHERE state = 'complete' AND run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if indexed in ((*state, _FORMAT_VERSION), (*current, _FORMAT_VERSION)):
                 return
             if conn.execute('SELECT 1 FROM runs WHERE run_id = ?', (run_id,)).fetchone() is None:
                 return

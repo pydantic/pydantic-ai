@@ -354,6 +354,30 @@ class TestFullTextIndex:
         assert 'the MOOSE note' in await _search(_toolset(store), 'moose')
         assert _rows(database, 'SELECT run_id, hash FROM conversation_search_messages') == [('r1', 'written-first')]
 
+    async def test_a_newer_index_is_not_overwritten_by_an_older_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A search that loaded a run before a newer snapshot keeps the newer rows another process wrote."""
+        database = tmp_path / 'sessions.db'
+        store = SqliteStepStore(database=database)
+        await _seed_run(store, 'r1', [_user('the first turn')], minute=1)
+        original = SnapshotHistorySource.run_history
+        raced: list[bool] = []
+
+        async def run_history(source: SnapshotHistorySource, *, run_id: str) -> list[ModelMessage]:
+            history = await original(source, run_id=run_id)
+            if not raced:
+                raced.append(True)
+                await store.save_snapshot(
+                    ContinuableSnapshot(run_id='r1', step_index=1, messages=[*history, _reply('the YAK reply')])
+                )
+                await _search(_toolset(SqliteStepStore(database=database)), 'yak')
+            return history
+
+        monkeypatch.setattr(SnapshotHistorySource, 'run_history', run_history)
+
+        assert 'the YAK reply' in await _search(_toolset(store), 'yak')
+
     async def test_a_run_deleted_while_indexing_stays_out(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
