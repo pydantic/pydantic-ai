@@ -75,7 +75,8 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     a signature expires. A run continues the conversation of the `message_history` it is given, so the turns of
     one chat share their URL descriptions. The conversation id comes from the caller when one is passed to
     `run(..., conversation_id=...)`, so a caller that passes the same id to two unrelated runs gets the first
-    run's description of a URL in the second, without the URL being fetched again.
+    run's description of a URL in the second, without the URL being fetched again. A text document given by URL
+    is kept only up to 100,000 characters; a longer one is downloaded again each time a request carries it.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its
     own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
