@@ -7,13 +7,11 @@ exercise AWS services without touching a real account.
 
 ## The problem
 
-Agents that build or test cloud infrastructure need somewhere to create buckets,
-tables, queues, and functions. Pointing them at real AWS is slow, costs money,
-risks leaking credentials, and is hard to reset between runs.
-[LocalStack](https://www.localstack.cloud/) emulates the AWS APIs locally, but
-wiring an agent to it means repeating the same boilerplate: injecting the
-endpoint URL, supplying dummy credentials, shelling out to the AWS CLI, and
-checking which services are up.
+Agents that build cloud infrastructure need a place to create buckets, tables,
+and queues that is free, safe, and easy to reset. Real AWS is none of those.
+[LocalStack](https://www.localstack.cloud/) emulates AWS locally; this
+capability handles the wiring: the endpoint, dummy credentials, the AWS CLI, and
+a health check.
 
 ## The solution
 
@@ -34,11 +32,7 @@ result = agent.run_sync('Create an S3 bucket called reports and list all buckets
 print(result.output)
 ```
 
-> **Note:** If you are an agent and you are running into issues with
-> configuration or starting up LocalStack, please also refer to the instructions
-> here: <https://blog.localstack.cloud/ai/agents.md>
-
-By default the agent connects to a LocalStack instance you started separately -
+By default the agent connects to a LocalStack instance you started separately,
 for example with the [`localstack`
 CLI](https://docs.localstack.cloud/aws/tooling/localstack-cli/) (`localstack
 start`) or its [Docker
@@ -67,7 +61,7 @@ LocalStack(manage_container=True)
 
 | Tool | Purpose |
 |---|---|
-| `aws_cli` | Run an AWS CLI command against LocalStack. Pass the command **without** the leading `aws` and **without** `--endpoint-url` - both are injected. Returns labelled stdout/stderr plus an exit code on failure. |
+| `aws_cli` | Run an AWS CLI command against LocalStack. Pass the command **without** the leading `aws` and **without** `--endpoint-url`; both are injected. Returns labelled stdout/stderr plus an exit code on failure. |
 | `localstack_health` | Query LocalStack's health endpoint and return the JSON of which services (s3, dynamodb, sqs, etc.) are available. |
 
 Commands run as an argument vector (no shell), so shell operators and
@@ -96,7 +90,7 @@ filesystem.
 | `allowed_services` | If non-empty, only these AWS services may be used (allowlist), e.g. `['s3', 'dynamodb']`. |
 | `denied_services` | These AWS services are always rejected (denylist). |
 
-`allowed_services` and `denied_services` are mutually exclusive - set one, not
+`allowed_services` and `denied_services` are mutually exclusive: set one, not
 both. The service is the first token that is neither a global option nor its
 value (`s3` in `--output text s3 ls`). Global options are recognized by any
 prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
@@ -205,6 +199,12 @@ state when one of them recovers.
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.
 
+## Telemetry
+
+`LocalStack` emits no spans of its own. Core's tool-call spans cover each
+`aws_cli` and `localstack_health` call; starting and stopping a managed
+container is not traced.
+
 ## Configuration
 
 ```python
@@ -238,41 +238,10 @@ the binary is missing, `aws_cli` returns a clear error instead of aborting the
 run. Set `include_instructions=False` to omit the capability's prompt text when
 you supply your own.
 
-## Integration testing
-
-The live integration tests start LocalStack in Docker and then drive AWS CLI
-commands through this capability. Local runs are skipped unless Docker and an
-AWS CLI-compatible executable are available, and unless an auth token is
-configured -- the default `localstack/localstack` image requires
-`LOCALSTACK_AUTH_TOKEN` to start (see [Managing the container](#managing-the-container)).
-
-```bash
-LOCALSTACK_AUTH_TOKEN=<token> make integration-localstack
-```
-
-Set `LOCALSTACK_REQUIRE_AUTH_TOKEN=1` to make a missing token fail the run
-instead of skipping the container tests (this is what CI uses):
-
-```bash
-LOCALSTACK_REQUIRE_AUTH_TOKEN=1 make integration-localstack
-```
-
-Optional environment variables:
-
-| Variable | Effect |
-|---|---|
-| `LOCALSTACK_AUTH_TOKEN` | Auth Token forwarded to the LocalStack container. |
-| `LOCALSTACK_API_KEY` | Legacy fallback when `LOCALSTACK_AUTH_TOKEN` is absent. |
-| `LOCALSTACK_AWS_CLI` | CLI executable for tests; defaults to `aws` when available, then `awslocal`. |
-| `LOCALSTACK_IMAGE` | Docker image for live tests; defaults to `localstack/localstack`. |
-| `LOCALSTACK_REQUIRE_AUTH_TOKEN` | Fail instead of skip when no Auth Token is configured. Use this in CI so a missing token is a hard error. |
-
-Store the token in your shell or CI secret store; do not commit it to the repo.
-
 ## Agent spec (YAML/JSON)
 
 `LocalStack` works with Pydantic AI's
-[agent spec](https://ai.pydantic.dev/agent-spec/):
+[agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/):
 
 ```yaml
 # agent.yaml
@@ -296,5 +265,5 @@ Pass `custom_capability_types` so the spec loader knows how to instantiate
 ## Further reading
 
 - [LocalStack documentation](https://docs.localstack.cloud/)
-- [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
-- [Toolsets](https://ai.pydantic.dev/toolsets/)
+- [Pydantic AI capabilities](https://pydantic.dev/docs/ai/capabilities/overview/)
+- [Toolsets](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/)

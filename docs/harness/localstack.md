@@ -7,8 +7,8 @@ description: Give a Pydantic AI agent access to an emulated AWS environment thro
 
 `LocalStack` gives an agent access to an emulated AWS environment, so it can
 provision and exercise AWS services without touching a real account. It wires
-the AWS CLI to a running [LocalStack](https://www.localstack.cloud/) instance --
-injecting the endpoint, region, and credentials -- and can optionally start and
+the AWS CLI to a running [LocalStack](https://www.localstack.cloud/) instance,
+injecting the endpoint, region, and credentials, and can optionally start and
 stop the LocalStack Docker container for each run.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/localstack/)
@@ -17,12 +17,10 @@ stop the LocalStack Docker container for each run.
 
 ## The problem
 
-Agents that build or test cloud infrastructure need somewhere to create buckets,
-tables, queues, and functions. Pointing them at real AWS is slow, costs money,
-risks leaking credentials, and is hard to reset between runs. LocalStack
-emulates the AWS APIs locally, but wiring an agent to it means repeating the same
-boilerplate: injecting the endpoint URL, supplying dummy credentials, shelling
-out to the AWS CLI, and checking which services are up.
+Agents that build cloud infrastructure need a place to create buckets, tables,
+and queues that is free, safe, and easy to reset. Real AWS is none of those.
+LocalStack emulates AWS locally; this capability handles the wiring: the
+endpoint, dummy credentials, the AWS CLI, and a health check.
 
 ## Usage
 
@@ -43,7 +41,7 @@ result = agent.run_sync('Create an S3 bucket called reports and list all buckets
 print(result.output)
 ```
 
-By default the agent connects to a LocalStack instance you started separately --
+By default the agent connects to a LocalStack instance you started separately,
 for example with the
 [`localstack` CLI](https://docs.localstack.cloud/aws/tooling/localstack-cli/)
 (`localstack start`). The defaults match LocalStack's conventions: the edge
@@ -55,7 +53,7 @@ the capability start and stop a fresh Docker container per run.
 
 | Tool | Purpose |
 |---|---|
-| `aws_cli` | Run an AWS CLI command against LocalStack. Pass the command **without** the leading `aws` and **without** `--endpoint-url` -- both are injected. Returns labelled stdout/stderr plus an exit code on failure. |
+| `aws_cli` | Run an AWS CLI command against LocalStack. Pass the command **without** the leading `aws` and **without** `--endpoint-url`; both are injected. Returns labelled stdout/stderr plus an exit code on failure. |
 | `localstack_health` | Query LocalStack's health endpoint and return the JSON of which services (s3, dynamodb, sqs, etc.) are available. |
 
 Commands run as an argument vector (no shell), so shell operators and
@@ -83,7 +81,7 @@ AWS-emulator access and AWS CLI access to the process's filesystem.
 | `allowed_services` | If non-empty, only these AWS services may be used (allowlist), e.g. `['s3', 'dynamodb']`. |
 | `denied_services` | These AWS services are always rejected (denylist). |
 
-`allowed_services` and `denied_services` are mutually exclusive -- set one, not
+`allowed_services` and `denied_services` are mutually exclusive: set one, not
 both. The service is the first token that is neither a global option nor its
 value (`s3` in `--output text s3 ls`). Global options are recognized by any
 prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
@@ -179,6 +177,12 @@ state when one of them recovers.
 
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.
+
+## Telemetry
+
+`LocalStack` emits no spans of its own. Core's tool-call spans cover each
+`aws_cli` and `localstack_health` call; starting and stopping a managed
+container is not traced.
 
 ## Configuration
 

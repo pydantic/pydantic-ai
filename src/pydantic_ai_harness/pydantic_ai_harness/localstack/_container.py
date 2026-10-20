@@ -58,7 +58,7 @@ class LocalStackContainer:
 
     Drives the `docker` CLI, so Docker must be installed and running. On enter it
     launches the container, polls the health endpoint until LocalStack is ready,
-    and exposes `endpoint_url`. On exit it stops the container — it is started
+    and exposes `endpoint_url`. On exit it stops the container, which is started
     with `--rm`, so stopping also removes it.
 
     ```python
