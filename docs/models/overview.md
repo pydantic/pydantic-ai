@@ -335,7 +335,7 @@ exception handlers, and response handlers — all of which can be sync or async.
 !!! note
     The provider SDKs on which Models are based (like OpenAI, Anthropic, etc.) often have built-in retry logic that can delay the `FallbackModel` from activating.
 
-    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
+    When using `FallbackModel`, it's recommended to disable provider SDK retries to ensure immediate fallback, by setting [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. Bedrock and xAI ignore it and warn with [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], so with one of those as a candidate, set it on the other candidates. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
     To bound how long the fallback can be delayed instead, set [`request_timeout`](../timeouts.md#model-request-deadlines) in the model settings: each model gets that long across all of its attempts, and when it runs out the resulting [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] triggers the fallback to the next model, which gets a fresh deadline.
 

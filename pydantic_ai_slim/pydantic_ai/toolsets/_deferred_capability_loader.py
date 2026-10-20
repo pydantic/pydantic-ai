@@ -5,7 +5,12 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityCallPart, LoadCapabilityReturn
+from pydantic_ai._deferred_capabilities import (
+    CAPABILITY_LOAD_KIND,
+    LoadCapabilityArgs,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturn,
+)
 from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -52,7 +57,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             name=LOAD_CAPABILITY_TOOL_NAME,
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
-            tool_kind='capability-load',
+            tool_kind=CAPABILITY_LOAD_KIND,
         )
 
         load_tool = ToolsetTool(

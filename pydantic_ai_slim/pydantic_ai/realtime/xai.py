@@ -68,6 +68,7 @@ from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._lifecycle import InputId
+from ._openai_lifecycle import AudioCommit, OpenAILifecycle
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -300,6 +301,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             model_name=model_name,
             model_name_getter=model_name_getter,
         )
+        # With turn detection off, xAI doesn't commit audio it heard no speech in, so a commit it never acknowledged
+        # is a turn only if it did.
+        self._lifecycle = OpenAILifecycle(transcribes=input_transcription_enabled, commits_need_speech=manual_turns)
         self._conversation_id = conversation_id
         # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
         # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is
@@ -313,9 +317,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # joins the conversation (checked live). Nothing below applies with turn detection on.
         self._manual_turns = manual_turns
         self._commit_held = False
-        self._audio_commit_listener: Callable[[], None] | None = None
-        # Whether the listener heard about the held commit already, which a reconnect sends again.
-        self._commit_announced = False
         # Whether xAI heard speech in the audio it has since the last commit. It doesn't answer a commit of
         # silence at all (checked live), so without speech the commit goes out with a `response.create`.
         self._speech_detected = False
@@ -386,9 +387,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Send the held commit, and the audio it covers, with the request for a response."""
         # Marked first, so audio sent meanwhile is kept back until the reply ends rather than joining the turn.
         self._response_active = True
-        if not self._commit_announced:
-            self._commit_announced = True
-            self._announce_commit()
         # Each frame leaves the held audio only as it goes out, and the commit stays held until it's sent, so
         # a connection that drops midway still has the whole turn to send again after the reconnect.
         while self._held_audio_committed:
@@ -413,13 +411,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         await super()._send_event({'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT, 'event_id': event_id})
         self._release_commit()
 
-    def _announce_commit(self) -> None:
-        """Tell the listener audio is being committed, before anything goes out that xAI could answer first."""
-        if self._audio_commit_listener is not None:
-            self._audio_commit_listener()
-
     def _release_commit(self) -> None:
-        self._commit_held = self._commit_announced = False
+        self._commit_held = False
         self._sent_audio.clear()
         # The commit lands after anything sent while it was held, so the audio is xAI's latest input.
         self._audio_is_latest_input = True
@@ -428,13 +421,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Send the audio kept back behind a reply that has ended, until a new commit is held or a reply starts."""
         while self._held_audio and not self._commit_held and not self._response_active:
             await self._send_audio(self._held_audio.pop(0))
-
-    @property
-    def _defers_audio_commit(self) -> bool:
-        return self._manual_turns
-
-    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
-        self._audio_commit_listener = listener
 
     @property
     def _response_request_dropped(self) -> bool:
@@ -456,18 +442,17 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
             self._audio_is_latest_input = False
         # Audio still in the buffer is committed by the request, and answered by its response.
-        sent_before: list[InputId] | None = None
+        commit: AudioCommit | None = None
         if self._audio_uncommitted:
-            self._announce_commit()
             # Whatever went out before the request joins the conversation ahead of the turn it commits.
-            sent_before = self._lifecycle.audio_commit_sent()
+            commit = self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
         try:
             await super()._create_response(input_indexes, answers)
         except BaseException:
-            if sent_before is not None:
-                self._lifecycle.audio_commit_failed(sent_before)
+            if commit is not None:
+                self._lifecycle.audio_commit_failed(commit)
             raise
 
     async def _attempt_reconnect(self) -> bool:

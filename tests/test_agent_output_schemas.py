@@ -265,6 +265,57 @@ def test_output_json_schema_transitive_collision_preserves_branches(
     assert schema == expected
 
 
+def test_output_json_schema_contains_refs_preserve_branch_types():
+    """Use `json_schema_extra` to move `items` to `contains` and exercise colliding item definitions."""
+
+    def use_contains(schema: dict[str, Any]) -> None:
+        schema['contains'] = schema.pop('items')
+
+    first_item = create_model('Item', value=(int, ...))
+    second_item = create_model('Item', value=(str, ...))
+    first = create_model('First', values=(list[first_item], Field(json_schema_extra=use_contains)))
+    second = create_model('Second', values=(list[second_item], Field(json_schema_extra=use_contains)))
+
+    schema = Agent(TestModel(), output_type=[first, second]).output_json_schema()
+
+    assert schema == snapshot(
+        {
+            'anyOf': [
+                {
+                    'properties': {
+                        'values': {'contains': {'$ref': '#/$defs/Item'}, 'title': 'Values', 'type': 'array'}
+                    },
+                    'required': ['values'],
+                    'title': 'First',
+                    'type': 'object',
+                },
+                {
+                    'properties': {
+                        'values': {'contains': {'$ref': '#/$defs/Second_Item_1'}, 'title': 'Values', 'type': 'array'}
+                    },
+                    'required': ['values'],
+                    'title': 'Second',
+                    'type': 'object',
+                },
+            ],
+            '$defs': {
+                'Item': {
+                    'properties': {'value': {'title': 'Value', 'type': 'integer'}},
+                    'required': ['value'],
+                    'title': 'Item',
+                    'type': 'object',
+                },
+                'Second_Item_1': {
+                    'properties': {'value': {'title': 'Value', 'type': 'string'}},
+                    'required': ['value'],
+                    'title': 'Item',
+                    'type': 'object',
+                },
+            },
+        }
+    )
+
+
 async def test_tool_output_json_schema():
     # one output
     agent = Agent(
@@ -637,7 +688,7 @@ async def test_deferred_output_json_schema():
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'tool_kind': {
                             'anyOf': [
-                                {'enum': ['tool-search', 'capability-load'], 'type': 'string'},
+                                {'type': 'string'},
                                 {'type': 'null'},
                             ],
                             'default': None,
@@ -755,7 +806,7 @@ async def test_deferred_output_json_schema():
                         'tool_call_id': {'title': 'Tool Call Id', 'type': 'string'},
                         'tool_kind': {
                             'anyOf': [
-                                {'enum': ['tool-search', 'capability-load'], 'type': 'string'},
+                                {'type': 'string'},
                                 {'type': 'null'},
                             ],
                             'default': None,
