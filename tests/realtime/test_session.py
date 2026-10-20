@@ -4374,7 +4374,7 @@ async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
         [
             ToolReturnPart(
                 tool_name='noop',
-                content='The tool raised an unhandled error and the session ended.',
+                content='The tool raised an unhandled error.',
                 tool_call_id='tc1',
                 timestamp=IsDatetime(),
                 outcome='failed',
@@ -7882,7 +7882,7 @@ async def test_agent_realtime_session_tool_exception() -> None:
                 [
                     ToolReturnPart(
                         tool_name='explode',
-                        content='The tool raised an unhandled error and the session ended.',
+                        content='The tool raised an unhandled error.',
                         tool_call_id='tc',
                         timestamp=IsDatetime(),
                         outcome='failed',
@@ -9599,6 +9599,22 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
         _ = [e async for e in session]
     # Static literal then dynamic function, double-newline separated — same as `run`/`iter`.
     assert model.last_instructions == 'Base\n\nDynamic'
+
+
+async def test_agent_realtime_session_append_instructions_warn() -> None:
+    agent: Agent[None, str] = Agent(instructions='Base')
+
+    @agent.instructions(name='state', on_change='append')
+    def state() -> str:
+        return 'Current state'
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(
+        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
+    ):
+        async with agent.realtime(model).session() as session:
+            _ = [event async for event in session]
+    assert model.last_instructions == 'Base\n\nCurrent state'
 
 
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:

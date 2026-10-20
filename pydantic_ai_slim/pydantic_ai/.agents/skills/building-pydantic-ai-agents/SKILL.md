@@ -246,7 +246,8 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 `RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). A part's `index` identifies it for the whole
 session: when text of an output item's transcript arrives after a later item started, the session streams that part
 again under the same `index`, so keep parts by `index`. Use `RealtimeTurnCompleteEvent` as the exchange boundary: it
-comes when what `wait_for_reply()` waits for is over (every reply owed has come, tool rounds included). This is not
+comes when what `wait_for_reply()` waits for is over (every reply owed has come, tool rounds included, each from the
+response that answers it: not one that was already under way when the input arrived). This is not
 always the end of audible speech: on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and
 `RealtimeOutputSpeechEndEvent`. On OpenAI Realtime and Azure OpenAI, a tool-heavy agent can set
 `openai_prune_tool_items` to delete answered tool rounds from the server conversation, which otherwise bills every
@@ -369,7 +370,9 @@ Key facts for building realtime agents:
   A reply cut off this way is recorded as interrupted with `SpeechPart.interrupted_at_ms`, even when it
   had already finished generating (the usual case): a later snapshot holds an interrupted copy at the
   same position, so persist the latest `all_messages()` rather than appending only what's past what you
-  stored. Its transcript stays what the model generated; text handoff and seeding add an interruption note.
+  stored. Its transcript stays what the model generated (except on ElevenLabs Agents, which reports what was heard:
+  the transcript becomes that, or `None` for a message never heard, and the generated text moves to the part's
+  `provider_details['original_transcript']`); text handoff and seeding add an interruption note.
 - **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
   nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
   Under manual turn control, stop sending and call `clear_audio()` instead.

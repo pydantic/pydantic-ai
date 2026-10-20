@@ -16,6 +16,7 @@ from typing import Annotated, Literal, TypeVar
 from urllib.parse import parse_qs
 
 import anyio
+from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -45,6 +46,7 @@ from pydantic_clai2.builtin_plugins.web.protocol import (
 )
 from pydantic_clai2.builtin_plugins.web.service import PluginAction, TaskAction, WebService
 from pydantic_clai2.builtin_plugins.web.workspaces import listing, open_workspace
+from pydantic_clai2.runtime.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
 HEADER = 'x-clai-token'
@@ -108,6 +110,13 @@ class Input(BaseModel):
     """A prompt or `/command` to enter."""
 
     text: str = Field(max_length=200_000)
+
+
+class PromptInput(Input):
+    """Input for a session's prompt, with the images pasted for it, base64-encoded."""
+
+    # Strings, decoded off the loop once their length is checked; see `send`.
+    images: list[str] = []
 
 
 class Answer(BaseModel):
@@ -212,6 +221,7 @@ def create_app(*, service: WebService, token: str, hosts: frozenset[str], static
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     _page(app, token=token, static=static)
     _prompt(app, service)
+    _images(app, service)
     _sessions(app, service)
     _plugins(app, service)
     _commands(app, service)
@@ -268,9 +278,11 @@ def _prompt(app: FastAPI, service: WebService) -> None:
     async def state(conversation_id: str | None = None) -> Response:
         return Response(dump(session(conversation_id).snapshot()), media_type='application/json')
 
-    async def send(body: Input, conversation_id: str | None = None) -> Entered:
+    async def send(body: PromptInput, conversation_id: str | None = None) -> Entered:
         channel = session(conversation_id)
-        return Entered(menu=_run(lambda: channel.send(body.text)))
+        # Off the loop: decoding large images would stall every stream meanwhile.
+        images = await _wait(to_thread.run_sync(decode_images, body.images)) if body.images else []
+        return Entered(menu=_run(lambda: channel.send(body.text, images=images)))
 
     async def interrupt(conversation_id: str | None = None) -> Interrupted:
         return Interrupted(interrupted=session(conversation_id).session.interrupt())
@@ -312,6 +324,28 @@ def _prompt(app: FastAPI, service: WebService) -> None:
     @app.get('/api/models')
     async def models() -> list[str]:
         return await service.models()
+
+
+def _images(app: FastAPI, service: WebService) -> None:
+    """The images of a session's prompts, by the IDs its transcript items list, for the page to show.
+
+    Each route is there twice, as the composer's are. The page fetches them with the token header and
+    shows them as `data:` URLs, which its content policy allows.
+    """
+
+    async def image(image_id: str, conversation_id: str | None = None) -> Response:
+        channel = _run(service.default if conversation_id is None else lambda: service.session(conversation_id))
+        # On the loop: the session hashed each image once already, when its transcript listed it.
+        found = channel.image(image_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail='No such image in this session.')
+        # An ID is the digest of the bytes, so they never change.
+        return Response(
+            found.data, media_type=found.media_type, headers={'Cache-Control': 'private, max-age=31536000, immutable'}
+        )
+
+    for prefix in ('/api', '/api/sessions/{conversation_id}'):
+        app.get(f'{prefix}/images/{{image_id}}')(image)
 
 
 def _answer(answer: Answer) -> AskUserAnswer:
