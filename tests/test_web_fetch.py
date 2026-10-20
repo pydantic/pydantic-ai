@@ -148,6 +148,22 @@ class TestWebFetchLocalTool:
         assert 'Hello' in result['content']
         assert 'World' in result['content']
 
+    async def test_fetch_html_without_asyncio_loop(self):
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response('<title>Fallback</title><p>Content</p>'),
+            ),
+            patch('pydantic_ai.common_tools.web_fetch.asyncio') as mocked_asyncio,
+        ):
+            mocked_asyncio.get_running_loop.side_effect = RuntimeError
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert result['title'] == 'Fallback'
+        assert 'Content' in result['content']
+
     async def test_fetch_html_title_with_whitespace(self):
         """Title whitespace is stripped."""
         html = '<html><head><title>  Hello  </title></head><body><p>Content</p></body></html>'
