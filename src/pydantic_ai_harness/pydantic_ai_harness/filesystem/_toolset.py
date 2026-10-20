@@ -447,11 +447,20 @@ _SCOPED_FLAGS = re.compile(r'\(\?(?P<on>[a-zA-Z]*)(?:-(?P<off>[a-zA-Z]*))?:')
 
 
 def _skip_insignificant(pattern: str, index: int, verbose: bool) -> int:
-    """The index of the next character at or after `index` that verbose mode does not ignore."""
-    while verbose and index < len(pattern):
-        if pattern[index].isspace():
+    """The index of the next character at or after `index` that `re` does not ignore.
+
+    `re` ignores an inline `(?#...)` comment, and in verbose mode whitespace and `#` comments too.
+    """
+    while index < len(pattern):
+        if pattern.startswith('(?#', index):
+            # The comment runs to the first unescaped `)`; the pattern compiled, so there is one.
+            index += 3
+            while pattern[index] != ')':
+                index += 2 if pattern[index] == '\\' else 1
             index += 1
-        elif pattern[index] == '#':
+        elif verbose and pattern[index].isspace():
+            index += 1
+        elif verbose and pattern[index] == '#':
             end = pattern.find('\n', index)
             index = len(pattern) if end < 0 else end + 1
         else:
@@ -486,9 +495,6 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             index += pattern.startswith(']', index)
             while index < len(pattern) and pattern[index] != ']':
                 index += 2 if pattern[index] == '\\' else 1
-        elif pattern.startswith('(?#', index):
-            # An inline comment runs to the first `)` and holds nothing `re` parses.
-            index = pattern.index(')', index)
         elif char == '(':
             enclosing.append((repeats, verbose))
             repeats = False
