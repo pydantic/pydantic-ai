@@ -199,7 +199,7 @@ agent = Agent(
 
 The bundled stores implement `SearchableMemoryStore`. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
 
-Search reads only the files directly in the run's scope. Files of a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`, are skipped.
+The bundled stores search only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`. The fallback scan for a custom store skips them too, but they still count toward the `max_search_files + 1` paths it requests.
 
 Before backend dispatch, queries are limited to 1,000 characters and 32 unique whitespace-separated terms. Repeated case-insensitive terms are collapsed so they cannot inflate scoring or scan work.
 
@@ -263,7 +263,7 @@ Each model request that uses automatic snapshot loading records one bounded snap
 
 ## Security and provenance
 
-Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. A `<memory>` or `</memory>` tag inside stored content is injected as `&lt;memory>`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
+Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. In stored content, the `<` of a `<memory>` or `</memory>` tag, in any case or spacing, is injected as `&lt;`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
 Memory records do not carry source citations or verified provenance. If an application needs auditable facts, store provenance in the note itself or implement a custom store and schema. Optimistic concurrency prevents lost updates; it does not establish that a remembered claim is true.
 

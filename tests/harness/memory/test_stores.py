@@ -105,12 +105,19 @@ async def test_local_store_search_skips_nested_scopes(tmp_path: Path, index: int
     store = _local_stores(tmp_path)[index]
     await store.write('acme/main/MEMORY.md', 'tea', expected_version=None)
     await store.write('acme/main/main/MEMORY.md', 'tea tea', expected_version=None)
+    await store.write('acme/main/main/notes.md', 'tea tea tea', expected_version=None)
+    await store.write('acme/main/notes.md', 'more tea', expected_version=None)
 
-    result = await store.search('acme/main/', 'tea', limit=10, max_files=1, max_chars=100, max_file_chars=100)
-    assert [match.path for match in result.matches] == ['acme/main/MEMORY.md']
-    assert result.scanned == 1
+    result = await store.search('acme/main/', 'tea', limit=10, max_files=2, max_chars=100, max_file_chars=100)
+    assert [match.path for match in result.matches] == ['acme/main/MEMORY.md', 'acme/main/notes.md']
+    assert result.scanned == 2
     assert not result.truncated
-    assert await store.list_paths('acme/main/', limit=10) == ['acme/main/MEMORY.md', 'acme/main/main/MEMORY.md']
+    assert await store.list_paths('acme/main/', limit=10) == [
+        'acme/main/MEMORY.md',
+        'acme/main/main/MEMORY.md',
+        'acme/main/main/notes.md',
+        'acme/main/notes.md',
+    ]
 
 
 @pytest.mark.parametrize('path', ['./main.md', 'tenant/./main.md', 'tenant/.'])

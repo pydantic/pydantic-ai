@@ -663,12 +663,12 @@ async def _fallback_search(
     scanned = 0
     content_truncated = False
     for path in paths[:max_files]:
-        scanned += 1
         if not path.startswith(prefix):
             raise RuntimeError('memory backend returned a path outside the requested scope')
         name = path.removeprefix(prefix)
         if '/' in name or not _FILENAME_RE.fullmatch(name) or '..' in name:
             continue
+        scanned += 1
         memory_file = await store.read(path, max_chars=max_file_chars)
         if memory_file is None:
             continue
