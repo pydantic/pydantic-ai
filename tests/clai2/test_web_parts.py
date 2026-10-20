@@ -291,6 +291,7 @@ def test_history_items() -> None:
     ids = ImageIds()
     [listed] = history_items([image_only], image_ids=ids)
     assert (listed.text, listed.images) == ('', [hashlib.sha256(b'png').hexdigest()])
+    assert history_items([image_only], image_ids=ids)[0].images == listed.images, 'from the IDs already hashed'
     assert history_items([ModelRequest(parts=[UserPromptPart('plain')])], image_ids=ids)[0].images == []
     assert ids.find(listed.images[0]) is image
     ids.keep([image])
