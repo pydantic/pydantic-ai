@@ -472,6 +472,35 @@ async def test_unrelated_toolset_id_matching_mcp_url_id_is_retained() -> None:
     assert capability.id in json.dumps(exported['instruction_parts'])
 
 
+@pytest.mark.parametrize('last_explicit', [False, True])
+async def test_combined_mcp_keeps_the_winning_id_provenance(last_explicit: bool) -> None:
+    class SupportsMCP(FunctionModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[MCPServerTool]]:
+            return frozenset({MCPServerTool})
+
+    url = 'https://mcp.example.test/private/SENTINEL-path'
+    derived = MCP(url, native=True, local=False)
+    assert derived.id is not None
+    explicit = MCP(url, native=True, local=False, id=derived.id)
+    merged = MCP.combine([derived, explicit] if last_explicit else [explicit, derived])
+
+    def respond(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    settings, exporter = redacted_setup()
+    await Agent(SupportsMCP(respond), capabilities=[merged, Instrumentation(settings=settings)]).run('go')
+    chat = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes and span.attributes.get('gen_ai.operation.name') == 'chat'
+    )
+    assert chat.attributes is not None
+    serialized = chat.attributes['model_request_parameters']
+    assert isinstance(serialized, str)
+    assert json.loads(serialized)['native_tools'][0]['id'] == (derived.id if last_explicit else '[REDACTED]')
+
+
 @pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
 async def test_local_mcp_instruction_id_is_masked_without_tools() -> None:
     server = FastMCP('test', instructions='server guidance')

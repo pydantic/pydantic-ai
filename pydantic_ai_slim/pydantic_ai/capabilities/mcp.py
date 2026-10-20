@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -50,6 +50,9 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
 
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
+
+    _telemetry_url_derived_id: str | None = field(init=False, repr=False, compare=False, default=None)
+    """Whether the final configured ID came from the URL (retained by capability merges)."""
 
     def __init__(
         self,
