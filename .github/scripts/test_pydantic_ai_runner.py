@@ -2870,7 +2870,7 @@ def test_run_timeout_marks_the_spans_it_cuts_off(
                 yield 'partial'
             await _skip_clock_and_hang(budget_secs)
 
-    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '8')
+    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', str(budget_secs // 60 + shim.JOB_TIMEOUT_HEADROOM_MINS))
     with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
         rc = runner.run(
             shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
