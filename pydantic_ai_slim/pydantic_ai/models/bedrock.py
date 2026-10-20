@@ -1481,6 +1481,9 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
         supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
+        include_citations = settings.get('include_citations', False) and profile.get(
+            'bedrock_supports_citations', False
+        )
 
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
@@ -1509,8 +1512,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             await self._map_user_prompt(
                                 part,
                                 document_count,
-                                include_citations=settings.get('include_citations', False)
-                                and profile.get('bedrock_supports_citations', False),
+                                include_citations=include_citations,
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
                                 prior_messages=bedrock_messages,
                             )
@@ -1564,7 +1566,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                             f'Document {next(document_count)}',
                                             uf_format,
                                             uf_source,
-                                            include_citations=False,
+                                            include_citations=include_citations,
                                         )
                                     )
                             elif is_multi_modal_content(item):
@@ -1573,7 +1575,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 file_block = await self._map_file_to_content_block(
                                     cast(ImageUrl | DocumentUrl | VideoUrl | BinaryContent, item),
                                     document_count,
-                                    include_citations=False,
+                                    include_citations=include_citations,
                                 )
                                 kind = next((k for k in ('image', 'document', 'video') if k in file_block), None)
                                 if kind in profile.get(

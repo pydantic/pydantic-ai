@@ -1497,6 +1497,38 @@ Want me to tailor\
                     'pydantic_ai': {
                         'id': IsStr(),
                         'provider_name': 'openai',
+                        'provider_details': {
+                            'citations': [
+                                {
+                                    'end_index': 946,
+                                    'start_index': 799,
+                                    'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+                                    'type': 'url_citation',
+                                    'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                                },
+                                {
+                                    'end_index': 2582,
+                                    'start_index': 2435,
+                                    'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+                                    'type': 'url_citation',
+                                    'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                                },
+                                {
+                                    'end_index': 2896,
+                                    'start_index': 2749,
+                                    'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
+                                    'type': 'url_citation',
+                                    'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
+                                },
+                                {
+                                    'end_index': 3518,
+                                    'start_index': 3353,
+                                    'title': 'OpenTelemetry Logging Instrumentation — OpenTelemetry Python Contrib documentation',
+                                    'type': 'url_citation',
+                                    'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai',
+                                },
+                            ]
+                        },
                         'citations': [
                             {
                                 'sources': [
@@ -1504,12 +1536,10 @@ Want me to tailor\
                                         'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
                                         'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     }
                                 ],
                                 'anchor': {'start': 799, 'end': 946, 'kind': 'marker'},
-                                'provider_details': None,
                             },
                             {
                                 'sources': [
@@ -1517,12 +1547,10 @@ Want me to tailor\
                                         'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
                                         'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     }
                                 ],
                                 'anchor': {'start': 2435, 'end': 2582, 'kind': 'marker'},
-                                'provider_details': None,
                             },
                             {
                                 'sources': [
@@ -1530,12 +1558,10 @@ Want me to tailor\
                                         'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/fastapi/fastapi.html',
                                         'title': 'OpenTelemetry FastAPI Instrumentation — OpenTelemetry Python Contrib  documentation',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     }
                                 ],
                                 'anchor': {'start': 2749, 'end': 2896, 'kind': 'marker'},
-                                'provider_details': None,
                             },
                             {
                                 'sources': [
@@ -1543,12 +1569,10 @@ Want me to tailor\
                                         'url': 'https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/logging/logging.html?utm_source=openai',
                                         'title': 'OpenTelemetry Logging Instrumentation — OpenTelemetry Python Contrib documentation',
                                         'excerpts': [],
-                                        'provider_details': None,
                                         'kind': 'web',
                                     }
                                 ],
                                 'anchor': {'start': 3353, 'end': 3518, 'kind': 'marker'},
-                                'provider_details': None,
                             },
                         ],
                     }

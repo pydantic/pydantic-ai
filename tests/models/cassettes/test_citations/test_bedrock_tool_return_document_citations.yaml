@@ -1,0 +1,195 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 63b1de3a-7f25-4baa-8aaa-c19673a0d962
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "633"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What are the return window and the shipping time? Read the shipping policy
+              first. Answer in two sentences and cite the documents.
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                text: The return window is thirty days from purchase.
+              citations:
+                enabled: true
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: read_shipping_policy
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              description: Read the shipping policy document.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "458"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1731
+        output:
+          message:
+            content:
+            - toolUse:
+                input: {}
+                name: read_shipping_policy
+                toolUseId: tooluse_VXKZyp8CxyqVtybbwCuvZ5
+                type: tool_use
+            role: assistant
+        stopReason: tool_use
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 1133
+          outputTokens: 38
+          serverToolUsage: {}
+          totalTokens: 1171
+  recorded_at: 2026-10-20T14:14:17.352813+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - e6e99e94-3955-42b4-bffc-584062fa1253
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "1054"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What are the return window and the shipping time? Read the shipping policy
+              first. Answer in two sentences and cite the documents.
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                text: The return window is thirty days from purchase.
+              citations:
+                enabled: true
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: tooluse_VXKZyp8CxyqVtybbwCuvZ5
+              name: read_shipping_policy
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_VXKZyp8CxyqVtybbwCuvZ5
+              content:
+              - document:
+                  name: Document 2
+                  format: txt
+                  source:
+                    text: Orders ship within two business days.
+                  citations:
+                    enabled: true
+              status: success
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: read_shipping_policy
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              description: Read the shipping policy document.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "912"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1747
+        output:
+          message:
+            content:
+            - citationsContent:
+                citations:
+                - location:
+                    documentChar:
+                      documentIndex: 0
+                      end: 47
+                      start: 0
+                  sourceContent:
+                  - text: The return window is thirty days from purchase.
+                  title: Document 1
+                content:
+                - text: The return window is thirty days from purchase.
+            - text: " "
+            - citationsContent:
+                citations:
+                - location:
+                    documentChar:
+                      documentIndex: 1
+                      end: 37
+                      start: 0
+                  sourceContent:
+                  - text: Orders ship within two business days.
+                  title: Document 2
+                content:
+                - text: Orders ship within two business days.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 1258
+          outputTokens: 51
+          serverToolUsage: {}
+          totalTokens: 1309
+  recorded_at: 2026-10-20T14:14:19.227870+00:00
