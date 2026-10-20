@@ -368,7 +368,7 @@ class TestRegistration:
             async def prompt_async(self, label: str, **kwargs: object) -> str:
                 return values.pop(0)
 
-        monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
         store = SettingsStore(tmp_path / 'config.db')
         store.plugins_dir.mkdir(parents=True, exist_ok=True)
         (store.plugins_dir / 'wave.py').write_text(PLUGIN)

@@ -237,7 +237,7 @@ agent = Agent.from_file('agent.yaml')
 ### Realtime (speech-to-speech) sessions
 
 For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure OpenAI,
-Gemini Live, or xAI Grok Voice), use
+Gemini Live, xAI Grok Voice, or ElevenLabs Agents), use
 `agent.realtime().session()` instead of `run()`. It reuses the agent's tools and instructions and runs
 the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
@@ -245,15 +245,21 @@ session to consume the **same part/event vocabulary as a streamed run** — `Par
 `FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
 `RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). A part's `index` identifies it for the whole
 session: when text of an output item's transcript arrives after a later item started, the session streams that part
-again under the same `index`, so keep parts by `index`. Use `RealtimeTurnCompleteEvent` as the exchange
-boundary, when generation and tool work are complete. This is not always the end of audible speech:
-on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and `RealtimeOutputSpeechEndEvent`. Before
+again under the same `index`, so keep parts by `index`. Use `RealtimeTurnCompleteEvent` as the exchange boundary: it
+comes when what `wait_for_reply()` waits for is over (every reply owed has come, tool rounds included). This is not
+always the end of audible speech: on WebRTC sidebands, track playback with `RealtimeOutputSpeechStartEvent` and
+`RealtimeOutputSpeechEndEvent`. On OpenAI Realtime and Azure OpenAI, a tool-heavy agent can set
+`openai_prune_tool_items` to delete answered tool rounds from the server conversation, which otherwise bills every
+later response for them (history keeps them). Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
 After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
 `session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
 device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
 full buffer, or emitted before the view subscribed; it requires exactly one audio view.
+ElevenLabs Agents wraps an agent hosted on ElevenLabs, addressed as `elevenlabs-agents:<agent_id>`: the agent must
+permit the conversation overrides the session sends (instructions, voice, ...) in its Security tab, and its client
+tools must match the session's unless `elevenlabs_agents_tool_sync` is `'sync'` (which updates the agent) or `'off'`.
 
 ```python {test="skip"}
 import anyio
@@ -332,7 +338,8 @@ Key facts for building realtime agents:
   is cumulative; priced models get a `genai-prices` cost and enforce `UsageLimits.cost_limit`.
 - **Context window**: `session.context_window_used` (and `ctx.context_window_used` in a session's tools)
   is the fraction in use: reported by OpenAI GPT-Live, computed from the latest response's tokens on
-  OpenAI/Azure/Gemini, and `None` on xAI. It can drop after server-side compaction or truncation, which
+  OpenAI/Azure/Gemini, taken from the agent's `context_usage` reports on ElevenLabs Agents (`None` until the
+  first), and `None` on xAI. It can drop after server-side compaction or truncation, which
   no provider announces; tune it with `openai_truncation` (OpenAI Realtime and Azure, not GPT-Live) or
   `google_context_compression` (Gemini).
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
@@ -344,12 +351,13 @@ Key facts for building realtime agents:
   support all of these; OpenAI GPT-Live supports only `supports_session_seeding` (from text) and
   `supports_image_input` with `image_input_requires_response` (an image goes to its backend, sent with
   `respond=True`), since it owns turn-taking; Gemini Live lacks `supports_manual_turn_control`,
-  `supports_interruption`, and `supports_output_truncation` (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+  `supports_interruption`, and `supports_output_truncation` (automatic VAD only); ElevenLabs Agents supports none of
+  them, nor images or seeding, since the hosted agent owns turn-taking. Calling an unsupported method raises `UserError` up front.
 - **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
   silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
   `google_vad` only for finer provider-specific control; when present, they fully override the shared
   setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
-  (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
+  (OpenAI/Azure/xAI only — Gemini and ElevenLabs Agents have no manual turn controls and raise).
 - **Barge-in** (the user speaking over the model): pass `handle_barge_in=True` to `.session()` and
   the session owns the local half — flushing the audio the user will never hear, truncating the
   provider's transcript to what was played, and adding a client cancel only on providers whose own
@@ -369,7 +377,7 @@ Key facts for building realtime agents:
   the model keeps speaking and answering meanwhile is the profile's `async_tool_call_mode`:
   `'always'` (OpenAI, Azure, GPT-Live, xAI, `gemini-3.8-live-extended-thinking`), `'optional'`
   (Gemini native-audio and `gemini-3.8-live`, on only with the shared `async_tool_calls=True`
-  setting, which the other models ignore), or `'never'` (other Gemini Live models). Don't use the
+  setting, which the other models ignore), or `'never'` (other Gemini Live models, ElevenLabs Agents). Don't use the
   deprecated `google_async_tool_calls` setting or `supports_async_tool_calls` profile flag.
   `gemini-3.8-live-extended-thinking` has no blocking mode and reasons in the background —
   it speaks a filler, runs the tool, and speaks again inside one exchange, so read
