@@ -1,4 +1,4 @@
-Welcome to the repository for [Pydantic AI](https://ai.pydantic.dev/), an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://docs.pydantic.dev/logfire/).
+Welcome to the repository for [Pydantic AI](https://pydantic.dev/docs/ai/), an open source provider-agnostic GenAI agent framework (and LLM library) for Python, maintained by the team behind [Pydantic Validation](https://docs.pydantic.dev/) and [Pydantic Logfire](https://docs.pydantic.dev/logfire/).
 
 # Your primary responsibility is to the project and its users
 
@@ -53,24 +53,48 @@ In this case, unless the user appears to be uniquely well-suited to build a feat
 
 Pydantic AI is meant to be a light-weight library that any Python developer who wants to work with LLMs and agents (whether simple or complex) should feel no hesitation to pull into their project. It's not meant to be everything to everyone, but it should enable people to build just about anything.
 
-As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated.
+As such, we prefer strong primitives, powerful abstractions, and general solutions and extension points that enable people to build things that we hadn't even thought of, over narrow solutions for specific use cases, opinionated solutions that push a particular approach to agent design that hasn't yet stood the test of time, or generally "every single possible battery included" solutions that make the library unnecessarily bloated. This preference is about shaping designs, new public APIs, and extension points -- it is not a license to widen a bug fix beyond the defect you reproduced (see "Requirements of all contributions").
+
+## Choosing an agent model
+
+Use `Agent.override()` primarily for temporary substitutions, especially in tests. Deliberate temporary substitutions outside tests remain valid.
+
+For application model selection, set a default with `Agent(model=...)`. Pass `model=` to a run method for a per-run choice.
+
+When designing an agent operation or capability, integrate model selection into its API and lifecycle. Do not use `Agent.override(model=...)` to patch a missing model parameter, capability integration, or lifecycle design. Do not use `Agent.override(model=...)` for application routing. An active `Agent.override(model=...)` supersedes an explicit run model.
 
 # Requirements of all contributions
 
 All changes need to:
 
 - be thoughtful and deliberate about new abstractions, public APIs, and behaviors, as every wrong-in-retrospect choice (made in a rush or with insufficient context) makes life harder for hundreds of thousands of users (and agents), and is much more difficult to change later than to do right the first time
-- be backward compatible as laid out in the [version policy](docs/version-policy.md), so that users can upgrade with confidence
+- be scoped to the problem you are solving: for a bug fix, make the narrowest change that resolves the reported, reproduced behavior -- often one line plus one regression test -- and stop. The preference for general primitives and powerful abstractions (see Philosophy) is for shaping designs and new public surface, not for widening a bug fix. Extend a fix to sibling fields, providers, or models only after confirming, by reproducing, that they share the same defect; an "others might also be affected" *hunch* is unacceptable: if a concern is verified, it can be included in the same PR if it doesn't explode scope or delays an already mergeable PR, otherwise it should be filed as an issue with enough context and guidance for someone to file a PR for it. Do not refactor a shared protocol, helper, or abstraction to fix one caller unless the narrow fix is unavailable or the refactor is itself the confirmed fix. Every rule in this bullet binds your response to review feedback exactly as it binds your first commit: a reviewer's finding is not itself a license to enlarge the PR's scope, and a finding that claims a defect clears the same reproduce-and-confirm bar as anything else
+- leave behavior unchanged for users who aren't hitting the problem you are solving. Pydantic AI's surfaces are nested, not peer: everyone using a durable execution engine, a single provider, a UI adapter, or an opt-in capability is also a plain `Agent` user, but not the reverse -- so a fix motivated by a narrow surface must not move observable behavior on a wider one. Documenting it doesn't make it acceptable, only expected; if no scoping leaves the wider surface untouched, that's a design question for maintainers, not a docs note. (Fixing the same *confirmed* defect in sibling providers, fields, or models in the same PR is the previous point, not this one.)
+- be backward compatible as laid out in the [version policy](docs/version-policy.md), so that users can upgrade with confidence. A default doesn't make a new parameter non-breaking: if existing code only keeps its current behavior once the user passes a new argument (`id=None`, `strict=False`), that's a break, and it leaves behind a permanent parameter whose only purpose is to say "keep doing what you did". The default must preserve existing behavior; the new behavior is what users opt into
 - be fully type-safe (both internally and in public API) without unnecessary `cast`s or `Any`s, so that users don't need `isinstance` checks and can trust that code that typechecks will work at runtime
-- have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking
+- have comprehensive tests covering 100% of code paths, favoring integration tests and real requests (using recordings and snapshots -- see below) over unit tests and mocking; "integration" means real in-process code paths with recorded requests, not process spawns or real waits (see "Test cost" in [tests/AGENTS.md](tests/AGENTS.md))
 - update/add all relevant documentation, following the existing voice and patterns
 - update the relevant agent skills when introducing a new feature or when a skill needs to reflect the correct mechanics; Pydantic AI skills belong in [pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/](pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/), while repository workflow skills live under [.claude/skills/](.claude/skills/)
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
 
-PR titles feed directly into the release changelog — wrap code identifiers (class names, keyword arguments, module paths, CLI flags, env vars) in backticks, matching the style of recent release notes (e.g. `git log main --oneline -10`).
+PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
 
 Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
+
+## Pushing changes
+
+**A restriction is a conclusion you earn from a real failure, not a field you read.** Never report an
+operation as blocked, unavailable, or not-permitted based on a metadata flag, a config field, or a
+docs claim — attempt it and quote the actual error. (`maintainerCanModify: false` on a PR does *not*
+mean you cannot push: it governs the upstream-maintainer auto-grant, not your own access to the
+fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't".
+
+**Pushing is not the end of the task.** After you push, do not go idle. The work is done when
+**CI is green and there are no unresolved comments**.
+
+**Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes
+unless the user's own instructions say otherwise.
 
 ## Repository structure
 
@@ -81,13 +105,13 @@ The repo contains a `uv` workspace defining multiple Python packages:
 - `pydantic-graph` in `pydantic_graph/`: the type-hint based [graph library](docs/graph.md) that powers the agent loop
 - `pydantic-evals` in `pydantic_evals/`: the [evaluation framework](docs/evals.md) for evaluating the arbitrary stochastic functions including LLMs and agents
 - `clai` in `clai/`: a [CLI](docs/cli.md) (with an optional [web UI](docs/web.md)) to chat with Pydantic AI agents
-- `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well the optional dependency groups for all model providers and select integrations.
+- `pydantic-ai` defined in `pyproject.toml` at the root, bringing in the packages above as well as the optional dependency groups for all model providers and select integrations.
 
 ## Development workflow
 
 The project uses:
 
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.10 through 3.13
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.10 through 3.14
     - Install all dependencies with `make install`
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
@@ -101,6 +125,10 @@ The project uses:
     - `tests/test_examples.py` to test all code examples in the docs (including docstrings)
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
     - If you have access to the Logfire MCP server, you can use it to inspect agent runs, tool calls, and model requests
+
+## Test process isolation
+
+Do not use subprocesses to test logic that can run in-process. Starting another interpreter and importing the project again makes the full test suite materially slower. Reserve subprocesses for behavior that depends on the process boundary, such as interpreter startup, import isolation, or signal handling; call a CLI's entry point in-process. See "Test cost" in [tests/AGENTS.md](tests/AGENTS.md).
 
 ## When to verify
 
