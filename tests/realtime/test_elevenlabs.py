@@ -17,7 +17,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.exceptions import ModelAPIError, UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.messages import ModelMessage, ModelRequest, RealtimeSessionErrorEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import WebRTCSession
 from pydantic_ai.realtime._lifecycle import InputAdded, InputLost, ResponseEnded, ResponseStarted
@@ -30,6 +30,7 @@ from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
     import httpx2
+    import websockets
 
     from pydantic_ai.providers import infer_provider
     from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
@@ -44,7 +45,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
-    from .test_openai import FakeConnect, FakeWebSocket, PushWebSocket
+    from .test_openai import FakeConnect, FakeWebSocket
     from .test_openai_lifecycle import created, describe, done, frames, tool_output_added, transcript
 
 pytestmark = [
@@ -426,22 +427,68 @@ async def test_connection_names_elevenlabs_when_closed() -> None:
 # --- connection behavior --------------------------------------------------------------------------
 
 
+class _KeepAliveWebSocket(FakeWebSocket):
+    """Records the keep-alive frames it is sent, failing the first `failures` of them as a dropped socket would."""
+
+    def __init__(self, incoming: list[Any], *, failures: int = 0) -> None:
+        super().__init__(incoming)
+        self.failures = failures
+        self.kept_alive = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        if data == _KEEP_ALIVE:
+            if self.failures:
+                self.failures -= 1
+                raise websockets.ConnectionClosedError(None, None)
+            self.kept_alive.set()
+        await super().send(data)
+
+
+_KEEP_ALIVE = '{"type":"input_audio_buffer.append","audio":""}'
+
+
 async def test_keep_alive_sends_an_empty_append_when_idle(monkeypatch: pytest.MonkeyPatch) -> None:
-    # ElevenLabs closes a session that hasn't heard from the client for 60 seconds, and pings don't count.
-    monkeypatch.setattr(ElevenLabsRealtimeConnection, '_keep_alive_after', 0.01)
-    ws = PushWebSocket()
-    conn = ElevenLabsRealtimeConnection(ws)  # type: ignore[arg-type]
+    """ElevenLabs closes a session that hasn't heard from the client for 60 seconds, and pings don't count.
 
-    async def read() -> None:
-        async for _ in conn.frames():
-            pass  # pragma: no cover
+    The keep-alive belongs to `connect()`, which drains it on exit.
+    """
+    monkeypatch.setattr(ElevenLabsRealtimeConnection, '_keep_alive_after', 0.0)
+    ws = _KeepAliveWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_elevenlabs.websockets, 'connect', FakeConnect(ws))
+    tasks_before = asyncio.all_tasks()
+    async with _connect(_model(), 'x'):
+        await asyncio.wait_for(ws.kept_alive.wait(), timeout=5)
+    assert asyncio.all_tasks() == tasks_before
 
-    reading = asyncio.create_task(read())
-    await asyncio.sleep(0.05)
-    assert {'type': 'input_audio_buffer.append', 'audio': ''} in [json.loads(sent) for sent in ws.sent]
-    reading.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await reading
+
+async def test_keep_alive_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ElevenLabsRealtimeConnection, '_keep_alive_after', None)
+    ws = _KeepAliveWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_elevenlabs.websockets, 'connect', FakeConnect(ws))
+    async with _connect(_model(), 'x'):
+        await asyncio.sleep(0)
+    assert _KEEP_ALIVE not in ws.sent
+
+
+async def test_keep_alive_stops_once_the_socket_is_closed_for_good() -> None:
+    conn = ElevenLabsRealtimeConnection(_KeepAliveWebSocket([], failures=1))  # type: ignore[arg-type]
+    await asyncio.wait_for(conn._keep_alive(0.0), timeout=5)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_keep_alive_carries_on_across_a_reconnect() -> None:
+    ws = _KeepAliveWebSocket([], failures=1)
+
+    async def dial() -> Any:
+        return ws  # pragma: no cover
+
+    conn = ElevenLabsRealtimeConnection(ws, dial=dial, reconnect={})  # type: ignore[arg-type]
+    keep_alive = asyncio.create_task(conn._keep_alive(0.0))  # pyright: ignore[reportPrivateUsage]
+    try:
+        await asyncio.wait_for(ws.kept_alive.wait(), timeout=5)
+    finally:
+        keep_alive.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await keep_alive
 
 
 def _call(response_id: str, call_id: str) -> dict[str, Any]:
@@ -554,17 +601,12 @@ async def test_audio_tags_kept_when_stripping_is_off(monkeypatch: pytest.MonkeyP
     assert [event.text for event in events if isinstance(event, OutputTranscript)] == ['[cheerful] Hi.']
 
 
-async def test_keep_alive_can_be_turned_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(ElevenLabsRealtimeConnection, '_keep_alive_after', None)
-    ws = FakeWebSocket([])
-    assert await collect_codec_events(ElevenLabsRealtimeConnection(ws)) == []  # type: ignore[arg-type]
-    assert ws.sent == []
-
-
 async def test_tool_calls_of_a_response_under_way_are_not_abandoned() -> None:
     ws = FakeWebSocket(frames(created('resp_1'), _call('resp_1', 'call_1'), created('resp_2')))
     events = await collect_codec_events(ElevenLabsRealtimeConnection(ws))  # type: ignore[arg-type]
-    assert [event for event in events if getattr(event, 'type', None) == 'tool_calls_abandoned'] == []
+    # The second response started while the first was still under way: its calls could still get results.
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
+    assert [type(event).__name__ for event in events] == snapshot(['ToolCall'])
 
 
 def test_semantic_vad_stop_is_not_a_commit() -> None:

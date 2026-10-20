@@ -44,8 +44,8 @@ SDK supplies the event types the shared OpenAI codec is built on):
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence, Set as AbstractSet
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence, Set as AbstractSet
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, cast
 
@@ -63,6 +63,8 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from .._http import AsyncHTTPClient
+from .._instrumentation import get_instructions
+from .._utils import cancel_and_drain
 from ..exceptions import UserError
 from ..messages import ModelMessage, RealtimeSessionErrorEvent
 from ..models import ModelRequestParameters
@@ -71,15 +73,19 @@ from ..providers import Provider, infer_provider
 from ..providers.elevenlabs import ElevenLabsProvider
 from ..tools import ToolDefinition
 from ._elevenlabs_audio_tags import AudioTagStripper, strip_audio_tags
-from ._lifecycle import LifecycleEvent, RealtimeFrame
+from ._lifecycle import LifecycleEvent
 from ._openai_lifecycle import OpenAILifecycle
 from ._openai_protocol import (
     AUTO_TRANSCRIPTION_MODEL,
     CONVERSATION_ITEM_CREATE_EVENT,
+    config_has_manual_turns,
+    config_interrupts_response_on_speech,
+    connect_openai_protocol,
     loads_obj,
     turn_detection_config,
     with_realtime_query,
 )
+from ._utils import inject_trace_context
 from .codec import OutputTranscript, RealtimeCodecEvent, ResponseDone, ToolResult
 from .model import RealtimeModel, WebRTCAnswer
 from .openai import (
@@ -214,6 +220,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         prune_tool_items: bool = False,
         keep_tool_items: AbstractSet[str] = frozenset(),
         manual_turns: bool = False,
+        strip_audio_tags: bool = True,
     ) -> None:
         # ElevenLabs transcribes every spoken turn, so its transcripts arrive (and belong in history) even when
         # `input_transcription_model=None` asked for none.
@@ -233,7 +240,8 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         )
         # Semantic VAD commits the speech it hears on its own, unless turn detection is off.
         self._lifecycle = _ElevenLabsLifecycle(server_vad=not manual_turns)
-        self._strip_audio_tags = True
+        # See `ElevenLabsRealtimeModelSettings.elevenlabs_strip_audio_tags`.
+        self._strip_audio_tags = strip_audio_tags
         # The streamed transcript of each output item under way, with its audio tags removed, and the tags each
         # response's transcripts held (see `_strip_transcript_tags`).
         self._tag_strippers: dict[str | None, AudioTagStripper] = {}
@@ -250,34 +258,40 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         # is one of the settings it ignores.
         return False
 
-    async def frames(self) -> AsyncIterator[RealtimeFrame]:
-        keep_alive = asyncio.create_task(self._keep_alive()) if self._keep_alive_after is not None else None
+    @asynccontextmanager
+    async def _kept_alive(self) -> AsyncGenerator[None]:
+        """Keep the connection open while idle for as long as the context lasts (see `_keep_alive`)."""
+        if self._keep_alive_after is None:
+            yield
+            return
+        keep_alive = asyncio.create_task(self._keep_alive(self._keep_alive_after), name='elevenlabs-keep-alive')
         try:
-            async for frame in super().frames():
-                yield frame
+            yield
         finally:
-            if keep_alive is not None:
-                keep_alive.cancel()
+            await cancel_and_drain(keep_alive)
 
-    async def _keep_alive(self) -> None:
+    async def _keep_alive(self, after: float) -> None:
         """Keep an idle session open: ElevenLabs closes one that hasn't heard from the client for 60 seconds.
 
-        Pings don't count, so after `_keep_alive_after` seconds without sending anything, this sends an empty
-        `input_audio_buffer.append`, which adds no audio.
+        Pings don't count, so after `after` seconds without sending anything, this sends an empty
+        `input_audio_buffer.append`, which adds no audio. It stops once the socket is closed for good.
         """
-        assert self._keep_alive_after is not None
         loop = asyncio.get_running_loop()
         # The handshake just went out: the clock starts now.
         self._last_sent = loop.time()
         while True:
             idle = loop.time() - self._last_sent
-            if idle >= self._keep_alive_after:
-                with suppress(*self.transport_errors):
-                    # A dropped socket is `frames`' to handle: it reconnects or ends the session.
+            if idle >= after:
+                try:
                     await self._ws.send(_KEEP_ALIVE_FRAME)
+                except self.transport_errors:
+                    if self._reconnect is None or self._dial is None:
+                        # Closed with no reconnect to come: there is nothing left to keep open.
+                        return
+                    # A reconnect replaces the socket, and the clock restarts with it.
                 self._last_sent = loop.time()
                 idle = 0.0
-            await asyncio.sleep(self._keep_alive_after - idle)
+            await asyncio.sleep(after - idle)
 
     async def _send_event(self, event: dict[str, Any]) -> None:
         await super()._send_event(event)
@@ -479,14 +493,55 @@ class ElevenLabsRealtimeModel(OpenAIRealtimeModel):
         messages: Sequence[ModelMessage],
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncGenerator[OpenAIRealtimeConnection]:
+    ) -> AsyncGenerator[ElevenLabsRealtimeConnection]:
         settings = cast('ElevenLabsRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
-        async with super().connect(
-            messages=messages, model_settings=model_settings, model_request_parameters=model_request_parameters
+        instructions = get_instructions(messages, model_request_parameters) or ''
+        session_config = self._session_config(
+            instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
+        )
+
+        async def dial_headers() -> dict[str, str]:
+            headers = await self._auth_headers()
+            # The raw WebSocket bypasses the provider's HTTP client, so every handshake carries the trace context.
+            inject_trace_context(headers)
+            return headers
+
+        def session_model(created: dict[str, Any]) -> str | None:
+            return self._session_model_name(created, settings)
+
+        def build_connection(
+            ws: ClientConnection,
+            dial: Callable[[], Awaitable[ClientConnection]],
+            server_model: str | None,
+            model_name_getter: Callable[[], str | None],
+        ) -> ElevenLabsRealtimeConnection:
+            return ElevenLabsRealtimeConnection(
+                ws,
+                dial=dial,
+                reconnect=settings.get('reconnect'),
+                interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
+                model_name=server_model,
+                model_name_getter=model_name_getter,
+                audio_output_sample_rate=self.audio_output_sample_rate,
+                manual_turns=config_has_manual_turns(session_config),
+                strip_audio_tags=settings.get('elevenlabs_strip_audio_tags', True),
+            )
+
+        async with connect_openai_protocol(
+            model_name=self.model,
+            messages=messages,
+            profile=self.profile,
+            provider_name=self.system,
+            session_config=session_config,
+            handshake_timeout=settings.get('handshake_timeout', 30.0),
+            dial_headers=dial_headers,
+            dial_url=self._realtime_url,
+            session_model=session_model,
+            build_connection=build_connection,
         ) as connection:
-            assert isinstance(connection, ElevenLabsRealtimeConnection)
-            connection._strip_audio_tags = settings.get('elevenlabs_strip_audio_tags', True)  # pyright: ignore[reportPrivateUsage]
-            yield connection
+            # The connection's idle keep-alive lives exactly as long as the connection.
+            async with connection._kept_alive():  # pyright: ignore[reportPrivateUsage]
+                yield connection
 
     async def _webrtc_headers(self) -> dict[str, str]:
         # Only the API key: the OpenAI SDK client's other default headers (`OpenAI-Organization`, say) are OpenAI's.
