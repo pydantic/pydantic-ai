@@ -311,10 +311,13 @@ itself closes has none), and the live connection has it as
   transcript as ElevenLabs sends it (`[laughs] Hi there.`). To keep the LLM from writing tags in the first place,
   turn off expressive mode on the agent (`tts.expressive_mode: false`), which also gives up the expressive delivery.
   This works only in Custom voice mode: in [Realtime voice mode](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models), ElevenLabs manages expressive mode itself.
-- A barge-in on a response still being generated ends it with the transcript cut down to what the
-  user heard (or, when ElevenLabs sends a correction instead, with the cut-down text in
-  `provider_details['corrected_agent_response']`). One on a response already delivered keeps its full
-  text in history; ElevenLabs' correction of it is dropped.
+- A barge-in cuts each agent message down to what the user heard, as ElevenLabs reports it. Synthesis
+  outruns playback, so this is usually after the message's response has ended. History then holds an
+  [interrupted copy](history.md#transcription-and-history-edge-cases) of the response, in the same position,
+  whose speech part has the heard text as its transcript: the cut-off message ends in `...`, and a message
+  the user heard none of (one after it in the same turn) has no transcript. What the agent said is kept in
+  the part's `provider_details['original_transcript']`. A response cut off while it is still being
+  generated also carries the heard text in `provider_details['corrected_agent_response']`.
 - [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
   its next turn on, without stopping or replying.
 - A response's parallel tool calls each run as soon as they arrive.

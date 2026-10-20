@@ -72,6 +72,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -12086,7 +12087,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
             expected = sanitize_messages(server_history)
     else:
         expected = sanitize_messages(server_history, strip_system_prompts=False)
-    assert _model_visible(loaded) == _model_visible(expected)
+    # Server history has the enqueued parts in the tool's request, right after its return. The client loads
+    # them back as their own request after it, which renders the same once the two are merged for the model.
+    assert _model_visible(_clean_message_history(loaded)) == _model_visible(_clean_message_history(expected))
     assert _model_visible(loaded) == [
         ('request', [('user-prompt', 'Go')]),
         ('response', [('tool-call', {})]),

@@ -3636,6 +3636,7 @@ class TestDynamicCatalog:
         [part] = request.parts
         assert isinstance(part, SystemPromptPart)
         assert '`weather`' in part.content
+        assert part.metadata == {'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': ['weather']}
 
     async def test_no_announce_when_disabled(self) -> None:
         """With `dynamic_catalog=False`, the hooks are inert even on a real search return."""
@@ -3759,8 +3760,11 @@ class TestDynamicCatalog:
 
         assert len(ctx.pending_messages) == 1
 
-    async def test_search_return_in_history_counts_even_if_its_announcement_was_dropped(self) -> None:
-        """What marks a tool as announced is its search return in visible history, not the announcement."""
+    async def test_dropped_announcement_is_announced_again(self) -> None:
+        """What marks a tool as announced is its marked announcement, so one a history processor dropped is repeated.
+
+        The search return alone doesn't count: the model never saw the announcement it would stand for.
+        """
         cap = CodeMode[object](dynamic_catalog=True)
         ctx = build_run_context(None)
         result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
@@ -3785,14 +3789,98 @@ class TestDynamicCatalog:
             result=result,
         )
 
+        assert len(ctx.pending_messages) == 1
+
+    async def test_legacy_unmarked_announcement_falls_back_to_search_returns(self) -> None:
+        """A history recorded before announcements were marked still deduplicates, by its search returns."""
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
+        ctx.messages.append(
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(content=result, tool_call_id='c1'),
+                    SystemPromptPart(
+                        content=(
+                            'New functions are now available inside `run_code`. Their signatures have been added '
+                            'to the available-functions catalog in the system prompt: `weather`.'
+                        )
+                    ),
+                ]
+            )
+        )
+
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
         assert ctx.pending_messages == []
+
+    async def test_user_text_shaped_like_an_announcement_is_not_one(self) -> None:
+        """Announcement-shaped user text neither counts as an announcement nor brings back the legacy reading."""
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        result: ToolSearchReturnContent = {'discovered_tools': [{'name': 'weather'}]}
+        ctx.messages.append(
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(content=result, tool_call_id='c1'),
+                    UserPromptPart(
+                        content=(
+                            'New functions are now available inside `run_code`. Their signatures have been added '
+                            'to the available-functions catalog in the system prompt: `weather`.'
+                        )
+                    ),
+                ]
+            )
+        )
+
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c2'),
+            tool_def=_search_tool_def(),
+            args={},
+            result=result,
+        )
+
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
+
+    async def test_malformed_announcement_metadata_announces_nothing(self) -> None:
+        """A marked announcement whose `tools` isn't a list of names hides no tool, nor does another app's marker."""
+        cap = CodeMode[object](dynamic_catalog=True)
+        ctx = build_run_context(None)
+        ctx.messages.append(
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Note.', metadata={'origin': 'my_app.note', 'tools': ['weather']}),
+                    SystemPromptPart(
+                        content='Announcement.',
+                        metadata={'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': 'weather'},
+                    ),
+                ]
+            )
+        )
+
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather'}]},
+        )
+
+        assert ctx.pending_messages is not None
+        assert len(ctx.pending_messages) == 1
 
     async def test_native_search_in_a_final_response_still_delivers_the_announcement(self) -> None:
         """A search return in the response that would end the run still gets its announcement into history.
 
-        Already-announced names are read from search returns, which holds only if every search return in
-        history is followed by its announcement. The enqueued announcement redirects the run instead of
-        being lost when the run would otherwise end.
+        The enqueued announcement redirects the run instead of being lost when the run would otherwise end.
         """
         responses = [
             ModelResponse(
@@ -4006,6 +4094,14 @@ class TestDynamicCatalog:
         assert len(search_returns) == 2
         assert len(announcements) == 1
         assert '`weather`' in announcements[0]
+        marked = [
+            p.metadata
+            for m in second.all_messages()
+            if isinstance(m, ModelRequest)
+            for p in m.parts
+            if isinstance(p, SystemPromptPart) and p.metadata is not None
+        ]
+        assert marked == [{'origin': 'pydantic-ai-harness.code_mode.discovery.v1', 'tools': ['weather']}]
 
     # -- discovery announcement: native search path -----------------------
 

@@ -4373,7 +4373,7 @@ async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
         [
             ToolReturnPart(
                 tool_name='noop',
-                content='The tool raised an unhandled error and the session ended.',
+                content='The tool raised an unhandled error.',
                 tool_call_id='tc1',
                 timestamp=IsDatetime(),
                 outcome='failed',
@@ -7881,7 +7881,7 @@ async def test_agent_realtime_session_tool_exception() -> None:
                 [
                     ToolReturnPart(
                         tool_name='explode',
-                        content='The tool raised an unhandled error and the session ended.',
+                        content='The tool raised an unhandled error.',
                         tool_call_id='tc',
                         timestamp=IsDatetime(),
                         outcome='failed',

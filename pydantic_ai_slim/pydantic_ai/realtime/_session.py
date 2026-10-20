@@ -476,7 +476,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         reason = 'requires approval' if isinstance(error, ApprovalRequired) else 'runs externally'
         content = f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.'
     else:
-        content = 'The tool raised an unhandled error and the session ended.'
+        content = 'The tool raised an unhandled error.'
     return ToolReturnPart(
         tool_name=call.tool_name,
         content=content,
@@ -896,8 +896,9 @@ class RealtimeSession:
         detaches, and the browser's call stays up: use
         [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] to end it.
 
-        Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
-        tool — unless it was already raised by event iteration or an outbound session method.
+        Raises a failure that hasn't been delivered yet: whatever ended the session (a provider hangup,
+        an exceeded `usage_limits`), or a failed tool that nothing was iterating to receive. A failure
+        already raised by event iteration or an outbound session method is not raised again.
         """
         if not self._entered:
             return
@@ -1334,8 +1335,9 @@ class RealtimeSession:
         tool-calling turn, that is the answer that follows the tool results, not the response that
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
-        over; it also returns if the session closes, fails (a tool raised, or a usage limit tripped) so
-        the reply can no longer come, or the provider refuses the request for the reply (reported as a
+        over; it also returns if the session closes or ends (a response passed a usage limit), if the
+        exchange fails (a tool raised, or its result would pass a usage limit) so the reply can no longer
+        come, or if the provider refuses the request for the reply (reported as a
         [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and

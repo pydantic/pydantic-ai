@@ -23,7 +23,8 @@ sits directly after the response that called it, as request-response APIs requir
 A recorded message is never edited in place, so a snapshot already handed out doesn't change. It is swapped
 for an updated copy, in the same position, when the provider's copy changes after the fact: when retained
 audio is evicted, and when a barge-in cuts off a response that had already ended (generation outruns
-playback, so the reply the user speaks over has usually finished).
+playback, so the reply the user speaks over has usually finished), whether the session cut it or the provider
+reports what was heard.
 """
 
 from __future__ import annotations as _annotations
@@ -70,6 +71,7 @@ from ._lifecycle import (
     InputId,
     InputLost,
     LifecycleEvent,
+    OutputItemCut,
     OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
@@ -319,6 +321,22 @@ Effect: TypeAlias = (
 # --- entities --------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _Cut:
+    """What the listener heard of one spoken output item: how long, and which words, as far as each is known."""
+
+    heard_ms: int | None = None
+    heard_transcript: str | None = None
+
+    def merged(self, earlier: _Cut | None) -> _Cut:
+        """This cut over an earlier one of the same item: the shorter hearing, and the latest words reported."""
+        if earlier is None:
+            return self
+        heard_ms = min((ms for ms in (self.heard_ms, earlier.heard_ms) if ms is not None), default=None)
+        transcript = self.heard_transcript if self.heard_transcript is not None else earlier.heard_transcript
+        return _Cut(heard_ms=heard_ms, heard_transcript=transcript)
+
+
 @dataclass(eq=False)
 class _Response:
     id: str
@@ -478,7 +496,7 @@ class SessionCore:
         """The response each tool call came from."""
         self._recorded_items: OrderedDict[str, tuple[_Response, int]] = OrderedDict()
         """The recorded response and part index of each recent output item that spoke, for a barge-in to cut off."""
-        self._pending_cuts: dict[str, int] = {}
+        self._pending_cuts: dict[str, _Cut] = {}
         """Cuts of output items of responses still under way, applied once each is recorded."""
         self._returns: dict[str, ModelRequest] = {}
         self._result_input: dict[str, InputId] = {}
@@ -562,6 +580,8 @@ class SessionCore:
         elif isinstance(item, OutputItemDetails):
             if (response := self._open_response(item.response_id)) is not None:
                 response.item_details[item.item_id] = item.provider_details
+        elif isinstance(item, OutputItemCut):
+            self._cut_recorded_item(item.item_id, _Cut(heard_ms=item.heard_ms, heard_transcript=item.heard_transcript))
         elif isinstance(item, SessionUsage):
             self._usage(item)
         elif isinstance(item, UserTurnStarted):
@@ -630,7 +650,7 @@ class SessionCore:
             if (response := self._speaking_response()) is not None and command.played_ms is not None:
                 response.interrupted_at_ms = command.played_ms
             for item_id, heard_ms in command.cuts:
-                self._cut_recorded_item(item_id, heard_ms)
+                self._cut_recorded_item(item_id, _Cut(heard_ms=heard_ms))
         elif isinstance(command, ExchangeAbandoned):
             self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
             self._epoch += 1
@@ -1096,17 +1116,18 @@ class SessionCore:
         response.native_parts = []
         response.closed_parts.clear()
         self._record_audio(response, message)
-        for item_id, heard_ms in pending_cuts:
-            self._cut_recorded_item(item_id, heard_ms)
+        for item_id, cut in pending_cuts:
+            self._cut_recorded_item(item_id, cut)
         return response.message
 
-    def _cut_recorded_item(self, item_id: str, heard_ms: int) -> None:
-        """Record that the listener heard only `heard_ms` of a recorded response's output item.
+    def _cut_recorded_item(self, item_id: str, cut: _Cut) -> None:
+        """Record that the listener heard only part of a recorded response's output item.
 
-        The response is marked interrupted, as one cut off while it was still being generated is, and its
-        transcript stays what the provider said (the provider doesn't report which words were heard). The
-        message is swapped for a copy in the same position, so a snapshot of history already handed out
-        doesn't change. An item cut off twice keeps the earlier cut.
+        The response is marked interrupted, as one cut off while it was still being generated is. Its transcript
+        becomes what the provider says was heard, with the original kept in the part's
+        `provider_details['original_transcript']`, or stays what the provider said when it doesn't say (OpenAI
+        doesn't). The message is swapped for a copy in the same position, so a snapshot of history already handed
+        out doesn't change. An item cut off twice keeps the shorter hearing.
         """
         if (recorded := self._recorded_items.get(item_id)) is None:
             if any(
@@ -1114,17 +1135,29 @@ class SessionCore:
                 for response in self._open_responses.values()
             ):
                 # Still being generated: cut once it is recorded, however it ends.
-                self._pending_cuts[item_id] = min(heard_ms, self._pending_cuts.get(item_id, heard_ms))
+                self._pending_cuts[item_id] = cut.merged(self._pending_cuts.get(item_id))
             return
         response, index = recorded
         message = response.message
         assert message is not None
         part = message.parts[index]
         assert isinstance(part, SpeechPart)
-        if part.interrupted_at_ms is not None and part.interrupted_at_ms <= heard_ms:
+        updated = part
+        if cut.heard_ms is not None and (part.interrupted_at_ms is None or cut.heard_ms < part.interrupted_at_ms):
+            updated = replace(updated, interrupted_at_ms=cut.heard_ms)
+        if cut.heard_transcript is not None and (cut.heard_transcript or None) != part.transcript:
+            details = dict(part.provider_details or {})
+            details.setdefault('original_transcript', part.transcript)
+            updated = replace(
+                updated,
+                transcript=cut.heard_transcript or None,
+                provider_name=part.provider_name or self._provider_name,
+                provider_details=details,
+            )
+        if updated is part and message.state == 'interrupted':
             return
         parts = list(message.parts)
-        parts[index] = replace(part, interrupted_at_ms=heard_ms)
+        parts[index] = updated
         # The same audio object, so the retained-audio budget still tracks it, and eviction still finds it.
         response.message = replace(message, parts=parts, state='interrupted')
 

@@ -246,7 +246,7 @@ class Checker:
         """`id()`s of the finished operations already judged (they can finish in any order)."""
         self._judged_events = 0
         self._judged_truncations = 0
-        self._consumer_error_judged = False
+        self._judged_consumer_errors = 0
         self._codec_issues: list[ConformanceIssue] = []
 
     def attach(self, session: RealtimeSession) -> None:
@@ -331,10 +331,13 @@ class Checker:
             for operation in judged
             if operation.error is not None and not _expected_error(operation.error)
         ]
-        if (error := sim.consumer_error) is not None and not self._consumer_error_judged:
-            self._consumer_error_judged = True
-            if not _expected_error(error):
-                unexpected.append((f'iterating the session raised {error!r}', {'operation': 'iterate'}))
+        errors = sim.consumer_errors[self._judged_consumer_errors :]
+        self._judged_consumer_errors = len(sim.consumer_errors)
+        unexpected += [
+            (f'iterating the session raised {error!r}', {'operation': 'iterate'})
+            for error in errors
+            if not _expected_error(error)
+        ]
         self.report('api.unexpected_error', unexpected)
 
     def _removal_allowed(self, message: ModelMessage) -> bool:  # pragma: lax no cover (the session core never removes)
@@ -509,12 +512,21 @@ class Checker:
             or any(loss >= waiter.started for loss in truth.connection_losses)
             # Every connection was lost and none replaced (GPT-Live doesn't reconnect): the session is over.
             or len(truth.connection_losses) >= truth.connections
-            or 'error' in sim.tools.settled.values()
             or sim.receive_ended
         ):
-            # The session ended, lost state to a drop, or a tool failure ended the exchange: returning is right.
+            # The session ended or lost state to a drop: returning is right. (A failure that ended only an exchange is
+            # judged per exchange, below.)
             return []
         context = {'waiter': waiter.index, 'started': waiter.started}
+
+        def ended_by_failure(since: int) -> bool:
+            """Whether a failure the session parked ended an exchange begun at `since` before the wait returned.
+
+            A tool that raised, a usage limit a tool's result would pass, or a tool result that failed to send ends the
+            exchange in progress, though the session goes on receiving.
+            """
+            return any(since < at <= returned for at in sim.failures_parked_at)
+
         # A reply to a turn it had asked for, by the time the wait began, before the provider saw it...
         soliciting = [
             operation.key
@@ -525,7 +537,7 @@ class Checker:
         violations: list[Violation] = [
             (f'wait_for_reply() #{waiter.index} returned before the reply to {key!r} ended', {**context, 'input': key})
             for key, input_ in inputs
-            if input_ is None or not self._input_resolved(input_, returned, set())
+            if input_ is None or not (self._input_resolved(input_, returned, set()) or ended_by_failure(input_.seq))
         ]
         # ...or a response it could see was under way when the wait began (unless the client cut it off).
         interrupted = [operation.issued for operation in sim.operations if operation.name.startswith('interrupt_')]
@@ -547,6 +559,7 @@ class Checker:
             and not (settled_by_drop and any(loss > response.seq_start for loss in truth.connection_losses))
             and not self._exchange_resolved(response, waiter.started, set())
             and not self._exchange_resolved(response, returned, set())
+            and not ended_by_failure(response.seq_start)
         ]
         return violations
 

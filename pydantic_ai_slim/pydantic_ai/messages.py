@@ -4637,12 +4637,35 @@ def _repair_dangling_tool_calls(
     return repaired
 
 
+def _move_parts_from_between_tool_results(request: ModelRequest) -> ModelRequest:
+    """Move the parts sitting between a request's tool results to right after the last of them.
+
+    Content enqueued during parallel tool calls sits right after its own call's result in history, but
+    providers such as Anthropic and OpenAI need the results answering a turn together, ahead of other content.
+    Only that shape changes: parts ahead of the first result or after the last keep their place, and so do
+    `ToolAvailabilityDeltaPart`s, which the model's own preparation renders where they are.
+    """
+    indices = [index for index, part in enumerate(request.parts) if _is_tool_result_part(part)]
+    if not indices:
+        return request
+    first, last = indices[0], indices[-1]
+    between = request.parts[first : last + 1]
+    moved = [
+        part for part in between if not (_is_tool_result_part(part) or isinstance(part, ToolAvailabilityDeltaPart))
+    ]
+    if not moved:
+        return request
+    kept = [part for part in between if _is_tool_result_part(part) or isinstance(part, ToolAvailabilityDeltaPart)]
+    return replace(request, parts=[*request.parts[:first], *kept, *moved, *request.parts[last + 1 :]])
+
+
 def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Normalize the history's shape by merging consecutive same-role messages into one.
 
     Neither adds nor removes content — it only combines adjacent `ModelRequest`s (or adjacent
     synthetic `ModelResponse`s) that providers expect as a single turn, and within a merged request
-    hoists tool results ahead of user-facing parts (where providers require them). Runs last, after
+    hoists tool results ahead of user-facing parts (where providers require them). A request that isn't
+    merged only has the parts between its tool results moved after them. Runs last, after
     the repair passes have settled call/result pairing, so it operates on a valid history and never
     separates a result from the call it answers.
     """
@@ -4686,7 +4709,7 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
                 )
                 clean_messages[-1] = merged_message
             else:
-                clean_messages.append(message)
+                clean_messages.append(_move_parts_from_between_tool_results(message))
         elif isinstance(message, ModelResponse):  # pragma: no branch
             if (
                 last_message
@@ -5808,17 +5831,28 @@ ModelResponseStreamEvent = Annotated[
 class EnqueuedMessagesEvent:
     """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
 
-    Emitted at delivery time, carrying the delivered message objects themselves — the same objects
-    held in the run's message history, exactly as they landed there (with `timestamp` / `run_id` /
+    Emitted at delivery time, carrying the delivered content itself — the same objects held in the
+    run's message history, exactly as they landed there (with `timestamp` / `run_id` /
     `conversation_id` stamped). A history processor that replaces history with new message objects
-    does not affect the event, but in-place mutation of a delivered message will be visible through it.
+    does not affect the event, but in-place mutation of delivered content will be visible through it.
+
+    Content enqueued during a tool call goes into the [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+    carrying that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Its
+    `messages` then holds a request of its own with the delivered parts, a view of what was delivered rather
+    than a message in history, and `parts` holds those parts as they sit in history. Events are emitted in
+    the order their content lands in history.
     """
 
     enqueue_id: str
-    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced these messages."""
+    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced this content."""
 
     messages: tuple[ModelMessage, ...]
-    """The messages delivered into the run's message history."""
+    """The delivered messages: the ones added to the run's message history, or, for content that went into a
+    tool call's request, a request of its own holding the delivered `parts`."""
+
+    parts: tuple[ModelRequestPart, ...] = ()
+    """The parts added to the request carrying a tool call's return, as they sit in history, or `()` when the
+    content was added as its own `messages`."""
 
     event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
     """Event type identifier, used as a discriminator."""

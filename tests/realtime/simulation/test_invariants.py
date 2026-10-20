@@ -36,7 +36,7 @@ def test_unexpected_error_is_reported_whichever_order_operations_finish() -> Non
 def test_unexpected_consumer_error_is_reported_once() -> None:
     """An exception other than a `RealtimeError` escaping the session's iterator is a violation, judged once."""
     with OpenAISimulation(strict=True) as sim:
-        sim.consumer_error = RuntimeError('boom')
+        sim.consumer_errors.append(RuntimeError('boom'))
         with pytest.raises(
             InvariantViolation, match=r"\[api\.unexpected_error\] iterating the session raised RuntimeError\('boom'\)"
         ):
