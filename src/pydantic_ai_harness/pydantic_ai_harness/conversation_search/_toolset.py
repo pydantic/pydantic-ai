@@ -478,7 +478,9 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         # run, crowding `max_matches` with copies. Runs arrive in `started_at` order, so only
         # the leading messages an earlier run already holds are left out; everything from the
         # first new message on stays, repeats included. The hash ignores instruction changes, so
-        # an inherited request that core gave a new one in this run counts as new.
+        # an inherited request that core gave a new one in this run counts as new, and is indexed
+        # whole: its other parts repeat once. `seen` keeps each hash's latest copy, so a run that
+        # branches from before a change and a later one continuing past it can repeat it once more.
         seen: dict[str, ModelMessage] = {}
         for run in runs:
             messages = await self._source.run_history(run_id=run.run_id)
