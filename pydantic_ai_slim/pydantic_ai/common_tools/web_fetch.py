@@ -263,9 +263,11 @@ def _decode_text(response: httpx2.Response) -> str:
 
 
 class _HTMLMarkupBudget(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, html_length: int) -> None:
         super().__init__(convert_charrefs=False)
         self.count = 0
+        self.tag_scan_cost = 0
+        self.tag_scan_limit = 2 * html_length
 
     def _count(self, amount: int = 1) -> None:
         self.count += amount
@@ -273,7 +275,8 @@ class _HTMLMarkupBudget(HTMLParser):
             raise ModelRetry('the document is too complex')
 
     def check_for_whole_start_tag(self, i: int) -> int:
-        if self.rawdata.find('>', i) == -1:
+        closing_bracket = self.rawdata.find('>', i)
+        if closing_bracket == -1:
             if (
                 len(self.rawdata) - i > _MAX_HTML_UNFINISHED_TAG_CHARS
                 or self.rawdata.count('<', i) >= _MAX_HTML_UNFINISHED_OPENERS
@@ -293,7 +296,14 @@ class _HTMLMarkupBudget(HTMLParser):
             if attributes > _MAX_HTML_TAG_ATTRIBUTES:
                 raise ModelRetry('the document is too complex')
             position = attr_match.end()
-        return super().check_for_whole_start_tag(i)
+        end = super().check_for_whole_start_tag(i)
+        # Older parsers can retry a bogus tag after scanning to a distant '>'. A quoted
+        # '>' can make our find short while the parser scans the rest of the input.
+        scan_end = len(self.rawdata) if end == -1 else max(closing_bracket + 1, end)
+        self.tag_scan_cost += scan_end - i
+        if self.tag_scan_cost > self.tag_scan_limit:
+            raise ModelRetry('the document is too complex')
+        return end
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._count(1 + len(attrs))
@@ -325,7 +335,7 @@ class _HTMLMarkupBudget(HTMLParser):
 
 def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
-    budget = _HTMLMarkupBudget()
+    budget = _HTMLMarkupBudget(len(html))
     budget.feed(html)
     budget.close()
     soup = BeautifulSoup(html, 'html.parser')

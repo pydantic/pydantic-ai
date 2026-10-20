@@ -25,6 +25,7 @@ from pydantic_ai.common_tools.web_fetch import (
     _MAX_HTML_TEXT_SCAN_COST,  # pyright: ignore[reportPrivateUsage]
     WebFetchLocalTool,
     _convert_html,  # pyright: ignore[reportPrivateUsage]
+    _HTMLMarkupBudget,  # pyright: ignore[reportPrivateUsage]
     web_fetch_tool,
 )
 from pydantic_ai.exceptions import ModelRetry
@@ -1161,6 +1162,26 @@ class TestMarkdownConverter:
         ):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html('<title' + 'x' * 101)
+
+    def test_repeated_far_closing_bracket_scans_are_bounded(self):
+        # Older html.parser versions repeatedly scan to the distant '>' but do not charge
+        # malformed '<a\x00' fragments to the markup budget.
+        html = '<a\x00' * 30_000 + '>'
+        budget = _HTMLMarkupBudget(len(html))
+        budget.rawdata = html
+        budget.check_for_whole_start_tag(0)
+        budget.check_for_whole_start_tag(3)
+        with pytest.raises(ModelRetry, match='too complex'):
+            budget.check_for_whole_start_tag(6)
+
+    @pytest.mark.parametrize('html', ['<a\x00' * 30_000 + '>', '<a x=">x"' * 1_000])
+    def test_malformed_tags_do_not_repeat_unbounded_scans(self, html: str):
+        budget = _HTMLMarkupBudget(len(html))
+        with patch.object(budget, 'handle_data', wraps=budget.handle_data) as handle_data:
+            with suppress(ModelRetry):
+                budget.feed(html)
+                budget.close()
+        assert handle_data.call_count < 20
 
     @pytest.mark.parametrize('prefix', ['<div ', '<div data-x=">" ', "<div data=x' "])
     def test_many_attributes_are_rejected_before_parsing(self, prefix: str):
