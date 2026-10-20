@@ -310,8 +310,10 @@ def restore_telemetry_mcp_url_ids(
             for capability in configured_capabilities:
                 if isinstance(capability, MCP) and capability._telemetry_url_derived_id is None:  # pyright: ignore[reportPrivateUsage]
                     if isinstance(capability.native, MCPServerTool):
-                        # A local-only capability cannot claim an unrelated native payload.
                         explicit_ids.add((capability.native.id, capability.native.url))
+                    elif capability.native is not False:
+                        # A configured native factory can own an explicit ID before it resolves.
+                        explicit_ids.add((capability.id, capability.url))
         # An unconfigured native tool could come from a dynamic or per-run capability, or a
         # direct request. Legacy wire data cannot distinguish an equal caller-chosen ID, so
         # withhold that spelling from telemetry when no configured explicit ID claims it.

@@ -2140,7 +2140,7 @@ def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
     assert json.loads(serialized)['function_tools'][0]['toolset_id'] == 'chosen-id'
 
 
-@pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'local_only'])
+@pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'factory_native', 'local_only'])
 def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(strategy: str) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
     identity = 'mcp.example.test-SENTINEL-path-token'
@@ -2149,6 +2149,8 @@ def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(
         capability = MCP(native=MCPServerTool(id=identity, url=url), local=False)
     elif strategy == 'generated_native':
         capability = MCP(url, native=True, local=False, id=identity)
+    elif strategy == 'factory_native':
+        capability = MCP(url, native=lambda _ctx: MCPServerTool(id=identity, url=url), local=False, id=identity)
     else:
         capability = MCP(url, native=False, local=True, id=identity)
     agent = Agent(model, name='telemetry_recovery', capabilities=[capability])
