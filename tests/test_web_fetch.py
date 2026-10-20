@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import sys
 import time
@@ -122,16 +121,7 @@ class TestWebFetchLocalTool:
                 release.set()
                 await asyncio.gather(*tasks)
 
-    @pytest.mark.parametrize(
-        'anyio_backend',
-        [
-            'asyncio',
-            pytest.param(
-                'trio',
-                marks=pytest.mark.skipif(importlib.util.find_spec('trio') is None, reason='Trio is optional'),
-            ),
-        ],
-    )
+    @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
     async def test_fetch_html(self, anyio_backend: str):
         """Fetches HTML and converts to markdown."""
         html = '<html><head><title>Test Page</title></head><body><h1>Hello</h1><p>World</p></body></html>'
