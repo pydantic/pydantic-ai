@@ -165,7 +165,7 @@ A namespace is one or more `/`-separated segments of letters, digits, `_`, `-`, 
 
 An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Four constraints apply:
 
-- Give each instance a distinct `id`. Instances that share the default `id='memory'` are one capability to the agent: if their configurations differ, constructing the agent raises `UserError`.
+- Give each instance a distinct `id`. Instances that share the default `id='memory'` are one capability to the agent: unless they share one store instance and the same settings, constructing the agent raises `UserError`.
 - Give each instance a distinct `agent_name` or `namespace`. Injected blocks are tracked by their resolved scope, so instances that differ only in their store resolve the same scope and replace each other's injection.
 - All instances define the same tool names, so wrap every instance but one in `prefix_tools` to keep the tool schemas distinct.
 - Set a distinct `heading` on each instance so the model sees the blocks as separate sections. `agent_name` is a storage key and never appears in the prompt, so it can't label them.
