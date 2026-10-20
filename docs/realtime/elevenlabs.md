@@ -493,7 +493,9 @@ the connection sends an empty audio append (which adds no audio) after 45 second
 - When a response starts while a tool call is still running (because the user spoke, say), ElevenLabs abandons
   the call: its result never reaches the model, and a response asked for after it never comes. The session then
   gets a recoverable [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] of type
-  `'tool_calls_abandoned'` naming the calls, the result is still recorded in history, and no reply is waited for.
+  `'tool_calls_abandoned'` naming the calls. The tool keeps running and its result is still recorded in history, but
+  no reply to it is waited for: [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] come when the response that cut in ends.
 - `eleven_realtime_v1_max` sometimes answers a question that needs a tool with two responses: a spoken preamble
   ("Let me check the weather…") that completes on its own, then the tool call in a response nobody asked for.
   Nothing links the two, so [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and

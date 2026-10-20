@@ -78,6 +78,7 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -509,7 +510,9 @@ class SessionCore:
         self._unanswered_responses: set[str] = set()
         """Responses whose tool results get no reply: one of their calls settled without its result going out."""
         self._settled_calls: set[str] = set()
-        """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
+        """Calls that settled: their result is recorded (sent or not), or the provider cancelled or abandoned them."""
+        self._abandoned_calls: set[str] = set()
+        """Calls the provider abandoned: they run on, but no response answers their results (see `ToolCallsAbandoned`)."""
         self._input_audio = bytearray()
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
@@ -539,9 +542,6 @@ class SessionCore:
         self._effects: list[Effect] = []
         self._exchange_ending: bool | None = None
         """A response ended in the frame being applied, and whether it was cut off (see `end_frame`)."""
-        self._exchange_unsettled: bool | None = None
-        """A response ended while the model still owed something (and whether it was cut off): the exchange is over
-        once nothing is owed, as a later response ends or as a send settles what was left (see `end_send`)."""
         self._unrounded: dict[str, list[str]] = {}
         """The calls of each recorded response that no `ToolRoundsOver` named yet, while it has any (when tracking)."""
         self._pruned_calls: set[str] = set()
@@ -620,6 +620,8 @@ class SessionCore:
             # (One the session hasn't taken yet still runs, to be stopped as the session reaches the cancellation.)
             for call_id in item.tool_call_ids:
                 self._call_unanswered(call_id)
+        elif isinstance(item, ToolCallsAbandoned):
+            self._abandon_calls(item.tool_call_ids)
         elif isinstance(
             item,
             (
@@ -660,8 +662,6 @@ class SessionCore:
         elif isinstance(command, ExchangeAbandoned):
             self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
             self._epoch += 1
-            # Given up on, rather than over: it doesn't end in an `ExchangeOver`.
-            self._exchange_unsettled = None
         elif isinstance(command, TranscriptOverdue):
             self._end_transcriptions([command.turn_id])
         elif isinstance(command, ResponseOverdue):
@@ -950,7 +950,17 @@ class SessionCore:
         self._settle([self._result_input[call] for call in response.tool_calls if call in self._result_input], 'void')
 
     def _result_unanswered(self, call_id: str) -> bool:
-        return (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        return call_id in self._abandoned_calls or (
+            (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        )
+
+    def _abandon_calls(self, call_ids: Sequence[str]) -> None:
+        """The provider answers none of these calls' results: they run on, and nothing waits for them any more."""
+        self._abandoned_calls.update(call_ids)
+        self._settled_calls.update(call_ids)
+        for call_id in call_ids:
+            self._call_unanswered(call_id)
+        self._settle([self._result_input[call_id] for call_id in call_ids if call_id in self._result_input], 'void')
 
     def _native_part(self, event: PartStartEvent | PartEndEvent) -> None:
         """A native tool part (grounding, code execution) the connection streamed, numbered by its own counter.
@@ -1075,29 +1085,8 @@ class SessionCore:
         if (interrupted := self._exchange_ending) is None:
             return
         self._exchange_ending = None
-        self._exchange_unsettled = interrupted
         if not self.wait_tokens():
-            self._end_exchange(interrupted)
-
-    def end_send(self, input_id: InputId) -> None:
-        """What sending `input_id` settled is applied: an exchange it leaves owing nothing is over.
-
-        A provider can take no reply to an input as it goes out: GPT-Live, to the late result of a tool call its
-        backend gave up on. That result can be the last thing the model owed, with no response ending after it to end
-        the exchange. (An input lost in a frame ends no exchange: the connection lost it, and the exchange with it.)
-        """
-        if (
-            (interrupted := self._exchange_unsettled) is not None
-            and self._receiving
-            and not self._closed
-            and self._obligations.get(input_id) == 'lost'
-            and not self.wait_tokens()
-        ):
-            self._end_exchange(interrupted)
-
-    def _end_exchange(self, interrupted: bool) -> None:
-        self._exchange_unsettled = None
-        self._effects.append(ExchangeOver(interrupted=interrupted))
+            self._effects.append(ExchangeOver(interrupted=interrupted))
 
     def _record_response(self, response: _Response, event: ResponseEnded) -> ModelResponse | None:
         """Record a response that ended, returning what history records for it, if anything."""
@@ -1724,10 +1713,10 @@ class SessionCore:
 
     def result_asks_reply(self, call_id: str) -> bool:
         """Whether sending this call's result asks for a reply `requests_ahead()` doesn't count yet."""
+        if self._result_unanswered(call_id):
+            return False
         if not self._answers_per_response or (response := self._call_response.get(call_id)) is None:
             return True
-        if response.id in self._unanswered_responses:
-            return False
         return not any(
             outcome == 'pending' and self._reply_for(input_id) == response.id
             for input_id, outcome in self._obligations.items()

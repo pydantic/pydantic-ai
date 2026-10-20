@@ -1519,11 +1519,11 @@ def test_live_abandoned_calls_owe_nothing() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
-def test_live_abandoned_call_finishing_after_the_reply_ends_the_exchange() -> None:
-    """A tool call whose backend gave up still runs; its result, going nowhere, is the last thing the exchange owed.
+def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> None:
+    """A tool call whose backend gave up still runs, but its result gets no reply: the exchange ends with the reply.
 
-    No response ends after it, so the exchange ends as the result goes out; otherwise no `RealtimeTurnCompleteEvent` comes
-    for it at all (found live on Eleven Realtime, which abandons a call the same way when a new response starts).
+    Found live on Eleven Realtime, which abandons a call the same way when a new response starts: the turn only
+    completed once the abandoned tool finished, if at all.
     """
 
     def scenario(sim: LiveSimulation) -> None:
@@ -1531,15 +1531,20 @@ def test_live_abandoned_call_finishing_after_the_reply_ends_the_exchange() -> No
         sim.delegate()
         sim.backend_call()
         sim.backend_finish(status='failed')
+        # The reply that delegated is over, and the abandoned call owes nothing, though it still runs.
+        assert sim.tools.pending()
+        assert len(sim.turn_completes) == 1
         sim.send_text()
         waiter = sim.wait_for_reply(ticks=0)
         sim.speak()
         sim.advance_time(1.0)
-        # The reply is over, but the call still runs: the model owes its round until the call settles.
-        assert waiter.returned is None and not sim.turn_completes
-        sim.finish_tool()
+        # The reply to the interjection ends its exchange as it ends, not once the call finishes.
+        assert sim.tools.pending()
         assert waiter.returned is not None
-        assert len(sim.turn_completes) == 1
+        assert len(sim.turn_completes) == 2
+        sim.finish_tool()
+        # Its result goes nowhere, and ends no exchange of its own.
+        assert len(sim.turn_completes) == 2
 
     run_clean(LiveSimulation(), scenario)
 

@@ -17,10 +17,17 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.exceptions import ModelAPIError, UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, RealtimeSessionErrorEvent
+from pydantic_ai.messages import (
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    RealtimeSessionErrorEvent,
+    RealtimeTurnCompleteEvent,
+    ToolReturnPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import WebRTCSession
-from pydantic_ai.realtime._lifecycle import InputAdded, InputLost, ResponseEnded, ResponseStarted
+from pydantic_ai.realtime._lifecycle import InputAdded, InputLost, ResponseEnded, ResponseStarted, ToolCallsAbandoned
 from pydantic_ai.realtime.codec import OutputTranscript, ResponseDone
 from pydantic_ai.tools import ToolDefinition
 
@@ -45,8 +52,9 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
-    from .test_openai import FakeConnect, FakeWebSocket
+    from .test_openai import FakeConnect, FakeWebSocket, PushWebSocket
     from .test_openai_lifecycle import created, describe, done, frames, tool_output_added, transcript
+    from .test_session import RealtimeSession
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
@@ -533,6 +541,7 @@ async def test_tool_calls_abandoned_by_a_later_response() -> None:
             ResponseEnded(
                 response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
             ),
+            ToolCallsAbandoned(tool_call_ids=('call_1',)),
             'RealtimeSessionErrorEvent',
             ResponseStarted(response_id='resp_2'),
             'ResponseDone',
@@ -545,6 +554,61 @@ async def test_tool_calls_abandoned_by_a_later_response() -> None:
         ]
     )
     assert [json.loads(sent)['type'] for sent in ws.sent] == snapshot(['conversation.item.create'])
+
+
+async def test_abandoned_tool_call_still_running_doesnt_hold_the_reply_to_an_interjection() -> None:
+    """The reply to text sent while an abandoned call runs ends its exchange, rather than the call's late result.
+
+    Seen live: the turn complete only came, if at all, once the abandoned tool finished, seconds after the reply.
+    """
+    release = asyncio.Event()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        await release.wait()
+        return 'done'
+
+    ws = PushWebSocket()
+    session = RealtimeSession(ElevenLabsRealtimeConnection(ws), runner)  # pyright: ignore[reportArgumentType]
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in session:
+            events.append(event)
+
+    async def settle() -> None:
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+    async with session:
+        consumer = asyncio.create_task(consume())
+        ws.push(created('resp_1'))
+        ws.push({**_call('resp_1', 'call_1'), 'name': 'slow'})
+        ws.push(done('resp_1'))
+        await settle()
+        await session.send('what is 2+2?')
+        waiter = asyncio.create_task(session.wait_for_reply())
+        # The reply to the text starts while the call still runs: ElevenLabs abandons the call.
+        ws.push(created('resp_2'))
+        ws.push(transcript('resp_2', 'Four.'))
+        ws.push(done('resp_2'))
+        await asyncio.wait_for(waiter, timeout=5)
+        await settle()
+        assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
+        assert not any(isinstance(event, FunctionToolResultEvent) for event in events)
+
+        release.set()
+        await settle()
+        # The late result is recorded and added to the conversation, but asks for no reply, and ends no exchange.
+        assert any(isinstance(event, FunctionToolResultEvent) for event in events)
+        assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
+        assert ws.sent_types()[-1] == 'conversation.item.create'
+        assert [
+            part.tool_call_id
+            for message in session.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ] == ['call_1']
+        consumer.cancel()
 
 
 async def test_audio_tags_are_stripped_from_transcripts() -> None:

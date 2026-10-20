@@ -2029,7 +2029,6 @@ class RealtimeSession:
                         # anything the connection reads next.
                         for event in settled:
                             self._core.apply(event)
-                        self._core.end_send(input_index)
                         self._emit_effects(self._core.take_effects())
                         self._core_advanced(self._core)
                     if isinstance(content, BinaryAudio):
