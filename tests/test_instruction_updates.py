@@ -162,6 +162,43 @@ async def test_instruction_updates_hook_unset_preserves_recorded_text():
     ] == ['C']
 
 
+async def test_instruction_updates_hook_unset_ends_a_window_without_blocks():
+    """Unsetting the parts ends a window that opened with no blocks too, so the changes recorded in it stop applying."""
+    received: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(context_statements(messages))
+        return ModelResponse(parts=[TextPart('done')])
+
+    def clear_parts(ctx: RunContext[State], request: ModelRequestContext) -> ModelRequestContext:
+        request.model_request_parameters.instruction_parts = None
+        return request
+
+    agent = Agent(FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=True)), deps_type=State)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    unset = [Hooks(before_model_request=clear_parts)]
+    history = (await agent.run('Continue.', deps=State('A'))).all_messages()
+    # Unsetting the parts ends the window `A` opened, with an empty baseline.
+    history = (
+        await agent.run('Continue.', deps=State('A'), message_history=history, capabilities=unset)
+    ).all_messages()
+    # `B` is first seen in that empty window, so it's delivered as a change.
+    history = (await agent.run('Continue.', deps=State('B'), message_history=history)).all_messages()
+    assert received[-1] == ['<context id="agent:state">\nB\n</context>']
+    # Unsetting the parts again ends this window as well, so `B` isn't sent.
+    result = await agent.run('Continue.', deps=State('B'), message_history=history, capabilities=unset)
+    assert received[-1] == []
+    assert baseline_of(result.new_messages()[0]) == []
+    # A window with no blocks and no changes has nothing to end, so this request records no baseline.
+    result = await agent.run('Continue.', deps=State('B'), message_history=result.all_messages(), capabilities=unset)
+    assert received[-1] == []
+    assert baseline_of(result.new_messages()[0]) is None
+
+
 async def test_instruction_updates_hook_appended_request_preserves_history():
     """Pin history merging and projected prefixes independently of provider response matching."""
     prefixes: list[str | None] = []
@@ -1265,9 +1302,9 @@ def test_instruction_updates_render_escapes_the_id():
 
 def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
-    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context-diff> after.')
+    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context-diff> after.\n</context>'
+        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context_diff> after.\n</context>'
     )
 
 
@@ -1287,7 +1324,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     )
     assert part.render(previous=MEMORY) == snapshot(
         """\
-<context-diff id="agent:memory">
+<context_diff id="agent:memory">
 --- before
 +++ after
 @@ -5,5 +5,5 @@
@@ -1297,7 +1334,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
 +- Fact 7: value seven.
  - Fact 8: value 8.
  - Fact 9: value 9.
-</context-diff>\
+</context_diff>\
 """
     )
     full = f'<context id="agent:memory">\n{edited}\n</context>'
@@ -1339,7 +1376,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
     assert received[1] == [deltas[0].render(previous=MEMORY)]
     # Each request renders the earlier changes exactly as before, so the cached prefix holds.
     assert received[2] == [*received[1], deltas[1].render(previous=first_edit)]
-    assert all(statement.startswith('<context-diff id="agent:memory">') for statement in received[2])
+    assert all(statement.startswith('<context_diff id="agent:memory">') for statement in received[2])
 
     # A processor that drops the first change leaves the second without the text it was computed
     # against, so the model gets it in full.

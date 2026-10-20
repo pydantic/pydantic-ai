@@ -59,9 +59,9 @@ BackgroundTools(tools=lambda ctx, td: td.name.startswith('research_'))
 Use `metadata={'background': 'optional'}` to let the model decide for each call. The model sees a
 `run_in_background` argument, but your function does not receive it.
 
-A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools and
-realtime sessions run normally. Do not use `run_in_background` as one of your function's own
-parameters.
+A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools,
+realtime sessions, and calls that code mode's `run_code` makes from its sandbox run normally, even
+with `run_in_background`. Do not use `run_in_background` as one of your function's own parameters.
 
 ```python
 from pydantic_ai import Agent
@@ -107,7 +107,16 @@ Each follow-up is a [`ModelRequest`][pydantic_ai.messages.ModelRequest] containi
 `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`, including handled
 failure notifications. This identifies the entire completion part, including any files and extra
 content. The metadata is not sent to the model and survives native message serialization and merging
-consecutive requests. The Vercel AI and AG-UI message conversions omit this metadata.
+consecutive requests. The Vercel AI and AG-UI message conversions omit this metadata. A history
+loaded back from them keeps the text and its framing, but the follow-up is then an ordinary user
+prompt.
+
+The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
+tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
+model the text is the tool's output rather than something the user said, and which pending call it
+completes. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
+frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
+`ModelRetry` or `ToolFailed`.
 
 Text and files returned by the tool are sent to the model. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
 is discarded.

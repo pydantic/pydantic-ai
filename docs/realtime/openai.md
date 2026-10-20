@@ -229,9 +229,11 @@ history nor waited for by [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSess
 split it, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
-was sent, not when the model took it in. Since Live can take text as context
-without answering it, bound [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
-with a timeout rather than relying on a reply always following.
+was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
+than in a reply of its own: text sent while the model is speaking is answered by that reply once it says anything more,
+and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] ends with it. Since Live can also take
+text as context without answering it, bound `wait_for_reply()` with a timeout rather than relying on a reply always
+following.
 
 Live's timeline only advances while it receives audio, so a session with no microphone, like the
 [text-to-audio example](../examples/realtime-text-to-audio.md), needs `openai_live_idle_audio=True`.
