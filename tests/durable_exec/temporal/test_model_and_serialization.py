@@ -57,6 +57,9 @@ from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelTimeoutError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -128,6 +131,7 @@ try:
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._model_errors import (
+        _retry_policy_type,  # pyright: ignore[reportPrivateUsage]
         model_errors_as_application_errors,
         rebuilt_model_errors,
     )
@@ -3506,7 +3510,7 @@ def test_a_subclass_with_plain_reduce_state_crosses_with_it():
     class StatefulModelError(ModelAPIError):
         extra: int | None = None
 
-        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
             return self.__class__, (self.model_name, self.message), {'extra': self.extra}
 
     # Only Pydantic AI's own classes cross, so present this one as one of them.
@@ -3532,6 +3536,61 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             raise ModelHTTPError(503, 'gpt-test')
     assert raised.value.type == 'ModelHTTPError'
     assert not raised.value.non_retryable
+
+
+@pytest.mark.parametrize(
+    ('error', 'type_name'),
+    [
+        pytest.param(
+            ModelHTTPError.for_category(ModelServerError, status_code=500, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-category',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='gpt-test', in_stream=True),
+            'ModelHTTPError',
+            id='in-stream-http-category',
+        ),
+        pytest.param(ModelTimeoutError('gpt-test', 'timed out', phase='read'), 'ModelAPIError', id='timeout'),
+        pytest.param(
+            ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
+        ),
+        pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
+    ],
+)
+def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIError, type_name: str):
+    """A retry policy sees an error with a category as the class it was before categories existed, so
+    `non_retryable_error_types` matches what it did; the workflow still rebuilds it as its own class."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    assert raised.value.type == type_name
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
+
+
+def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():
+    """An HTTP error with a category has the category's name, so it crosses marked as the HTTP variant."""
+    error = ModelHTTPError.for_category(
+        ModelRateLimitError, status_code=429, model_name='gpt-test', headers={'retry-after': '3'}
+    )
+    rebuilt = _crossed(error)
+    assert type(rebuilt) is type(error)
+    assert isinstance(rebuilt, ModelHTTPError) and isinstance(rebuilt, ModelRateLimitError)
+    assert (rebuilt.status_code, rebuilt.retry_after) == (429, 3.0)
+
+    assert type(_crossed(ModelRateLimitError('gpt-test', 'slow down'))) is ModelRateLimitError
+
+
+def test_a_category_subclass_defined_elsewhere_keeps_its_own_type():
+    """Only the categories in `pydantic_ai.exceptions` report their legacy class: a subclass defined elsewhere,
+    like an adapter-specific error, reports its own name, as it did before categories existed."""
+
+    class AdapterTimeoutError(ModelTimeoutError):
+        pass
+
+    assert _retry_policy_type(AdapterTimeoutError('gpt-test', 'timed out', phase='read')) == 'AdapterTimeoutError'
 
 
 def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
