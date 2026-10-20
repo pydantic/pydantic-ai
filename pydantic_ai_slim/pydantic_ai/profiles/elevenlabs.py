@@ -66,3 +66,44 @@ def elevenlabs_agents_realtime_model_profile(model_name: str) -> RealtimeModelPr
         'audio_input_sample_rate': 16000,
         'audio_output_sample_rate': 16000,
     }
+
+
+def elevenlabs_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+    """Get the realtime model profile for an Eleven Realtime speech-to-speech model.
+
+    Both models (`eleven_realtime_v1_mini` and `eleven_realtime_v1_max`) share the same API surface; Max reasons
+    before it responds, but exposes no reasoning setting.
+    """
+    del model_name
+    return {
+        # With `turn_detection: null`, a commit is answered only once `response.create` asks for it.
+        'supports_manual_turn_control': True,
+        # `response.cancel` ends the active response with `status: 'cancelled'`.
+        'supports_interruption': True,
+        # `conversation.item.truncate` is acknowledged with `conversation.item.truncated`.
+        'supports_output_truncation': True,
+        # `output_modalities: ['text']` answers text input with `response.output_text.*`, but then ignores audio input
+        # entirely: no speech events, no transcription, and a committed turn is never answered.
+        'supports_text_output': False,
+        # `input_image` content parts are accepted but silently dropped from the conversation item.
+        'supports_image_input': False,
+        # User and assistant text items seed the conversation, which reconnect relies on too.
+        'supports_session_seeding': True,
+        'supports_seeding_images': False,
+        # Seeded user audio becomes an empty text part, and an assistant item needs a non-empty text part.
+        'supports_seeding_audio': False,
+        # Not implemented by `ElevenLabsRealtimeModel`: ElevenLabs serves no `/realtime/calls` endpoint.
+        'supports_webrtc': False,
+        # There is no reasoning setting: `reasoning` is accepted but dropped.
+        'supports_thinking': False,
+        # The model does answer the user while a tool call is outstanding, but a result sent after such a reply
+        # never reaches it, and the `response.create` that follows the result goes unanswered. So the result only
+        # arrives reliably when nothing else happens while the tool runs.
+        'async_tool_call_mode': 'never',
+        'emits_input_speech_events': True,
+        # `response.done` carries no `usage`.
+        'response_usage_covers_context': False,
+        # The input rate is configurable, but output audio is always 24 kHz PCM.
+        'audio_input_sample_rate': 24000,
+        'audio_output_sample_rate': 24000,
+    }

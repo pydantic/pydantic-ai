@@ -540,7 +540,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   goes on. When Live reports such a failure only as a session-level error that names no delegation
   (for instance `Responses handoff incomplete.` when the backend runs out of `max_output_tokens`),
   Pydantic AI treats the delegated work in flight as the work that failed, with code
-  `live_delegation_failed`, so the turn still ends.
+  `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
+  result is recorded in history, but goes nowhere: the turn doesn't wait for it.
 - The backend continues a delegated round only once it has every call's output, and Live has no
   command to cancel a delegation, so a tool that raises leaves its round unfinished. Pydantic AI gives
   the round up, so the exchange [ends as on every other provider](tools.md#function-tools): the rest of
