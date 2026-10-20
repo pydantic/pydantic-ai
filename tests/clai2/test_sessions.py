@@ -1,6 +1,7 @@
 """Saved sessions restore context, never tool execution or executable configuration."""
 
 import os
+import sqlite3
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
 from io import StringIO
@@ -37,7 +38,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness import Coder
-from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepPersistence
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot, StepEvent, StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationConflict,
     ConversationSummary,
@@ -47,7 +48,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
 from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
 from pydantic_clai2.plugins import PluginHost, load_plugin
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime._session import Session, SessionStepStore
 from pydantic_clai2.runtime.sessions import PersistencePlugin
 from tests.clai2.test_session_browser import repository
 
@@ -261,6 +262,57 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     assert snapshot.conversation_id == session.summary.id
     bare = PluginHost(name='persistence', console=Console(file=StringIO()), settings={})
     assert not load_plugin(PersistencePlugin, bare).capabilities
+
+
+async def test_step_records_another_writer_locks_out_do_not_fail_the_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr('pydantic_ai_harness.step_persistence._store._BUSY_TIMEOUT_SECONDS', 0.01)
+    database = tmp_path / 'sessions.db'
+    other = sqlite3.connect(database, isolation_level=None, check_same_thread=False)
+
+    def run_command() -> str:
+        # Another CLAI sharing `sessions.db` starts a long write while the tool runs.
+        other.execute('BEGIN IMMEDIATE')
+        return 'done'
+
+    async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='run_command', json_args='{}', tool_call_id='call')}
+        else:
+            other.execute('COMMIT')
+            yield 'finished'
+
+    session = Session(
+        Agent(FunctionModel(stream_function=model), tools=[run_command]),
+        deps=None,
+        conversations=SqliteConversationStore(database=database),
+        workspace=tmp_path,
+    )
+    steps = session.step_store
+    assert isinstance(steps, SessionStepStore)
+    session.plugins = [StepPersistence(store=steps, capture_frontier=True)]
+    try:
+        result = await session.prompt('run it')
+    finally:
+        other.close()
+
+    assert result.output == 'finished'
+    assert session.conversations is not None and session.summary.run_id is not None
+    saved = await session.conversations.get(conversation_id=session.summary.id)
+    assert saved.summary.outcome == 'completed' and saved.messages == session.messages
+    assert 'Skipped saving a tool effect: database is locked' in caplog.text
+    assert 'Skipped saving a step checkpoint: database is locked' in caplog.text
+    # The tool's completion was not recorded, so its effect still reads as started.
+    assert [
+        effect.tool_call_id for effect in await steps.list_unresolved_tool_effects(run_id=session.summary.run_id)
+    ] == ['call']
+
+
+async def test_step_store_still_raises_errors_other_than_a_lock(tmp_path: Path) -> None:
+    store = SessionStepStore(database=tmp_path)
+    with pytest.raises(sqlite3.OperationalError, match='unable to open database file'):
+        await store.append_event(StepEvent(run_id='r1', kind='run_started', step_index=0))
 
 
 async def test_cancellation_still_propagates_when_saving_fails(
