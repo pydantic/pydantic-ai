@@ -865,6 +865,7 @@ class SessionCore:
                         tool_name=call.tool_name,
                         content=INTERRUPTED_TOOL_RETURN_CONTENT,
                         tool_call_id=call_id,
+                        tool_kind=call.tool_kind,
                         outcome='interrupted',
                     )
                 ]

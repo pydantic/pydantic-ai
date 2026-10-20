@@ -1017,10 +1017,10 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     In both cases, messages that precede the chosen response in the history are omitted
     from the input, since OpenAI reconstructs them from server-side state. A response is only
-    chosen while those messages are unchanged: each response created with this setting records a
-    digest of the history it was created from as
+    chosen while it and those messages are unchanged: each response created with this setting records a
+    digest of its parts and the history it was created from as
     [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest], and if a
-    history processor or compaction has changed them since, the full history is sent instead.
+    history processor or compaction has changed either since, the full history is sent instead.
 
     Requires the referenced response to have been stored (see
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
@@ -2382,15 +2382,34 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
-def _history_digest(history: Sequence[ModelMessage], key: bytes | None) -> str:
+class _Hasher(Protocol):
+    def update(self, data: bytes, /) -> None: ...
+    def copy(self) -> _Hasher: ...
+    def hexdigest(self) -> str: ...
+
+
+_RESPONSE_PART_ADAPTER: TypeAdapter[ModelResponsePart] = TypeAdapter(ModelResponsePart)
+
+
+def _history_hasher(history: Sequence[ModelMessage], key: bytes | None) -> _Hasher:
+    """A SHA-256, or an HMAC with `key`, fed the history a response is created from."""
     # `exclude_none` keeps the digest stable when a release adds a field, which loads as `None` from older histories.
     # `exclude_defaults` would go further, but it drops the part kinds too, so a role change would go unnoticed.
     serialized = ModelMessagesTypeAdapter.dump_json(
         [_without_application_metadata(message) for message in history], exclude_none=True
     )
-    if key is None:
-        return hashlib.sha256(serialized).hexdigest()
-    return hmac.new(key, serialized, hashlib.sha256).hexdigest()
+    hasher: _Hasher = hashlib.sha256() if key is None else hmac.new(key, digestmod=hashlib.sha256)
+    hasher.update(serialized)
+    return hasher
+
+
+def _continuation_digest(history: _Hasher, parts: Sequence[ModelResponsePart]) -> str:
+    """The digest of a response's parts after the history it was created from, both of which the server holds."""
+    hasher = history.copy()
+    for part in parts:
+        hasher.update(b'\n')
+        hasher.update(_RESPONSE_PART_ADAPTER.dump_json(_part_without_application_metadata(part), exclude_none=True))
+    return hasher.hexdigest()
 
 
 def _without_application_metadata(message: ModelMessage) -> ModelMessage:
@@ -2417,8 +2436,11 @@ def _part_without_application_metadata(part: _PartT) -> _PartT:
     return part
 
 
-def _with_history_digest(response: ModelResponse, history_digest: str | None) -> ModelResponse:
-    return response if history_digest is None else replace(response, history_digest=history_digest)
+def _with_history_digest(response: ModelResponse, history: _Hasher | None) -> ModelResponse:
+    """`response` with its digest recorded, when `history` says a later request may continue from it."""
+    if history is None:
+        return response
+    return replace(response, history_digest=_continuation_digest(history, response.parts))
 
 
 @dataclass(init=False)
@@ -2722,9 +2744,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if info := self._get_continuation_info(messages, settings):
             # Non-streaming retrieve: on `store=false` backends (Codex, which is also stream-only)
             # `_get_continuation_info` already rejected the continuation with `UserError`.
-            response_id, _, _ = info
+            suspended, response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
-            return self._process_response(response, settings, model_request_parameters)
+            # The retrieved response replaces the suspended one, the last message, and continues from what came before.
+            return _with_history_digest(
+                self._process_response(response, settings, model_request_parameters),
+                self._resumed_history_to_record(messages[:-1], suspended, settings),
+            )
         elif self.profile.get('openai_responses_requires_streaming', False):
             # Stream-only backend (e.g. Codex subscription auth): drain a forced stream via the
             # streamed-response path, which handles `response.completed` arriving with an empty `output`.
@@ -2741,7 +2767,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     stream,
                     settings,
                     model_request_parameters,
-                    history_digest=self._history_digest_to_record(messages, settings),
+                    history=self._history_to_record(messages, settings),
                 )
                 async for _ in streamed_response:
                     pass
@@ -2754,25 +2780,38 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 return response
             return _with_history_digest(
                 self._process_response(response, settings, model_request_parameters),
-                self._history_digest_to_record(messages, settings),
+                self._history_to_record(messages, settings),
             )
 
-    def _history_digest_to_record(
+    def _history_to_record(
         self, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
-    ) -> str | None:
-        """The digest of the history a new response is created from, when a later request may continue from it."""
+    ) -> _Hasher | None:
+        """The history a new response is created from, to digest with it, when a later request may continue from it."""
         if settings.get('openai_previous_response_id') is None:
             return None
-        return _history_digest(messages, self._history_digest_key)
+        return _history_hasher(messages, self._history_digest_key)
+
+    def _resumed_history_to_record(
+        self, history: Sequence[ModelMessage], suspended: ModelResponse, settings: OpenAIResponsesModelSettings
+    ) -> _Hasher | None:
+        """The history a retrieved background response continues: the messages before the suspended one it replaces.
+
+        The server created it from the history the suspended response recorded, so if that, or the suspended response,
+        has changed since, none is returned: the merged response keeps the suspended one's digest, which no longer
+        matches, so it isn't continued from.
+        """
+        if self._history_changed(suspended, history):
+            return None
+        return self._history_to_record(history, settings)
 
     def _history_changed(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
-        """Whether `history`, the messages before `response`, differs from the history it was created from.
+        """Whether `response`, or `history`, the messages before it, changed since the response was created.
 
-        A response with no recorded history, from before it was recorded or from a request that didn't
+        A response with no recorded digest, from before it was recorded or from a request that didn't
         continue server-side state, is trusted as before.
         """
-        return response.history_digest is not None and response.history_digest != _history_digest(
-            history, self._history_digest_key
+        return response.history_digest is not None and response.history_digest != _continuation_digest(
+            _history_hasher(history, self._history_digest_key), response.parts
         )
 
     async def count_tokens(
@@ -2848,7 +2887,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
         if info := self._get_continuation_info(messages, settings):
-            response_id, last_sequence_number, previous_model_name = info
+            suspended, response_id, last_sequence_number, previous_model_name = info
             expected_response_id = response_id
             if last_sequence_number is None:
                 # Some background responses were not previously streamed and have no resumable
@@ -2857,7 +2896,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 response = await self._responses_retrieve(response_id, settings)
                 sr: StreamedResponse = _ModelResponseStreamedResponse(
                     model_request_parameters=model_request_parameters,
-                    _model_response=self._process_response(response, settings, model_request_parameters),
+                    _model_response=_with_history_digest(
+                        self._process_response(response, settings, model_request_parameters),
+                        self._resumed_history_to_record(messages[:-1], suspended, settings),
+                    ),
                 )
                 yield sr
                 return
@@ -2883,7 +2925,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 model_request_parameters,
                 expected_model_name=previous_model_name,
                 expected_response_id=expected_response_id,
-                history_digest=None if expected_response_id else self._history_digest_to_record(messages, settings),
+                # A resumed stream has only the parts after the cursor, so it can't digest the whole response.
+                history=None if expected_response_id else self._history_to_record(messages, settings),
             )
             yield sr
 
@@ -3075,7 +3118,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         expected_model_name: OpenAIModelName | None = None,
         expected_response_id: str | None = None,
-        history_digest: str | None = None,
+        history: _Hasher | None = None,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
@@ -3121,7 +3164,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=provider_timestamp,
-            _history_digest=history_digest,
+            _history=history,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
         )
@@ -3447,8 +3490,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def _get_continuation_info(
         self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
-    ) -> tuple[str, int | None, OpenAIModelName | None] | None:
-        """If the last message is a suspended response from this provider, return continuation metadata."""
+    ) -> tuple[ModelResponse, str, int | None, OpenAIModelName | None] | None:
+        """If the last message is a suspended response from this provider, return it with continuation metadata."""
         if not messages:  # pragma: lax no cover
             return None
         last = messages[-1]
@@ -3472,6 +3515,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         last_sequence_number = details.get('last_sequence_number')
         return (
+            last,
             last.provider_response_id,
             last_sequence_number,
             cast(OpenAIModelName | None, last.model_name),
@@ -3855,9 +3899,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # (handled by `_map_messages`) without a `previous_response_id`.
                 if m.provider_details and m.provider_details.get('compaction'):
                     return None, messages, True
-                # The server continues from the history this response was created with, so if the
-                # messages before it have changed since (a history processor redacted or trimmed
-                # them, say), continuing would silently drop the change: resend everything instead.
+                # The server continues from this response and the history it was created with, so if
+                # either has changed since (a history processor redacted or trimmed them, say),
+                # continuing would silently drop the change: resend everything instead.
                 if self._history_changed(m, messages[:index]):
                     return None, messages, True
                 previous_response_id = m.provider_response_id
@@ -4587,6 +4631,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
+    _usage_received: bool | None = field(default=False, init=False)
     # Content segments are anonymous; reasoning segments also carry their field identity.
     _content_generation: int = field(default=0, init=False)
     _reasoning_generation: int = field(default=0, init=False)
@@ -4610,13 +4655,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                         'timestamp': self._provider_timestamp,
                     }
 
-                chunk_usage = self._map_usage(chunk)
-                if self._model_settings and self._model_settings.get('openai_continuous_usage_stats'):
-                    # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
-                    # so we replace rather than increment to avoid double-counting.
-                    self._usage = chunk_usage
-                else:
-                    self._usage += chunk_usage
+                # When continuous_usage_stats is enabled, each chunk contains cumulative usage,
+                # so we replace rather than increment to avoid double-counting.
+                cumulative = bool(self._model_settings and self._model_settings.get('openai_continuous_usage_stats'))
+                if chunk.usage is not None or not cumulative:
+                    self._add_usage(self._map_usage(chunk), reported=chunk.usage is not None, cumulative=cumulative)
 
                 if chunk.id:  # pragma: no branch
                     self.provider_response_id = chunk.id
@@ -4928,14 +4971,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
-    _history_digest: str | None = None
-    """The digest of the history this response was created from, recorded on it as `ModelResponse.history_digest`."""
+    _history: _Hasher | None = None
+    """The history this response was created from, digested with its parts as `ModelResponse.history_digest`."""
 
     def get(self) -> ModelResponse:
-        return _with_history_digest(super().get(), self._history_digest)
+        return _with_history_digest(super().get(), self._history)
 
     def _set_state(self, status: ResponseStatus | None) -> None:
         # `_track_background` stamps the `background` marker from `response.background` on every status
@@ -5099,7 +5143,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
                             mcp_list_tools_return_ids.add(item.id)
 
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
                     self._set_state(chunk.response.status)
 
@@ -5134,7 +5178,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     self._store_conversation_id(chunk.response)
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Record the terminal state first, so a failed background job isn't cancelled after the raise.
                     self._set_state(chunk.response.status)
                     if error := chunk.response.error:
@@ -5161,11 +5205,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         yield event
 
                 elif isinstance(chunk, (responses.ResponseInProgressEvent, responses.ResponseQueuedEvent)):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseIncompleteEvent):
-                    self._usage += self._map_usage(chunk.response)
+                    self._record_usage(chunk.response)
                     # Parity with the non-streaming `_process_response`: map the incomplete
                     # reason when the provider sends one, leave the finish reason unset otherwise.
                     raw_finish_reason = details.reason if (details := chunk.response.incomplete_details) else None
@@ -5630,6 +5674,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
+    def _record_usage(self, response: responses.Response) -> None:
+        self._add_usage(self._map_usage(response), reported=response.usage is not None)
+
     @property
     def model_name(self) -> OpenAIModelName:
         """Get the model name of the response."""
@@ -5961,9 +6008,11 @@ def _map_usage(
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
-                web_searches=web_search_requests, details={'web_search_requests': web_search_requests}
+                unmeasured_requests=1,
+                web_searches=web_search_requests,
+                details={'web_search_requests': web_search_requests},
             )
-        return usage.RequestUsage()
+        return usage.RequestUsage(unmeasured_requests=1)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {

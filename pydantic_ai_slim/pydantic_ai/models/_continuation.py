@@ -217,9 +217,10 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
         merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
-    # The turn was created from the history its first segment was, which is what continuing from it relies on.
-    if existing.history_digest is not None:
-        merged = replace(merged, history_digest=existing.history_digest)
+    # A segment that digested the whole response, like a retrieved background response, carries the turn's digest.
+    # Otherwise the first segment's is kept: it covers fewer parts than the turn has, so the next request resends
+    # the history rather than continuing from a response it can't vouch for.
+    merged = replace(merged, history_digest=new.history_digest or existing.history_digest)
     # Attempts that failed before an earlier segment (e.g. the models a `FallbackModel` moved on from
     # before the one that suspended) belong to the turn as a whole, so they are kept in order.
     if existing.failed_attempts:

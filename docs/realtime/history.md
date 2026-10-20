@@ -250,9 +250,9 @@ With transcription disabled:
   Gemini Live reports none, so a turn there is the audio sent since the last reply, recorded as the model
   replies to it;
 - with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn once the
-  provider has it (on xAI, commits made while a reply is still under way go out together after it, as one turn,
-  and one still held back when the session closes records nothing); a commit with no audio since the last one
-  records nothing;
+  provider has it, even if the session closes or the connection drops before the provider confirms the commit
+  (on xAI, commits made while a reply is still under way go out together after it, as one turn, and one still
+  held back when the session closes records nothing); a commit with no audio since the last one records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.
