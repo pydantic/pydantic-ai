@@ -39,6 +39,8 @@ result = agent.run_sync('Run the test suite and fix the first failure.')
 
 ## What the sandbox allows
 
+The wrapped workspace must run commands without a controlling terminal. `BubblewrapWorkspace` omits `bwrap --new-session` so the backend can stop foreground descendants on timeout or cancellation; with a controlling terminal, kernels permitting `TIOCSTI` could let sandboxed commands inject input into the host terminal. `LocalWorkspaceBackend` starts a new session and `SSHWorkspaceBackend` uses `ssh -T`, so both satisfy this requirement; custom backends must do so too.
+
 Inside the sandbox, commands see the host's files read-only, a private `/tmp` and no network, and can write only to the working directory. `/run` is empty, because host daemons such as Docker listen on sockets there, and a read-only mount doesn't stop a connection. `bwrap` must be able to give the sandbox its own user namespace, and the sandbox has no capabilities.
 
 When the working directory contains the host account's home directory, as an `SSHWorkspace` without a `working_dir` does, the files the host runs or reads when the next SSH connection logs in, before the command starts, are mounted read-only: `~/.ssh`, `~/.pam_environment`, and the startup files a login shell runs for a command (`~/.bashrc`, `~/.zshenv`, `~/.cshrc`, `~/.tcshrc` and `~/.config/fish`). Missing ones are created first, empty. If one of them is a symlink, the sandbox doesn't start, because a command could replace the link.
