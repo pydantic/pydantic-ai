@@ -18,6 +18,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hoo
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelRequestAttempt
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
@@ -642,3 +643,32 @@ async def test_failed_attempts_a_streamed_model_carries_are_counted():
         agent = Agent(model, deps_type=type(None), capabilities=capabilities)
         result = await agent.run('x', event_stream_handler=consume)
         assert (result.usage.input_tokens, result.usage.output_tokens) == (150, 201)
+
+
+async def test_a_streamed_fallback_model_under_a_plain_agent_keeps_its_attempts_and_usage():
+    """A `FallbackModel` streaming under an agent without `ModelFallback` keeps its failed attempts and the answer's usage."""
+
+    async def failing_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelAPIError(model_name='primary', message='boom')
+        yield ''  # pragma: no cover
+
+    async def answer_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    model = FallbackModel(
+        FunctionModel(stream_function=failing_stream, model_name='primary'),
+        FunctionModel(stream_function=answer_stream, model_name='answer'),
+    )
+    agent = Agent(model, deps_type=type(None))
+    async with agent.run_stream('x') as result:
+        assert await result.get_output() == 'hello'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == [
+        ('primary', 'error')
+    ]
+    assert (result.usage.input_tokens, result.usage.output_tokens, result.usage.requests) == (
+        response.usage.input_tokens,
+        response.usage.output_tokens,
+        1,
+    )

@@ -45,6 +45,7 @@ from pydantic_ai.durable_exec._toolset import ToolConfig
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UserError
 from pydantic_ai.messages import CapabilityEvent, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models import (
+    Model,
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
@@ -162,7 +163,7 @@ class RecordingDurability(BaseDurabilityCapability[Any]):
 
     replay_capability_operations = False
 
-    def __init__(self, *, models: Mapping[str, TestModel] | None = None) -> None:
+    def __init__(self, *, models: Mapping[str, Model] | None = None) -> None:
         super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.recorded_results: dict[str, Any] = {}
@@ -440,6 +441,25 @@ async def test_fallback_attempts_dispatch_through_durable_operations() -> None:
     assert (await agent.run('test')).output == 'from-fallback'
     assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
         ['fallback_durable__model.request', 'fallback_durable__model.request.registered']
+    )
+
+
+async def test_model_fallback_supplies_the_model_of_a_durable_agent_without_one() -> None:
+    """An agent with no model of its own can be made durable when `ModelFallback` supplies its first candidate."""
+
+    def failing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='failing', message='boom')
+
+    models: dict[str, Model] = {
+        'primary': FunctionModel(failing),
+        'secondary': TestModel(custom_output_text='from-secondary'),
+    }
+    durability = RecordingDurability(models=models)
+    agent = Agent(name='model_less_durable', capabilities=[ModelFallback('primary', 'secondary'), durability])
+
+    assert (await agent.run('test')).output == 'from-secondary'
+    assert [name for name, _ in durability.calls if '__model.' in name] == snapshot(
+        ['model_less_durable__model.request.primary', 'model_less_durable__model.request.secondary']
     )
 
 
