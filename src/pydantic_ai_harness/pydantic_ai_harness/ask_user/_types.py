@@ -28,8 +28,8 @@ MAX_QUESTION_LENGTH = 500
 def _printable(value: str, *, newlines: bool) -> str:
     """Reject control and format characters: these strings are drawn on terminals, and an escape sequence is an attack.
 
-    Space separators, such as the no-break and ideographic spaces, are ordinary text. Zero-width characters and
-    bidirectional overrides are not: they make two strings that differ look the same.
+    Space separators, such as the no-break and ideographic spaces, are ordinary text. Format characters, such as
+    zero-width spaces, joiners and bidirectional overrides, are not: they make two strings that differ look the same.
     """
     if not all(
         char.isprintable() or unicodedata.category(char) == 'Zs' or (newlines and char == '\n') for char in value

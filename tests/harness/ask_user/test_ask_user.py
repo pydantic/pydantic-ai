@@ -468,7 +468,7 @@ class TestSchema:
         ],
     )
     def test_invisible_formatting_is_rejected(self, label: str) -> None:
-        with pytest.raises(ValidationError, match='control characters'):
+        with pytest.raises(ValidationError, match='invisible formatting'):
             QuestionOption(label=label)
 
     def test_labels_that_only_differ_in_space_width_are_duplicates(self) -> None:
@@ -530,6 +530,7 @@ class TestCustomAnswers:
             ('custom', ('A',), 'cannot also select'),
             ('bad\x1b[31m', (), 'control characters'),
             ('bad\ttext', (), 'control characters'),
+            ('bad\u202etext', (), 'invisible formatting'),
         ],
     )
     def test_invalid_custom_answers(self, custom: str, selected: tuple[str, ...], message: str) -> None:
