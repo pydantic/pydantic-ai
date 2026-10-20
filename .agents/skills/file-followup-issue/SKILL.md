@@ -56,26 +56,26 @@ If a gate fails, do the alternative and **stop** — don't file:
    This also applies when deduplication skipped issue creation and Step 3 has no bound title.
    Never paste contributor text into double-quoted command arguments.
 
-   ```bash
-   title=$(cat <<'EOF'
-   defer: <short title of discovery>
-   EOF
-   )
-   decision=$(cat <<'EOF'
-   Filed as #<N> instead of fixing here
-   EOF
-   )
-   why=$(cat <<'EOF'
-   Out of scope for this PR — <decisions / uncertainty / blast-radius, pick one>
-   EOF
-   )
-   source=$(cat <<'EOF'
-   <new issue URL>
-   EOF
-   )
-   .agents/skills/branch-context/append-pr-decision.sh \
-     --title "$title" --decision "$decision" --why "$why" --source "$source"
-   ```
+```bash
+title=$(cat <<'EOF'
+defer: <short title of discovery>
+EOF
+)
+decision=$(cat <<'EOF'
+Filed as #<N> instead of fixing here
+EOF
+)
+why=$(cat <<'EOF'
+Out of scope for this PR — <decisions / uncertainty / blast-radius, pick one>
+EOF
+)
+source=$(cat <<'EOF'
+<new issue URL>
+EOF
+)
+.agents/skills/branch-context/append-pr-decision.sh \
+  --title "$title" --decision "$decision" --why "$why" --source "$source"
+```
 
 5. **Report** the issue URL. **Do not expand the current PR** — that's the whole point.
 
