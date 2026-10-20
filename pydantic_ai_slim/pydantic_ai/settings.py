@@ -721,6 +721,7 @@ ModelSettingName: TypeAlias = Literal[
     'stop_sequences',
     'extra_headers',
     'thinking',
+    'include_citations',
     'cache',
     'service_tier',
     'extra_body',
