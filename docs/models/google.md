@@ -509,7 +509,7 @@ Batch Mode isn't available on Google Cloud (Vertex AI), which runs batch predict
 BigQuery instead. Configure timeouts and custom headers on the client: per-request `timeout` and `extra_headers`
 are unsupported. Retrieve a job with the same API key that submitted it.
 
-A job that fails or is canceled before it writes any results doesn't report which requests it held, so retrieving its results raises the job's error, a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], for all of them.
+A job that fails or is canceled before it writes any results doesn't report which requests it held, so retrieving its results raises the job's error as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. `model_request_batch` reports that error for each of the job's requests, and an agent run waiting on the job raises it.
 
 ## Long decode
 

@@ -8,13 +8,14 @@ raised before anything is sent, and results the API rarely produces on demand.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import ModelRequest, ToolDefinition, UserPromptPart
+from pydantic_ai import ModelRequest, ModelResponse, ToolDefinition, UserPromptPart
+from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._batch_model import BatchPool
@@ -24,7 +25,7 @@ from pydantic_ai.settings import ModelSettings
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import BatchJob
+    from google.genai.types import BatchJob, BatchJobDestination, File, JobError, JobState
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -165,7 +166,10 @@ async def test_gemini_batch_handles_check_their_group_and_status(allow_model_req
         ),
         (
             {'state': 'JOB_STATE_CANCELLED'},
-            (ModelAPIError, 'The batch job was canceled before the model ran the request.'),
+            (
+                ModelHTTPError,
+                "status_code: 499, model_name: gemini-2.5-flash-lite, body: {'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}}",
+            ),
         ),
         ({'state': 'JOB_STATE_EXPIRED'}, None),
     ],
@@ -227,3 +231,49 @@ def test_gemini_batch_error_raises_the_http_error_of_its_rpc_code(error: dict[st
         model.batch_decode(result, _request())
     assert exc_info.value.status_code == status_code
     assert exc_info.value.body == {'error': error}
+
+
+async def test_model_request_batch_keeps_other_jobs_results_when_one_fails(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job that failed without results fails only its own requests; the other jobs' responses are kept."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    batches = model.client.aio.batches
+    files = model.client.aio.files
+    uploads: list[bytes] = []
+
+    async def upload(*, file: Any, config: Any = None) -> File:
+        uploads.append(file.getvalue())
+        return File(name=f'files/input-{len(uploads)}')
+
+    async def create(*, model: str, src: str, config: Any = None) -> BatchJob:
+        return BatchJob(name=f'batches/{src.rsplit("-", 1)[1]}', state=JobState.JOB_STATE_PENDING)
+
+    async def get(*, name: str, config: Any = None) -> BatchJob:
+        if name == 'batches/1':
+            return BatchJob(
+                name=name, state=JobState.JOB_STATE_SUCCEEDED, dest=BatchJobDestination(file_name='files/out-1')
+            )
+        return BatchJob(name=name, state=JobState.JOB_STATE_FAILED, error=JobError(code=8, message='Quota exceeded.'))
+
+    async def download(*, file: str, config: Any = None) -> bytes:
+        key = json.loads(uploads[0])['key']
+        response = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hi!'}]}, 'finishReason': 'STOP'}]}
+        return json.dumps({'key': key, 'response': response}).encode()
+
+    monkeypatch.setattr(files, 'upload', upload)
+    monkeypatch.setattr(files, 'download', download)
+    monkeypatch.setattr(batches, 'create', create)
+    monkeypatch.setattr(batches, 'get', get)
+
+    first, second = await model_request_batch(
+        model,
+        [_request('first'), _request('second')],
+        max_requests=1,
+        poll_interval=timedelta(milliseconds=1),
+        max_poll_interval=timedelta(milliseconds=1),
+    )
+
+    assert isinstance(first, ModelResponse) and first.text == 'Hi!'
+    assert isinstance(second, ModelHTTPError)
+    assert second.status_code == 429

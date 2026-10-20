@@ -9,13 +9,20 @@ from typing import TYPE_CHECKING
 
 from pydantic_core import to_json
 
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import ModelResponse
 from ..settings import ModelSettings
 from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 if TYPE_CHECKING:
     from . import Model, ModelRequestParameters
+
+
+class BatchJobError(ModelHTTPError):
+    """The error of a batch job that ended without results for its requests, which it doesn't name, so it's theirs.
+
+    `model_request_batch` reports it for each of the job's requests, as other jobs' results are still valid.
+    """
 
 
 def shared_group(requests: Sequence[EncodedBatchRequest], provider: str, causes: str) -> str:

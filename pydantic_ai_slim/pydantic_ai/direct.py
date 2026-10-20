@@ -24,6 +24,7 @@ from ._sync_stream import SyncStreamBridge
 from ._utils import run_until_complete as _run_until_complete
 from .exceptions import ModelAPIError, UserError
 from .models import StreamedResponse, batch as batch_models, instrumented as instrumented_models
+from .models._batch_codec import BatchJobError
 from .models._batch_settings import DEFAULT_MAX_POLL_INTERVAL, DEFAULT_POLL_INTERVAL, check_batch_settings
 from .models._request_timeout import enforce_request_deadline, open_request_stream, start_request_deadline
 
@@ -193,10 +194,13 @@ async def model_request_batch(
         groups.setdefault(encoded.group, []).append(encoded)
 
     batches: list[batch_models.Batch] = []
+    batch_custom_ids: list[list[str]] = []
     try:
         for group in groups.values():
             for start in range(0, len(group), batch_size):
-                batches.append(await model_instance.batch_create(group[start : start + batch_size]))
+                chunk = group[start : start + batch_size]
+                batches.append(await model_instance.batch_create(chunk))
+                batch_custom_ids.append([encoded.custom_id for encoded in chunk])
         for index, batch in enumerate(batches):
             batches[index] = await _wait_for_batch(
                 model_instance,
@@ -204,9 +208,13 @@ async def model_request_batch(
                 poll_interval=poll_interval,
                 max_poll_interval=max_poll_interval,
             )
-        results = {
-            result.custom_id: result for batch in batches for result in await model_instance.batch_results(batch)
-        }
+        results: dict[str, batch_models.BatchResult | BatchJobError] = {}
+        for batch, custom_ids in zip(batches, batch_custom_ids, strict=True):
+            try:
+                results.update({result.custom_id: result for result in await model_instance.batch_results(batch)})
+            except BatchJobError as error:
+                # The job ended without results, so its error is each of its requests' outcome.
+                results.update(dict.fromkeys(custom_ids, error))
     except BaseException:
         await _cancel_batches(model_instance, batches)
         raise
@@ -216,6 +224,9 @@ async def model_request_batch(
         result = results.get(request.custom_id) or batch_models.BatchResult(
             custom_id=request.custom_id, status='expired'
         )
+        if isinstance(result, BatchJobError):
+            responses.append(result)
+            continue
         try:
             responses.append(model_instance.batch_decode(result, request))
         except ModelAPIError as error:
