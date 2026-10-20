@@ -122,7 +122,8 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
     # followed by a second assistant turn.
     first_request, summary, last_request, last_response = transcript.messages
     assert isinstance(summary, ModelResponse) and isinstance(first_request, ModelRequest)
-    assert isinstance(last_request, ModelRequest) and last_request.parts[0].content == 'one more'
+    assert isinstance(last_request, ModelRequest)
+    assert [part.content for part in last_request.parts if isinstance(part, UserPromptPart)] == ['one more']
     [request_part] = first_request.parts
     assert summary.parts == [CompactionPart(content='the gist')] and isinstance(request_part, UserPromptPart)
     assert request_part.content == 'hello there', 'harness keeps the first user message verbatim'
