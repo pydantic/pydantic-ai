@@ -119,7 +119,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 
 1. Write the discussion artifact to repo-root `PLAN.md` so it is tracked in the plan-only PR.
 2. Commit `PLAN.md` only.
-3. Follow the tracked `pushing-commits-to-the-repo` skill through its independent pre-push review,
+3. Follow the tracked `pushing-commits-to-the-repo` skill through its pre-push gate, including applicable exemptions,
    then push and create a ready-for-review PR. Use a draft only when the user explicitly asks:
    - Title: concise description of the change
    - Body: follow the tracked `pushing-commits-to-the-repo` skill. Put each closing issue reference
@@ -136,7 +136,7 @@ Ask: 'Based on my research, I assess this as [simple/complex]. [1-2 sentence rea
 2. Implement changes per plan
 3. Run `make format && make lint` — fix issues until clean
 4. Commit all changes, then follow the tracked `pushing-commits-to-the-repo` skill through its
-   independent pre-push review gate
+   pre-push gate, including applicable exemptions
 5. Push and create PR:
    - Title: concise description of the change
    - Body: follow the tracked `pushing-commits-to-the-repo` skill, including closing issue placement

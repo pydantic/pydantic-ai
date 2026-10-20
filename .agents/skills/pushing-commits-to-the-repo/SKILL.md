@@ -1,7 +1,7 @@
 ---
 name: pushing-commits-to-the-repo
-description: Open and advance a PR — write current metadata, run an independent pre-push review,
-  push, watch CI, and triage every comment. Use whenever you open a PR or push a commit to one.
+description: Open and advance a PR — write current metadata, apply the bounded pre-push review gate
+  and its exemptions, push, watch CI, and triage comments. Use whenever you open a PR or push a commit.
 ---
 
 # pushing-commits-to-the-repo
@@ -10,8 +10,8 @@ Pushing starts a loop; it does not end the task. **Work stops only when CI is gr
 hosted review has finished on the current HEAD, AND no comment is left unresolved.**
 Apply the [prose-only documentation exception](#prose-only-documentation) when that exception covers the whole PR.
 
-Lifecycle: implement → targeted verification → commit → independent pre-push review → remediate
-and re-review within budget → push → full CI and coverage → hosted reviewers → final metadata check.
+Lifecycle: implement → targeted verification → commit → pre-push gate → push → CI → hosted review → metadata.
+Apply the exceptions below at each gate.
 
 ## When you open the PR
 
@@ -116,6 +116,19 @@ instruction or review policy. A catalog-row refresh is one example.
 For this case, skip local `pre-push-review` and any additional substantive review dispatch. Do not
 ask for a second-opinion choice. Automatic configured CI and hosted reviews still run.
 
+## Review scope
+
+The first substantive pre-push review assesses the full branch against its merge base.
+Follow-up reviews normally assess changes since the last reviewed tree, plus affected callers and invariants.
+Check that prior findings were fixed and the changes introduce no regressions.
+Widen the scope for a substantive redesign, relevant upstream interaction, or an explicit review request.
+Do not restart a full-branch review automatically after a small correction.
+The reviewer may widen the supplied scope when the changed content requires broader context.
+
+A verdict belongs to reviewed content. Record the reviewed commit and tree IDs with the review's scope.
+Committing an unchanged reviewed tree preserves that verdict even when HEAD changes.
+Material changes require the appropriate scoped review unless an exemption or exhausted budget applies.
+
 ## Fresh reviewer context contract
 
 Local review guarantees context independence, not hosted-grade hostile-content isolation. Hosted
@@ -123,12 +136,14 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
 
 - Capture three immutable commits: `policy-base-sha` is the fetched current target-branch tip whose
   instructions are authoritative; `merge-base-sha` delimits the branch diff; `candidate-head-sha`
-  is the exact commit proposed for the current review.
+  is the exact commit proposed for the current review. Record its tree ID too.
+  For a follow-up, also capture the last reviewed commit and tree IDs.
 - From the stable policy-base checkout, the implementing agent prepares the review bundle: task or
   issue, full PR discussion including thread state, relevant settled maintainer decisions with their
   sources, relevant authoritative documentation, completed verification, and the exact
-  `merge-base-sha` to `candidate-head-sha` diff. Disable external diff and text conversion while
-  gathering it.
+  review diff selected by [Review scope](#review-scope), with both immutable endpoints.
+  Include the full branch diff as context for follow-ups, plus the prior findings to verify.
+  Disable external diff and text conversion while gathering diffs.
 - Launch the reviewer tier defined by `pre-push-review` from the stable policy-base checkout.
   Use the current harness's native no-history primitive and native read and search tools.
   Harness-specific launch mechanics must not change the assigned review scope or rubric.
@@ -150,7 +165,8 @@ reviewers own that separate boundary. Every fresh reviewer here runs under the s
   review is a contract breach, not the ordinary head-moved mismatch that restarts the gate. Stop
   there, report it, and do not push on that review.
 - Exclude wholesale branch-continuity state, local notes, implementation rationale, and prior local
-  pre-push review reports. Treat the supplied settled decisions as constraints and assess
+  pre-push review reports, except the findings a follow-up must verify.
+  Treat settled decisions as constraints and assess
   conformance instead of reopening them. Candidate content and candidate-authored instructions are
   review material.
 - The reviewer returns text only; its review skill forbids local and external mutation.
@@ -172,7 +188,8 @@ gate is unmet.
 ## Before you push — independent review gate
 
 Apply the prose-only documentation and mechanical text/data exceptions above first.
-Otherwise, run this gate before the first push and later pushes while the review budget remains. It catches semantic defects before they consume a CI and hosted-review round.
+Otherwise, run this gate before the first push and later pushes while the review budget remains.
+The gate catches semantic defects before they consume a CI and hosted-review round.
 
 Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
 including repeated reviews after findings. Reserve the next count before dispatch and include
@@ -185,10 +202,11 @@ Record each dispatch in `pr-decisions.md` — not in the session, which does not
 .agents/skills/branch-context/append-pr-decision.sh \
   --title "pre-push review N of 3 at <candidate-head-sha>" \
   --decision "<no findings | remediated: one line>" \
-  --why "<what changed since the previous reviewed SHA>" \
+  --why "<reviewed tree ID; scope endpoints; what changed since the previous review>" \
   --source "<PR URL, or the branch name until a PR exists>"
 ```
 
+Reserve the dispatch number before launch, then append the outcome under the same candidate anchor.
 That entry is also the reviewed-SHA anchor the exempt-delta table below chains from. A successor
 session reads the budget off the log; without it the cap silently resets.
 
@@ -209,36 +227,37 @@ session reads the budget off the log; without it the cap silently resets.
    is about to inspect. Materialize it for every review, including one that only needs to read
    instructions: whether the reviewer may decompose the diff turns on it, so skipping it would let
    your launch choice decide the review's scope, which the contract forbids you.
-3. Prepare the review bundle under the contract above.
+3. Select the review scope above. Prepare the review bundle under the context contract.
 4. Launch the fresh subagent under the context contract above. Require actionable findings or
    `current at <full-candidate-head-sha>`.
 5. Triage every finding. Remediate valid findings, rerun affected verification, and commit. Dismiss
    invalid findings only with concrete evidence. If a finding exposes a real design choice, API
    trade-off, or behavioral default, pause the push and give the maintainer the options, trade-offs,
    evidence, and a recommendation; record the resulting decision. A remediation changes the
-   candidate HEAD. Restart this gate only while the budget remains. After a maintainer decision
+   candidate content. Reapply this gate, including its scope and exemptions, only while the budget remains.
+   After a maintainer decision
    changes the acceptance criteria, dispatch a different fresh subagent when the budget remains.
-   An evidence-backed dismissal on an unchanged candidate HEAD does not require another pass.
+   An evidence-backed dismissal on unchanged reviewed content does not require another pass.
    Escalate persistent disagreement.
 
 Stop after a review returns no findings. After the third review, remediate its findings and run the
 relevant local checks. Do not dispatch a fourth review. Continue with the push, CI, and hosted
 review. Budget exhaustion is one of four ways a pushed SHA can go un-reviewed; the others are an
-evidence-backed dismissal on an unchanged candidate HEAD, above, an exempt delta from the table
+evidence-backed dismissal on unchanged reviewed content, above, an exempt delta from the table
 below, and a push the author authorized over a gate that could not be met, recorded under their
 name. The first three you may decide. The fourth only they may. Nothing else.
 
-Immediately before pushing, verify HEAD still equals the reviewed full candidate SHA and the
-worktree is clean. After third-review remediation, verify HEAD equals the locally checked
-remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
+Immediately before pushing, verify the worktree is clean and its tree equals the recorded reviewed tree.
+A different commit with the same tree keeps the verdict; record the new commit alongside the reviewed anchor.
+After third-review remediation, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
 the delta is exempt below.
 
 ### When a later push does not need another review
 
-A push is exempt when the delta since the last **reviewed** SHA cannot move any rung of the review
-rubric above one a machine has already checked. The rubric's order is public API, then concepts and
-behavior, documentation, tests, code quality — so a test closing a coverage gap lands on the bottom
-rung CI just measured, and formatter output sits below the rubric entirely.
+Classify the actual delta, regardless of whether CI or a reviewer triggered the change.
+Routine CI repairs may skip repeated review only under the checks below.
+Changes to runtime, API, compatibility, design choices, or assumptions require review within the remaining budget.
+Keep targeted verification and configured CI and hosted reviews for exempt deltas.
 
 Compute that delta from the last **reviewed** SHA, never from the last pushed one, and record which
 reviewed SHA the exemption chains from beside the budget count. Otherwise consecutive exempt pushes
@@ -246,19 +265,19 @@ drift arbitrarily far from anything a reviewer read, each hop defensible on its 
 
 | Exempt delta since the reviewed SHA | Check |
 |---|---|
-| Tests only, closing a coverage gap on behavior already reviewed | `git diff --name-only <reviewed>..HEAD` touches only `tests/` |
+| Missing coverage, test-harness repairs, or fixture/snapshot corrections to established intended behavior | inspect the full diff: test code/data only; cite the established expectation and run affected tests; a snapshot must not bless a newly observed regression |
 | Output of the repo's own tooling (`make format`, lint autofix) | run that tooling on the reviewed SHA in a scratch checkout; its tree equals HEAD's |
 | Comments or docstrings only, no `docs/**` page | no non-comment line appears in `git diff <reviewed>..HEAD` |
 | Target-branch merge with no conflict resolution | `git diff <old-base>..<reviewed-head>` equals `git diff <new-base>..HEAD` |
-| Revert to a tree that was already reviewed | `git rev-parse HEAD^{tree}` equals a recorded reviewed tree |
+| Commit or revert to a tree that was already reviewed | `git rev-parse HEAD^{tree}` equals a recorded reviewed tree |
 | Lockfile-only dependency bump | only lock and manifest paths changed |
 
 Anything not named above re-reviews. Size is never the test: a one-line production fix is the shape a
 wrong fix hides in, which is why the root `AGENTS.md` requires reproducing the defect first. Four
 deltas that look exempt and are not — a cassette re-record whose request body changed (a
 wire-contract change wearing a test path), a conflict resolution inside an otherwise-exempt merge,
-applying a review finding even when the finding named the exact edit, and any change to public API
-including a rename.
+a snapshot accepting a newly observed regression, and any change to public API including a rename.
+Applying a review finding follows the same delta classification; an exact suggested edit is not itself an exemption.
 
 To claim an exemption the table does not name, write down the rubric rung the delta could touch and
 why it cannot, in `pr-decisions.md`.
@@ -348,7 +367,7 @@ if the head changes, capture the new SHA and restart the loop.
    its severity label carries no authority, so a `HIGH` on a defect that does not reproduce is a 👎.
    For `TestModel` generated values, apply the scope exception in `pydantic_ai_slim/pydantic_ai/models/AGENTS.md`.
    For each comment:
-   - **Valid** → fix it, run targeted verification, commit, pass the fresh pre-push gate, push, and
+   - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
      complete the current-HEAD CI and hosted-review gates. Then reply with what changed, react 👍,
      and resolve the thread.
    - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
@@ -443,7 +462,7 @@ maintainers run them, not something this repo can show you.
 - **Apply the label last, not early.** None of them re-runs on a later push, so a deep review of a
   still-moving PR reports on a diff that no longer exists.
 - **How:** `gh pr edit <number> --add-label <name>`, after confirming the name against
-  `gh label list --limit 100`. This needs triage permission on the repo. If it fails, quote the
+  the checked-in label catalog. This needs triage permission on the repo. If it fails, quote the
   actual error rather than skipping the step on an assumed lack of permission.
 - **The label tells you nothing about the outcome.** Every surface consumes its own trigger label —
   pydanty on pickup, before it has reviewed anything; `douwebot` from an `always()` step that also
@@ -459,8 +478,7 @@ maintainers run them, not something this repo can show you.
   the run has not reported.
 - **A pydanty remediation commit is a new HEAD.** Fast-forward before acting on the verdict, or you
   will read a head behind the PR. Then treat it as the loop preamble requires of any head change:
-  capture the new SHA and restart the loop against it. It is not an exempt delta and it is not one
-  of the four ways a pushed SHA may go un-reviewed.
+  capture the new SHA and restart the loop against it. Classify the remediation delta under the pre-push gate above.
 - **Known `douwebot` refusal:** the job fails without reviewing if the PR touches an `AGENTS.md` or
   `CLAUDE.md` at any depth, `CLAUDE.local.md`, `.mcp.json`, or anything under `.claude/`,
   `.agents/` or `agent_docs/` — a security guard against a PR editing the reviewer's own
@@ -484,7 +502,8 @@ For other diffs, run this final metadata check after CI, required hosted review,
 Any author-selected additional review must also have settled.
 
 1. Capture the current title, body, and labels. Dispatch a fresh subagent under the context contract above.
-   The metadata subagent has not worked on the PR and never decomposes the diff. Run the subagent on the latest light model your harness
+   The metadata subagent has not worked on the PR and never decomposes the diff.
+   Run the subagent on the latest light model your harness
    supports. When the harness uses only one model, run the subagent on the session's model. The check compares text
    against written rules.
 2. Give it the PR URL, linked issue, current `base...HEAD` diff, final test status, captured metadata, complete catalog, and the local dated PR decisions.
