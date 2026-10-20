@@ -148,7 +148,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     max_steps: int = 50
     """Hard cap on the sub-agent's perception-action steps per `browse_web` call.
 
-    Each step is one LLM call, before planning, judge, and extraction calls. On the
+    Each step is one LLM call, not counting planning, judge, and extraction calls. On the
     last step browser-use makes the agent give a final answer, which the tool labels
     as incomplete when the agent reports failure.
     """
@@ -170,7 +170,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     """
 
     sensitive_data: dict[str, str | dict[str, str]] | None = field(default=None, repr=False)
-    """Secrets the sub-agent may type without the values entering its prompt.
+    """Secrets the sub-agent may type without the values entering its own messages.
 
     Kept out of `repr()`, so the values do not reach a traceback, a log line, or a span
     attribute.
@@ -179,10 +179,11 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     `{'x_password': '...'}`; the model writes `<secret>x_password</secret>`)
     and substitutes the real values into the action. Screenshots are not redacted,
     so a value typed into a visible, non-password field reaches the model when
-    `use_vision` is on. Scope entries per domain with the nested form
+    `use_vision` is on, and the page-extraction and judge models receive a value
+    the agent writes into an `extract` query or its final answer. Scope entries per domain with the nested form
     `{'https://example.com': {'x_password': '...'}}`. Flat entries require a
     non-empty `allowed_domains` on the capability or `browser_profile` with explicit
-    hostnames, and are substituted only on pages that allowlist names.
+    hostnames, and are substituted only on the hosts that allowlist names.
     Secret-bearing sessions process same-origin frames only, the default factory
     removes browser-use's `evaluate` action, and `browse_web` replaces any secret
     value in its result with the placeholder.

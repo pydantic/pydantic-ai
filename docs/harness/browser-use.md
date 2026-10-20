@@ -175,12 +175,13 @@ as a clean answer.
 
 ## Secrets
 
-`sensitive_data` keeps credentials out of the sub-agent's prompt: the model is
-shown only placeholder keys and writes `<secret>key</secret>`, and browser-use
-substitutes the real value into the action. Screenshots are not redacted, so a
-value typed into a visible, non-password field reaches the model while
-`use_vision` is on. Scope entries to a domain with the nested form, and combine
-with `allowed_domains`:
+`sensitive_data` keeps credentials out of the browser agent's own messages: the
+model is shown only placeholder keys and writes `<secret>key</secret>`, and
+browser-use substitutes the real value into the action. Screenshots are not
+redacted, so a value typed into a visible, non-password field reaches the model
+while `use_vision` is on, and the page-extraction and judge models receive a
+value the agent writes into an `extract` query or its final answer. Scope
+entries to a domain with the nested form, and combine with `allowed_domains`:
 
 ```python
 from pydantic_ai_harness import BrowserUse
@@ -196,8 +197,8 @@ non-empty `allowed_domains` allowlist with explicit hostnames on the capability
 or `browser_profile`. Host globs, including `'*.example.com'`, and catch-all
 entries such as `'*'` and `'https://*'` are rejected. Use the domain-scoped
 nested form shown above when the allowed domains are not known in advance.
-Flat values are substituted only on pages the allowlist names, not on `data:`
-pages, which browser-use's navigation guard always admits.
+Flat values are substituted only on the hosts the allowlist names, not on
+`data:` pages, which browser-use's navigation guard always admits.
 
 browser-use substitutes a placeholder in any action, not only when typing. So
 whenever `sensitive_data` is configured, BrowserUse:
@@ -268,7 +269,7 @@ domain, so add `allowed_domains` to bound where such a request can go.
   `block_ip_addresses`, and `cdp_url` override the profile when set, exactly like directly passed
   fields on a hand-built `BrowserSession`.
 - **Step budget.** `max_steps` (default 50) caps the sub-agent's loop; each
-  step is one of its model calls, before planning, judge, and extraction calls.
+  step is one of its model calls, not counting planning, judge, and extraction calls.
   On the last step browser-use makes the agent give a final answer, which the
   tool labels as incomplete when the agent reports failure.
 - **Sub-agent instructions.** `extend_system_message` appends standing
@@ -350,7 +351,7 @@ BrowserUse(
     max_steps=50,                # cap on sub-agent steps per call (one LLM call each)
     use_vision=True,             # send screenshots; 'auto' follows the model, False disables
     output_schema=None,          # Pydantic model class for a structured, validated result
-    sensitive_data=None,         # secrets typed by the browser, kept out of the model's prompt
+    sensitive_data=None,         # secrets typed by the browser, kept out of the agent's messages
     extend_system_message=None,  # extra standing instructions for the sub-agent
     agent_settings=None,         # BrowserAgentSettings: supported Agent options
     session_scope='call',        # 'call' = fresh browser per call; 'agent' = one shared session

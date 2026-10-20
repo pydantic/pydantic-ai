@@ -104,7 +104,13 @@ def _normalize_allowed_domain(domain: str) -> list[str]:
         rest = f'{authority.lower()}{slash}{path}'
         domain = f'{scheme}://{rest}'
         if fnmatch('file', scheme):
-            return [f'{matched}://{rest}' for matched in ('http', 'https') if fnmatch(matched, scheme)]
+            # Each narrowed entry is normalized again, so it gets the path boundary below.
+            return [
+                entry
+                for matched in ('http', 'https')
+                if fnmatch(matched, scheme)
+                for entry in _normalize_allowed_domain(f'{matched}://{rest}')
+            ]
         parsed = urlsplit(domain)
         if (
             parsed.scheme in ('http', 'https')
@@ -208,21 +214,21 @@ def _scope_flat_secrets(
 
     browser-use substitutes a flat secret on any page, including `data:` URLs, which its
     navigation guard admits whatever the allowlist says. Keying each flat secret by the
-    allowlist entries restricts substitution to pages the allowlist names. A domain-scoped
-    entry the caller wrote for the same key wins over the flat value.
+    allowlist entries restricts substitution to the hosts the allowlist names. A
+    domain-scoped value the caller wrote for the same placeholder wins over the flat one.
     """
     if sensitive_data is None or not allowed_domains:
         return sensitive_data
     flat = {key: value for key, value in sensitive_data.items() if isinstance(value, str)}
     if not flat:
         return sensitive_data
-    scoped: dict[str, str | dict[str, str]] = {
-        key: value for key, value in sensitive_data.items() if isinstance(value, dict)
-    }
-    for pattern in allowed_domains:
-        scope = _secret_scope(pattern)
-        existing = scoped.get(scope)
-        scoped[scope] = {**flat, **existing} if isinstance(existing, dict) else dict(flat)
+    scoped: dict[str, str | dict[str, str]] = {_secret_scope(pattern): dict(flat) for pattern in allowed_domains}
+    # Added after the allowlist scopes: browser-use merges every key matching a page in dict
+    # order, so the later, caller-written value wins over the flat one.
+    for key, value in sensitive_data.items():
+        if isinstance(value, dict):
+            existing = scoped.pop(key, None)
+            scoped[key] = {**existing, **value} if isinstance(existing, dict) else value
     return scoped
 
 
@@ -243,7 +249,7 @@ def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None)
         if value:
             placeholder = f'<secret>{key}</secret>'
             placeholders.setdefault(value, placeholder)
-            placeholders.setdefault(json.dumps(value)[1:-1], placeholder)
+            placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
     return placeholders
 
 
@@ -605,7 +611,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # list, so the profile allowlist only reaches the navigation guard when the
         # direct one is absent. Normalization also runs in `BrowserUse.__post_init__`,
         # which reports a bad allowlist at construction; repeating it here covers a
-        # `BrowserUseToolset` built directly, and the transform is idempotent.
+        # `BrowserUseToolset` built directly. The transform is idempotent.
         allowed_domains = (
             self._allowed_domains if self._allowed_domains is not None else browser_profile.allowed_domains
         )

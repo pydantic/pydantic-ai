@@ -30,7 +30,7 @@ from browser_use.llm.messages import BaseMessage
 from browser_use.llm.views import ChatInvokeCompletion
 from browser_use.telemetry.service import ProductTelemetry
 from browser_use.telemetry.views import BaseTelemetryEvent
-from browser_use.utils import match_url_with_domain_pattern
+from browser_use.tools.registry.service import Registry
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent
@@ -104,6 +104,12 @@ class _FakeChatModel:
 class _Facts(BaseModel):
     name: str
     price_usd: int
+
+
+class _Typed(BaseModel):
+    """Action parameters browser-use fills secret placeholders into."""
+
+    text: str
 
 
 def _validation_error() -> ValidationError:
@@ -1339,11 +1345,11 @@ class TestSensitiveDataSafety:
 
     async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
         """JSON escapes a `"` in the value, so the escaped form is redacted too."""
-        facts = _Facts(name='pa"ss', price_usd=1)
+        facts = _Facts(name='pa"ssé', price_usd=1)
         history = _FakeHistory(result=facts.model_dump_json(), success=True, structured=facts)
         capability = BrowserUse[None](
             output_schema=_Facts,
-            sensitive_data={'https://safe.example': {'x_password': 'pa"ss'}},
+            sensitive_data={'https://safe.example': {'x_password': 'pa"ssé'}},
             browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
         )
 
@@ -1371,13 +1377,17 @@ class TestSensitiveDataSafety:
     async def test_flat_secrets_are_scoped_to_the_allowlist(self, kill_calls: list[BrowserSession]) -> None:
         """browser-use substitutes a flat secret on any page, `data:` URLs included, which no allowlist blocks.
 
-        Keyed by the allowlist instead, browser-use's own secret matcher substitutes it only there.
-        A domain-scoped value the caller wrote for the same key wins over the flat one.
+        Keyed by the allowlist instead, browser-use's own substitution fills it in only there,
+        and a domain-scoped value the caller wrote for the same placeholder still wins.
         """
         factory = _success_factory()
         capability = BrowserUse[None](
             allowed_domains=['safe.example', 'https://login.safe.example/sso'],
-            sensitive_data={'x_password': 'hunter2', 'http*://safe.example': {'x_password': 'scoped'}},
+            sensitive_data={
+                'x_password': 'hunter2',
+                'https://safe.example': {'x_password': 'scoped'},
+                'http*://www.safe.example': {'x_password': 'www-only'},
+            },
             browser_agent=factory,
         )
 
@@ -1385,18 +1395,26 @@ class TestSensitiveDataSafety:
 
         sensitive_data = factory.requests[0].sensitive_data
         assert sensitive_data is not None
-        assert sensitive_data == {
-            'http*://safe.example': {'x_password': 'scoped'},
-            'http*://www.safe.example': {'x_password': 'hunter2'},
-            'https://login.safe.example': {'x_password': 'hunter2'},
+        registry = Registry[None]()
+        substituted = {
+            url: registry._replace_sensitive_data(  # pyright: ignore[reportPrivateUsage]
+                _Typed(text='<secret>x_password</secret>'), sensitive_data, url
+            ).model_dump()['text']
+            for url in [
+                'https://safe.example/login',
+                'https://www.safe.example/',
+                'https://login.safe.example/sso/start',
+                'data:text/html,<input>',
+                'https://attacker.test/',
+            ]
         }
-        for url, matched in [
-            ('https://safe.example/login', 'http*://safe.example'),
-            ('https://login.safe.example/sso/start', 'https://login.safe.example'),
-        ]:
-            assert [scope for scope in sensitive_data if match_url_with_domain_pattern(url, scope)] == [matched]
-        for url in ['data:text/html,<input>', 'https://attacker.test/', 'about:blank']:
-            assert not any(match_url_with_domain_pattern(url, scope) for scope in sensitive_data)
+        assert substituted == {
+            'https://safe.example/login': 'scoped',
+            'https://www.safe.example/': 'www-only',
+            'https://login.safe.example/sso/start': 'hunter2',
+            'data:text/html,<input>': '<secret>x_password</secret>',
+            'https://attacker.test/': '<secret>x_password</secret>',
+        }
 
     async def test_domain_scoped_secrets_are_forwarded_unchanged(self, kill_calls: list[BrowserSession]) -> None:
         factory = _success_factory()
@@ -1843,3 +1861,32 @@ class TestLocalFileNavigation:
         """At 100 entries browser-use converts the list to a set, which no normalized entry matches."""
         with pytest.raises(ValueError, match='by exact hostname only'):
             BrowserUse[None](allowed_domains=[f'site{index}.com' for index in range(50)])
+
+    async def test_a_narrowed_scheme_glob_gets_a_path_boundary(self, kill_calls: list[BrowserSession]) -> None:
+        """Narrowing `*://host` to `http`/`https` must not leave a bare prefix that matches `host.attacker.test`.
+
+        Built directly, the toolset normalizes once, so the narrowed entries need the boundary on that pass.
+        """
+        factory = _success_factory()
+        toolset = BrowserUseToolset[None](
+            browser_agent=factory,
+            llm=None,
+            browser_profile=None,
+            allowed_domains=['*://trusted.example'],
+            block_ip_addresses=True,
+            headless=None,
+            max_steps=10,
+            use_vision=True,
+            output_schema=None,
+            sensitive_data=None,
+            extend_system_message=None,
+            settings=BrowserAgentSettings(),
+            session_scope='call',
+            cdp_url=None,
+        )
+        await toolset.browse_web(_ctx(), 'task')
+        session = factory.requests[0].browser_session
+
+        assert session.browser_profile.allowed_domains == ['http://trusted.example/*', 'https://trusted.example/*']
+        assert await self._navigation_allowed(session, 'https://trusted.example/page') is True
+        assert await self._navigation_allowed(session, 'https://trusted.example.attacker.test/') is False
