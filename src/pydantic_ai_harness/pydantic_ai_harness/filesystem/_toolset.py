@@ -442,8 +442,8 @@ def _repeats_at(pattern: str, index: int) -> bool:
     return high is None or not high or int(high) > 1
 
 
-_VERBOSE_FLAG = re.compile(r'\(\?[a-zA-Z]*x')
-"""An inline verbose flag, global (`(?x)`) or scoped (`(?x:...)`)."""
+_SCOPED_FLAGS = re.compile(r'\(\?(?P<on>[a-zA-Z]*)(?:-(?P<off>[a-zA-Z]*))?:')
+"""The opening of a group with scoped inline flags, such as `(?x:` or `(?i-x:`."""
 
 
 def _skip_insignificant(pattern: str, index: int, verbose: bool) -> int:
@@ -459,18 +459,19 @@ def _skip_insignificant(pattern: str, index: int, verbose: bool) -> int:
     return index
 
 
-def _has_nested_quantifier(pattern: str) -> bool:
+def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
     """Whether a repeated group itself contains a repetition, as `(a+)+` and `(.*a){12}` do.
 
     That shape can make a backtracking engine such as Python's `re` take exponential or high
     polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
     This is a heuristic for the common shape: it also refuses some harmless patterns, such as
-    `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`. With a verbose flag
-    anywhere in it, the whole pattern is scanned as verbose, so whitespace or a comment between a
-    group and its quantifier cannot hide the nesting.
+    `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`. `verbose` says whether
+    the compiled pattern is verbose as a whole; a scoped `(?x:...)` group is tracked here. Where
+    verbose mode applies, whitespace and comments are skipped as `re` skips them, so they cannot
+    hide a quantifier from the check.
     """
-    verbose = _VERBOSE_FLAG.search(pattern) is not None
-    enclosing: list[bool] = []
+    # Each open group saves the enclosing group's `repeats` and verbose mode, restored when it closes.
+    enclosing: list[tuple[bool, bool]] = []
     repeats = False  # whether the innermost open group repeats anything so far
     index = 0
     while (index := _skip_insignificant(pattern, index, verbose)) < len(pattern):
@@ -485,13 +486,23 @@ def _has_nested_quantifier(pattern: str) -> bool:
             index += pattern.startswith(']', index)
             while index < len(pattern) and pattern[index] != ']':
                 index += 2 if pattern[index] == '\\' else 1
+        elif pattern.startswith('(?#', index):
+            # An inline comment runs to the first `)` and holds nothing `re` parses.
+            index = pattern.index(')', index)
         elif char == '(':
-            enclosing.append(repeats)
+            enclosing.append((repeats, verbose))
             repeats = False
-        elif char == ')' and enclosing:  # a verbose-mode comment can hold an unmatched `)`
+            if (flags := _SCOPED_FLAGS.match(pattern, index)) is not None:
+                if 'x' in flags['on']:
+                    verbose = True
+                elif 'x' in (flags['off'] or ''):
+                    verbose = False
+        elif char == ')':  # the pattern compiled, and comments are skipped, so a group is open
+            outer_repeats, verbose = enclosing.pop()
+            # The quantifier after `)` is read in the enclosing group's verbose mode.
             if repeats and _repeats_at(pattern, _skip_insignificant(pattern, index + 1, verbose)):
                 return True
-            repeats = enclosing.pop() or repeats
+            repeats = outer_repeats or repeats
         elif _repeats_at(pattern, index):
             repeats = True
         index += 1
@@ -1485,7 +1496,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # without commands, or when the command path itself fails.
         if entry is not None and supports_commands(scope.workspace):
             return await self._command_search_files(scope, ctx, entry, resolved, pattern, include_glob)
-        if _has_nested_quantifier(pattern):
+        if _has_nested_quantifier(pattern, verbose=bool(compiled.flags & re.VERBOSE)):
             raise ValueError(
                 'This regex repeats a group that itself repeats, such as `(a+)+`, which can take exponential time '
                 'in the Python regex engine this workspace searches with. Rewrite it without the nested '
