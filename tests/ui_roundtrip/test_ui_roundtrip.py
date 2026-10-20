@@ -27,9 +27,9 @@ and reported a loss that real clients don't have.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import warnings
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -45,7 +45,9 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -68,7 +70,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 
 from ..conftest import try_import
-from .conftest import MARKER, JSDriver
+from .conftest import JSDriver
 
 with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
@@ -95,7 +97,7 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='UI, OpenAI or Anthropic extras not installed'),
-    getattr(pytest.mark, MARKER),
+    pytest.mark.ui_roundtrip,
     # A hydrated client sends back the system prompt `dump_messages()` wrote; the adapter strips it, says so,
     # and reinjects the agent's own.
     pytest.mark.filterwarnings('ignore:Client-submitted system prompts were stripped:UserWarning'),
@@ -114,16 +116,13 @@ PATHS: tuple[Path, ...] = ('dump', 'stream')
 _INVISIBLE_PART_FIELDS = frozenset({'timestamp', 'metadata', 'part_kind'})
 
 
-def _project_part(part: Any) -> dict[str, Any]:
-    projected: dict[str, Any] = {'kind': part.part_kind}
-    for f in dataclasses.fields(part):
-        value = getattr(part, f.name)
-        if f.name in _INVISIBLE_PART_FIELDS or value is None:
-            continue
-        if f.name == 'args' and isinstance(part, ToolCallPart):
-            value = part.args_as_dict()
-        projected[f.name] = to_jsonable_python(value, bytes_mode='base64')
-    return projected
+def _project_part(part: ModelRequestPart | ModelResponsePart) -> dict[str, Any]:
+    dumped: dict[str, Any] = to_jsonable_python(part, bytes_mode='base64')
+    if isinstance(part, ToolCallPart):
+        dumped['args'] = part.args_as_dict()
+    return {'kind': part.part_kind} | {
+        key: value for key, value in dumped.items() if key not in _INVISIBLE_PART_FIELDS and value is not None
+    }
 
 
 def project(messages: Sequence[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -512,7 +511,7 @@ class Turn:
     calls: list[ModelCall]
 
 
-class Client:
+class Client(ABC):
     """A conversation through one protocol's real JavaScript client."""
 
     protocol: Protocol
@@ -560,17 +559,20 @@ class Client:
         return Turn(sent=self.sanitize(adapter, sent), expected=self.sanitize(adapter, expected), history=[], calls=[])
 
     @property
-    def adapter_type(self) -> type[UIAdapter[Any, Any, Any, Any, Any]]:
-        raise NotImplementedError
+    @abstractmethod
+    def adapter_type(self) -> type[UIAdapter[Any, Any, Any, Any, Any]]: ...
 
+    @abstractmethod
     def user_message(self, prompt: str) -> dict[str, Any]:
-        raise NotImplementedError
+        """The message the user sends, in the shape the client's send call takes."""
 
+    @abstractmethod
     def adapter(self, agent: Agent[None, str], body: bytes) -> UIAdapter[Any, Any, Any, Any, Any]:
-        raise NotImplementedError
+        """The adapter the app's endpoint builds for the client's request body."""
 
+    @abstractmethod
     def stream(self, encoded: list[str]) -> dict[str, Any]:
-        raise NotImplementedError
+        """The server's encoded stream, as the driver's `receive` takes it."""
 
 
 class VercelClient(Client):

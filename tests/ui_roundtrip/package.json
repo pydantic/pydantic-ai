@@ -1,7 +1,7 @@
 {
   "name": "pydantic-ai-ui-roundtrip",
   "private": true,
-  "description": "Real JavaScript UI reducers for the round-trip tests in this directory. Install with `npm ci --ignore-scripts`.",
+  "description": "The real Vercel AI and AG-UI JavaScript clients for the round-trip tests in this directory. Install with `npm ci --ignore-scripts`.",
   "license": "MIT",
   "type": "module",
   "engines": {

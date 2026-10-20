@@ -8,7 +8,7 @@ name: UI round trip
 # The scheduled run opens an issue when it fails.
 #
 # The `ci.yml` test jobs collect these tests too and skip them, since they have no `node_modules`;
-# `UI_JS_REDUCER_REQUIRED` makes this job fail instead.
+# `UI_ROUNDTRIP_REQUIRED` makes this job fail instead.
 
 on:
   pull_request:
@@ -82,7 +82,7 @@ jobs:
           uv run --package pydantic-ai-slim --extra ui --extra ag-ui --extra openai --extra anthropic
           pytest tests/ui_roundtrip
         env:
-          UI_JS_REDUCER_REQUIRED: "1"
+          UI_ROUNDTRIP_REQUIRED: "1"
 
   report:
     needs: [ui-roundtrip]

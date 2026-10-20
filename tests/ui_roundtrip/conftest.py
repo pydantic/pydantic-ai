@@ -2,7 +2,7 @@
 
 `driver.mjs` wraps the AI SDK's `AbstractChat` and `@ag-ui/client`'s `AbstractAgent`, pinned in
 `package.json`. Install them with `npm ci --ignore-scripts` in this directory. Without `node` or the
-installed packages, tests marked `ui_js_reducer` skip, unless `UI_JS_REDUCER_REQUIRED` is set, as the
+installed packages, tests marked `ui_roundtrip` skip, unless `UI_ROUNDTRIP_REQUIRED` is set, as the
 `UI round trip` CI job does, which makes them fail instead.
 """
 
@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 HERE = Path(__file__).parent
-MARKER = 'ui_js_reducer'
+MARKER = 'ui_roundtrip'
 
 
 def _unavailable_reason() -> str | None:
@@ -37,8 +37,8 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     if (reason := _unavailable_reason()) is None:
         return
-    if os.environ.get('UI_JS_REDUCER_REQUIRED'):
-        raise pytest.UsageError(f'UI_JS_REDUCER_REQUIRED is set, but {reason}')
+    if os.environ.get('UI_ROUNDTRIP_REQUIRED'):
+        raise pytest.UsageError(f'UI_ROUNDTRIP_REQUIRED is set, but {reason}')
     skip = pytest.mark.skip(reason=reason)
     for item in items:
         if item.get_closest_marker(MARKER) is not None:
