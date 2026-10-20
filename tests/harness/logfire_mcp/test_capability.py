@@ -138,8 +138,23 @@ class TestLogfireMCP:
         with pytest.raises(UserError, match='`client` owns the connection'):
             LogfireMCP(client='https://example.com/mcp', auth=auth, url=url)
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        capability = LogfireMCP[None](client='https://example.com/mcp', auth='')
+        assert transport(capability).url == 'https://example.com/mcp'
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[LogfireMCP(client=server, defer_loading=True)])
+
+    @pytest.mark.parametrize('id', [None, ''])
+    def test_unset_id_means_the_default(self, server: FastMCP, id: str | None) -> None:
+        capability = LogfireMCP[None](id=id, client=server, defer_loading=True)
+        assert (capability.id, leaf(capability).id) == ('logfire-mcp', 'logfire-mcp')
+        Agent(TestModel(), deps_type=type(None), capabilities=[capability])
+
+    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(UserError, match="Capability id 'logfire-mcp' is used by multiple LogfireMCP capabilities"):
+            Agent(TestModel(), capabilities=[LogfireMCP(id=None, auth='a'), LogfireMCP(id=None, auth='b')])
 
     def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
         with pytest.raises(
