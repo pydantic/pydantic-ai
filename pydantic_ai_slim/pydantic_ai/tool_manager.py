@@ -110,7 +110,9 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
     change the answer mid-run. A tool is only left out in favor of a tool that stays, so in a chain
     (A unless B's kind, B unless C's kind) C drops B and A stays. Tools that can only be resolved in
     favor of each other form a cycle; there the first tool in toolset order that is on the cycle stays,
-    and the rest follows from that.
+    every tool whose kind it names steps aside, and the rest follows from that. Some cycles can't satisfy
+    every rule at once (A unless B, B unless C, C unless A), so cyclic configurations are resolved
+    best-effort, deterministically from toolset order.
     """
     names_by_kind: dict[str, list[str]] = {}
     for name, tool in tools.items():
@@ -137,7 +139,12 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
                 stays[name] = True
                 progressed = True
         if not progressed:
-            stays[_first_on_a_cycle(undecided, suppliers)] = True
+            pinned = _first_on_a_cycle(undecided, suppliers)
+            stays[pinned] = True
+            # The pinned tool wins against every tool whose kind it names, so none can be kept beside it later,
+            # for instance by a separate cycle that would otherwise pin one of them.
+            for other in suppliers[pinned]:
+                stays.setdefault(other, False)
         undecided = [name for name in undecided if name not in stays]
     return {name: tool for name, tool in tools.items() if stays[name]}
 

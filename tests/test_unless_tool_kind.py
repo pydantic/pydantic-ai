@@ -41,6 +41,10 @@ def read_notes() -> str:
     return 'notes'
 
 
+def read_other_notes() -> str:
+    return 'other notes'  # pragma: no cover -- only offered, never called
+
+
 def read_index() -> str:
     return 'index'  # pragma: no cover -- only offered, never called
 
@@ -130,6 +134,20 @@ def test_a_tool_leading_into_a_cycle_steps_aside_for_the_cycle_member_that_stays
         ]
     )
     assert _offered_tools(agent) == [['read_notes']]
+
+
+def test_a_pinned_tool_wins_against_every_tool_whose_kind_it_names():
+    # `read_file` and `read_notes` form one cycle, `read_index` and `read_other_notes` another. Pinning
+    # `read_file` also sets aside `read_other_notes`, which has the kind it names, so `read_index` stays.
+    agent = Agent(
+        tools=[
+            Tool(read_file, prepare=_with(tool_kind=FILE_READ, unless_tool_kind=NOTES_READ)),
+            Tool(read_notes, prepare=_with(tool_kind=NOTES_READ, unless_tool_kind=FILE_READ)),
+            Tool(read_other_notes, prepare=_with(tool_kind=NOTES_READ, unless_tool_kind=INDEX_READ)),
+            Tool(read_index, prepare=_with(tool_kind=INDEX_READ, unless_tool_kind=NOTES_READ)),
+        ]
+    )
+    assert _offered_tools(agent) == [['read_file', 'read_index']]
 
 
 def test_only_a_tool_that_stays_supersedes():
