@@ -32,6 +32,7 @@ jobs:
           cache-suffix: lint
 
       - name: Install dependencies
+        id: install
         run: uv sync --all-extras --no-extra outlines-vllm-offline --all-packages --group lint
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
@@ -39,6 +40,12 @@ jobs:
           extra_args: --all-files --verbose
         env:
           SKIP: no-commit-to-branch
+
+      # The full Pyright check runs here, not in pre-commit. It runs whenever the install
+      # succeeded, so a failing pre-commit hook does not hide type errors.
+      - name: Type-check with Pyright
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: make typecheck
 
       - run: uv build --all-packages
       - run: ls -lh dist/
