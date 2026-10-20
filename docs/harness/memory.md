@@ -38,15 +38,13 @@ agent = Agent(
 )
 ```
 
-`FileStore.list_paths` skips symlinked directory prefixes, including links outside the store.
-
 `FileStore` keeps the notes as Markdown files in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so the model can also open them with its file tools. A run without a workspace fails at its start. With a read-only run workspace, the write and delete tools are hidden; a store with its own workspace follows that workspace's permissions instead. Workspace refusals during mutations become tool failures. To keep them on your machine while the agent works in a sandbox, pass a backend: `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))`.
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 
 ## Injection modes and limits
 
-Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`. The default guidance uses about 200 of those tokens; when the guidance fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
+Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part beside the latest user prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
@@ -63,7 +61,7 @@ memory = Memory(
 
 Only the current request retains the injected user-role part, so copies do not accumulate in message history. A part saved to history by an earlier release is removed on the next request. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
 
-The block goes on the request that holds the latest user prompt, so after a tool call, or when a run resumes after a deferred tool approval, it stays with the user's prompt rather than following the tool results, where a model could read it as a new message from the user. With no user prompt in the history, it goes on the last request. While the snapshot is unchanged, each request in a tool loop starts with the previous one, so prefix caching keeps working. When the snapshot changes, or a new user prompt moves the block, the content from the block's earlier position onward changes once.
+The block goes on the request that holds the latest user prompt, so after tool results or a resumed deferred tool approval it stays with that prompt instead of following the tool results, where the model could read it as a new user message. With no user prompt in the history, it goes on the last request. While the snapshot is unchanged, each request in a tool loop starts with the previous one, so prompt caching keeps working. When the snapshot changes or a new user prompt moves the block, the content from the block's earlier position onward changes once.
 
 When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
 
@@ -80,9 +78,9 @@ With `injection_errors='ignore'` (the default), a store failure skips automatic 
 
 ## Persistence and concurrency
 
-The store contract includes optimistic compare-and-swap mutations and idempotency. A write based on a stale revision fails with a conflict instead of overwriting a concurrent edit. Replaying the same run and tool call does not apply its mutation twice; reusing that operation identifier with different arguments raises `MemoryOperationConflictError`. These guarantees belong to the mutation operation, so custom stores must implement them atomically rather than composing separate read and write calls.
+Writes and deletes are compare-and-swap: a mutation based on stale content fails with a conflict instead of overwriting a concurrent edit. A replayed tool call is not applied twice, and reusing its operation identifier with different arguments raises `MemoryOperationConflictError`. Custom stores must make both checks atomic inside `write` and `delete` rather than composing separate read and write calls.
 
-Every `MemoryStore.read` call includes a finite `max_chars`, and every `list_paths` call includes a finite `limit`. A store returns the bounded prefix plus `MemoryFile.truncated=True` when more content exists, while its version still represents the complete file. `read_memory` marks that bounded result as truncated. `write_memory` refuses to append or edit an oversized externally supplied file because doing so would derive new content from a partial read; remediate or replace it through the backing store first. A custom `SearchableMemoryStore.search` must likewise honor `max_file_chars` as well as the result limits.
+Every `read` call passes a finite `max_chars` and every `list_paths` call a finite `limit`. When the file is longer, a store returns the bounded prefix with `MemoryFile.truncated=True` and the version of the complete file. A custom `SearchableMemoryStore.search` must honor `max_file_chars` as well as the result limits. `read_memory` marks a truncated result. `write_memory` refuses to append to or edit a file larger than `max_memory_size`, because it would build the new content from a partial read; edit or replace that file in the backing store first.
 
 | Store | Persistence and concurrency boundary |
 | --- | --- |
@@ -103,7 +101,7 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 
 If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
 
-`FileStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict.
+`FileStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileStore` listings and searches skip symlinked directories, including links that point outside the store.
 
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
@@ -111,7 +109,7 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 pip/uv-add asyncpg
 ```
 
-```python
+```python {typecheck="skip - asyncpg's pooled connections are untyped proxies, see #10853"}
 import asyncpg
 
 from pydantic_ai_harness import Memory
@@ -195,7 +193,7 @@ agent = Agent(
 - `max_search_result_chars` limits the combined scope-relative filename and snippet text, default 4,000 characters.
 - `max_search_files` limits how many files a fallback scan may inspect, default 1,000.
 
-The bundled stores implement `SearchableMemoryStore`. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
+The bundled stores implement `SearchableMemoryStore`. A store counts as searchable when it has a `search` method, so a custom store's `search` must take the arguments `SearchableMemoryStore.search` declares. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
 
 The bundled stores search only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`. The fallback scan for a custom store skips them too, but they still count toward the `max_search_files + 1` paths it requests.
 
