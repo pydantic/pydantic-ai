@@ -2366,8 +2366,10 @@ async def test_generator_exit_inside_iter_context_propagates_after_quiet_teardow
     loop_errors: list[str] = []
     loop.set_exception_handler(lambda _loop, context: loop_errors.append(context['message']))
 
+    run_holder: list[Any] = []
     with pytest.raises(GeneratorExit):
         async with agent.iter('go') as agent_run:
+            run_holder.append(agent_run)
             async for node in agent_run:
                 if Agent.is_model_request_node(node):
                     async with node.stream(agent_run.ctx) as node_stream:
@@ -2376,7 +2378,7 @@ async def test_generator_exit_inside_iter_context_propagates_after_quiet_teardow
                 break
             raise GeneratorExit
 
-    assert agent_run.result is None
+    assert run_holder[0].result is None
     task = asyncio.current_task()
     assert task is not None
     assert _task_cancelling(task) == 0
@@ -2392,8 +2394,10 @@ async def test_keyboard_interrupt_inside_iter_context_propagates_after_quiet_tea
     loop_errors: list[str] = []
     loop.set_exception_handler(lambda _loop, context: loop_errors.append(context['message']))
 
+    run_holder: list[Any] = []
     with pytest.raises(KeyboardInterrupt):
         async with agent.iter('go') as agent_run:
+            run_holder.append(agent_run)
             async for node in agent_run:
                 if Agent.is_model_request_node(node):
                     async with node.stream(agent_run.ctx) as node_stream:
@@ -2402,7 +2406,7 @@ async def test_keyboard_interrupt_inside_iter_context_propagates_after_quiet_tea
                 break
             raise KeyboardInterrupt
 
-    assert agent_run.result is None
+    assert run_holder[0].result is None
     task = asyncio.current_task()
     assert task is not None
     assert _task_cancelling(task) == 0
