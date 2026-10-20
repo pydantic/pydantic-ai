@@ -132,6 +132,12 @@ def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * size - 1)
     with pytest.raises(ValueError, match='32 MiB'):
         decode_images([data, data])
+    # A noisy JPEG grows as PNG, past a limit its upload is within.
+    photo = io.BytesIO()
+    Image.effect_noise((64, 64), 100).convert('RGB').save(photo, format='JPEG', quality=10)
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', len(photo.getvalue()) + 2)
+    with pytest.raises(ValueError, match='once converted to PNG'):
+        decode_images([base64.b64encode(photo.getvalue()).decode()])
     monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', size - 1)
     with pytest.raises(ValueError, match='10 MiB'):
         decode_images([data])

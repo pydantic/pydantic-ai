@@ -40,7 +40,7 @@ def encode_image(image: Image.Image) -> BinaryContent:
 def decode_images(encoded: Sequence[str]) -> list[BinaryContent]:
     """Read base64-encoded images from elsewhere, such as the browser's clipboard, checked and normalized as a file is.
 
-    The batch is bounded by its encoded length before any image is decoded.
+    The batch is bounded by its encoded length before any image is decoded, and again once converted.
     """
     sizes = [len(text) * 3 // 4 for text in encoded]
     if any(size > MAX_IMAGE_BYTES for size in sizes):
@@ -51,7 +51,10 @@ def decode_images(encoded: Sequence[str]) -> list[BinaryContent]:
         images = [b64decode(text, validate=True) for text in encoded]
     except binascii.Error as exc:
         raise ValueError('Images must be base64-encoded.') from exc
-    return [_decode(data) for data in images]
+    decoded = [_decode(data) for data in images]
+    if sum(len(image.data) for image in decoded) > MAX_PENDING_BYTES:
+        raise ValueError('These images exceed the 32 MiB limit once converted to PNG; send fewer at a time.')
+    return decoded
 
 
 def _decode(data: bytes) -> BinaryContent:
