@@ -85,9 +85,7 @@ def in_temporal_workflow() -> bool:
 # `None` and every helper is a plain `await`.
 
 
-async def call_monty(
-    portal: BlockingPortal | None, fn: Callable[[Unpack[_Args]], Awaitable[_T]], *args: Unpack[_Args]
-) -> _T:
+async def call_monty(portal: BlockingPortal | None, fn: Callable[[Unpack[_Args]], Awaitable[_T]], *args: *_Args) -> _T:
     """Await one call into Monty's async bindings, `fn(*args)`, through `portal` when there is one."""
     if portal is None:
         return await fn(*args)
@@ -434,7 +432,11 @@ class MontyExecutor:
         for cid in pending_ids:
             if cid in self._pre_resolved:
                 results[cid] = self._pre_resolved.pop(cid)
-            elif self.global_sequential:
+
+        # Sequential modes resume the deferred calls in dispatch order: `_pending` is
+        # insertion-ordered, but `pending_call_ids` may list the ids in any order.
+        if self.global_sequential:
+            for cid in [cid for cid in self._pending if cid in pending_ids]:
                 results[cid] = await _await_external(self._pending.pop(cid))
 
         # Gather any remaining parallel tasks concurrently. They stay in `_pending` until

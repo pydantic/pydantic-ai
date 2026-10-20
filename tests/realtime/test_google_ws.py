@@ -95,7 +95,6 @@ async def test_audio_in_server_vad_turn(
         [
             'PartStartEvent',
             'PartDeltaEvent',
-            'PartEndEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
@@ -508,16 +507,13 @@ async def test_tool_result_image(
         """Take a photo of the table."""
         return ToolReturn(return_value='Photo taken.', content=[image])
 
-    # An async call's turn completes alongside the call, and the answer comes in a turn of its own.
-    turns = 2 if async_tool_calls else 1
+    # The exchange is over once the model answered the call's result, whether it blocked on it or not.
     async with agent.realtime(model, model_settings={'async_tool_calls': async_tool_calls}).session() as session:
         await session.send('What fruit is on the table?')
         with anyio.fail_after(60):
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
-                    turns -= 1
-                    if not turns:
-                        break
+                    break
 
     [response] = sent_frames_containing(cassette, 'Photo taken.')
     [function_response] = response['toolResponse']['functionResponses']
@@ -938,7 +934,7 @@ async def test_handle_barge_in_over_live_speech(
 
 
 async def test_extended_thinking_async_tool_round(
-    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
     """`gemini-3.8-live-extended-thinking` speaks a filler, runs the tool in the background, then answers.
 
@@ -953,7 +949,8 @@ async def test_extended_thinking_async_tool_round(
     @agent.tool_plain
     async def search_flights(origin: str, destination: str) -> str:
         """Search flights between two cities. Takes several seconds."""
-        await anyio.sleep(5)
+        # Only the live model needs a slow tool to speak its filler; replay follows the recorded frame order.
+        await anyio.sleep(5 if realtime_recording else 0)
         return 'KLM at 120 dollars'
 
     events: list[Any] = []

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, Protocol, TypeVar
 
@@ -236,7 +236,7 @@ async def test_provider_close_stream_cancels_active_pull(provider: Literal['goog
             model_request_parameters=ModelRequestParameters(),
             _model_name='grok-4-fast-non-reasoning',
             _response=xai_stream,
-            _timestamp=datetime.now(timezone.utc),
+            _timestamp=datetime.now(UTC),
             _provider=XaiProvider(api_key='xai-api-key'),
         )
         stream = xai_stream

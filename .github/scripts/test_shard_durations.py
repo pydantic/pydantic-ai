@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+import io
+import json
+import sys
+import zipfile
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+import shard_durations
+
+REPO = 'pydantic/pydantic-ai'
+PREFIX = 'test-durations-3.12-all-extras-'
+
+
+def _zip(durations: dict[str, float]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w') as archive:
+        archive.writestr('test-durations.json', json.dumps(durations))
+    return buffer.getvalue()
+
+
+def _artifact(artifact_id: int, name: str) -> dict[str, Any]:
+    return {'id': artifact_id, 'name': name, 'expired': False}
+
+
+class FakeApi:
+    def __init__(self, runs: dict[int, list[dict[str, Any]]], zips: dict[int, bytes]) -> None:
+        self.runs = runs
+        self.zips = zips
+        self.paths: list[str] = []
+
+    def __call__(self, path: str) -> bytes:
+        self.paths.append(path)
+        parts = path.split('?')[0].split('/')
+        if parts[3:5] == ['actions', 'workflows']:
+            return json.dumps({'workflow_runs': [{'id': run_id} for run_id in self.runs]}).encode()
+        if parts[3:5] == ['actions', 'runs']:
+            return json.dumps({'artifacts': self.runs[int(parts[5])]}).encode()
+        return self.zips[int(parts[5])]
+
+
+def test_fetch_merges_shards_of_newest_complete_main_run():
+    api = FakeApi(
+        runs={
+            # Newest first: a run still missing its second shard, then the run to use.
+            300: [_artifact(30, f'{PREFIX}1')],
+            200: [
+                _artifact(20, f'{PREFIX}1'),
+                _artifact(21, f'{PREFIX}2'),
+                _artifact(22, 'coverage-3.12-all-extras-1'),
+            ],
+            100: [_artifact(10, f'{PREFIX}1'), _artifact(11, f'{PREFIX}2')],
+        },
+        zips={20: _zip({'a': 1.0}), 21: _zip({'b': 2.0})},
+    )
+    assert shard_durations.fetch(REPO, PREFIX, 2, '2026-10-09T12:00:00Z', api) == (200, {'a': 1.0, 'b': 2.0})
+    assert api.paths[0] == (
+        f'repos/{REPO}/actions/workflows/ci.yml/runs?branch=main&event=push&created=%3C2026-10-09T12:00:00Z&per_page=20'
+    )
+
+
+def test_fetch_without_a_complete_run():
+    api = FakeApi(runs={300: [_artifact(30, f'{PREFIX}1')]}, zips={})
+    assert shard_durations.fetch(REPO, PREFIX, 2, '2026-10-09T12:00:00Z', api) is None
+
+
+def test_compare_flags_new_slow_and_slower_tests():
+    baseline = {'steady': 1.0, 'doubled': 1.0, 'tiny': 0.1, 'gone': 5.0}
+    current = {'steady': 1.5, 'doubled': 2.5, 'tiny': 0.9, 'new_fast': 0.5, 'new_slow': 3.0}
+    report = shard_durations.compare(baseline, current)
+    assert report == shard_durations.Report(new=[('new_slow', 3.0)], slower=[('doubled', 1.0, 2.5)])
+    rendered = shard_durations.render(report, '3.12 shard 1')
+    assert '| `new_slow` | 3.0 |' in rendered
+    assert '| `doubled` | 1.0 | 2.5 |' in rendered
+    assert shard_durations.render(shard_durations.Report(new=[], slower=[]), 'x') == ''
+
+
+def test_report_writes_the_step_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    baseline = tmp_path / 'baseline.json'
+    current = tmp_path / 'current.json'
+    summary = tmp_path / 'summary.md'
+    baseline.write_text(json.dumps({'a': 1.0}))
+    current.write_text(json.dumps({'a': 1.0, 'b': 4.0}))
+    monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(summary))
+    args = ['report', '--baseline', str(baseline), '--current', str(current), '--title', 't']
+    assert shard_durations.main(args) == 0
+    assert '| `b` | 4.0 |' in summary.read_text()
+
+
+def test_fetch_failure_does_not_fail_the_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    monkeypatch.delenv('GITHUB_REPOSITORY', raising=False)
+    output = tmp_path / 'durations.json'
+    assert shard_durations.main(['fetch', '--prefix', PREFIX, '--shards', '2', '--output', str(output)]) == 0
+    # Every shard reads this file, so an empty one still makes them all fall back the same way.
+    assert json.loads(output.read_text()) == {}
+    assert 'splitting by module size' in capsys.readouterr().out
+
+
+def test_module_weights_sum_tests_and_estimate_new_modules(tmp_path: Path):
+    durations = {
+        'tests/test_a.py::test_one': 1.0,
+        'tests/test_a.py::test_two[x::y]': 2.0,
+        'tests/test_b.py::TestB::test_one': 5.0,
+        'tests/test_c.py::test_one': 7.0,
+        'tests/test_removed.py::test_one': 100.0,
+    }
+    modules = ['tests/test_a.py', 'tests/test_b.py', 'tests/test_c.py', 'tests/test_new.py']
+    assert shard_durations.module_weights(modules, durations, tmp_path) == {
+        'tests/test_a.py': 3.0,
+        'tests/test_b.py': 5.0,
+        'tests/test_c.py': 7.0,
+        'tests/test_new.py': 5.0,
+    }
+
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 'test_a.py').write_text('x' * 10)
+    assert shard_durations.module_weights(['tests/test_a.py'], {}, tmp_path) == {'tests/test_a.py': 10.0}
+
+
+def test_assign_puts_every_module_in_exactly_one_balanced_shard():
+    weights = {'tests/test_a.py': 9.0, 'tests/test_b.py': 5.0, 'tests/test_c.py': 4.0, 'tests/test_d.py': 4.0}
+    assert shard_durations.assign(weights, 2) == [
+        ['tests/test_a.py', 'tests/test_d.py'],
+        ['tests/test_b.py', 'tests/test_c.py'],
+    ]
+
+
+def test_select_ignores_the_other_shards_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    durations = tmp_path / 'durations.json'
+    durations.write_text(json.dumps({'tests/test_slow.py::test': 10.0, 'tests/test_fast.py::test': 1.0}))
+
+    def find_test_modules(root: Path, exclude: Sequence[str]) -> list[str]:
+        return ['tests/test_fast.py', 'tests/test_slow.py']
+
+    monkeypatch.setattr(shard_durations, 'find_test_modules', find_test_modules)
+    args = ['select', '--durations', str(durations), '--shards', '2', '--shard', '1']
+    assert shard_durations.main(args) == 0
+    out, err = capsys.readouterr()
+    assert out.split() == ['--ignore=tests/test_fast.py']
+    assert '* shard 1: 1 modules, estimated 10s' in err
+
+
+def test_find_test_modules_lists_this_repo():
+    root = Path(__file__).parents[2]
+    modules = shard_durations.find_test_modules(root, ['tests/durable_exec'])
+    assert 'tests/test_agent.py' in modules
+    assert 'tests/conftest.py' not in modules
+    assert not any(path.startswith('tests/durable_exec/') for path in modules)

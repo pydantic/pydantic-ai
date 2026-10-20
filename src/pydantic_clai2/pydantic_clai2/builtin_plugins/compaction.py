@@ -10,9 +10,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    model_serializer,
+)
 
-from pydantic_ai import RunContext
+from pydantic_ai import ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, on_event
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UsageLimitExceeded
 from pydantic_ai_harness.compaction import (
@@ -22,10 +30,13 @@ from pydantic_ai_harness.compaction import (
     SlidingWindowCompaction,
     SummarizingCompaction,
     compact_now,
-    estimate_token_count,
+    estimate_message_tokens,
 )
 from pydantic_clai2.commands import Command
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
+from pydantic_clai2.plugins.menus import FieldRow, SettingsMenu
+from pydantic_clai2.runtime import agent_instrumentation
+from pydantic_clai2.ui.menus.field_menu import first_error, shown
 from pydantic_clai2.ui.rendering.status import Status
 
 
@@ -45,7 +56,9 @@ class CompactionSettings(BaseModel):
         description='Compact once the history exceeds this fraction of the context window.',
     )
     protected_tokens: int = Field(
-        default=50_000, ge=0, description='Tokens of the most recent messages that are never compacted.'
+        default=50_000,
+        ge=0,
+        description='Tokens of the most recent messages that are never compacted; /compact caps it at half.',
     )
     context_window: int | None = Field(
         default=None,
@@ -55,6 +68,80 @@ class CompactionSettings(BaseModel):
     summarization_model: str | None = Field(
         default=None, description='Model that writes the summary. Unset uses the model running the conversation.'
     )
+
+    @model_serializer(mode='wrap')
+    def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
+        """Save only the settings someone chose, so menu edits never pin the other defaults."""
+        dumped: dict[str, JsonValue] = handler(self)
+        return {key: value for key, value in dumped.items() if key in self.model_fields_set}
+
+
+_TEXT_FIELDS = frozenset({'strategy', 'summarization_model'})
+"""Settings typed as plain text; the others are typed as JSON numbers."""
+
+
+class CompactionSource:
+    """The compaction settings, one row each, saved through the validated model; empty input resets."""
+
+    title = 'Compaction settings'
+
+    def __init__(self, host: PluginHost[None]) -> None:
+        self.host = host
+
+    def rows(self) -> tuple[FieldRow, ...]:
+        fields = CompactionSettings.model_fields
+
+        def row(key: str, label: str, choices: tuple[str, ...] = ()) -> FieldRow:
+            default: JsonValue = fields[key].default
+            return FieldRow(
+                key=key,
+                label=label,
+                description=fields[key].description or '',
+                default=shown(default),
+                choices=choices,
+                allow_custom=not choices,
+            )
+
+        return (
+            row('strategy', 'Strategy', ('summarization', 'truncation')),
+            row('threshold', 'Threshold'),
+            row('protected_tokens', 'Protected tokens'),
+            row('context_window', 'Context window'),
+            row('summarization_model', 'Summarization model'),
+        )
+
+    def current(self, row: FieldRow) -> str:
+        settings = self.host.settings(CompactionSettings)
+        values: dict[str, JsonValue] = {
+            'strategy': settings.strategy,
+            'threshold': settings.threshold,
+            'protected_tokens': settings.protected_tokens,
+            'context_window': settings.context_window,
+            'summarization_model': settings.summarization_model,
+        }
+        return shown(values[row.key])
+
+    def _updated(self, row: FieldRow, raw: str) -> CompactionSettings:
+        data: dict[str, JsonValue] = self.host.settings(CompactionSettings).model_dump(mode='json')
+        data[row.key] = raw if row.key in _TEXT_FIELDS else TypeAdapter(JsonValue).validate_json(raw)
+        return CompactionSettings.model_validate(data)
+
+    def problem(self, row: FieldRow, text: str) -> str | None:
+        try:
+            self._updated(row, text)
+        except ValueError as exc:
+            return first_error(exc)
+        return None
+
+    def apply(self, row: FieldRow, raw: str) -> str:
+        self.host.save_settings(self._updated(row, raw))
+        return f'Saved {row.label}.'
+
+    def reset(self, row: FieldRow) -> str:
+        data: dict[str, JsonValue] = self.host.settings(CompactionSettings).model_dump(mode='json')
+        data.pop(row.key, None)
+        self.host.save_settings(CompactionSettings.model_validate(data))
+        return f'Reset {row.label}.'
 
 
 def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
@@ -87,6 +174,11 @@ class _ContextGauge(AbstractCapability[None]):
     @on_event(ContextUsageEvent)
     async def _gauge(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
         self.status.context_tokens = event.used_tokens
+        # Without a response's reported usage, the reading counts characters and leaves out most tool
+        # definitions, so a session's first request reads well under what the provider then reports.
+        self.status.context_estimated = not any(
+            isinstance(message, ModelResponse) and message.usage.input_tokens for message in ctx.messages
+        )
         self.status.context_window = event.window_tokens if event.resolved else None
         self.status.context_alert = event.fraction > self.threshold
 
@@ -116,8 +208,12 @@ class CompactionPlugin(Plugin[CompactionSettings]):
                 description='Compact the conversation so far; add words to say what the summary must keep',
                 handler=self._compact,
                 raw=True,
+                live=True,
             ),
         )
+
+    def settings_menu(self) -> SettingsMenu:
+        return SettingsMenu(source=CompactionSource(self.host))
 
     async def on_session_end(self, event: SessionEnd) -> None:
         self.host.status.context_window = None
@@ -131,9 +227,18 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         model = await conversation.resolved_model()
         if model is None:
             raise ValueError('Choose a model first: /set model <Tab>')
-        after = await compact_now(self.chain, before, model=model, focus=' '.join(args) or None)
-        if after == before:
-            return f'Nothing to compact: the last {self.settings.protected_tokens:,} tokens are always kept.'
+        # Counted as the provider reported them, so thinking returned without text is not missed.
+        tokens = sum(estimate_message_tokens(before))
+        # Cap the protected target at half the history: a conversation just over the protected tail
+        # would otherwise trade a sliver of its head for a summary plus the kept first prompt, and grow.
+        # The kept messages can still exceed it by the whole message that crosses it.
+        tail = min(self.settings.protected_tokens, tokens // 2)
+        chain = build_chain(self.settings.model_copy(update={'protected_tokens': tail}))
+        after = await compact_now(
+            chain, before, model=model, focus=' '.join(args) or None, tracer=agent_instrumentation.tracer()
+        )
+        saved = tokens - sum(estimate_message_tokens(after))
+        if saved <= 0:
+            return 'Nothing to compact: compacting would not make the conversation smaller.'
         await conversation.commit_messages(after)
-        saved = max(estimate_token_count(before) - estimate_token_count(after), 0)
-        return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} tokens saved.'
+        return f'Compacted {len(before)} messages down to {len(after)}; about {saved:,} of {tokens:,} tokens saved.'

@@ -171,7 +171,7 @@ class MathTools(AbstractCapability[Any]):
         return math_toolset
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[MathTools()])
+agent = Agent('{{ openai:medium }}', capabilities=[MathTools()])
 result = agent.run_sync('What is 2 + 3?')
 print(result.output)
 #> The answer is 5.0
@@ -214,7 +214,7 @@ class LogToolCalls(AbstractCapability[Any]):
         return LoggingToolset(wrapped=toolset)
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[LogToolCalls()])
+agent = Agent('{{ openai:medium }}', capabilities=[LogToolCalls()])
 
 
 @agent.tool_plain
@@ -254,7 +254,7 @@ class KnowsCurrentTime(AbstractCapability[Any]):
         return _get_time
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[KnowsCurrentTime()])
+agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentTime()])
 result = agent.run_sync('What time is it?')
 print(result.output)
 #> The current time is 3:45 PM.
@@ -290,7 +290,7 @@ class ThinkingOnRetry(AbstractCapability):
         return resolve
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[ThinkingOnRetry()])
+agent = Agent('{{ openai:medium }}', capabilities=[ThinkingOnRetry()])
 result = agent.run_sync('hello')
 print(result.output)
 #> Hello! How can I help you today?
@@ -326,7 +326,7 @@ class AdaptiveModel(AbstractCapability[Deps]):
         return self.select_model
 
     def select_model(self, ctx: ModelSelectionContext[Deps]) -> str:
-        return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
+        return '{{ openai:medium }}' if ctx.deps.task_complexity == 'complex' else '{{ openai:small }}'
 
 
 agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
@@ -388,7 +388,7 @@ class UserModelResolver(AbstractCapability[Deps]):
         return infer_model(model_id.removeprefix('user:'), provider_factory)
 
 
-agent = Agent('user:openai:gpt-5.6-sol', deps_type=Deps, capabilities=[UserModelResolver()])
+agent = Agent('user:{{ openai:medium }}', deps_type=Deps, capabilities=[UserModelResolver()])
 ```
 
 The constructor ID remains a string through [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent], so a bound capability can install a resolver without default inference first constructing a provider with different configuration or credentials.
@@ -422,9 +422,7 @@ Override [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] 
 
 ```python {title="agent_bound_capability.py"}
 from dataclasses import dataclass, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import AbstractAgent
@@ -445,8 +443,8 @@ class AgentIdentity(AbstractCapability[Any]):
 
 
 identity = AgentIdentity()
-support = Agent('openai:gpt-5.2', name='support', capabilities=[identity])
-sales = Agent('openai:gpt-5.2', name='sales', capabilities=[identity])
+support = Agent('{{ openai:medium }}', name='support', capabilities=[identity])
+sales = Agent('{{ openai:medium }}', name='sales', capabilities=[identity])
 ```
 
 `for_agent()` is synchronous because it binds configuration during agent construction, before run dependencies or a lifecycle context exist. Keep it free of I/O; asynchronous run-specific setup belongs in [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run].
@@ -515,7 +513,7 @@ A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandato
 !!! note "Observing cancellation"
     A cancellation reaches a capability as an `asyncio.CancelledError`: through a `wrap_*` hook's `handler()` await (catch it around `await handler(...)`), or at the run's terminal funnel [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error], whose `error` is a `BaseException`. It does **not** reach the recovery-oriented `Exception`-typed hooks — [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error], [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error], [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] — because a cancellation is a terminal control signal, not a failure of that step you could recover from.
 
-    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work — on Python 3.11+ the run re-asserts the cancellation at the next step boundary (best-effort on Python 3.10).
+    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work. The run re-asserts the cancellation at the next step boundary.
 
 ### Node hooks
 
@@ -562,7 +560,7 @@ class NodeLogger(AbstractCapability[Any]):
 
 
 logger = NodeLogger()
-agent = Agent('openai:gpt-5.2', capabilities=[logger])
+agent = Agent('{{ openai:medium }}', capabilities=[logger])
 agent.run_sync('hello')
 print(logger.nodes)
 #> ['UserPromptNode', 'ModelRequestNode', 'CallToolsNode']
@@ -618,9 +616,30 @@ The response a wrapper's handler returns isn't necessarily the one the provider 
 
 To skip the model call entirely and provide a replacement response, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `wrap_model_request`.
 
-`before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`, and can modify it.
+`before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`. See [Changing what the model sees](#steering-messages-and-reminders) for how to add steering messages and reminders, and how to change only what one request sends.
 
 To change the [instructions](../agent.md#instruction-parts) for a request, rewrite `request_context.model_request_parameters.instruction_parts` — that's what the model is sent, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest] recorded in message history is re-rendered from it once the hooks have run, so history and traces show what was actually sent. Assigning to that message's `instructions` is not propagated back into the parts and does not reach the model.
+
+#### Changing what the model sees: steering messages and reminders {#steering-messages-and-reminders}
+
+From `before_model_request`, where a change goes decides two things: whether the model sees it once or for the rest of the conversation, and whether the prompt cache and the model's earlier reasoning survive it.
+
+| You want to | From `before_model_request` | What happens |
+|---|---|---|
+| Steer the model with a message it sees now and that stays in the conversation | [`ctx.enqueue(part)`][pydantic_ai.tools.RunContext.enqueue] | It goes into the request being prepared and into the message history, as a [`ModelRequest`][pydantic_ai.messages.ModelRequest] of its own, so every later request sends it too. |
+| Remind the model of something true only for this request | `ctx.enqueue(SystemPromptPart(..., scope='request'))` | A [request-scoped prompt](../message-history.md#request-scoped-system-prompts): it goes into this request and into history. Anthropic sends it as a turn-scoped system message (`clear_at`) and stops showing it to the model once its request has been answered; elsewhere it's sent with its own request only. |
+| Keep state the model should track, like a todo list or notes | [Instructions](#providing-instructions), with a callable for values that change | Rendered fresh for every request. A change re-sends everything after the instructions uncached, so this suits state that changes rarely. |
+| Change only what this request sends: trim, filter, redact | Assign a new list to `request_context.messages` | Request-only: history keeps the original. The list is new, but the messages and parts in it are the ones history holds, so build replacements instead of mutating them in place, or history changes too. |
+| Rewrite the history, as compaction does | Replace the contents of [`ctx.messages`][pydantic_ai.tools.RunContext.messages] (`ctx.messages[:] = ...`), and assign `request_context.messages` too if this request should be sent the result | Persistent: later requests start from the rewritten history. |
+
+"Request-scoped" and "request-only" are different things. A request-scoped prompt is a part in the history that the model is shown for its own request only; the history keeps it, so later requests send exactly what earlier ones did. A request-only change never reaches the history at all, which is what can move the cached prefix.
+
+`request_context.messages.append(...)` (or `extend`, or `+=`) in `before_model_request` still adds the message to history as well, as it did before request-only messages existed, but that's deprecated and emits a warning. Use `ctx.enqueue(...)` instead.
+
+!!! warning "Request-only changes and the prompt cache"
+    A request-only change that drops or alters content an earlier request already sent moves the cached prefix: the provider re-processes everything from that point on, every time. On models that tie their reasoning to the exact conversation, such as Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), it also invalidates the model's earlier reasoning. That's why a reminder added on every request should be enqueued, so it stays in history and every later request sends it unchanged, and request-scoped when it's a one-off, so providers that can clear it do.
+
+The [`StayTerse` capability](../message-history.md#request-scoped-system-prompts) is a complete reminder capability built this way.
 
 !!! note "Skip and chain behavior"
     A skip exception ([`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest], [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution]) raised from `before_*` stops the remaining `before_*` hooks, the core operation, and `after_*`, then propagates outward through the already-entered wrapper chain. A wrapper that raises a skip without calling its handler bypasses all inner wrappers and the entire `before_*`/core/`after_*` lifecycle. If its handler returns before the wrapper raises, that lifecycle has already completed.
@@ -721,7 +740,7 @@ class HideDangerousTools(AbstractCapability[Any]):
         return [td for td in tool_defs if not any(td.name.startswith(p) for p in self.hidden_prefixes)]
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[HideDangerousTools()])
+agent = Agent('{{ openai:medium }}', capabilities=[HideDangerousTools()])
 
 
 @agent.tool_plain
@@ -925,7 +944,11 @@ Mark each operation method with `@durable_operation(name='...')`. The required n
 
 A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may return a fresh instance — the operation dispatches on whichever instance the run is using, from `before_run` and from per-request hooks alike. The replacement has to keep the capability's `id`, since that is what dispatch and worker-side recovery resolve it by; Pydantic AI raises a `UserError` at the start of the run if a bound capability's ID is no longer present. Dispatch is established once `for_run()` has returned, so an operation called from inside `for_run()` itself runs directly rather than durably.
 
+An operation can also be called from a tool the capability contributes. Where the engine already runs the tool in its own activity, step, or task, as Temporal, Prefect, and AWS Lambda do, the operation runs directly inside it, under that unit's timeout, retry, and cache configuration rather than its own, since that unit records the result. Where the tool runs in workflow code, as function tools do under DBOS, the operation is its own unit. Either way the work is recorded once, so a capability whose tools do I/O can route that I/O through an operation and stay durable on every engine.
+
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
+
+Keep a capability's `id` stable once runs that use it are deployed, including the default `id` of one you did not write: Harness capabilities that record their tool requests, such as [`ExaSearch`](../harness/exa-search.md), name those records after their `id`.
 
 To branch on whether a hook is running in durable workflow code, check [`ctx.in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]. It is `True` inside a durable workflow or flow (like a Temporal or DBOS workflow) when the agent has a durability capability. It is `False` outside durable execution and inside the Temporal activities and DBOS steps where tools and model requests run. Prefect tasks inherit their flow's context, so it is `True` inside a Prefect task too.
 
@@ -985,7 +1008,7 @@ class RequestCounter(AbstractCapability[Any]):
 
 
 counter = RequestCounter()
-agent = Agent('openai:gpt-5.2', capabilities=[counter])
+agent = Agent('{{ openai:medium }}', capabilities=[counter])
 
 # The shared counter stays at 0 because for_run returns a fresh instance
 agent.run_sync('first run')
@@ -1189,7 +1212,7 @@ class PIIRedactionGuardrail(AbstractCapability[Any]):
         return response
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[PIIRedactionGuardrail()])
+agent = Agent('{{ openai:medium }}', capabilities=[PIIRedactionGuardrail()])
 result = agent.run_sync("What's Jane's contact info?")
 print(result.output)
 #> You can reach Jane at [EMAIL REDACTED] or [PHONE REDACTED].
@@ -1245,7 +1268,7 @@ class VerboseLogging(AbstractCapability[Any]):
         return result
 
 
-agent = Agent('openai:gpt-5.2', capabilities=[VerboseLogging()])
+agent = Agent('{{ openai:medium }}', capabilities=[VerboseLogging()])
 result = agent.run_sync('hello')
 print(f'Output: {result.output}')
 #> Output: Hello! How can I help you today?

@@ -4,19 +4,19 @@ import asyncio
 import dataclasses
 import inspect
 import time
-from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import field, replace
+from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, assert_never, cast
 
 import anyio
 from opentelemetry.trace import Tracer
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
@@ -26,6 +26,9 @@ from pydantic_ai._instrumentation import (
     capture_model_response_span_context,
     get_instructions as _get_history_instructions,
     get_instructions_source as _get_history_instructions_source,
+    mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
+    mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
@@ -58,6 +61,7 @@ from . import (
     usage as _usage,
 )
 from ._cancel import RunCancellation
+from ._context_size import context_input_tokens
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
     parse_loaded_capabilities,
@@ -72,6 +76,8 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
+from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -87,11 +93,15 @@ from .models._continuation import (
     MAX_GENERATION_CONTINUATIONS,
     MergeMode,
     _ContinuationStreamedResponse,
+    billed_beyond,
     cancel_suspended_job,
     merge_mode,
     merge_responses,
+    report_continuation_segment,
+    resumed_response,
 )
-from .output import OutputDataT, OutputSpec
+from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
+from .output import OutputDataT, OutputSpec, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
     AgentNativeTool,
@@ -116,6 +126,7 @@ __all__ = (
     'build_run_context',
     'capture_run_messages',
     'HistoryProcessor',
+    'resolve_conversation',
     'resolve_conversation_id',
     'process_tool_calls',
     'resolve_run_id',
@@ -227,17 +238,6 @@ async def _with_event_stream_buffer(
         yield event_stream_buffer.pop(0)
 
 
-async def _cancel_task(task: Task[Any]) -> None:
-    # `cancel()` is a documented no-op on an already-finished task, so there's no need to guard it.
-    task.cancel()
-    try:
-        await task
-    except BaseException:
-        # Called while another stream error is already propagating; await only
-        # to finish cleanup and retrieve the task exception, not replace it.
-        pass
-
-
 def _context_changes(before: Context, after: Context) -> list[tuple[ContextVar[Any], Any]]:
     """Return values newly set or replaced between two task-context snapshots."""
     return [(var, after[var]) for var in after if var not in before or before[var] is not after[var]]
@@ -249,12 +249,10 @@ def _apply_context_changes(changes: Sequence[tuple[ContextVar[Any], Any]]) -> No
         var.set(value)
 
 
-async def _resolve_interrupted_stream_state(
-    model: models.Model,
-    stream_error: BaseException,
-    partial: _messages.ModelResponse,
-) -> _messages.ModelResponseState:
-    """State to record for a streamed turn the consumer stopped, cancelling a leaked job when appropriate.
+def _interrupted_stream_response(
+    stream_error: BaseException, partial: _messages.ModelResponse
+) -> _messages.ModelResponse:
+    """The response to record for a streamed turn the consumer stopped.
 
     The composite treats every `aclose()` (which the handler teardown triggers) as a *detach*, so
     `partial.state` is `'suspended'` whenever the last segment is a still-pending job — regardless of
@@ -263,13 +261,12 @@ async def _resolve_interrupted_stream_state(
     - `GeneratorExit` is a walk-away detach (the consumer broke out of `run_stream`/`stream_text`). Mirror
       the non-streaming detach: keep `'suspended'` so the run is resumable, and leave the job alive.
     - any other exception is a genuine downstream failure. Mirror the non-streaming cancel-on-error policy:
-      force `'interrupted'` (non-resumable) and best-effort cancel the still-live job so it doesn't leak.
+      force `'interrupted'` (non-resumable); the graph best-effort cancels the still-live job so it doesn't leak.
     """
-    if isinstance(stream_error, GeneratorExit) and partial.state == 'suspended':
-        return 'suspended'
-    if partial.state == 'suspended':
-        await cancel_suspended_job(model, partial)
-    return 'interrupted'
+    detached = isinstance(stream_error, GeneratorExit) and partial.state == 'suspended'
+    response = replace(partial, state='suspended' if detached else 'interrupted')
+    fill_response_cost(response)
+    return response
 
 
 NEW_CONVERSATION: Literal['new'] = 'new'
@@ -280,28 +277,64 @@ NEW_CONVERSATION: Literal['new'] = 'new'
 def resolve_conversation_id(
     explicit: str | None,
     message_history: Sequence[_messages.ModelMessage] | None,
+    *,
+    default: str | None = None,
 ) -> str:
     """Resolve the `conversation_id` to use for an agent run.
 
     Priority:
 
-    1. `explicit == 'new'` → fresh UUID7 (forks a conversation off the supplied history).
+    1. `explicit == 'new'` → fresh id (forks a conversation off the supplied history).
     2. Explicit string → used as-is.
     3. Most recent non-`None` `conversation_id` on `message_history` (scanned from the end).
-    4. Fresh UUID7.
+    4. Fresh id.
 
-    A fresh UUID7 is intentionally distinct from the run's `run_id`, so callers can
+    A fresh id is `default` when given (a durable engine's replay-stable id), and a UUID7
+    otherwise. Either way it is distinct from the run's `run_id`, so callers can
     treat the two identifiers as independent.
     """
-    if explicit == NEW_CONVERSATION:
-        return str(uuid7())
-    if explicit is not None:
+    if explicit is not None and explicit != NEW_CONVERSATION:
         return explicit
-    if message_history:
+    if explicit is None and message_history:
         for message in reversed(message_history):
             if (cid := message.conversation_id) is not None:
                 return cid
-    return str(uuid7())
+    return default if default is not None else str(uuid7())
+
+
+def resolve_conversation(
+    conversation: Conversation | None,
+    *,
+    message_history: Sequence[_messages.ModelMessage] | None,
+    usage: _usage.RunUsage | None,
+    conversation_id: str | None,
+) -> tuple[Sequence[_messages.ModelMessage] | None, _usage.RunUsage | None, str | None]:
+    """Resolve a `conversation` argument into the three arguments it stands in for.
+
+    The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
+    passing the conversation's own object would make running from a conversation change it —
+    double-counting across two runs started from the same one, and corrupting it as a point to
+    branch from. `copy` covers the mutable `details` mapping too, per `UsageBase.__copy__`.
+    """
+    if conversation is None:
+        return message_history, usage, conversation_id
+
+    if conflicts := [
+        name
+        for name, value in (
+            ('message_history', message_history),
+            ('usage', usage),
+            ('conversation_id', conversation_id),
+        )
+        if value is not None
+    ]:
+        listed = ' and '.join(f'`{name}`' for name in conflicts)
+        raise exceptions.UserError(
+            f'`conversation` already carries {listed}, so passing both is ambiguous. '
+            f'Pass the conversation on its own, or pass its pieces yourself.'
+        )
+
+    return conversation.messages, copy(conversation.usage), conversation.conversation_id
 
 
 def resolve_run_id(
@@ -317,7 +350,8 @@ def resolve_run_id(
     Priority:
 
     1. Explicit string → used as-is (raises `UserError` if empty, or if that id already
-       appears on `message_history`).
+       appears on `message_history`). `Agent` passes a durable engine's replay-stable
+       default here when the caller gave none.
     2. Fresh UUID7.
     """
     if explicit is not None:
@@ -364,6 +398,12 @@ class GraphAgentState:
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
     last_model_request_parameters: models.ModelRequestParameters | None = None
     """Last-resolved model request parameters, used for OTel span attributes."""
+    default_output_modes: dict[str, StructuredOutputMode] = dataclasses.field(
+        default_factory=dict[str, StructuredOutputMode]
+    )
+    """Internal: the default output mode each model's first request this run resolved to, keyed by model ID.
+
+    See `_keep_default_output_mode`."""
     pending_messages: list[_enqueue.PendingMessage] = dataclasses.field(default_factory=list[_enqueue.PendingMessage])
     """Internal: queue used by [`PendingMessageDrainCapability`][pydantic_ai.capabilities._pending_messages.PendingMessageDrainCapability]
     for messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] or [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue]."""
@@ -493,6 +533,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
+
+    deadline: datetime | None = None
+    """The run's deadline, from `timeout=` or inherited from an enclosing run; exposed as `RunContext.deadline`."""
 
     pending_immediate_dispatches: dict[int, list[anyio.Event]] = dataclasses.field(
         default_factory=dict[int, list[anyio.Event]], repr=False
@@ -718,7 +761,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             await self._reevaluate_dynamic_prompts(messages, run_context)
 
         if next_message:
-            await self._reevaluate_dynamic_prompts([next_message], run_context)
+            reevaluated: list[_messages.ModelMessage] = [next_message]
+            await self._reevaluate_dynamic_prompts(reevaluated, run_context)
+            next_message = cast(_messages.ModelRequest, reevaluated[0])
         else:
             parts: list[_messages.ModelRequestPart] = []
             if not messages:
@@ -793,7 +838,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         """Reevaluate any `SystemPromptPart` with dynamic_ref in the provided messages by running the associated runner function."""
         # Only proceed if there's at least one dynamic runner.
         if self.system_prompt_dynamic_functions:
-            for msg in messages:
+            for index, msg in enumerate(messages):
                 if isinstance(msg, _messages.ModelRequest):
                     reevaluated_message_parts: list[_messages.ModelRequestPart] = []
                     for part in msg.parts:
@@ -805,14 +850,15 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                                 # To enable dynamic system prompt refs in future runs, use a placeholder string
                                 updated_part_content = await runner.run(run_context)
                                 part = _messages.SystemPromptPart(
-                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
+                                    updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
                                 )
 
                         reevaluated_message_parts.append(part)
 
-                    # Replace message parts with reevaluated ones to prevent mutating parts list
+                    # Replace the whole message instead of assigning to msg.parts so
+                    # caller-owned message_history objects are never mutated in place.
                     if reevaluated_message_parts != msg.parts:
-                        msg.parts = reevaluated_message_parts
+                        messages[index] = replace(msg, parts=reevaluated_message_parts)
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.SystemPromptPart]:
         """Build the initial system-prompt messages for the conversation."""
@@ -1008,6 +1054,9 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), ctx.deps.tool_manager.toolset),
+        _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
+        _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
@@ -1023,6 +1072,42 @@ async def _prepare_request_parameters(
         allow_image_output=output_schema.allows_image,
         instruction_parts=instruction_parts,
     )
+
+
+def _keep_default_output_mode(
+    state: GraphAgentState,
+    model: models.Model,
+    model_settings: ModelSettings | None,
+    params: models.ModelRequestParameters,
+) -> models.ModelRequestParameters:
+    """Resolve the output mode for a structured `output_type` that doesn't pick one once per run, not per request.
+
+    Where Tool Output's forced tool choice would stop a request from thinking, the model resolves the default to
+    Native or Prompted Output instead, so the mode follows whether each request thinks. Thinking can change from
+    one step to the next (through a `model_settings` callable or a capability), and the output tool would then
+    come and go from the tools sent to the model, invalidating the prompt cache. So later requests to the same
+    model keep the mode its first request resolved to: Tool Output on a request that thinks then offers the output
+    tool without forcing it. A request the kept mode isn't valid for resolves its own.
+    """
+    if params.output_mode != 'auto':
+        return params
+    model_id = model.model_id
+    if (kept_mode := state.default_output_modes.get(model_id)) is not None:
+        kept = params.with_default_output_mode(kept_mode)
+        try:
+            with suppress_unsupported_setting_warnings():
+                model.prepare_request(model_settings, kept)
+        except exceptions.UserError:
+            # The kept mode isn't valid for this request: e.g. Bedrock rejects output tools alongside thinking on
+            # models other than Claude, and Gemini before 3 rejects them alongside a native tool added mid-run.
+            return params
+        return kept
+    with suppress_unsupported_setting_warnings():
+        _, prepared = model.prepare_request(model_settings, params)
+    # `FallbackModel` leaves it to whichever model ends up answering.
+    if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
+        state.default_output_modes[model_id] = mode
+    return params
 
 
 # --- Innermost model-call helpers ---
@@ -1049,12 +1134,50 @@ def _split_resume_seed(
     A normal request ends in a `ModelRequest`, so the seed is `None` and the messages pass
     through untouched.
     """
-    if messages and isinstance(last := messages[-1], _messages.ModelResponse) and last.state == 'suspended':
-        return list(messages[:-1]), last
+    if (seed := resumed_response(messages)) is not None:
+        # Resuming is a new request, so the deadline a `FallbackModel` carried on the suspended response is dropped.
+        return list(messages[:-1]), without_carried_deadline(seed)
     return list(messages), None
 
 
-def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: _usage.RequestUsage) -> None:
+def _record_attempts_usage(usage: _usage.RunUsage, attempts: Sequence[_messages.ModelRequestAttempt] | None) -> None:
+    """Record the usage of attempts that failed before a response, such as responses a `FallbackModel` rejected.
+
+    Only their tokens and cost are recorded: a failed attempt isn't a response the agent acted on, so it
+    doesn't count as a request towards [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit].
+    """
+    for attempt in attempts or ():
+        if attempt.usage is not None:
+            _usage_attribution.record_usage(usage, attempt.usage)
+
+
+def _billed_by_request(
+    response: _messages.ModelResponse, request_messages: Sequence[_messages.ModelMessage]
+) -> _messages.ModelResponse:
+    """What the provider billed for `response` during this request, beyond the suspended response it resumed.
+
+    The run that produced a suspended response committed its usage, so a request that resumes it from
+    history counts only the segments it requested itself.
+    """
+    resumed = resumed_response(request_messages)
+    if resumed is not None:
+        # Priced like the response it was merged into, so subtracting it leaves only the new segments' cost.
+        fill_response_cost(resumed)
+    return billed_beyond(response, resumed)
+
+
+def _record_billed_usage(usage: _usage.RunUsage, billed: _messages.ModelResponse) -> None:
+    """Record a response's billed usage, and that of the attempts that failed before it."""
+    # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
+    _record_attempts_usage(usage, billed.failed_attempts)
+    _usage_attribution.record_usage(usage, billed.usage)
+
+
+def _check_continuation_usage(
+    run_context: RunContext[Any],
+    continuation_usage: _usage.RequestUsage,
+    attempts: Sequence[_messages.ModelRequestAttempt] | None = None,
+) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
     Continuation segments accumulate usage but aren't committed to the run usage until the
@@ -1065,29 +1188,20 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
+
+    `attempts` are the turn's failed attempts (e.g. responses a `FallbackModel` rejected before the one
+    that suspended), whose usage is committed alongside the merged response's.
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
         provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
+        attempt_usages = [attempt.usage for attempt in attempts or () if attempt.usage is not None]
+        for attempt_usage in attempt_usages:
+            provisional.incr(attempt_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
-        if continuation_usage.cost is not None:
+        if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
-
-
-async def _check_resume_seed_usage(
-    model: models.Model, run_context: RunContext[Any], seed: _messages.ModelResponse | None
-) -> None:
-    """Check a suspended history seed before sending the continuation that resumes it."""
-    usage_limits = run_context.usage_limits
-    if seed is None or usage_limits is None or usage_limits.cost_limit is None:
-        return
-    try:
-        fill_response_cost(seed)
-        _check_continuation_usage(run_context, seed.usage)
-    except BaseException:
-        await cancel_suspended_job(model, seed)
-        raise
 
 
 async def model_request(
@@ -1125,7 +1239,6 @@ async def model_request(
         The (merged) model response.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
-    await _check_resume_seed_usage(model, run_context, seed)
 
     # Two independent ceilings distinguished by the generic `merge_mode` signal, mirroring the
     # streamed composite in `_continuation`: every *fresh-generation* re-suspension (accumulate
@@ -1140,7 +1253,10 @@ async def model_request(
     # re-issue (`last_mode is None`) counts as strict, harmless since both ceilings allow ≥1.
     last_mode: MergeMode | None = None
     response = seed
-    with set_current_run_context(run_context):
+    # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
+    # `FallbackModel` starts one per model it tries instead, and carries the picked model's on its suspended responses.
+    deadline = start_request_deadline(model, request_context.model_settings)
+    with set_current_run_context(run_context), enforce_request_deadline(deadline):
         while True:
             if response is None:
                 messages = base_messages
@@ -1190,12 +1306,13 @@ async def model_request(
                 raise
 
             new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
-                        _check_continuation_usage(run_context, response.usage)
+                        _check_continuation_usage(run_context, response.usage, response.failed_attempts)
                     except BaseException:
                         await cancel_suspended_job(model, response)
                         raise
@@ -1209,9 +1326,11 @@ async def model_request(
                 last_mode = merge_mode(response, new_response)
                 response = merge_responses(response, new_response)
                 # Enforce token limits early against a provisional total so a runaway
-                # continuation can't blow the budget; the total is committed once later.
+                # continuation can't blow the budget; the total is committed once later. A resumed
+                # `seed` was counted by the run that suspended it, so only what this run billed counts.
+                billed = billed_beyond(response, seed)
                 try:
-                    _check_continuation_usage(run_context, response.usage)
+                    _check_continuation_usage(run_context, billed.usage, billed.failed_attempts)
                 except BaseException:
                     # The limit tripped on a still-suspended merge: cancel the live
                     # server-side job before propagating so it doesn't leak (mirrors the
@@ -1254,7 +1373,6 @@ async def model_request_stream(
         A `StreamedResponse` to iterate inside the durable boundary.
     """
     base_messages, seed = _split_resume_seed(request_context.messages)
-    await _check_resume_seed_usage(model, run_context, seed)
     with set_current_run_context(run_context):
         sr = _ContinuationStreamedResponse(
             model_request_parameters=request_context.model_request_parameters,
@@ -1273,7 +1391,11 @@ async def model_request_stream(
             # it here so re-attaching it around each segment keeps `get_current_span()`-driven span
             # updates (e.g. `FallbackModel` recording the resolved inner model) on the right span.
             segment_context=capture_current_context(),
+            request_context=request_context,
         )
+        # Started here, in the `wrap_model_request` task, so it also covers the wait for the first pull.
+        if (deadline := start_request_deadline(model, request_context.model_settings)) is not None:
+            sr._enforce_request_deadline(deadline)  # pyright: ignore[reportPrivateUsage]
         try:
             yield sr
         finally:
@@ -1342,10 +1464,28 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # means that the stream was started but not finished before `run()` was called
             raise exceptions.AgentRunError('You must finish streaming before calling run()')  # pragma: no cover
 
-        return await self._make_request(ctx)
+        try:
+            return await self._make_request(ctx)
+        except BaseException:
+            _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+            raise
 
     @asynccontextmanager
     async def stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
+    ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
+        try:
+            async with self._stream(ctx) as agent_stream:
+                yield agent_stream
+        except BaseException:
+            # A stream interrupted after it opened has already committed its partial response, which
+            # answers the request, so this only drops anything when the step never got a response.
+            _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+            raise
+
+    @asynccontextmanager
+    async def _stream(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncGenerator[result.AgentStream[DepsT, T]]:
@@ -1364,8 +1504,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
+        _handler_request_context: ModelRequestContext | None = None
         _handler_called = False
         _handler_usage_recorded = False
+        _stream_cut_short = False
+        # Set when the consumer stops the stream by raising, before the graph task cancels the handler.
+        stream_error: BaseException | None = None
+        _interrupted_response: _messages.ModelResponse | None = None
         time_to_first_chunk: float | None = None
         accounted_responses: list[_messages.ModelResponse] = []
         before_model_request_context: list[tuple[ContextVar[Any], Any]] = []
@@ -1373,7 +1518,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
-            nonlocal _handler_called, _handler_response, _handler_usage_recorded, time_to_first_chunk
+            nonlocal _handler_called, _handler_response, _handler_request_context, _handler_usage_recorded
+            nonlocal _stream_cut_short, time_to_first_chunk, _interrupted_response
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -1385,6 +1531,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             finally:
                 context_after_hooks = copy_context()
                 before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
+            _handler_request_context = req_ctx
             # After the before-chain, so the check applies to the model actually being called
             # (a `before_model_request` hook may have swapped it).
             _ensure_model_supports_streaming(req_ctx.model)
@@ -1397,20 +1544,38 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # into one continuous stream, so the whole chain is presented as a single
             # `AgentStream` and the model-request hooks wrap it once. The step is counted in
             # `ctx.state.usage.requests` when its response is committed, not here.
-            async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
-                self._did_stream = True
-                agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
-                agent_stream_holder.append(agent_stream)
-                stream_ready.set()
-                try:
-                    await stream_done.wait()
-                finally:
-                    # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                    # that cancelled path `finish` is never reached today (no metrics of any
-                    # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk = sr.time_to_first_chunk(request_start)
+            try:
+                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                    self._did_stream = True
+                    agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
+                    agent_stream_holder.append(agent_stream)
+                    stream_ready.set()
+                    try:
+                        await stream_done.wait()
+                    finally:
+                        if not stream_done.is_set():
+                            # `wrap_model_request` stopped the handler while the stream is still being consumed,
+                            # e.g. a parallel `InputGuardrail` blocking the prompt. Stop the consumer's pull before
+                            # the stream closes; it continues with the response `wrap_model_request` returns instead.
+                            _stream_cut_short = await agent_stream._abandon_model_stream(_wrap_response)  # pyright: ignore[reportPrivateUsage]
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and graph teardown cancels `wrap_task` at the `wait()` above,
+                        # mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk = sr.time_to_first_chunk(request_start)
+            except BaseException:
+                if stream_error is not None:
+                    # The consumer stopped the stream, so the graph task cancelled this one. Record what the
+                    # provider billed for so far before the `wrap_model_request` chain unwinds, so wrappers that
+                    # account for billed responses, and the `chat` span, see it. The graph task commits this same
+                    # response afterwards.
+                    _interrupted_response = _interrupted_stream_response(stream_error, agent_stream_holder[0].response)
+                    req_ctx._usage_response_ledger.responses.append(  # pyright: ignore[reportPrivateUsage]
+                        _billed_by_request(_interrupted_response, req_ctx.messages)
+                    )
+                    capture_model_response_span_context(req_ctx, _interrupted_response, time_to_first_chunk)
+                raise
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
@@ -1434,6 +1599,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             wrap_awaitable = _streaming_handler(wrap_request_context)
         wrap_task = asyncio.create_task(wrap_awaitable)
+
+        async def _wrap_response() -> _messages.ModelResponse | None:
+            """The response `wrap_model_request` finishes with after abandoning the stream.
+
+            Any error it raises instead is raised to the consumer, so it can't act on the cut-short
+            stream, except `ModelRetry`, which ends the stream for the retry below.
+            """
+            try:
+                # Shielded so a cancelled consumer leaves `wrap_task` to the stream teardown below.
+                return await asyncio.shield(wrap_task)
+            except exceptions.SkipModelRequest as e:
+                return e.response
+            except exceptions.ModelRetry:
+                return None
 
         # Wait for handler to start or wrap to complete (short-circuit).
         # If outer cancellation arrives during this wait, drain both tasks before re-raising
@@ -1506,7 +1685,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return
 
         # Normal path: handler was called, stream is ready
-        stream_error: BaseException | None = None
         try:
             yield agent_stream_holder[0]
         except BaseException as exc:
@@ -1517,18 +1695,36 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             try:
                 if stream_error is not None:
-                    await _cancel_task(wrap_task)
+                    # Graph teardown may already be under cancellation. Drain the wrapper task so its model
+                    # stream cleanup finishes before the event iterator is closed below.
+                    await cancel_and_drain(wrap_task)
                     # Capture the partial response so `capture_run_messages` and `all_messages()`
                     # include what was streamed before the interruption.
                     # We append directly rather than via `_append_response` to skip the usage-limit
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
+                        partial = agent_stream_holder[0].response
                         await self._commit_interrupted_response(
-                            ctx, wrap_request_context.model, stream_error, agent_stream_holder[0].response
+                            ctx,
+                            wrap_request_context.model,
+                            partial,
+                            # The handler recorded the response it billed, unless `wrap_model_request`
+                            # had already stopped it before the consumer did.
+                            _interrupted_response or _interrupted_stream_response(stream_error, partial),
+                            (_handler_request_context or wrap_request_context).messages,
                         )
                 else:
                     try:
-                        model_response = await wrap_task
+                        try:
+                            model_response = await wrap_task
+                        except exceptions.SkipModelRequest as e:
+                            # `wrap_model_request` skipped the request after the stream opened, e.g. a parallel
+                            # `InputGuardrail` that blocked the prompt. The consumer then streamed the skip's
+                            # response in place of the model's. If the consumer had already received the model's
+                            # whole response, it may have acted on it, so the skip propagates instead.
+                            if not _stream_cut_short:
+                                raise
+                            model_response = e.response
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
                         # `_handler_response` is unset only if the handler failed between stream
@@ -1552,25 +1748,28 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     async def _commit_interrupted_response(
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
         model: models.Model,
-        stream_error: BaseException,
-        partial: _messages.ModelResponse,
+        streamed: _messages.ModelResponse,
+        recorded: _messages.ModelResponse,
+        request_messages: Sequence[_messages.ModelMessage],
     ) -> None:
-        """Record the response an interrupted stream produced so far, without checking usage limits."""
-        recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
-        partial_response = replace(
-            partial,
-            state=recorded_state,
-            run_id=ctx.state.run_id,
-            conversation_id=ctx.state.conversation_id,
-        )
-        fill_response_cost(partial_response)
-        partial_response.workspace_ref = ctx.deps.workspace_ref
-        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
-        if partial_response.parts:
+        """Commit the response an interrupted stream produced so far, without checking usage limits.
+
+        `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
+        `request_messages` are the messages the stream was requested with, which end in the suspended response it
+        resumed, if any.
+        """
+        if streamed.state == 'suspended' and recorded.state == 'interrupted':
+            # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
+            await cancel_suspended_job(model, streamed)
+        recorded.run_id = ctx.state.run_id
+        recorded.conversation_id = ctx.state.conversation_id
+        recorded.workspace_ref = ctx.deps.workspace_ref
+        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
+        if recorded.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
             _usage_attribution.record_request(ctx.state.usage)
-        ctx.state.message_history.append(partial_response)
+        ctx.state.message_history.append(recorded)
 
     @staticmethod
     def _build_agent_stream(
@@ -1818,6 +2017,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
             mirrored_messages.detach()
+        # The drain capability ran ahead of the other hooks, so `'asap'` content a `before_model_request` hook
+        # enqueued would wait for the next request. Delivering it now puts it in this request and in history with
+        # one call, which is what a request-scoped reminder needs. Not when resuming a suspended response: that
+        # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
+        if self._resume_suspended is None:
+            processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
@@ -1836,6 +2041,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = request_context.model_request_parameters
 
         run_context.model_settings = model_settings
+
+        model_request_parameters = _keep_default_output_mode(ctx.state, model, model_settings, model_request_parameters)
+        request_context.model_request_parameters = model_request_parameters
 
         if self._resume_suspended is None:
             if not messages:
@@ -1898,6 +2106,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
+            # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
+            # it, behind that request's `CachePoint`, so an inserted message isn't guaranteed to reach the
+            # wire as a turn of its own. A rewrite that needs its own turn belongs in the adapter, where
+            # the rendered position is known (see the carried reasoning in `AnthropicModel._map_message`).
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
             )
@@ -1913,7 +2125,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 outgoing_namespace_before: dict[str, Any] = (
                     dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
                 )
-                with set_current_run_context(run_context):
+                # The request this counts warns about ignored settings when it's sent.
+                with set_current_run_context(run_context), suppress_unsupported_setting_warnings():
                     counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
 
                 # Counting models may persist framework-only state on the request they counted. When
@@ -2020,10 +2233,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> _messages.ModelResponse:
+        if isinstance(error, exceptions.FallbackExceptionGroup):
+            # No response reaches history, but a response a `FallbackModel` rejected was still billed,
+            # so it counts towards the run's usage and its token and cost limits.
+            _record_attempts_usage(ctx.state.usage, error.attempts)
+            # No response carries them either, so `wrap_model_request` finds them on the request context.
+            request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
-        if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
-            raise error
-        return await root_capability.on_model_request_error(run_context, request_context=request_context, error=error)
+        try:
+            if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                raise error
+            return await root_capability.on_model_request_error(
+                run_context, request_context=request_context, error=error
+            )
+        except exceptions.FallbackExceptionGroup as unrecovered:
+            # A limit the rejected responses exceeded is what stopped the run, so that's raised, with the
+            # group as its cause.
+            try:
+                ModelRequestNode._enforce_usage_limits(ctx, [])
+            except exceptions.UsageLimitExceeded as limit_exceeded:
+                raise limit_exceeded from unrecovered
+            raise
 
     @staticmethod
     def _append_response(
@@ -2054,11 +2284,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         request_context: ModelRequestContext | None = None,
     ) -> None:
-        """Commit billed usage at the provider-response boundary."""
-        if request_context is not None:
-            request_context._usage_response_ledger.responses.append(response)  # pyright: ignore[reportPrivateUsage]
+        """Commit billed usage at the provider-response boundary.
+
+        A request that resumed a suspended response from history counts only what it billed beyond it,
+        and records that in the request's billed-response record too: see `billed_beyond`.
+        """
         fill_response_cost(response)
-        _usage_attribution.record_usage(ctx.state.usage, response.usage)
+        billed = response
+        if request_context is not None:
+            billed = _billed_by_request(response, request_context.messages)
+            request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
+        _record_billed_usage(ctx.state.usage, billed)
 
     @staticmethod
     def _enforce_usage_limits(
@@ -2073,8 +2309,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # For a continuation chain (Anthropic `pause_turn`, OpenAI background mode) the merged
             # response sums usage across segments (see `_check_continuation_usage`), so this caps the
             # chain's combined input rather than any single segment's — conservative, not lenient.
+            # A response a provider SDK merged from several requests (Google long decode) is checked against
+            # the input of the first; see `context_input_tokens`.
             for response in responses:
-                ctx.deps.usage_limits.check_per_request_input_tokens(response.usage.input_tokens)
+                ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
     async def _build_retry_node(
         self,
@@ -2086,6 +2324,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Increments the retry counter and creates a new request with a RetryPromptPart.
         """
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
+        # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
+        # response was kept in history it answers them, and this is a no-op.
+        _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
         m = _messages.RetryPromptPart(content=error.message)
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
@@ -2617,6 +2858,36 @@ class SetFinalResult(AgentNode[DepsT, NodeRunEndT]):
         return End(self.final_result)
 
 
+def _drop_unanswered_request_scoped_prompts(messages: list[_messages.ModelMessage]) -> None:
+    """Remove the request-scoped `SystemPromptPart`s that no response will answer, in place.
+
+    Called once a step has given up on getting a response: the run raised or was cancelled, or a
+    capability asked for a retry without one. The parts were written for that step alone, so leaving
+    them in the trailing requests would carry them into the next step's request next to the ones it adds
+    for itself. Never between attempts at the same step: a retried or fallback attempt is still that
+    step's request.
+
+    Edits the list in place, since it's the run's history, but replaces the affected requests rather
+    than mutating them: instrumentation caches each message's serialized form. A request left empty
+    is removed, unless every trailing request was, in which case one empty request is kept so the
+    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does.
+    """
+    is_request_scoped = _messages._is_request_scoped  # pyright: ignore[reportPrivateUsage]
+    start = len(messages)
+    while start and isinstance(messages[start - 1], _messages.ModelRequest):
+        start -= 1
+    for index in range(len(messages) - 1, start - 1, -1):
+        message = messages[index]
+        assert isinstance(message, _messages.ModelRequest)
+        if not any(is_request_scoped(part) for part in message.parts):
+            continue
+        parts = [part for part in message.parts if not is_request_scoped(part)]
+        if not parts and len(messages) - start > 1:
+            del messages[index]
+        else:
+            messages[index] = replace(message, parts=parts)
+
+
 async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     selector = ctx.deps.model_selector
     if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
@@ -2651,6 +2922,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _model_id=ctx.deps.model_id,
         usage=ctx.state.usage,
         usage_limits=ctx.deps.usage_limits,
+        deadline=ctx.deps.deadline,
         prompt=ctx.deps.prompt,
         messages=ctx.state.message_history,
         validation_context=None,
@@ -2692,10 +2964,10 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
 
 
 def run_cancelled_snapshot(
-    message: str, state: GraphAgentState, deps: GraphAgentDeps[Any, Any]
+    message: str, state: GraphAgentState, deps: GraphAgentDeps[Any, Any], *, timed_out: bool = False
 ) -> exceptions.RunCancelled:
-    """Build a `RunCancelled` carrying a detached snapshot of the run's current state."""
-    return exceptions.RunCancelled(
+    """Build a `RunCancelled` (or `RunTimedOut`) carrying a detached snapshot of the run's current state."""
+    return (exceptions.RunTimedOut if timed_out else exceptions.RunCancelled)(
         message,
         messages=state.message_history,
         new_message_index=deps.new_message_index,

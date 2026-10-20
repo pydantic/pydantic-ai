@@ -112,13 +112,12 @@ from collections import deque
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, get_args
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar, get_args
 from urllib.parse import urlparse
 
 import anyio
 import idna
 from opentelemetry import trace
-from typing_extensions import Self
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
@@ -482,7 +481,7 @@ async def _resolve_host(host: str) -> tuple[str, ...] | None:
         return cached[1]
     try:
         addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)
-    except (OSError, UnicodeError, asyncio.TimeoutError):
+    except (TimeoutError, OSError, UnicodeError):
         return None
     if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
         _resolution_cache.clear()
@@ -1268,7 +1267,7 @@ class PlaywrightBrowserSession:
             return await awaitable
         try:
             return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             # Raised as a Playwright timeout so the tools map it like any other
             # deadline they already handle.
             raise PlaywrightTimeoutError(f'Timeout {self._launch_timeout_ms}ms exceeded.') from exc
@@ -1655,7 +1654,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
         try:
             await asyncio.wait_for(sweep(), budget_ms / 1000)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         return texts
 
@@ -1761,9 +1760,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             return await awaitable
         try:
             return await asyncio.wait_for(awaitable, timeout_ms / 1000)
-        except asyncio.TimeoutError as exc:
-            # asyncio.wait_for raises asyncio.TimeoutError, which is a distinct class
-            # from the builtin TimeoutError on Python 3.10 (aliased only from 3.11).
+        except TimeoutError as exc:
+            # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc
 
     def _timeout_error(self, timeout_ms: int | None) -> str | None:

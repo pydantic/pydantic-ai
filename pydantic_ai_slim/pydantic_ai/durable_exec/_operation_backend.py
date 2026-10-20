@@ -30,7 +30,8 @@ def in_durable_unit() -> bool:
     """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
 
     In-process engines need it where their own container check stays true inside a unit (Prefect's
-    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call from a tool goes direct.
+    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
+    operation called from a tool goes direct.
     """
     return _IN_DURABLE_UNIT.get()
 

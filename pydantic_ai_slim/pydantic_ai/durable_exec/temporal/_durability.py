@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 
 from pydantic_core import PydanticSerializationError
@@ -12,6 +12,7 @@ from temporalio.client import Client, WorkflowHandle
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -19,6 +20,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrde
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
+    conversation_id_from_run_id,
 )
 from pydantic_ai.durable_exec._capability_operation import CapabilityMethodDeclaration
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
@@ -78,6 +80,9 @@ from ._transports import (
     _StreamedActivityPayload,
     _WorkspaceCallTransport,
 )
+
+_STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
+"""`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
@@ -395,7 +400,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
         # Temporal applies its durable-operation guards while deserializing the run context;
         # wrapping it again would replace activity-specific compatibility state.
-        yield ctx
+        if ctx.deadline is None:
+            yield ctx
+            return
+        # An activity doesn't share the workflow's context, so an agent a tool runs here inherits the
+        # run's deadline from the serialized context instead.
+        with provide_run_deadline(ctx.deadline):
+            yield ctx
 
     def _resolve_temporal_tool_config(
         self, operation_id: DurableOperationId, tool: object | None, name: str
@@ -493,7 +504,26 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None
+        # `workflow.uuid4()` draws from the workflow's random sequence. Histories recorded before every
+        # durable run got a stable default only drew here when the root capability supplied workspaces
+        # and reached this capability directly (not through a wrapper), so the rest replay without the
+        # draw and keep the sequence (and the random run ID) they were recorded with.
+        root = self._agent.root_capability if self._agent is not None else None
+        drew_before = (
+            root is not None
+            and root._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+            and any(capability is self for capability in root.capabilities)
+        )
+        if not drew_before and not workflow.patched(_STABLE_DEFAULT_RUN_ID_PATCH):
+            return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        # `workflow.now()` is replay-safe: a replayed run computes the same deadline and timer.
+        return workflow.now if self.in_durable_context else None
 
     async def wrap_run(
         self,

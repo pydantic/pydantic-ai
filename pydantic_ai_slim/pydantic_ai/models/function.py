@@ -5,9 +5,9 @@ from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, assert_never, overload
 
-from typing_extensions import assert_never, overload
+import anyio
 
 from .. import _utils, usage
 from .._instrumentation import get_instructions
@@ -221,7 +221,10 @@ class FunctionModel(Model):
                 _iter=response_stream,
             )
         finally:
-            await response_stream.aclose()
+            # Closing can wait for a pending pull's lock before reaching the user's
+            # generator, so protect the entire close from an already-cancelled scope.
+            with anyio.CancelScope(shield=True):
+                await response_stream.aclose()
 
     @property
     def provider(self) -> None:

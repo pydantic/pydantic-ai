@@ -295,6 +295,17 @@ def test_format_report_leads_with_alerts_and_totals():
     assert '6,000' in report
 
 
+def test_format_report_counts_failed_runs_per_workflow():
+    """Failed runs report here rather than as an `[aw]` issue per run."""
+    records = [_record('r.lock.yml', conclusion='failure'), _record('r.lock.yml'), _record('r.lock.yml')]
+
+    report = format_report(summarize(records), days=7, sampled=3, total=3)
+
+    header, row = report.split('```\n', 1)[1].splitlines()[:2]
+    assert header.split() == ['workflow', 'runs', 'failed', 'agent', 'empty', 'out', 'tok']
+    assert row.split()[:3] == ['r.lock.yml', '3', '1']
+
+
 def test_format_report_discloses_partial_sampling():
     """Never imply full coverage: not every run yields a readable artifact."""
     report = format_report(summarize([_record('r.lock.yml')]), days=7, sampled=1, total=50)

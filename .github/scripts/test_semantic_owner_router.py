@@ -562,7 +562,7 @@ def test_gated_selection_skips_full_assignee_list_without_starving_the_next():
 
 
 def test_gated_routing_backs_off_after_a_recent_unassignment():
-    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    recent = (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).isoformat()
     client = FakeClient({7: item(7, labels=['MCP', 'p:1-highest'], unassigned_at=[recent])})
 
     selection = router.decision_for(client, CORE, 7)
@@ -574,7 +574,7 @@ def test_gated_routing_backs_off_after_a_recent_unassignment():
 
 
 def test_bot_unassignments_do_not_suppress_gated_routing():
-    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    recent = (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).isoformat()
     client = FakeClient(
         {
             7: item(
@@ -593,7 +593,7 @@ def test_bot_unassignments_do_not_suppress_gated_routing():
 
 
 def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
-    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2)).isoformat()
+    recent = (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).isoformat()
     cleanup: list[str | dict[str, Any]] = [
         {'createdAt': recent, 'actor': {'__typename': 'Bot'}}
         for _ in range(router._UNASSIGNED_EVENT_PAGE)  # pyright: ignore[reportPrivateUsage]
@@ -608,7 +608,7 @@ def test_a_full_page_of_recent_bot_cleanup_still_backs_off():
 
 
 def test_a_full_page_of_old_bot_cleanup_does_not_back_off():
-    old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
+    old = (dt.datetime.now(dt.UTC) - dt.timedelta(days=30)).isoformat()
     cleanup: list[str | dict[str, Any]] = [
         {'createdAt': old, 'actor': {'__typename': 'Bot'}}
         for _ in range(router._UNASSIGNED_EVENT_PAGE)  # pyright: ignore[reportPrivateUsage]

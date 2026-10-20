@@ -342,7 +342,7 @@ dataset = Dataset(
         # Quality score with different model
         LLMJudge(
             rubric='Overall response quality',
-            model='anthropic:claude-sonnet-4-6',
+            model='{{ anthropic:medium }}',
             score={'evaluation_name': 'quality', 'include_reason': False},
             assertion=False,
         ),

@@ -169,7 +169,7 @@ from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSet
 provider = AzureProvider(
     voice_live_endpoint='https://my-voice-live.services.ai.azure.com',
     voice_live_api_key='...',
-    voice_live_api_version='2026-04-10',
+    voice_live_api_version='2026-07-15',
 )
 
 agent = Agent(instructions='You are a helpful voice assistant.')
@@ -193,12 +193,39 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA,
-adapting them to the model: for example, semantic VAD on a
-[cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade] uses
-Voice Live's own semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
-sets the sampling temperature. Voice Live ignores `openai_output_speed`, `openai_truncation`, and
-`parallel_tool_calls`.
+Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA.
+On a [cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade],
+which can't take OpenAI's semantic VAD or near/far-field noise reduction, they become Voice Live's own
+semantic VAD and deep noise suppression. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+sets the sampling temperature. Voice Live ignores `openai_output_speed` and `openai_truncation`.
+
+### Turn detection and audio processing
+
+Voice Live's own audio processing is configured with
+[`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection],
+[`azure_voice_live_noise_reduction`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_noise_reduction],
+and [`azure_voice_live_echo_cancellation`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_echo_cancellation].
+[`AzureSemanticVAD`][pydantic_ai.realtime.azure.AzureSemanticVAD] works on every model;
+[end-of-utterance detection][pydantic_ai.realtime.azure.AzureEndOfUtteranceDetection], which lets the
+user pause mid-sentence, works only on a cascade model:
+
+```python
+from pydantic_ai.realtime.azure import (
+    AzureEndOfUtteranceDetection,
+    AzureRealtimeModelSettings,
+    AzureSemanticVAD,
+)
+
+settings = AzureRealtimeModelSettings(
+    azure_voice_live_turn_detection=AzureSemanticVAD(
+        type='azure_semantic_vad_multilingual',
+        languages=['en', 'fr'],
+        end_of_utterance_detection=AzureEndOfUtteranceDetection(model='semantic_detection_v1_multilingual'),
+    ),
+    azure_voice_live_noise_reduction='azure_deep_noise_suppression',
+    azure_voice_live_echo_cancellation=True,
+)
+```
 
 ### Voices
 
@@ -287,7 +314,7 @@ model = AzureRealtimeModel(
 | Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
-| Native tools | Unsupported | The API offers remote MCP servers, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Native tools | Unsupported | The API offers remote MCP servers (plus Foundry tools and agents on Voice Live) but no web or file search; Pydantic AI doesn't expose the MCP support yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)), so configure [local fallbacks](tools.md#native-tools) |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 
@@ -301,3 +328,5 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
   otherwise.
 - Azure AI Voice Live rides the same model behind `azure_voice_live=True`, against its own
   resource and beta session protocol; browser WebRTC is GA-only for now.
+- Voice Live's informational `warning` events are raised as Python `UserWarning`s, so escalating
+  warnings to errors ends the session.

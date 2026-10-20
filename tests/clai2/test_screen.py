@@ -155,7 +155,7 @@ async def test_plugin_takes_the_screen_from_inside_a_tool(tmp_path: Path, termin
     )
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('hello\n/exit\n')
+        pipe.send_text('hello\r/exit\r')
         await chat(
             Agent(TestModel(call_tools=['take'], custom_output_text='done')),
             deps=None,
