@@ -157,8 +157,9 @@ Authored code first runs when the model calls `author_capability`, not on the ne
 validation executes the module body, the constructor, and the static getters in the current
 run, with the agent process's environment and permissions, even when validation then
 rejects the code. If that code blocks, cancelling the run stops waiting for it, but its
-worker thread runs until the code returns. Other authoring, listing, and disabling calls
-are not held up by it. `store.load_active()` runs authored code in its calling thread, so
+worker thread runs until the code returns and then finishes the write, so code that passes
+validation is still saved and loaded by the next `load_active()`; disable it if you did not
+want it. Other authoring, listing, and disabling calls are not held up by it. `store.load_active()` runs authored code in its calling thread, so
 an authored module that blocks also blocks that call.
 
 To have a person approve authored code before any of it runs, require approval for

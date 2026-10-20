@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -131,11 +132,11 @@ class CapabilityStore:
         live = self.directory / f'{name}.py'
         rejected = self.directory / f'{name}.rejected.py'
         # Authored code runs outside the directory lock, so code that blocks holds up only this call.
-        fd, candidate_name = tempfile.mkstemp(dir=self.directory, prefix=f'{name}.', suffix='.candidate.py')
-        candidate = Path(candidate_name)
+        # The candidate keeps the name `<name>.py`, so errors and `__file__` match the file it becomes.
+        staging = Path(tempfile.mkdtemp(dir=self.directory, prefix='.candidate-'))
+        candidate = staging / live.name
         try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as file:
-                file.write(code)
+            candidate.write_text(code, encoding='utf-8')
             try:
                 class_name, error = validate_capability_file(candidate), None
             except CapabilityValidationError as exc:
@@ -156,7 +157,7 @@ class CapabilityStore:
                 self._save_manifest(manifest)
                 return record
         finally:
-            candidate.unlink(missing_ok=True)
+            shutil.rmtree(staging, ignore_errors=True)
 
     def disable(self, name: str) -> bool:
         """Mark the named capability disabled so `load_active` stops returning it. Returns whether it existed."""

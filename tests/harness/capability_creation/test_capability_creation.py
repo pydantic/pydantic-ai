@@ -336,6 +336,18 @@ class TestCapabilityStore:
         assert store.write('marker', NO_SUBCLASS_CODE).module_file == 'marker.py'
         assert not (tmp_path / 'marker.rejected.py').exists()
 
+    def test_write_reports_the_same_error_as_load_active(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Validation runs on a staged copy; its error must name the saved file, so a reload has nothing to update.
+        store = CapabilityStore(tmp_path)
+        record = store.write('bad', SYNTAX_ERROR_CODE)
+        assert record.last_error is not None
+        assert 'bad.py' in record.last_error
+        save_spy = Mock()
+        monkeypatch.setattr(CapabilityStore, '_save_manifest', save_spy)
+        assert store.load_active() == []
+        save_spy.assert_not_called()
+        assert sorted(path.name for path in tmp_path.iterdir()) == ['bad.py', 'manifest.json']
+
     def test_failed_reauthor_of_broken_entry_replaces_it(self, tmp_path: Path) -> None:
         # With no version that passed validation to keep, the new attempt is what gets recorded.
         store = CapabilityStore(tmp_path)
