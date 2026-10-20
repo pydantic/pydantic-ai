@@ -172,7 +172,8 @@ def paths_read(messages: list[ModelMessage]) -> list[str]:
 ```
 
 `read_file` also has a typed return part, `ReadFileReturnPart`, for a return
-whose outcome is `'success'`, which includes a `Path not found: <path>` result.
+whose outcome is `'success'`, which includes a `Path not found: <path>` result and the
+description `read_file` returns for a file over 64 MiB, so neither means the file's content was read.
 Its `content` is the text with its header, or `[header, BinaryContent]` for an
 image or PDF. The kind declares no content shape, since `ToolKind` takes a class
 and not a union, so `typed_content` is untyped. The other tools return text
