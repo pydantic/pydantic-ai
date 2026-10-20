@@ -62,6 +62,7 @@ from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     BinaryContent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -1027,8 +1028,15 @@ def _safe_outputs_toolset(sink: Path) -> AbstractToolset[object]:
     return toolset
 
 
-def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse], sink: Path) -> int:
-    """Run the shim on a `FunctionModel` that streams each response `respond` returns."""
+def _run_shim(
+    respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse], sink: Path, *, mcp_tool_names: bool = False
+) -> int:
+    """Run the shim on a `FunctionModel` that streams each response `respond` returns.
+
+    `mcp_tool_names` names the safe-output tools as the model sees gh-aw's `safeoutputs` server,
+    `mcp__safeoutputs__<tool>`, instead of by their bare names.
+    """
+    safe_outputs = _safe_outputs_toolset(sink)
 
     async def _stream(messages: list[ModelMessage], info: AgentInfo):
         response = respond(messages, info)
@@ -1049,7 +1057,7 @@ def _run_shim(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
                 None,
                 task=None if os.environ.get('GITHUB_WORKFLOW') == shim.ATTENTION_WORKFLOW else shim.task,
             ),
-            mcp_servers=[_safe_outputs_toolset(sink)],
+            mcp_servers=[safe_outputs.prefixed('mcp__safeoutputs_') if mcp_tool_names else safe_outputs],
             session_id='test-session',
         )
     )
@@ -1472,10 +1480,43 @@ def test_run_warns_the_model_when_the_time_budget_is_nearly_spent(
         warned.append(shim.TIME_BUDGET_NOTICE in (info.instructions or ''))
         if sink.exists():
             return ModelResponse(parts=[TextPart('done')])
-        return ModelResponse(parts=[ToolCallPart('noop', {'message': 'posted'})])
+        return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'posted'})])
 
-    assert _run_shim(_respond, sink) == 0
+    assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
     assert warned == [inside_reserve, inside_reserve]
+
+
+def test_run_offers_only_safe_output_tools_inside_the_time_reserve(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    sink = tmp_path / 'outputs.jsonl'
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', str(sink))
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setattr(shim, 'emit', lambda obj: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS + 60)
+    offered: list[set[str]] = []
+    glob_returns: list[str] = []
+
+    def _respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        offered.append({tool_def.name for tool_def in info.function_tools})
+        glob_returns.extend(
+            str(part.content)
+            for part in messages[-1].parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'Glob'
+        )
+        if len(offered) == 1:
+            # The reserve starts while this request is in flight.
+            monkeypatch.setattr(shim, '_run_deadline', time.monotonic() + shim.RUN_TIME_RESERVE_SECS - 1)
+            return ModelResponse(parts=[ToolCallPart('Glob', {'pattern': '*'})])
+        if sink.exists():
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('mcp__safeoutputs__noop', {'message': 'posted'})])
+
+    (tmp_path / 'module.py').write_text('', encoding='utf-8')
+    assert _run_shim(_respond, sink, mcp_tool_names=True) == 0
+    assert {'Glob', 'Read', 'Task', 'mcp__safeoutputs__noop'} <= offered[0]
+    assert offered[1:] == [{'mcp__safeoutputs__noop', 'mcp__safeoutputs__probe'}] * 2
+    # The in-flight request's tool call still ran.
+    assert len(glob_returns) == 1
+    assert 'module.py' in glob_returns[0]
 
 
 @pytest.mark.parametrize('parallel_tasks', [1, 2])
@@ -1557,6 +1598,163 @@ def test_task_cuts_off_a_subagent_before_the_run_time_reserve(monkeypatch: pytes
     monkeypatch.setattr(shim, '_run_seconds_left', lambda: shim.RUN_TIME_RESERVE_SECS + 0.01)
     out = asyncio.run(shim.task(cast(RunContext[None], _Ctx()), 'x', 'y'))
     assert out == 'error: sub-agent timed out after 1min'
+
+
+def _cut_delegate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    turns: list[tuple[str, str]],
+    resume: Callable[[list[ModelMessage], AgentInfo], ModelResponse],
+) -> FunctionModel:
+    """A delegate model that plays `turns`, then answers its resume request with `resume`.
+
+    Each turn is `('read', path)`, a `Read` call, or `('cut', partial_text)`, which streams
+    `partial_text` and then times out. A read of `cut.py` times out while the tool runs. Raising
+    `TimeoutError` where the cut lands takes `task`'s timeout path without expiring its wall-clock cap;
+    the run records its partial state as it does for the cap's cancellation, which
+    `test_subagent_is_resumed_after_its_cap_cuts_it_off` covers.
+    """
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    tools: FunctionToolset[object] = FunctionToolset()
+
+    @tools.tool_plain(name='Read')
+    async def _read(file_path: str) -> str:
+        if file_path == 'cut.py':
+            raise TimeoutError
+        return f'source of {file_path}'
+
+    def _select_tools(
+        _allowed: frozenset[str] | None, permission_mode: str | None, *, task: shim.TaskCallable | None
+    ) -> AbstractToolset[object]:
+        return tools
+
+    monkeypatch.setattr(shim, 'select_claude_code_toolset', _select_tools)
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        # The resume request is the only one made without tools.
+        if not info.function_tools:
+            for part in resume(messages, info).parts:
+                assert isinstance(part, TextPart)
+                yield part.content
+            return
+        kind, value = turns.pop(0)
+        if kind == 'read':
+            yield {0: DeltaToolCall(name='Read', json_args=json.dumps({'file_path': value}))}
+            return
+        if value:
+            yield value
+        raise TimeoutError
+
+    return FunctionModel(stream_function=_stream)
+
+
+def _resumed_report(report: str) -> str:
+    return (
+        'note: the sub-agent timed out after 15min and wrote this report afterwards from what it had '
+        f'already found, without further tool calls.\n\n{report}'
+    )
+
+
+def test_task_resumes_a_timed_out_subagent_from_its_history(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    resume_requests: list[tuple[list[ModelMessage], AgentInfo]] = []
+
+    def _resume(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        resume_requests.append((messages, info))
+        return ModelResponse(parts=[TextPart('Reviewed files: a.py\nUnreviewed files: b.py')])
+
+    model = _cut_delegate(
+        monkeypatch, tmp_path, [('read', 'a.py'), ('cut', 'No findings in a.py. Next, b.py')], _resume
+    )
+    parent_usage = RunUsage()
+    ctx = RunContext[object](deps=object(), model=model, usage=parent_usage, usage_limits=None)
+    out = asyncio.run(shim.task(ctx, 'review a.py and b.py', 'Review a.py and b.py.'))
+
+    assert out == _resumed_report('Reviewed files: a.py\nUnreviewed files: b.py')
+    [(messages, info)] = resume_requests
+    assert info.function_tools == []
+    assert info.instructions is not None and 'Review a.py and b.py.' in info.instructions
+    parts = [part for message in messages for part in message.parts]
+    assert [part.content for part in parts if isinstance(part, ToolReturnPart)] == ['source of a.py']
+    # The response the cut left partial is not part of the resumed history.
+    assert not any(isinstance(part, TextPart) for part in parts)
+    assert isinstance(parts[-1], UserPromptPart) and parts[-1].content == shim.SUBAGENT_RESUME_PROMPT
+    # The delegate's two requests, including the one cut off, and the resume request.
+    assert parent_usage.requests == 3
+
+
+def test_task_resume_closes_out_tool_calls_the_timeout_left_unanswered(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    resume_requests: list[list[ModelMessage]] = []
+
+    def _resume(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        resume_requests.append(messages)
+        return ModelResponse(parts=[TextPart('Reviewed files: a.py\nUnreviewed files: cut.py')])
+
+    model = _cut_delegate(monkeypatch, tmp_path, [('read', 'a.py'), ('read', 'cut.py')], _resume)
+    ctx = RunContext[object](deps=object(), model=model, usage=RunUsage(), usage_limits=None)
+    out = asyncio.run(shim.task(ctx, 'review a.py and cut.py', 'Review a.py and cut.py.'))
+
+    assert out == _resumed_report('Reviewed files: a.py\nUnreviewed files: cut.py')
+    [messages] = resume_requests
+    returns = {
+        part.tool_call_id: part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    calls = {
+        part.tool_call_id: part.args_as_dict()['file_path']
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    }
+    assert {calls[call_id]: content for call_id, content in returns.items()} == {
+        'a.py': 'source of a.py',
+        'cut.py': INTERRUPTED_TOOL_RETURN_CONTENT,
+    }
+
+
+@pytest.mark.parametrize('blocked_by', ['time', 'requests', 'nothing to resume'])
+def test_task_returns_the_timeout_error_when_no_resume_is_admissible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, blocked_by: str
+):
+    turns = [('read', 'a.py'), ('cut', 'No findings in a.py.')]
+    usage_limits = None
+    if blocked_by == 'time':
+        # Read once when the delegate starts, and once when the cut lands inside the parent's time reserve.
+        seconds_left = iter([shim.RUN_TIME_RESERVE_SECS + shim.SUBAGENT_TIMEOUT_SECS, shim.RUN_TIME_RESERVE_SECS])
+        monkeypatch.setattr(shim, '_run_seconds_left', lambda: next(seconds_left))
+    elif blocked_by == 'requests':
+        # The delegate's grant of 3 requests is spent: 2 complete and the one cut off.
+        turns.insert(0, ('read', 'b.py'))
+        usage_limits = UsageLimits(request_limit=20)
+    else:
+        turns = [('cut', '')]
+    resume_requests: list[list[ModelMessage]] = []
+
+    def _resume(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        resume_requests.append(messages)
+        return ModelResponse(parts=[TextPart('report')])
+
+    model = _cut_delegate(monkeypatch, tmp_path, turns, _resume)
+    ctx = RunContext[object](deps=object(), model=model, usage=RunUsage(requests=15), usage_limits=usage_limits)
+    out = asyncio.run(shim.task(ctx, 'review a.py', 'Review a.py.'))
+    assert out == 'error: sub-agent timed out after 15min'
+    assert turns == []
+    assert resume_requests == []
+
+
+def test_task_returns_the_timeout_error_when_the_resume_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    resume_requests: list[list[ModelMessage]] = []
+
+    def _resume(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        resume_requests.append(messages)
+        raise RuntimeError('provider unavailable')
+
+    model = _cut_delegate(monkeypatch, tmp_path, [('read', 'a.py'), ('cut', '')], _resume)
+    ctx = RunContext[object](deps=object(), model=model, usage=RunUsage(), usage_limits=None)
+    out = asyncio.run(shim.task(ctx, 'review a.py', 'Review a.py.'))
+    assert out == 'error: sub-agent timed out after 15min'
+    assert len(resume_requests) == 1
 
 
 def test_read_only_subagent_tools_are_non_mutating_and_exclude_task():
@@ -2573,6 +2771,59 @@ def test_subagent_timeout_marks_the_spans_it_cuts_off(
     assert ('gen_ai.usage.input_tokens' in (cut_off_chat.attributes or {})) == bool(chunks_before_cutoff)
 
 
+def test_subagent_is_resumed_after_its_cap_cuts_it_off(
+    agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    task_returns: list[str] = []
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        if not info.function_tools:
+            # The resume request, the only one offered no tools.
+            yield 'Reviewed files: none'
+        elif shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            if not returns:
+                yield {0: DeltaToolCall(name='Glob', json_args='{"pattern": "*"}')}
+            else:
+                yield 'partial'
+                await _skip_clock_and_hang(shim.SUBAGENT_TIMEOUT_SECS)
+        elif returns:
+            task_returns.extend(str(part.content) for part in returns if part.tool_name == 'Task')
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim.run(
+                prompt='review the PR',
+                model=FunctionModel(stream_function=_stream),
+                label='test-model',
+                claude_code_toolset=shim.select_claude_code_toolset(None, None, task=shim.task),
+                mcp_servers=[],
+                session_id='subagent-resume',
+            )
+        )
+    assert rc == 0
+    assert task_returns == [_resumed_report('Reviewed files: none')]
+    # The cap still marks the delegate and its `Task` call as timed out; the resume's own spans succeed.
+    assert _span_outcomes(agent_spans) == [
+        ('chat', 'ERROR', 'timeout'),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('chat', 'UNSET', None),
+        ('execute_tool', 'ERROR', 'timeout'),
+        ('execute_tool', 'UNSET', None),
+        ('invoke_agent', 'ERROR', 'timeout'),
+        ('invoke_agent', 'UNSET', None),
+        ('invoke_agent', 'UNSET', None),
+    ]
+    assert 'invoke_agent delegate-resume' in {span.name for span in agent_spans.get_finished_spans()}
+
+
 def test_a_subagents_own_timeout_error_is_not_marked_as_timed_out(
     agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
 ):
@@ -2626,8 +2877,11 @@ def test_run_timeout_marks_the_spans_it_cuts_off(
     agent_spans: InMemorySpanExporter,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    # A 6-minute run budget, so the run starts outside the parent's time reserve with all its tools.
+    budget_secs = 360
+
     async def hang() -> None:
-        await _skip_clock_and_hang(60)
+        await _skip_clock_and_hang(budget_secs)
 
     async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
         if stream_chunks is None:
@@ -2635,9 +2889,9 @@ def test_run_timeout_marks_the_spans_it_cuts_off(
         else:
             for _ in range(stream_chunks):
                 yield 'partial'
-            await _skip_clock_and_hang(60)
+            await _skip_clock_and_hang(budget_secs)
 
-    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', '3')  # a 60s run budget
+    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', str(budget_secs // 60 + shim.JOB_TIMEOUT_HEADROOM_MINS))
     with redirect_stdout(io.StringIO()), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
         rc = runner.run(
             shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
