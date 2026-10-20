@@ -643,7 +643,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
         if self.root_ref is not None:
-            root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
+            root_key = re.sub(r'^#/\$defs/', '', self.root_ref).replace('~1', '/').replace('~0', '~')
             root_schema = self.defs.get(root_key)
             if isinstance(root_schema, bool):
                 # Resolve boolean roots before the walk can rewrite their references to `#`.
@@ -667,7 +667,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # Because the following should never change the semantics of the schema we apply it unconditionally.
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
-            root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
+            root_key = re.sub(r'^#/\$defs/', '', self.root_ref).replace('~1', '/').replace('~0', '~')
             root_schema = self.defs.get(root_key)
             assert not isinstance(root_schema, bool)
             result.update(root_schema or {})

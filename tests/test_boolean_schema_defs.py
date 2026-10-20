@@ -58,6 +58,44 @@ def test_openai_boolean_root_defs(definition: bool, strict: bool | None, sibling
     assert schema == original
 
 
+@pytest.mark.parametrize('definition', [True, False])
+@pytest.mark.parametrize(
+    'name,reference',
+    [('X/Y', '#/$defs/X~1Y'), ('X~Y', '#/$defs/X~0Y'), ('X~1Y', '#/$defs/X~01Y')],
+)
+def test_openai_boolean_root_defs_escaped_names(name: str, reference: str, definition: bool):
+    schema: JsonSchema = {'$ref': reference, '$defs': {name: definition}, 'not': {'type': 'string'}}
+    original = deepcopy(schema)
+    expected: JsonSchema = {'$defs': {name: definition}, 'not': {'type': 'string'} if definition else {}}
+    assert OpenAIJsonSchemaTransformer(schema, strict=False).walk() == expected
+    assert schema == original
+
+
+@pytest.mark.parametrize('decoy_definition', [True, False])
+@pytest.mark.parametrize(
+    'name,reference,encoded_name',
+    [
+        ('X/Y', '#/$defs/X~1Y', 'X~1Y'),
+        ('X~Y', '#/$defs/X~0Y', 'X~0Y'),
+        ('X~1Y', '#/$defs/X~01Y', 'X~01Y'),
+    ],
+)
+def test_openai_dictionary_root_defs_escaped_names(
+    name: str, reference: str, encoded_name: str, decoy_definition: bool
+):
+    definition: JsonSchema = {
+        'type': 'object',
+        'properties': {'value': {'type': 'integer'}},
+        'required': ['value'],
+        'additionalProperties': False,
+    }
+    schema: JsonSchema = {'$ref': reference, '$defs': {name: definition, encoded_name: decoy_definition}}
+    original = deepcopy(schema)
+    expected: JsonSchema = {'$defs': deepcopy(schema['$defs']), **deepcopy(definition)}
+    assert OpenAIJsonSchemaTransformer(schema, strict=False).walk() == expected
+    assert schema == original
+
+
 @pytest.mark.parametrize(
     'profile,inlined',
     [
