@@ -142,8 +142,9 @@ spoken turn starts, joins the conversation, and gets the last of its audio and t
 [`UserTurnClosed`][pydantic_ai.realtime.lifecycle.UserTurnClosed]), where each input joins it
 ([`InputAdded`][pydantic_ai.realtime.lifecycle.InputAdded]), and which inputs no response will answer
 ([`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] /
-[`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]), or which tool calls' results
-([`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]). The session builds history, usage,
+[`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused]), and which tool calls' results
+it won't answer either ([`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned]). The session
+builds history, usage,
 and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] from them.
 
 **Implementing a connection** — subclass [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection]
