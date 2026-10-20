@@ -27,7 +27,9 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     Citation,
+    CitationSource,
     CompactionPart,
+    ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
     FilePart,
@@ -133,43 +135,50 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
-def _map_citations(citations: Sequence[BetaTextCitation] | None) -> list[Citation] | None:
-    result: list[Citation] = []
-    for citation in citations or []:
+def _fetched_page(block: BetaWebFetchToolResultBlock) -> tuple[str, str] | None:
+    """Return the URL and text of a page Web Fetch fetched, or `None` for a failed fetch or a PDF."""
+    if isinstance(block.content, BetaWebFetchBlock) and isinstance(block.content.content.source, BetaPlainTextSource):
+        return block.content.url, block.content.content.source.data
+    return None
+
+
+def _fetched_page_url(citation: BetaCitationCharLocation, fetched_pages: Sequence[tuple[str, str]]) -> str | None:
+    """Return the URL of the fetched page a character citation quotes, if any.
+
+    Anthropic cites a fetched page like a document, by index and character range, without its URL.
+    """
+    if not citation.cited_text:
+        return None
+    start, end = citation.start_char_index, citation.end_char_index
+    return next((url for url, page in fetched_pages if page[start:end] == citation.cited_text), None)
+
+
+def _map_citations(
+    citations: Sequence[BetaTextCitation], text: str, fetched_pages: Sequence[tuple[str, str]] = ()
+) -> list[Citation] | None:
+    sources: list[CitationSource] = []
+    for citation in citations:
+        excerpts = [citation.cited_text] if citation.cited_text else []
         if isinstance(citation, BetaCitationsWebSearchResultLocation):
-            result.append(
-                Citation(
-                    sources=[
-                        WebCitationSource(
-                            url=citation.url,
-                            title=citation.title,
-                            excerpts=[citation.cited_text] if citation.cited_text else [],
-                        )
-                    ],
-                    # Anthropic's opaque token for this citation, which it requires when the citation is sent back to it.
-                    provider_details={'encrypted_index': citation.encrypted_index},
-                )
-            )
+            sources.append(WebCitationSource(url=citation.url, title=citation.title, excerpts=excerpts))
+        elif isinstance(citation, BetaCitationCharLocation) and (url := _fetched_page_url(citation, fetched_pages)):
+            sources.append(WebCitationSource(url=url, title=citation.document_title, excerpts=excerpts))
         elif isinstance(
             citation,
             (BetaCitationCharLocation, BetaCitationPageLocation, BetaCitationContentBlockLocation),
-        ):
-            # These locations select evidence inside the input document, not a range in the generated TextPart.
-            # Keep them as source metadata rather than exposing them as a Citation.anchor.
-            details = citation.model_dump(exclude={'cited_text', 'document_title', 'file_id'})
-            result.append(
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            document_id=citation.file_id,
-                            title=citation.document_title,
-                            excerpts=[citation.cited_text] if citation.cited_text else [],
-                            provider_details=details or None,
-                        )
-                    ]
-                )
+        ) and (citation.file_id or citation.document_title or excerpts):
+            # These locations select evidence inside the input document, so they stay in the raw citation data.
+            sources.append(
+                DocumentCitationSource(document_id=citation.file_id, title=citation.document_title, excerpts=excerpts)
             )
-    return result or None
+    if not sources:
+        return None
+    # Anthropic splits its answer into text blocks and cites whole blocks, so the citation covers the whole part.
+    return [Citation(sources=sources, anchor=ContentCitationAnchor(start=0, end=len(text)) if text else None)]
+
+
+def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[str, Any]:
+    return {'citations': [citation.model_dump(mode='json') for citation in citations]}
 
 
 def _with_document_citations(
@@ -270,6 +279,7 @@ try:
         BetaMessageTokensCount,
         BetaMetadataParam,
         BetaOutputConfigParam,
+        BetaPlainTextSource,
         BetaPlainTextSourceParam,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
@@ -315,6 +325,7 @@ try:
         BetaToolUseBlock,
         BetaToolUseBlockParam,
         BetaUsage,
+        BetaWebFetchBlock,
         BetaWebFetchTool20250910Param,
         BetaWebFetchTool20260209Param,
         BetaWebFetchToolResultBlock,
@@ -1958,14 +1969,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaAdvisorToolResultBlock,
             )
         }
+        fetched_pages = [
+            page
+            for item in response.content
+            if isinstance(item, BetaWebFetchToolResultBlock) and (page := _fetched_page(item))
+        ]
         for item in response.content:
             if isinstance(item, BetaTextBlock):
-                items.append(
-                    TextPart(
-                        content=item.text,
-                        citations=_map_citations(item.citations),
+                if item.citations:
+                    items.append(
+                        TextPart(
+                            content=item.text,
+                            provider_name=self.system,
+                            provider_details=_citations_provider_details(item.citations),
+                            citations=_map_citations(item.citations, item.text, fetched_pages),
+                        )
                     )
-                )
+                else:
+                    items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
                 if item.name not in enabled_server_tool_names and item.id not in server_tool_result_ids:
                     continue
@@ -3712,6 +3733,8 @@ class AnthropicStreamedResponse(StreamedResponse):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
             pending_citations: dict[int, list[BetaTextCitation]] = {}
+            # Web Fetch citations name their page only by its text, so the fetched pages are kept to find their URLs.
+            fetched_pages: list[tuple[str, str]] = []
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
@@ -3819,6 +3842,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                             part=_map_text_editor_code_execution_tool_result_block(current_block, self.provider_name),
                         )
                     elif isinstance(current_block, BetaWebFetchToolResultBlock):  # pragma: lax no cover
+                        if page := _fetched_page(current_block):
+                            fetched_pages.append(page)
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=_map_web_fetch_tool_result_block(current_block, self.provider_name),
@@ -3938,13 +3963,15 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if citations := _map_citations(pending_citations.pop(event.index, None)):
+                    if block_citations := pending_citations.pop(event.index, None):
                         part = self._parts_manager.get_part_by_vendor_id(event.index)
                         if isinstance(part, TextPart):  # pragma: no branch
                             for event_ in self._parts_manager.handle_text_delta(
                                 vendor_part_id=event.index,
                                 content='',
-                                citations=citations,
+                                provider_name=self.provider_name,
+                                provider_details=_citations_provider_details(block_citations),
+                                citations=_map_citations(block_citations, part.content, fetched_pages),
                             ):
                                 yield event_
                     if event.index in ignored_server_tool_use_indices:

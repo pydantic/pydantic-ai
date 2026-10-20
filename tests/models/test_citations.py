@@ -19,7 +19,7 @@ from pydantic_ai import (
     WebCitationSource,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
@@ -56,23 +56,76 @@ class ExpectedWebCitation:
 @dataclass(frozen=True)
 class WebCitationCase:
     id: str
-    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai', 'openai-chat']
+    provider: Literal['anthropic', 'anthropic-web-fetch', 'google-gemini', 'google-vertex', 'openai', 'openai-chat']
     stream: bool = False
     expected: list[ExpectedWebCitation] = field(default_factory=list[ExpectedWebCitation])
 
 
 WEB_CASES = [
     WebCitationCase(
+        'anthropic-web-fetch',
+        'anthropic-web-fetch',
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['raw.githubusercontent.com'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=33),
+                    anchor_text='Pydantic AI uses the MIT License.',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'anthropic-web-fetch-stream',
+        'anthropic-web-fetch',
+        stream=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['raw.githubusercontent.com'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=32),
+                    anchor_text='Pydantic AI uses the MIT License',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
         'anthropic',
         'anthropic',
         expected=snapshot(
             [
-                ExpectedWebCitation(['pypi.org'], [1], None),
-                ExpectedWebCitation(['github.com'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
+                ExpectedWebCitation(
+                    source_labels=['pypi.org', 'github.com'],
+                    excerpt_counts=[1, 1],
+                    anchor=ContentCitationAnchor(start=0, end=58),
+                    anchor_text='The complete documentation is available at ai.pydantic.dev',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=100),
+                    anchor_text='Pydantic AI is the Python AI SDK: a typed, extensible agent loop with every model a string swap away',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=170),
+                    anchor_text='The same agent runs everywhere you need it: behind a web frontend, in the terminal, on a voice call, on a durable background queue, or as a plain object you call run() on',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=59),
+                    anchor_text='structured outputs, typed dependency injection, typed tools',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=146),
+                    anchor_text='support for virtually every model and provider (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more)',
+                ),
             ]
         ),
     ),
@@ -82,13 +135,42 @@ WEB_CASES = [
         stream=True,
         expected=snapshot(
             [
-                ExpectedWebCitation(['pypi.org'], [1], None),
-                ExpectedWebCitation(['github.com'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
-                ExpectedWebCitation(['pydantic.dev'], [1], None),
+                ExpectedWebCitation(
+                    source_labels=['pypi.org', 'github.com'],
+                    excerpt_counts=[1, 1],
+                    anchor=ContentCitationAnchor(start=0, end=58),
+                    anchor_text='The complete documentation is available at ai.pydantic.dev',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=100),
+                    anchor_text='Pydantic AI is the Python AI SDK: a typed, extensible agent loop with every model a string swap away',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=142),
+                    anchor_text='From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and Pydantic AI Harness have got you covered',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=171),
+                    anchor_text='Support for virtually every model and provider (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more), swappable with a string',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=59),
+                    anchor_text='Structured outputs, typed dependency injection, typed tools',
+                ),
+                ExpectedWebCitation(
+                    source_labels=['pydantic.dev'],
+                    excerpt_counts=[1],
+                    anchor=ContentCitationAnchor(start=0, end=31),
+                    anchor_text='Image generation and embeddings',
+                ),
             ]
         ),
     ),
@@ -272,6 +354,7 @@ WEB_CASES = [
 
 WEB_PROVIDER_AVAILABLE = {
     'anthropic': anthropic_available,
+    'anthropic-web-fetch': anthropic_available,
     'google-gemini': google_available,
     'google-vertex': google_available,
     'openai': openai_available,
@@ -293,6 +376,20 @@ def _web_citation_agent(
             'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
         )
         tool = WebSearchTool(max_uses=1)
+    elif case.provider == 'anthropic-web-fetch':
+        # Web Fetch only returns citations when asked, which `include_citations` does.
+        model = AnthropicModel(
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            settings=ModelSettings(max_tokens=4096, include_citations=True),
+        )
+        tool = WebFetchTool(max_uses=1)
+        # A plain-text page with no trailing whitespace or smart characters, which recording would rewrite and so move
+        # the cited ranges that tie a citation to the fetched page.
+        prompt = (
+            'Fetch https://raw.githubusercontent.com/pydantic/pydantic-ai/main/LICENSE and say in one sentence which '
+            'license Pydantic AI uses, citing it.'
+        )
     elif case.provider == 'google-gemini':
         model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
         tool = WebSearchTool()
@@ -400,14 +497,9 @@ DOCUMENT_CASES = [
                     sources=[
                         DocumentCitationSource(
                             excerpts=['The return window is thirty days from purchase.'],
-                            provider_details={
-                                'document_index': 0,
-                                'end_char_index': 47,
-                                'start_char_index': 0,
-                                'type': 'char_location',
-                            },
                         )
-                    ]
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=47),
                 )
             ]
         ),
@@ -421,14 +513,9 @@ DOCUMENT_CASES = [
                     sources=[
                         DocumentCitationSource(
                             excerpts=['The return window is thirty days from purchase.'],
-                            provider_details={
-                                'document_index': 0,
-                                'end_char_index': 47,
-                                'start_char_index': 0,
-                                'type': 'char_location',
-                            },
                         )
-                    ]
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=47),
                 )
             ]
         ),
@@ -442,14 +529,9 @@ DOCUMENT_CASES = [
                     sources=[
                         DocumentCitationSource(
                             excerpts=['Dummy PDF file'],
-                            provider_details={
-                                'document_index': 0,
-                                'end_page_number': 2,
-                                'start_page_number': 1,
-                                'type': 'page_location',
-                            },
                         )
-                    ]
+                    ],
+                    anchor=ContentCitationAnchor(start=0, end=42),
                 )
             ]
         ),
@@ -519,27 +601,17 @@ async def test_anthropic_tool_return_document_citations(allow_model_requests: No
                 sources=[
                     DocumentCitationSource(
                         excerpts=['The return window is thirty days from purchase.'],
-                        provider_details={
-                            'document_index': 0,
-                            'end_char_index': 47,
-                            'start_char_index': 0,
-                            'type': 'char_location',
-                        },
                     )
-                ]
+                ],
+                anchor=ContentCitationAnchor(start=0, end=47),
             ),
             Citation(
                 sources=[
                     DocumentCitationSource(
                         excerpts=['Orders ship within two business days.'],
-                        provider_details={
-                            'document_index': 1,
-                            'end_char_index': 37,
-                            'start_char_index': 0,
-                            'type': 'char_location',
-                        },
                     )
-                ]
+                ],
+                anchor=ContentCitationAnchor(start=0, end=37),
             ),
         ]
     )

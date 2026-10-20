@@ -921,11 +921,9 @@ def test_citation_message_history_round_trip() -> None:
                         'url': 'https://example.com/paris',
                         'title': 'Paris',
                         'excerpts': ["Paris is France's capital city."],
-                        'provider_details': None,
                     }
                 ],
                 'anchor': {'start': 32, 'end': 35, 'kind': 'marker'},
-                'provider_details': None,
             },
             {
                 'sources': [
@@ -934,11 +932,9 @@ def test_citation_message_history_round_trip() -> None:
                         'document_id': 'file-123',
                         'title': 'report.pdf',
                         'excerpts': ['The report identifies Paris as the capital.'],
-                        'provider_details': None,
                     }
                 ],
                 'anchor': None,
-                'provider_details': None,
             },
         ]
     )

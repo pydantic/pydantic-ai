@@ -2416,10 +2416,33 @@ def _map_responses_citations(
             citations.append(
                 Citation(
                     sources=[DocumentCitationSource(document_id=annotation.file_id, title=annotation.filename)],
-                    provider_details={'index': annotation.index},
                 )
             )
     return citations or None
+
+
+def _responses_citations_provider_details(
+    annotations: Sequence[responses.response_output_text.Annotation],
+) -> dict[str, Any]:
+    citations: list[responses.response_output_text.Annotation] = [
+        annotation
+        for annotation in annotations
+        if isinstance(
+            annotation,
+            (
+                responses.response_output_text.AnnotationURLCitation,
+                responses.response_output_text.AnnotationFileCitation,
+            ),
+        )
+    ]
+    return {'citations': responses_output_text_annotations_ta.dump_python(citations, warnings=False)}
+
+
+def _chat_citations_provider_details(annotations: Sequence[BaseModel]) -> dict[str, Any]:
+    citations = [
+        annotation for annotation in annotations if isinstance(annotation, chat.chat_completion_message.Annotation)
+    ]
+    return {'citations': chat_annotations_ta.dump_python(citations, warnings=False)}
 
 
 def _map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Citation] | None:
@@ -2459,7 +2482,10 @@ def _map_chat_content(
     if message.annotations:
         text_parts = [part for part in content_parts if isinstance(part, TextPart)]
         if len(content_parts) == 1 and text_parts:
-            text_parts[0].citations = _map_chat_citations(message.annotations, text_parts[0].content)
+            if citations := _map_chat_citations(message.annotations, text_parts[0].content):
+                text_parts[0].citations = citations
+                text_parts[0].provider_name = provider_name
+                text_parts[0].provider_details = _chat_citations_provider_details(message.annotations)
         # Annotation offsets address the unsplit provider text, so they are not safe to normalize after
         # embedded thinking tags have been removed. Raw annotations remain available through the explicit opt-in.
         if include_raw_annotations and text_parts:
@@ -3064,6 +3090,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     elif isinstance(content, responses.ResponseOutputText) and content.text:
                         citations = _map_responses_citations(content.annotations, content.text)
                         part_provider_details: dict[str, Any] | None = None
+                        if citations:
+                            part_provider_details = _responses_citations_provider_details(content.annotations)
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
                         if model_settings.get('openai_include_raw_annotations') and content.annotations:
@@ -4863,17 +4891,17 @@ class OpenAIStreamedResponse(StreamedResponse):
             if len(text_part_ids) == 1 and part.content == self._raw_text_content
             else None
         )
-        provider_details = (
-            {'annotations': serialized_annotations}
-            if self._model_settings and self._model_settings.get('openai_include_raw_annotations')
-            else None
-        )
-        if citations is None and provider_details is None:
+        provider_details: dict[str, Any] = {}
+        if self._model_settings and self._model_settings.get('openai_include_raw_annotations'):
+            provider_details['annotations'] = serialized_annotations
+        if citations:
+            provider_details.update(_chat_citations_provider_details(annotations))
+        if not provider_details:
             return
         yield from self._parts_manager.handle_text_delta(
             vendor_part_id=text_part_ids[-1],
             content='',
-            provider_name=self.provider_name if provider_details is not None else None,
+            provider_name=self.provider_name,
             provider_details=provider_details,
             citations=citations,
         )
@@ -5681,9 +5709,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         annotations = responses_output_text_annotations_ta.validate_python(raw_annotations or [])
                     except ValidationError:
                         citations = None
+                        citations_details = None
                         serialized_annotations = raw_annotations
                     else:
                         citations = _map_responses_citations(annotations, chunk.text)
+                        citations_details = _responses_citations_provider_details(annotations)
                         serialized_annotations = responses_output_text_annotations_ta.dump_python(
                             annotations, warnings=False
                         )
@@ -5702,6 +5732,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         # Annotation offsets address the done text, so they can't be placed on streamed text that
                         # differs from it.
                         citations = None
+                    if citations and citations_details:
+                        provider_details.update(citations_details)
                     # Empty text makes no part, as in `_process_response`.
                     if (provider_details or citations) and chunk.text:
                         for event in self._parts_manager.handle_text_delta(

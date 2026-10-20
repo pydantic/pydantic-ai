@@ -33,9 +33,13 @@ from pytest_mock import MockerFixture
 from pydantic_ai import (
     AbstractToolset,
     BinaryImage,
+    Citation,
+    ContentCitationAnchor,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelHTTPError,
     ModelMessage,
     ModelResponse,
@@ -48,6 +52,7 @@ from pydantic_ai import (
     ToolReturnPart,
     ToolsetTool,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
@@ -1198,6 +1203,42 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[ToolCallPart(tool_name='final_result', args={'response': route})])
         elif isinstance(m.content, list) and m.content[0] == 'Summarize this document':
             return ModelResponse(parts=[TextPart('This document outlines the PDF specification version 1.4.')])
+        elif isinstance(m.content, list) and m.content[0] == 'How long do customers have to return an item?':
+            # docs/citations.md: a document citation covering the whole text part
+            text = 'Items may be returned within 30 days.'
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        text,
+                        citations=[
+                            Citation(
+                                sources=[DocumentCitationSource(excerpts=[text])],
+                                anchor=ContentCitationAnchor(start=0, end=len(text)),
+                            )
+                        ],
+                    )
+                ]
+            )
+        elif m.content == 'What is the tallest mountain in Alberta?':
+            # docs/citations.md: a web citation whose anchor is the marker the model wrote
+            return ModelResponse(
+                parts=[
+                    TextPart(
+                        'Mount Columbia is the tallest mountain in Alberta. [1]',
+                        citations=[
+                            Citation(
+                                sources=[
+                                    WebCitationSource(
+                                        'https://en.wikipedia.org/wiki/Mount_Columbia_(Canada)',
+                                        title='Mount Columbia - Wikipedia',
+                                    )
+                                ],
+                                anchor=MarkerCitationAnchor(start=51, end=54),
+                            )
+                        ],
+                    )
+                ]
+            )
         assert isinstance(m.content, str)
         if m.content == 'Mark task 1 as done, then stop without saying anything.' and any(
             t.name == 'mark_task_done' for t in info.function_tools

@@ -1831,12 +1831,16 @@ class GeminiStreamedResponse(StreamedResponse):
                         assert part.function_response is not None, f'Unexpected part: {part}'
 
             # Gemini sends the grounding metadata once, on the final chunk, after the text it grounds.
-            grounding_citations = _map_grounding_citations(
+            grounding_citations = _map_citations(
                 [Part(text=text_run.content) for text_run in self._text_runs], grounding_metadata
             )
-            for index, citations in grounding_citations.items():
+            for index, (citations, citations_details) in grounding_citations.items():
                 for event in self._parts_manager.handle_text_delta(
-                    vendor_part_id=self._text_runs[index].part_id, content='', citations=citations
+                    vendor_part_id=self._text_runs[index].part_id,
+                    content='',
+                    provider_name=self.provider_name,
+                    provider_details=citations_details,
+                    citations=citations,
                 ):
                     yield event
             for pending in self._pending_file_search_returns:
@@ -2159,59 +2163,33 @@ def _grounding_support_part_index(parts: Sequence[Part], segment: Segment) -> in
     return text_parts[0] if len(text_parts) == 1 else None
 
 
-def _map_grounding_source(chunk: GroundingChunk) -> CitationSource | None:
+def _map_citation_source(chunk: GroundingChunk) -> CitationSource | None:
     if (web := chunk.web) and web.uri:
-        return WebCitationSource(
-            url=web.uri,
-            title=web.title,
-            provider_details={'domain': web.domain} if web.domain else None,
-        )
+        return WebCitationSource(url=web.uri, title=web.title)
     if (maps := chunk.maps) and maps.uri:
-        details = maps.model_dump(mode='json', exclude_none=True, by_alias=False, exclude={'uri', 'title', 'text'})
-        return WebCitationSource(
-            url=maps.uri,
-            title=maps.title,
-            excerpts=[maps.text] if maps.text else [],
-            provider_details=details or None,
-        )
+        return WebCitationSource(url=maps.uri, title=maps.title, excerpts=[maps.text] if maps.text else [])
     if (image := chunk.image) and image.source_uri:
-        details = image.model_dump(mode='json', exclude_none=True, by_alias=False, exclude={'source_uri', 'title'})
-        return WebCitationSource(
-            url=image.source_uri,
-            title=image.title,
-            provider_details=details or None,
-        )
+        return WebCitationSource(url=image.source_uri, title=image.title)
     if context := chunk.retrieved_context:
-        details = context.model_dump(
-            mode='json', exclude_none=True, by_alias=False, exclude={'text', 'document_name', 'title', 'rag_chunk'}
-        )
-        if context.rag_chunk and (
-            rag_chunk := context.rag_chunk.model_dump(mode='json', exclude_none=True, by_alias=False, exclude={'text'})
-        ):
-            details['rag_chunk'] = rag_chunk
         excerpts = list(
             dict.fromkeys(
                 text for text in (context.text, context.rag_chunk.text if context.rag_chunk else None) if text
             )
         )
-        if any((context.document_name, context.title, excerpts, details)):
-            return DocumentCitationSource(
-                document_id=context.document_name,
-                title=context.title,
-                excerpts=excerpts,
-                provider_details=details or None,
-            )
+        if any((context.document_name, context.title, excerpts)):
+            return DocumentCitationSource(document_id=context.document_name, title=context.title, excerpts=excerpts)
     return None
 
 
-def _map_grounding_citations(
+def _map_citations(
     parts: Sequence[Part], grounding_metadata: GroundingMetadata | None
-) -> dict[int, list[Citation]]:
+) -> dict[int, tuple[list[Citation], dict[str, Any]]]:
+    """Map grounding supports to the citations and raw citation data of the text part each one belongs to."""
     if not grounding_metadata or not grounding_metadata.grounding_supports:
         return {}
 
     chunks = grounding_metadata.grounding_chunks or []
-    citations_by_part: dict[int, list[Citation]] = {}
+    citations_by_part: dict[int, tuple[list[Citation], dict[str, Any]]] = {}
     for support in grounding_metadata.grounding_supports:
         segment = support.segment
         if segment is None or segment.end_index is None:
@@ -2220,16 +2198,10 @@ def _map_grounding_citations(
         if part_index is None or (text := parts[part_index].text) is None:
             continue
 
-        chunk_indices = support.grounding_chunk_indices or []
-        scores = support.confidence_scores if len(support.confidence_scores or []) == len(chunk_indices) else None
-        sources: list[CitationSource] = []
-        mapped_scores: list[float] = []
-        for position, chunk_index in enumerate(chunk_indices):
-            if 0 <= chunk_index < len(chunks) and (source := _map_grounding_source(chunks[chunk_index])) is not None:
-                sources.append(source)
-                if scores is not None:
-                    mapped_scores.append(scores[position])
-
+        support_chunks = [
+            chunks[index] if 0 <= index < len(chunks) else None for index in support.grounding_chunk_indices or []
+        ]
+        sources = [source for chunk in support_chunks if chunk and (source := _map_citation_source(chunk))]
         if sources:
             start = _character_index(text, segment.start_index or 0)
             end = _character_index(text, segment.end_index)
@@ -2237,12 +2209,17 @@ def _map_grounding_citations(
             # Only keep offsets that select the segment text Google reports for them.
             if start is not None and end is not None and start < end and text[start:end] == segment.text:
                 anchor = ContentCitationAnchor(start=start, end=end)
-            citations_by_part.setdefault(part_index, []).append(
-                Citation(
-                    sources=sources,
-                    anchor=anchor,
-                    provider_details={'confidence_scores': mapped_scores} if mapped_scores else None,
-                )
+            citations, provider_details = citations_by_part.setdefault(part_index, ([], {'citations': []}))
+            citations.append(Citation(sources=sources, anchor=anchor))
+            # Supports refer to the response's chunks by index, so the raw data keeps the chunks it refers to, in the
+            # order of `grounding_chunk_indices` and `confidence_scores`.
+            provider_details['citations'].append(
+                {
+                    **support.model_dump(mode='json', exclude_none=True),
+                    'grounding_chunks': [
+                        chunk.model_dump(mode='json', exclude_none=True) if chunk else None for chunk in support_chunks
+                    ],
+                }
             )
     return citations_by_part
 
@@ -2250,6 +2227,15 @@ def _map_grounding_citations(
 def _is_signature_only_part(part: Part) -> bool:
     """Whether a part carries a thought signature and no other provider content."""
     return bool(part.thought_signature) and part.model_dump(exclude_none=True).keys() == {'thought_signature'}
+
+
+def _set_grounding_citations(
+    part: TextPart, citations: tuple[list[Citation], dict[str, Any]] | None, provider_name: str
+) -> None:
+    if citations is not None:
+        part.citations, citations_details = citations
+        part.provider_details = {**(part.provider_details or {}), **citations_details}
+        part.provider_name = provider_name
 
 
 def _process_response_from_parts(
@@ -2279,7 +2265,7 @@ def _process_response_from_parts(
     media_processing_tool_call_without_id: NativeToolCallPart | None = None
     file_search_tool_call_ids: list[str] = []
     last_web_search_return: NativeToolReturnPart | None = None
-    grounding_citations = _map_grounding_citations(parts, grounding_metadata)
+    grounding_citations = _map_citations(parts, grounding_metadata)
     for part_index, part in enumerate(parts):
         item, code_execution_tool_call_id = _process_part(
             part, code_execution_tool_call_id, provider_name, file_search_enabled=file_search_enabled
@@ -2287,7 +2273,7 @@ def _process_response_from_parts(
         if item is None:
             continue
         if isinstance(item, TextPart):
-            item.citations = grounding_citations.get(part_index)
+            _set_grounding_citations(item, grounding_citations.get(part_index), provider_name)
         elif isinstance(item, NativeToolReturnPart):
             if item.tool_name == _MEDIA_PROCESSING_TOOL_NAME:
                 if (

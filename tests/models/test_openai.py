@@ -4219,6 +4219,8 @@ async def test_openai_chat_url_citation(allow_model_requests: None):
     assert result.all_messages()[1].parts == [
         TextPart(
             'Answer [1]',
+            provider_name='openai',
+            provider_details={'citations': [annotation.model_dump()]},
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
@@ -4266,7 +4268,10 @@ async def test_openai_chat_invalid_citation_range_is_unanchored(allow_model_requ
 
     assert result.all_messages()[1].parts == [
         TextPart(
-            'Answer', citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])]
+            'Answer',
+            provider_name='openai',
+            provider_details={'citations': [annotation.model_dump()]},
+            citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])],
         )
     ]
 
@@ -4333,7 +4338,7 @@ async def test_openai_chat_stream_annotations_before_referenced_text(allow_model
                 )
             ],
             provider_name='openai',
-            provider_details={'annotations': [annotation.model_dump()]},
+            provider_details={'annotations': [annotation.model_dump()], 'citations': [annotation.model_dump()]},
         )
     ]
 
@@ -4399,7 +4404,10 @@ async def test_openai_chat_stream_skips_unsupported_annotation(allow_model_reque
         TextPart(
             'Answer [1]',
             provider_name='openai',
-            provider_details={'annotations': [citation.model_dump(), {'type': 'file'}]},
+            provider_details={
+                'annotations': [citation.model_dump(), {'type': 'file'}],
+                'citations': [citation.model_dump()],
+            },
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
@@ -4471,7 +4479,8 @@ async def test_openai_chat_stream_accumulates_raw_annotation_batches(allow_model
 
     [part] = result.all_messages()[1].parts
     assert isinstance(part, TextPart)
-    assert part.provider_details == {'annotations': [annotation.model_dump() for annotation in annotations]}
+    raw_annotations = [annotation.model_dump() for annotation in annotations]
+    assert part.provider_details == {'annotations': raw_annotations, 'citations': raw_annotations}
     assert part.citations == [
         Citation(
             sources=[WebCitationSource(url=f'https://example.com/{index}', title=f'Example {index}')],
@@ -4522,7 +4531,7 @@ async def test_openai_chat_raw_annotations_non_streaming(allow_model_requests: N
 
     [part] = result.all_messages()[1].parts
     assert isinstance(part, TextPart)
-    assert part.provider_details == {'annotations': [annotation.model_dump()]}
+    assert part.provider_details == {'annotations': [annotation.model_dump()], 'citations': [annotation.model_dump()]}
 
 
 async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requests: None):
@@ -4554,7 +4563,7 @@ async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requ
             anchor=MarkerCitationAnchor(start=7, end=10),
         )
     ]
-    assert part.provider_details == {'annotations': [annotation.model_dump()]}
+    assert part.provider_details == {'annotations': [annotation.model_dump()], 'citations': [annotation.model_dump()]}
 
 
 def test_openai_chat_citation_with_thinking_is_ignored():

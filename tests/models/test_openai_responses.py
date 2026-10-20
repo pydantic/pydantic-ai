@@ -2418,7 +2418,16 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
                     'title': 'Mount Columbia | mountain, Alberta, Canada | Britannica',
                     'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
                 }
-            ]
+            ],
+            'citations': [
+                {
+                    'end_index': 162,
+                    'start_index': 77,
+                    'title': 'Mount Columbia | mountain, Alberta, Canada | Britannica',
+                    'type': 'url_citation',
+                    'url': 'https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
+                }
+            ],
         }
     )
 
@@ -2808,6 +2817,31 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         content=IsStr(),
                         id='msg_0e3d55e9502941380068c4aada6d8c8195b8b6f92edbb53b4f',
                         provider_name='openai',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'end_index': 460,
+                                    'start_index': 294,
+                                    'title': 'UN overwhelmingly endorses two-state solution declaration that condemns Hamas',
+                                    'type': 'url_citation',
+                                    'url': 'https://www.reuters.com/world/middle-east/un-overwhelmingly-endorses-two-state-solution-declaration-that-condemns-hamas-2025-09-12/?utm_source=openai',
+                                },
+                                {
+                                    'end_index': 763,
+                                    'start_index': 670,
+                                    'title': "Nepal's president appoints former chief justice as interim premier and first woman leader",
+                                    'type': 'url_citation',
+                                    'url': 'https://apnews.com/article/aad7af5ddfb56b7484fa9db591297c9e?utm_source=openai',
+                                },
+                                {
+                                    'end_index': 1102,
+                                    'start_index': 974,
+                                    'title': 'Death toll rises to 46 in Israeli raids on Yemen',
+                                    'type': 'url_citation',
+                                    'url': 'https://www.reuters.com/world/middle-east/death-toll-rises-46-israeli-raids-yemen-2025-09-11/?utm_source=openai',
+                                },
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                 ],
@@ -13757,6 +13791,16 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                             content='The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves as an iconic symbol of the city.',
                             id=IsStr(),
                             provider_name='openai',
+                            provider_details={
+                                'citations': [
+                                    {
+                                        'file_id': 'file-U6Ke78qu8nkANsrCrjoYBr',
+                                        'filename': 'tmp2zuepgia.txt',
+                                        'index': 137,
+                                        'type': 'file_citation',
+                                    }
+                                ]
+                            },
                             citations=[
                                 Citation(
                                     sources=[
@@ -13764,7 +13808,6 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                                             document_id='file-U6Ke78qu8nkANsrCrjoYBr', title='tmp2zuepgia.txt'
                                         )
                                     ],
-                                    provider_details={'index': 137},
                                 )
                             ],
                         ),
@@ -13888,11 +13931,14 @@ async def test_openai_responses_model_file_search_tool_stream(
 
         assert agent_run.result is not None
         messages = agent_run.result.all_messages()
-        citations = [
-            citation for part in messages[1].parts if isinstance(part, TextPart) for citation in part.citations or []
-        ]
-        assert citations and all(isinstance(citation.sources[0], DocumentCitationSource) for citation in citations)
-        assert all(citation.anchor is None and citation.provider_details == {'index': 30} for citation in citations)
+        cited_part = next(part for part in messages[1].parts if isinstance(part, TextPart) and part.citations)
+        assert cited_part.citations and all(
+            isinstance(citation.sources[0], DocumentCitationSource) and citation.anchor is None
+            for citation in cited_part.citations
+        )
+        # OpenAI's file citation `index` is a character position in the text, kept in the raw citation data.
+        assert cited_part.provider_details is not None
+        assert [citation['index'] for citation in cited_part.provider_details['citations']] == [30]
         assert messages == snapshot(
             [
                 ModelRequest(
@@ -13927,6 +13973,16 @@ async def test_openai_responses_model_file_search_tool_stream(
                             content='The capital of France is Paris.',
                             id=IsStr(),
                             provider_name='openai',
+                            provider_details={
+                                'citations': [
+                                    {
+                                        'file_id': 'file-9RhPAs9YqVajpGXRfcgavJ',
+                                        'filename': 'tmp8l5_2pzy.txt',
+                                        'index': 30,
+                                        'type': 'file_citation',
+                                    }
+                                ]
+                            },
                             citations=IsCitationList(),
                         ),
                     ],
@@ -14010,6 +14066,16 @@ async def test_openai_responses_model_file_search_tool_stream(
                     index=2,
                     delta=TextPartDelta(
                         content_delta='',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'file_id': 'file-9RhPAs9YqVajpGXRfcgavJ',
+                                    'filename': 'tmp8l5_2pzy.txt',
+                                    'index': 30,
+                                    'type': 'file_citation',
+                                }
+                            ]
+                        },
                         citations_delta=IsCitationList(),
                     ),
                 ),
@@ -14019,6 +14085,16 @@ async def test_openai_responses_model_file_search_tool_stream(
                         content='The capital of France is Paris.',
                         id=IsStr(),
                         provider_name='openai',
+                        provider_details={
+                            'citations': [
+                                {
+                                    'file_id': 'file-9RhPAs9YqVajpGXRfcgavJ',
+                                    'filename': 'tmp8l5_2pzy.txt',
+                                    'index': 30,
+                                    'type': 'file_citation',
+                                }
+                            ]
+                        },
                         citations=IsCitationList(),
                     ),
                 ),
@@ -14108,6 +14184,16 @@ async def test_openai_responses_model_file_search_tool_with_results(
                             content=IsStr(),
                             id=IsStr(),
                             provider_name='openai',
+                            provider_details={
+                                'citations': [
+                                    {
+                                        'file_id': 'file-2b6dRdmXnzSrqiEbhVJZRU',
+                                        'filename': 'tmpd_9a5dki.txt',
+                                        'index': 30,
+                                        'type': 'file_citation',
+                                    }
+                                ]
+                            },
                             citations=IsCitationList(),
                         ),
                     ],

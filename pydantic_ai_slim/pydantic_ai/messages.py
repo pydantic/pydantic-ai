@@ -2582,9 +2582,6 @@ class WebCitationSource:
     render, or send them to clients.
     """
 
-    provider_details: dict[str, Any] | None = None
-    """Additional source data that cannot be mapped to standard fields."""
-
     kind: Literal['web'] = 'web'
     """Source type identifier, used as a discriminator for deserialization."""
 
@@ -2618,14 +2615,11 @@ class DocumentCitationSource:
     render, or send them to clients.
     """
 
-    provider_details: dict[str, Any] | None = None
-    """Additional source data that cannot be mapped to standard fields, such as page, block, or collection details."""
-
     kind: Literal['document'] = 'document'
     """Source type identifier, used as a discriminator for deserialization."""
 
     def __post_init__(self) -> None:
-        if not any((self.document_id, self.title, self.excerpts, self.provider_details)):
+        if not any((self.document_id, self.title, self.excerpts)):
             raise ValueError('A document citation source must have at least one source field')
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -2697,9 +2691,6 @@ class Citation:
     `None` means the citation belongs to the text part, but its position in the text is unknown.
     """
 
-    provider_details: dict[str, Any] | None = None
-    """Additional citation data that cannot be mapped to standard fields."""
-
     def __post_init__(self) -> None:
         if not self.sources:
             raise ValueError('A citation must have at least one source')
@@ -2736,7 +2727,11 @@ class TextPart:
     """
 
     citations: list[Citation] | None = None
-    """Citations associated with this text part, if any."""
+    """Citations associated with this text part, if any.
+
+    The provider's own citation data for this part, such as page numbers or confidence scores, is kept in
+    `provider_details['citations']`.
+    """
 
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
