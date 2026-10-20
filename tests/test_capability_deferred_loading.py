@@ -2886,6 +2886,73 @@ async def test_load_capability_without_tools_records_no_tool_availability_delta(
     )
 
 
+async def test_loads_before_one_request_are_recorded_as_one_exchange() -> None:
+    """Loads queued by the tool calls of one response are recorded as one exchange, like parallel model loads.
+
+    The tools run sequentially so the loads are queued, and recorded, in a fixed order.
+    """
+    policy = Capability[object](
+        id='policy', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
+    )
+    escalation = Capability[object](
+        id='escalation', description='Escalation.', instructions='Escalate after 2 days.', defer_loading=True
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('open_case', {}), ToolCallPart('escalate', {})])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_refunds(), policy, escalation])
+
+    @agent.tool(sequential=True)
+    async def open_case(ctx: RunContext[object]) -> str:
+        await ctx.load_capability('refunds')
+        await ctx.load_capability('policy')
+        return 'Case opened.'
+
+    @agent.tool(sequential=True)
+    async def escalate(ctx: RunContext[object]) -> str:
+        await ctx.load_capability('escalation')
+        return 'Escalated.'
+
+    result = await agent.run('Where is my refund?')
+
+    load_response, load_request = result.all_messages()[3:5]
+    assert (load_response.parts, load_request.parts) == snapshot(
+        (
+            [
+                LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id=(refunds_id := IsSameStr())),
+                LoadCapabilityCallPart(args={'id': 'policy'}, tool_call_id=(policy_id := IsSameStr())),
+                LoadCapabilityCallPart(args={'id': 'escalation'}, tool_call_id=(escalation_id := IsSameStr())),
+            ],
+            [
+                LoadCapabilityReturnPart(
+                    content={
+                        'instructions': """\
+Quote the refund policy.
+
+Pass the order ID, not the customer ID.\
+"""
+                    },
+                    tool_call_id=refunds_id,
+                    timestamp=IsDatetime(),
+                ),
+                ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id=refunds_id),
+                LoadCapabilityReturnPart(
+                    content={'instructions': 'Refunds take 5 days.'}, tool_call_id=policy_id, timestamp=IsDatetime()
+                ),
+                LoadCapabilityReturnPart(
+                    content={'instructions': 'Escalate after 2 days.'},
+                    tool_call_id=escalation_id,
+                    timestamp=IsDatetime(),
+                ),
+            ],
+        )
+    )
+    assert parse_loaded_capabilities(result.all_messages()) == {'refunds', 'policy', 'escalation'}
+
+
 @pytest.mark.parametrize(
     'capability, error',
     [

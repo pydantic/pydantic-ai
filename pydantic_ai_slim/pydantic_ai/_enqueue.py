@@ -210,7 +210,17 @@ class PendingMessageQueue(list[PendingMessage]):
         with self._lock:
             if self._closed:
                 raise UserError('`load_capability` is not available because the agent run has ended.')
-            self._capability_loads.append(pending)
+            if not self._capability_loads:
+                self._capability_loads.append(pending)
+                return
+            # Loads queued before the same model request are recorded as one call/return exchange,
+            # the shape the model's parallel `load_capability` calls take, rather than one turn each.
+            response, request = self._capability_loads[0].messages
+            added_response, added_request = pending.messages
+            assert isinstance(response, ModelResponse) and isinstance(added_response, ModelResponse)
+            assert isinstance(request, ModelRequest) and isinstance(added_request, ModelRequest)
+            response.parts = [*response.parts, *added_response.parts]
+            request.parts = [*request.parts, *added_request.parts]
 
     def pop_capability_loads(self) -> list[PendingMessage]:
         with self._lock:
