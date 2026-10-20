@@ -20,6 +20,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.realtime._lifecycle import (
+        AnswersRevised,
         InputAdded,
         InputLost,
         LifecycleEvent,
@@ -219,6 +220,29 @@ def test_lifecycle_contract_rules() -> None:
         start, named, end, OutputItemCut(item_id='item_a1', heard_transcript=''), inputs_sent=1
     ) == snapshot([])
     assert feed_lifecycle(OutputItemCut(item_id='item_b1')) == snapshot(['lifecycle.cut_of_unknown_item'])
+
+
+def test_answers_revised_rules() -> None:
+    """A response under way claims inputs, and one releases only what it answers: a released input is owed again."""
+    start = ResponseStarted(response_id='resp_1', answers=(0, 1))
+    end = ResponseEnded(response_id='resp_1', status='cancelled')
+    released = AnswersRevised(response_id='resp_1', released=(1,))
+    assert feed_lifecycle(
+        start,
+        released,
+        end,
+        ResponseStarted(response_id='resp_2', answers=(1,)),
+        AnswersRevised(response_id='resp_2', claimed=(2,)),
+        ResponseEnded(response_id='resp_2', status='completed'),
+        inputs_sent=3,
+    ) == snapshot([])
+    assert feed_lifecycle(
+        start,
+        AnswersRevised(response_id='resp_1', released=(2,)),
+        end,
+        AnswersRevised(response_id='resp_1', claimed=(2,)),
+        inputs_sent=3,
+    ) == snapshot(['lifecycle.bad_revision', 'lifecycle.bad_revision'])
 
 
 async def test_recorded_abnormal_close_is_replayed_as_one() -> None:

@@ -21,7 +21,12 @@ Checked after every step:
   prefix of the next);
 - `response.duplicated`: one server response is recorded as two `ModelResponse`s;
 - `response.mixed`: one `ModelResponse` holds what two server responses said;
-- `wait.early`: a `wait_for_reply()` returned while a reply it was owed was still coming;
+- `wait.early`: a `wait_for_reply()` returned while a reply it was owed was still coming: only the response that
+  answers an input, as the server saw it, settles it (not one already under way when it arrived);
+- `obligation.misattributed`: the session settled an input's reply with a response the server started before it had
+  the input (where the server names both, by the client's index and the response's id);
+- `turn_complete.while_owed`: the session streamed a `RealtimeTurnCompleteEvent` while a reply it was owed was still
+  coming, judged as `wait.early` judges a wait that returned there;
 - `codec.*`: the connection broke the lifecycle contract (`_conformance.py`);
 - `lifecycle.*`: a connection on version 2 of the contract broke a rule its lifecycle events promise
   (`_conformance.py`), checked on its lifecycle stream;
@@ -85,6 +90,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RealtimeSessionErrorEvent,
+    RealtimeTurnCompleteEvent,
     RetryPromptPart,
     SpeechPart,
     TextPart,
@@ -250,6 +256,8 @@ class Checker:
         self._seen: dict[int, tuple[ModelMessage, bytes]] = {}
         self._previous: list[int] = []
         self._judged_waiters: set[int] = set()
+        self._judged_turn_completes = 0
+        self._judged_attributions: set[tuple[int, str]] = set()
         self._judged_operations: set[int] = set()
         """`id()`s of the finished operations already judged (they can finish in any order)."""
         self._judged_events = 0
@@ -268,6 +276,26 @@ class Checker:
             return await handle(event)
 
         session._handle_pump_event = observed  # pyright: ignore[reportPrivateUsage]
+        queue_put = session._queue_put  # pyright: ignore[reportPrivateUsage]
+
+        def queued(item: object) -> None:
+            if isinstance(item, RealtimeTurnCompleteEvent):
+                from ._simulation import Waiter
+
+                # Nothing the session owed was still to come: what a wait taken now would return at once for.
+                sim = self.sim
+                now = sim.truth.clock
+                done = frozenset(
+                    operation.key
+                    for operation in sim.operations
+                    if operation.done and operation.key is not None and operation.error is None
+                )
+                sim.turn_completes.append(
+                    Waiter(index=len(sim.turn_completes), started=now, returned=now, snapshot=done)
+                )
+            queue_put(item)
+
+        session._queue_put = queued  # pyright: ignore[reportPrivateUsage]
 
     def observe_lifecycle_stream(
         self, inputs_sent: Callable[[], int]
@@ -312,9 +340,52 @@ class Checker:
         messages = session.all_messages()
         self._check_history_stability(messages)
         self._check_response_identity(messages)
+        self._check_attribution(session)
         waiters = [w for w in self.sim.waiters if w.returned is not None and w.index not in self._judged_waiters]
         self._judged_waiters.update(waiter.index for waiter in waiters)
         self.report('wait.early', [violation for waiter in waiters for violation in self._early_return(waiter)])
+        completes, self._judged_turn_completes = (
+            self.sim.turn_completes[self._judged_turn_completes :],
+            len(self.sim.turn_completes),
+        )
+        self.report(
+            'turn_complete.while_owed',
+            [
+                (detail.replace('wait_for_reply()', 'turn complete'), context)
+                for complete in completes
+                for detail, context in self._early_return(complete)
+            ],
+        )
+
+    def _check_attribution(self, session: RealtimeSession) -> None:
+        """Whether the session settles an input's reply with a response the server started before it had the input.
+
+        Judged where the server names its inputs by the client's index and its responses by the ids the session
+        records (the OpenAI protocol): such a response never saw the input, so it can't be the input's answer.
+        """
+        truth = self.sim.truth
+        inputs = {input_.client_index: input_ for input_ in truth.inputs if input_.client_index is not None}
+        answered_by = session._core._answered_by  # pyright: ignore[reportPrivateUsage]
+        violations: list[Violation] = []
+        for input_id, response_id in answered_by.items():
+            if (input_id, response_id) in self._judged_attributions:
+                continue
+            self._judged_attributions.add((input_id, response_id))
+            input_ = inputs.get(input_id)
+            response = truth.responses.get(response_id)
+            if (
+                input_ is not None
+                and response is not None
+                and input_.answered_by != response.key
+                and response.seq_start < input_.seq
+            ):
+                violations.append(
+                    (
+                        f'{input_.key!r} is settled by {response.key}, which the server started before it had the input',
+                        {'input': input_.key, 'response': response.key},
+                    )
+                )
+        self.report('obligation.misattributed', violations)
 
     def _check_simulator_frames(self) -> None:
         """The simulated server must only send frames the real connection can parse; anything else is a harness bug."""
@@ -500,12 +571,13 @@ class Checker:
             input_.refused_at < loss <= by for loss in self.sim.truth.connection_losses
         ):  # pragma: lax no cover (a refusal lost with its connection: no reply is coming)
             return True
-        # The response that answers it, or any the model gave after it arrived: a request the connection
-        # folded into another (a merged or superseded `response.create`) is answered by whichever came next.
+        # The response that answers it, and only that one: a response already under way when it arrived, which
+        # neither saw it nor spoke to it, doesn't. One the server names no answer for (a request the connection
+        # folded into another, a merged or superseded `response.create`) is answered by whichever came next.
         return any(
             self._exchange_resolved(response, by, set(seen))
             for response in self.sim.truth.responses.values()
-            if response.key == input_.answered_by or response.seq_start > input_.seq
+            if response.key == input_.answered_by or (input_.answered_by is None and response.seq_start > input_.seq)
         )
 
     def _early_return(self, waiter: Waiter) -> list[Violation]:
