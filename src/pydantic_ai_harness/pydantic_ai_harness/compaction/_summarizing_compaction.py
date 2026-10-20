@@ -648,9 +648,8 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         if self.keep_user_messages and not extra:
             # No retained user copy separates the summary from the tail, so the tail opens at a request.
+            # The tail never widens past the first message, so something is still left to summarize.
             to_summarize, preserved = _open_tail_at_request(messages, to_summarize, preserved)
-            if not to_summarize:
-                return messages
 
         if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
             # A large message can keep the retained token floor and the summary above the trigger;
