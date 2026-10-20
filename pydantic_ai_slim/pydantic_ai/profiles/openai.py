@@ -642,6 +642,15 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
+        if self.root_ref is not None:
+            root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
+            root_schema = self.defs.get(root_key)
+            if isinstance(root_schema, bool):
+                # Resolve boolean roots before the walk can rewrite their references to `#`.
+                self.schema = {key: value for key, value in schema.items() if key != '$ref'}
+                if not root_schema:
+                    self.schema['not'] = {}
+                self.root_ref = None
 
     def walk(self) -> JsonSchema:
         # Note: OpenAI does not support anyOf at the root in strict mode
@@ -659,7 +668,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
             root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
-            result.update(self.defs.get(root_key) or {})
+            root_schema = self.defs.get(root_key)
+            if isinstance(root_schema, dict):
+                result.update(root_schema)
 
         return result
 

@@ -88,7 +88,7 @@ class JsonSchemaTransformer(ABC):
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
+        self.defs: dict[str, _JsonSchemaNode] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
         self._walked_defs: dict[str, JsonSchema] = {}
@@ -198,7 +198,14 @@ class JsonSchemaTransformer(ABC):
             raise UserError(f'Could not find $ref definition for {key}')
 
         self.refs_stack.append(key)
-        walked = self._handle({**deepcopy(def_schema), **siblings})
+        if isinstance(def_schema, bool):
+            # A false definition must reject even when a sibling supplies its own `not`.
+            schema = deepcopy(siblings)
+            if not def_schema:
+                schema['not'] = {}
+        else:
+            schema = {**deepcopy(def_schema), **siblings}
+        walked = self._handle(schema)
         self.refs_stack.pop()
 
         assert not isinstance(walked, bool)

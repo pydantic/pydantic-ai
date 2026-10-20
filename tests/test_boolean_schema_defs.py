@@ -1,0 +1,94 @@
+"""Pin schema constraints before requests; provider recordings do not validate arbitrary schemas."""
+
+from copy import deepcopy
+
+import pytest
+
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.amazon import amazon_model_profile
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, GoogleOpenAPISchemaTransformer
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.tools import ToolDefinition
+
+
+@pytest.mark.parametrize('transformer', [InlineDefsJsonSchemaTransformer, GoogleOpenAPISchemaTransformer])
+@pytest.mark.parametrize('definition', [True, False])
+@pytest.mark.parametrize('root', [False, True])
+@pytest.mark.parametrize('siblings', [{}, {'description': 'value'}, {'not': {'type': 'string'}}, {'type': 'integer'}])
+def test_inline_boolean_defs(
+    transformer: type[JsonSchemaTransformer], definition: bool, root: bool, siblings: JsonSchema
+):
+    reference: JsonSchema = {'$ref': '#/$defs/X', **deepcopy(siblings)}
+    schema: JsonSchema = reference if root else {'type': 'object', 'properties': {'x': reference}, 'required': ['x']}
+    schema['$defs'] = {'X': definition}
+    original = deepcopy(schema)
+    expected = deepcopy(siblings)
+    if not definition:
+        # `not: {}` rejects every value, including 7 when the sibling was `not: {type: string}`.
+        expected['not'] = {}
+
+    walker = transformer(schema)
+    result = walker.walk()
+    assert result == (expected if root else {'type': 'object', 'properties': {'x': expected}, 'required': ['x']})
+    assert walker.walk() == result
+    assert schema == original
+
+
+@pytest.mark.parametrize('definition', [True, False])
+@pytest.mark.parametrize('strict', [None, False, True])
+@pytest.mark.parametrize(
+    'siblings',
+    [{}, {'description': 'value'}, {'not': {'type': 'string'}}, {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}],
+)
+def test_openai_boolean_root_defs(definition: bool, strict: bool | None, siblings: JsonSchema):
+    schema: JsonSchema = {'$ref': '#/$defs/X', '$defs': {'X': definition}, **deepcopy(siblings)}
+    original = deepcopy(schema)
+    expected: JsonSchema = {'$defs': {'X': definition}, **deepcopy(siblings)}
+    if not definition:
+        expected['not'] = {}
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=strict)
+    assert transformer.walk() == expected
+    assert transformer.walk() == expected
+    assert schema == original
+
+
+@pytest.mark.parametrize(
+    'profile,inlined',
+    [
+        pytest.param(amazon_model_profile('nova-pro'), True, id='amazon'),
+        pytest.param(meta_model_profile('llama-3.3-70b'), True, id='meta'),
+        pytest.param(qwen_model_profile('qwen3'), True, id='qwen'),
+        pytest.param(ModelProfile(json_schema_transformer=GoogleOpenAPISchemaTransformer), True, id='google-openapi'),
+        pytest.param(ModelProfile(json_schema_transformer=GoogleJsonSchemaTransformer), False, id='google'),
+        pytest.param(ModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), False, id='openai'),
+    ],
+)
+@pytest.mark.parametrize('definition', [True, False])
+def test_boolean_defs_tool_preparation(profile: ModelProfile | None, inlined: bool, definition: bool):
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        'required': ['x'],
+        '$defs': {'X': definition},
+    }
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='accept', parameters_json_schema=schema, strict=False)]
+    )
+    original = deepcopy(parameters)
+    model = TestModel(profile=profile)
+    _, prepared = model.prepare_request(None, parameters)
+    expected = deepcopy(schema)
+    if inlined:
+        expected.pop('$defs')
+        expected['properties']['x'] = {'not': {'type': 'string'} if definition else {}}
+    elif profile is not None and profile.get('json_schema_transformer') is OpenAIJsonSchemaTransformer:
+        expected['properties']['x'] = {'not': {'type': 'string'}, 'anyOf': [{'$ref': '#/$defs/X'}]}
+
+    assert prepared.function_tools[0].parameters_json_schema == expected
+    assert parameters == original

@@ -1,10 +1,11 @@
+from copy import deepcopy
 from typing import Annotated, Literal, cast, get_args
 
 import pytest
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, CodeExecutionTool
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -985,3 +986,16 @@ def test_strict_none_preserves_numeric_constraints():
             'required': ['score'],
         }
     )
+
+
+@pytest.mark.parametrize('definition', [True, False])
+def test_bedrock_boolean_defs_preserved(definition: bool):
+    """Bedrock retains definitions, so boolean references need no inlining rewrite."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    assert BedrockJsonSchemaTransformer(schema).walk() == original
+    assert schema == original
