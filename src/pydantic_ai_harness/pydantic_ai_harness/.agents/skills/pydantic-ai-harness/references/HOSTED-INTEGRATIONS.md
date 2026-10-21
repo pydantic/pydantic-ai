@@ -167,8 +167,9 @@ Add `ToolOutputLimits` to cap large tool results.
 **GitHub.** `toolsets=['repos', 'issues', 'actions']` picks GitHub's tool groups (`None` keeps the
 server's defaults, which include write tools). `toolsets=[]` raises, and so does an entry containing a
 comma. `url` targets GitHub Enterprise Cloud (`GITHUB_MCP_URL` is the default) and must be `https://`,
-except `http://` on a loopback host for a local server. `'oauth'` raises: GitHub has no automatic OAuth client registration.
-The capability does not limit which repositories are reachable; the token's permissions do.
+except `http://` on a loopback host for a local server. `'oauth'` raises: GitHub has no automatic OAuth
+client registration. The capability does not limit which repositories are reachable; the token's
+permissions do.
 
 **GoogleWorkspace.** `services` is the first positional argument: one of, or a list of, `'gmail'`,
 `'drive'`, `'docs'`, `'sheets'`, `'slides'`, `'calendar'`, `'chat'`, `'people'`. Each service is its own MCP
