@@ -70,7 +70,7 @@ backup = FunctionModel(backup_response, model_name='backup')
 # These deterministic responses stand in for calls to the primary and backup models.
 
 
-def select_model(ctx: ModelSelectionContext[None]) -> FunctionModel:
+def select_model(ctx: ModelSelectionContext[object]) -> FunctionModel:
     return backup if ctx.retry >= 1 else primary
 
 
