@@ -746,8 +746,7 @@ Things to know before you do:
 
 **`error: invalid engine: pydantic-ai. Valid engines are: claude, codex, copilot, gemini,
 pi.`** The `imports:` line is missing. Add
-`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`, not the path the accompanying tip
-suggests.
+`pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main`.
 
 **`error: invalid engine.model for engine 'pydantic-ai': for universal consumer engines,
 engine.model must use provider/model format`** The `provider/` prefix is missing from
