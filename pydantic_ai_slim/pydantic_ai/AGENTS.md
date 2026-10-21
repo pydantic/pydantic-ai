@@ -46,3 +46,7 @@ For non-trivial changes to this package, also read [Pydantic AI Slim Architectur
 
 
 <!-- /braindump -->
+
+## Framing tags
+
+- Render every framework tag that goes into prompt text (`<system>`, `<tool_result>`, `<context>`, …) with `_framing.wrap()` (or `open_tag`/`close_tag`), never a hand-built string: in a data tag's body it neutralizes every opening and closing spelling of every `FramingTag` (in the `<system>` body, of `<system>`), so content can't end its frame, forge another, or speak in the framework's voice, and it escapes attributes. Untrusted text placed in a frame some other way goes through `neutralize_tags()`. `tests/test_framing.py` fails on hand-built tag literals and non-snake_case tag names.
