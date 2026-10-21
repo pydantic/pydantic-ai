@@ -4,8 +4,8 @@ name: Sandbox live tests
 # service. Every test starts a billed sandbox, so `sandbox-live-nightly.yml` calls this only
 # on its daily schedule or when a maintainer explicitly dispatches it.
 #
-# Adding a provider adds its name to `PRESENT` and its secret below. The only per-provider
-# step sets the runner up for BoxLite, which needs no secret but boots VMs on the runner itself.
+# This file has no per-provider step. Adding a provider adds its name to `PRESENT` and its
+# secret below.
 #
 # There is deliberately no `ref` input: a scheduled or manual caller runs with the cache of
 # the branch it started from (usually `main`), and checking out another ref there would run
@@ -45,7 +45,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites", "daytona", "boxlite"]'
+          PRESENT: '["modal", "e2b", "sprites", "daytona"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -91,18 +91,6 @@ jobs:
           --extra "$PROVIDER" --extra temporal --extra code-mode --extra coder
         env:
           PROVIDER: ${{ matrix.provider }}
-
-      # BoxLite boots VMs on this runner with KVM, which the runner user can't open by default, and
-      # jails its engine with bubblewrap, which Ubuntu 24.04's AppArmor stops from creating user namespaces
-      # unless a profile allows it.
-      - if: matrix.provider == 'boxlite'
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          sudo apt-get install -y --no-install-recommends bubblewrap
-          sudo cp .github/scripts/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
-          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
 
       # `<NAME>_REQUIRE_LIVE` turns a missing or empty secret into a failure; without it the
       # live tests skip themselves and the job would report green having tested nothing.
