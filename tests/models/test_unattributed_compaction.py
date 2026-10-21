@@ -33,8 +33,9 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, sanitize_messages
 from pydantic_ai.models import Model
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 
 from .._inline_snapshot import snapshot
@@ -43,6 +44,9 @@ from ..conftest import RequestCapture, try_import
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.realtime._openai_protocol import (
+        _seed_request_items as _seed_openai_realtime_items,  # pyright: ignore[reportPrivateUsage]
+    )
 
 with try_import() as groq_available:
     from pydantic_ai.models.groq import GroqModel
@@ -82,6 +86,9 @@ with try_import() as xai_available:
 with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.realtime.google import (
+        _seed_request_parts as _seed_google_realtime_parts,  # pyright: ignore[reportPrivateUsage]
+    )
 
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -712,3 +719,55 @@ async def test_anthropic_reads_the_summary(
             'content': [{'type': 'text', 'text': FRAMED}, {'type': 'text', 'text': QUESTION}],
         },
     ]
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+def test_otel_renders_a_request_side_summary_as_text(include_content: bool):
+    settings = InstrumentationSettings(include_content=include_content)
+
+    assert CompactionPart(content=SUMMARY).otel_message_parts(settings) == [
+        {'type': 'text', 'content': SUMMARY} if include_content else {'type': 'text'}
+    ]
+    assert CompactionPart(content='').otel_message_parts(settings) == []
+
+
+def test_stripping_compaction_parts_covers_the_request_side():
+    """A client's own summary stands in for history just as a provider's would, so it is stripped the same way."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[CompactionPart(content=SUMMARY)]),
+        ModelRequest(parts=[CompactionPart(content=SUMMARY), UserPromptPart('go')]),
+    ]
+
+    sanitized = sanitize_messages(messages, strip_compaction_parts=True)
+
+    assert [[part.part_kind for part in message.parts] for message in sanitized] == [['user-prompt']]
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_openai_realtime_seeds_the_summary_as_user_text():
+    items = await _seed_openai_realtime_items(
+        [CompactionPart(content=SUMMARY), CompactionPart(content='')],
+        provider_name='openai',
+        supports_images=False,
+        supports_audio=False,
+        audio_input_sample_rate=24_000,
+        call_ids={},
+        seeded_calls=set(),
+    )
+
+    assert items == [
+        {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': FRAMED}]},
+    ]
+
+
+@pytest.mark.skipif(not google_available(), reason='google-genai not installed')
+async def test_google_realtime_seeds_the_summary_as_user_text():
+    parts = await _seed_google_realtime_parts(
+        [CompactionPart(content=SUMMARY), CompactionPart(content='')],
+        provider_name='google',
+        supports_images=False,
+        function_parts=True,
+        supports_audio=False,
+    )
+
+    assert [part.text for part in parts] == [FRAMED]

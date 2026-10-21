@@ -2473,7 +2473,7 @@ async def test_history_from_another_model(allow_model_requests: None):
         ),
         ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_2')]),
         ModelResponse(parts=[TextPart('Rain.'), CompactionPart(content=None)]),
-        ModelRequest(parts=[RetryPromptPart('Say more.')]),
+        ModelRequest(parts=[RetryPromptPart('Say more.'), CompactionPart(content='The user asked twice.')]),
         ModelResponse(parts=[TextPart('It is raining.'), CompactionPart(content='Weather was discussed.')]),
     ]
     agent = Agent(mock_model(record), output_type=bool, instructions='Was the user told the weather?')
@@ -2498,6 +2498,7 @@ Say more.
 Fix the errors and try again.\
 """
                 },
+                {'summary': 'The user asked twice.'},
                 {'assistant': 'It is raining.'},
                 {'summary': 'Weather was discussed.'},
             ],

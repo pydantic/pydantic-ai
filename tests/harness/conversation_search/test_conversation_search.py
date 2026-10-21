@@ -161,6 +161,12 @@ class TestSnapshotHistorySource:
         history = await SnapshotHistorySource(store).run_history(run_id='r1')
         assert history == [original, reply, follow_up]
 
+    async def test_an_empty_compaction_part_adds_nothing_to_search(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [ModelRequest(parts=[CompactionPart(content=''), UserPromptPart('the OSPREY')])])
+
+        assert 'OSPREY' in await _search(SnapshotHistorySource(store), 'OSPREY')
+
     async def test_an_app_authored_compaction_part_stays_searchable(self) -> None:
         """Only the summaries `SummarizingCompaction` wrote are artifacts; an application's own is content."""
         store = InMemoryStepStore()
