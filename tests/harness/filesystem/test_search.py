@@ -463,7 +463,7 @@ async def test_include_glob_with_a_slash_keeps_rg_to_its_directories(
         (tmp_path / 'aaa' / f'{n}.py').write_text('needle\n' * 20)
     (tmp_path / 'src' / 'pkg').mkdir(parents=True)
     (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
-    monkeypatch.setattr('pydantic_ai_harness.filesystem._ripgrep._MAX_OUTPUT_BYTES', 2_000)
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._ripgrep.MAX_OUTPUT_BYTES', 2_000)
     tools = FileSystem[None]().get_toolset()
     assert isinstance(tools, FileSystemToolset)
     workspace = LocalWorkspaceBackend(tmp_path)
