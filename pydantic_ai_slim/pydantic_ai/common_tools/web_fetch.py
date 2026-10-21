@@ -10,7 +10,6 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
-from html import parser as html_parser
 from html.parser import HTMLParser
 from typing import Any
 
@@ -38,10 +37,14 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
-# `HTMLParser`'s own start-tag grammar, used to count a tag's attributes before the parser
-# matches the whole tag. These parser internals are exercised on every supported Python in CI.
-_HTML_TAG_RE: re.Pattern[str] = getattr(html_parser, 'tagfind_tolerant')
-_HTML_ATTR_RE: re.Pattern[str] = getattr(html_parser, 'attrfind_tolerant')
+# `HTMLParser`'s tag grammar (`tagfind_tolerant`, `attrfind_tolerant`), with each separator run
+# matched by one character class so the match takes constant memory.
+_HTML_TAG_NAME_RE = re.compile(r'[a-zA-Z][^\t\n\r\f />]*')
+_HTML_TAG_SEPARATORS_RE = re.compile(r'[\t\n\r\f /]*')
+_HTML_TAG_ATTRIBUTE_RE = re.compile(
+    r'[^\t\n\r\f />][^\t\n\r\f /=>]*'
+    r'(?:[\t\n\r\f ]*=[\t\n\r\f ]*(?:\'[^\']*\'|"[^"]*"|(?![\'"])[^>\t\n\r\f ]*))?'
+)
 _WHITESPACE_RUN_RE = re.compile(r'[\t \r\n]+')
 _LINE_WITH_CONTENT_RE = re.compile(r'^(.*)', flags=re.MULTILINE)
 # `markdownify`'s stub doesn't declare its per-tag `convert_<tag>` methods, which it looks up by name.
@@ -66,9 +69,11 @@ _MAX_HTML_MARKUP_EVENTS = 500_000
 # `html.parser` loops once per `<` or `&`, including ones that produce no event (`< `, `</>`).
 # The same Wikipedia article has ~50k of them.
 _MAX_HTML_MARKUP_DELIMITERS = 500_000
-# Matching a whole start tag takes memory per attribute before any handler runs: a 1.9 MB tag
-# with 500k attributes peaks at ~300 MiB on CPython 3.11-3.15.
+# `html.parser` matches a whole start or end tag before any handler runs, taking memory per
+# attribute (a 1.9 MB tag with 500k attributes peaks at ~300-490 MiB on CPython 3.11-3.15) and per
+# whitespace or `/` character between them (~140-220 bytes each).
 _MAX_HTML_TAG_ATTRIBUTES = 2_000
+_MAX_HTML_TAG_SEPARATORS = 100_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
@@ -233,16 +238,32 @@ class _HTMLMarkupBudget(HTMLParser):
         if self.count > _MAX_HTML_MARKUP_EVENTS:
             raise ModelRetry('the document is too complex')
 
-    def check_for_whole_start_tag(self, i: int) -> int:
-        tag = _HTML_TAG_RE.match(self.rawdata, i + 1)
-        assert tag is not None
-        position, attributes = tag.end(), 0
-        while (attribute := _HTML_ATTR_RE.match(self.rawdata, position)) is not None:
+    def _check_tag(self, name_start: int) -> None:
+        name = _HTML_TAG_NAME_RE.match(self.rawdata, name_start)
+        assert name is not None
+        position, attributes, separator_count = name.end(), 0, 0
+        while True:
+            separators = _HTML_TAG_SEPARATORS_RE.match(self.rawdata, position)
+            assert separators is not None
+            separator_count += separators.end() - position
+            if separator_count > _MAX_HTML_TAG_SEPARATORS:
+                raise ModelRetry('the document is too complex')
+            attribute = _HTML_TAG_ATTRIBUTE_RE.match(self.rawdata, separators.end())
+            if attribute is None:
+                return
             attributes += 1
             if attributes > _MAX_HTML_TAG_ATTRIBUTES:
                 raise ModelRetry('the document is too complex')
             position = attribute.end()
+
+    def check_for_whole_start_tag(self, i: int) -> int:
+        self._check_tag(i + 1)
         return super().check_for_whole_start_tag(i)
+
+    def parse_endtag(self, i: int) -> int:
+        if self.rawdata.find('>', i + 2) != -1 and _HTML_TAG_NAME_RE.match(self.rawdata, i + 2):
+            self._check_tag(i + 2)
+        return super().parse_endtag(i)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._count(1 + len(attrs))

@@ -1008,6 +1008,39 @@ class TestMarkdownConverter:
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             assert 'ok' in _convert_html(html)[1]
 
+    @pytest.mark.parametrize(
+        ('html', 'whole_tag_match'),
+        [
+            pytest.param('<div' + ' ' * 100_001 + '>ok</div>', 'check_for_whole_start_tag', id='start-tag'),
+            pytest.param('<div a=1' + ' \n' * 50_001 + '>ok</div>', 'check_for_whole_start_tag', id='after-attribute'),
+            pytest.param(
+                '<div' + ' a=1' * 1_000 + ' ' * 99_100 + '>ok</div>',
+                'check_for_whole_start_tag',
+                id='across-attributes',
+            ),
+            pytest.param('</div' + '/' * 100_001 + '>', 'parse_endtag', id='end-tag'),
+        ],
+    )
+    def test_tag_separators_are_counted_before_matching(self, html: str, whole_tag_match: str):
+        """More than 100,000 whitespace or `/` characters inside one tag are rejected before the parser matches it."""
+        with patch(f'html.parser.HTMLParser.{whole_tag_match}', side_effect=AssertionError('whole-tag match')):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
+    def test_separator_run_at_the_limit_converts(self):
+        """A tag with 100,000 whitespace characters inside it is accepted."""
+        assert _convert_html('<p' + ' ' * 100_000 + '>ok</p>')[1] == 'ok'
+
+    def test_end_tag_attributes_are_counted(self):
+        """Attribute-like text in an end tag is counted before the parser matches the tag."""
+        html = '</div' + ' x=1' * 21 + '>'
+        with (
+            patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TAG_ATTRIBUTES', 20),
+            patch('html.parser.HTMLParser.parse_endtag', side_effect=AssertionError('whole-tag match')),
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
     @pytest.mark.parametrize('prefix', ['<div ', '<div data-x=">" ', "<div data=x' "])
     def test_many_attributes_are_rejected_before_whole_tag_scan(self, prefix: str):
         """A tag's attributes are counted before the parser matches the whole tag."""
