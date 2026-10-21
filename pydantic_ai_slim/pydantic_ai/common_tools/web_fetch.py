@@ -238,7 +238,7 @@ class _HTMLMarkupBudget(HTMLParser):
         if self.count > _MAX_HTML_MARKUP_EVENTS:
             raise ModelRetry('the document is too complex')
 
-    def _check_tag(self, name_start: int) -> None:
+    def _check_tag(self, name_start: int) -> int:
         name = _HTML_TAG_NAME_RE.match(self.rawdata, name_start)
         assert name is not None
         position, attributes, separator_count = name.end(), 0, 0
@@ -250,7 +250,7 @@ class _HTMLMarkupBudget(HTMLParser):
                 raise ModelRetry('the document is too complex')
             attribute = _HTML_TAG_ATTRIBUTE_RE.match(self.rawdata, separators.end())
             if attribute is None:
-                return
+                return attributes
             attributes += 1
             if attributes > _MAX_HTML_TAG_ATTRIBUTES:
                 raise ModelRetry('the document is too complex')
@@ -262,7 +262,8 @@ class _HTMLMarkupBudget(HTMLParser):
 
     def parse_endtag(self, i: int) -> int:
         if self.rawdata.find('>', i + 2) != -1 and _HTML_TAG_NAME_RE.match(self.rawdata, i + 2):
-            self._check_tag(i + 2)
+            # `handle_endtag` doesn't report end-tag attributes, so charge the walked ones here.
+            self._count(self._check_tag(i + 2))
         return super().parse_endtag(i)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
