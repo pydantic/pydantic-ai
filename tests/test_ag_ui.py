@@ -9294,12 +9294,14 @@ async def test_resume_unmatched_prefixed_id_fails_the_whole_run() -> None:
         executed.append(path)
         return f'deleted {path}'
 
-    run_input = _resume_input(ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True}))
-    # The helper derives the history's tool calls from the entries, so appending the extra
-    # entry afterwards leaves its id well-prefixed while matching no pending call.
-    run_input.resume.append(
-        ResumeEntry(interrupt_id='int-tc-does-not-exist', status='resolved', payload={'approved': True})
-    )
+    known = ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True})
+    run_input = _resume_input(known)
+    # The helper derives the history's tool calls from the entries, so adding the extra entry
+    # afterwards leaves its id well-prefixed while matching no pending call.
+    run_input.resume = [
+        known,
+        ResumeEntry(interrupt_id='int-tc-does-not-exist', status='resolved', payload={'approved': True}),
+    ]
 
     events = await _collect_adapter_events(agent, run_input)
 
