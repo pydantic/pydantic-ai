@@ -383,7 +383,7 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'final_result': '{"noop":"ok"}',
                     'gen_ai.aggregated_usage.input_tokens': 103,
                     'gen_ai.aggregated_usage.output_tokens': 8,
-                    'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]},{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
+                    'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"system","parts":[]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]},{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
                     'gen_ai.system_instructions': '[{"type":"text","content":"<context '
                     'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
                     'helpful assistant.\\n</context>\\nA later <context> element with '
