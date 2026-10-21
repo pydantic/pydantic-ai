@@ -277,7 +277,8 @@ async def test_parallel_tool_calls_get_one_reply(
     model = ElevenLabsRealtimeModel(MODEL, provider=provider)
     agent = Agent(instructions='Use get_weather for every city asked about, in parallel. Answer in one short sentence.')
 
-    @agent.tool_plain
+    # Run one after the other, so the results go out in the recorded order.
+    @agent.tool_plain(sequential=True)
     def get_weather(city: str) -> str:
         """Look up the current weather for a city."""
         return f'It is foggy and 12 degrees in {city}.'
