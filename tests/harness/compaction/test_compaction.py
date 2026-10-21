@@ -49,6 +49,7 @@ from pydantic_ai.messages import (
     ToolSearchReturnContent,
     ToolSearchReturnPart,
     UserPromptPart,
+    repair_messages,
 )
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -92,10 +93,13 @@ from pydantic_ai_harness.compaction._shared import (
 )
 from pydantic_ai_harness.compaction._summarizing_compaction import (
     _DEFAULT_SUMMARY_PROMPT,  # pyright: ignore[reportPrivateUsage]
+    _KEPT_USER_MESSAGE_METADATA,  # pyright: ignore[reportPrivateUsage]
     _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
     _extract_previous_summary,  # pyright: ignore[reportPrivateUsage]
     _extract_system_prompts,  # pyright: ignore[reportPrivateUsage]
     _format_messages,  # pyright: ignore[reportPrivateUsage]
+    _is_kept_user_message,  # pyright: ignore[reportPrivateUsage]
+    _is_kept_user_part,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
 from tests.conftest import try_import
@@ -2062,12 +2066,15 @@ def _request_shapes(messages: list[ModelMessage]) -> list[list[str]]:
 
 
 def _user_texts(messages: list[ModelMessage]) -> list[str]:
+    """Each user prompt's text, a `keep_user_messages` copy's included (its text is in `TextContent`)."""
     out: list[str] = []
     for m in messages:
         if isinstance(m, ModelRequest):
             for p in m.parts:
                 if isinstance(p, UserPromptPart) and isinstance(p.content, str):
                     out.append(p.content)
+                elif isinstance(p, UserPromptPart) and _is_kept_user_part(p):
+                    out.append(''.join(item.content for item in p.content if isinstance(item, TextContent)))
     return out
 
 
@@ -3983,12 +3990,13 @@ class TestKeepUserMessages:
         rc = _make_request_context(messages)
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('SUMMARY')):
             result = await comp.before_model_request(_make_ctx(rc.messages), rc)
-        # Exactly one user part survives the summarized prefix, and content that fits is untouched.
+        # Exactly one user part survives the summarized prefix, and content that fits keeps its text, marked
+        # as a retained copy.
         kept = [
             p for m in result.messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, UserPromptPart)
         ]
         assert len(kept) == 1
-        assert kept[0].content == [TextContent(content='multimodal')]
+        assert kept[0].content == [TextContent(content='multimodal', metadata=_KEPT_USER_MESSAGE_METADATA)]
 
     async def test_bounds_text_inside_sequence_content(self):
 
@@ -4019,9 +4027,9 @@ class TestKeepUserMessages:
             if isinstance(p, UserPromptPart) and not isinstance(p.content, str)
         )
         first, passthrough = bounded.content
-        assert isinstance(first, str)
-        assert first.endswith('[...]')
-        assert len(first) == 30
+        assert isinstance(first, TextContent)
+        assert first.content.endswith('[...]')
+        assert len(first.content) == 30
         # Non-text items ride along untouched.
         assert passthrough is cache_point
 
@@ -4047,6 +4055,24 @@ class TestKeepUserMessages:
         with patch('pydantic_ai.Agent', return_value=_patched_summary_agent('S2')):
             second = await comp.compact([*first, _user('third'), _assistant('c')], _make_ctx())
         assert sum('first' in text for text in _user_texts(second)) == 1
+
+    async def test_a_retained_copy_merged_into_a_later_request_is_still_recognized(self):
+        """Continuing a history merges adjacent requests and drops their metadata; the marker on the text survives."""
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts), max_messages=3, keep_messages=2, keep_user_messages=True
+        )
+        messages: list[ModelMessage] = [_user('KEPT TURN'), _assistant('a'), _user('second'), _assistant('b')]
+        first = await comp.compact(messages, _make_ctx(messages))
+        # The next run merges the retained copy with the request after it, as core's history cleanup does.
+        continued = repair_messages([*first, _user('third'), _assistant('c'), _user('fourth')])
+        assert not any(isinstance(m, ModelRequest) and _is_kept_user_message(m) for m in continued)
+
+        second = await comp.compact(continued, _make_ctx(continued))
+
+        # The retained copy isn't summarized again, and it's kept once, not copied a second time.
+        assert 'KEPT TURN' not in prompts[1]
+        assert sum('KEPT TURN' in text for text in _user_texts(second)) == 1
 
     async def test_retained_user_messages_converge_within_the_tail_budget(self):
         comp = SummarizingCompaction(

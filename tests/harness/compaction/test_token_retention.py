@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -442,7 +443,14 @@ class TestSummarizingCompactionTokenRetention:
 
         result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
 
-        kept_text = [part.content for message in result for part in message.parts if isinstance(part, UserPromptPart)]
+        kept_text = [
+            ''.join(item.content for item in part.content if isinstance(item, TextContent))
+            if not isinstance(part.content, str)
+            else part.content
+            for message in result
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
         assert kept_text == (['a'] if keep_messages and user_text == 'a' else [])
         assert len(result) == 2 + len(kept_text)
         assert result[-1] is history[-1]
