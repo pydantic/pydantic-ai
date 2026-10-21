@@ -646,7 +646,7 @@ class Simulation(ABC):
 
         try:
             self.loop.run_until_complete(handoff())
-        except Exception as e:  # pragma: no cover (only when a standard run rejects the history)
+        except Exception as e:  # pragma: lax no cover (only when a standard run rejects the history)
             self.checker.report('history.handoff', [(f'a standard run rejected the history: {e!r}', {})])
 
     # --- views for the invariants -------------------------------------------------------------------
