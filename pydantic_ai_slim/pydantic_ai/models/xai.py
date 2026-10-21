@@ -42,13 +42,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -60,11 +58,11 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_compaction_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -412,7 +410,6 @@ class XaiModel(Model[AsyncClient]):
         model_request_parameters: ModelRequestParameters,
     ) -> list[chat_types.chat_pb2.Message]:
         """Convert pydantic_ai messages to xAI SDK messages."""
-        messages = _render_unattributed_compaction_parts(messages)
         xai_messages: list[chat_types.chat_pb2.Message] = []
         # xAI expects tool results in the same order as tool calls.
         #
@@ -445,16 +442,16 @@ class XaiModel(Model[AsyncClient]):
 
         return xai_messages
 
-    async def _map_request_parts(  # noqa: C901
+    async def _map_request_parts(
         self,
         parts: Sequence[ModelRequestPart],
         pending_tool_call_ids: list[str],
     ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
-        tool_results: list[ToolReturnPart | RetryPromptPart] = []
+        tool_results: list[ToolReturnPart] = []
 
-        for part in parts:
+        for part in _sendable_request_parts(parts):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
@@ -462,18 +459,10 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
                 tool_results.append(part)
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    xai_messages.append(user(part.model_response()))
-                else:
-                    tool_results.append(part)
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                # `_render_unattributed_compaction_parts` swapped it for its framed user text before mapping.
-                raise _unrendered_compaction_part_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
@@ -486,12 +475,9 @@ class XaiModel(Model[AsyncClient]):
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
             file_content: list[UserContent] = []
             for part in tool_results:
-                if isinstance(part, ToolReturnPart):
-                    text, files = part.model_response_str_and_user_content()
-                    xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
-                    file_content.extend(files)
-                else:
-                    xai_messages.append(tool_result(part.model_response(), tool_call_id=part.tool_call_id))
+                text, files = part.model_response_str_and_user_content()
+                xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
+                file_content.extend(files)
             if file_content and (
                 user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
             ):  # pragma: no branch

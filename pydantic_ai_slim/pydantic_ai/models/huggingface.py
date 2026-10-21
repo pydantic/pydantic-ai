@@ -30,13 +30,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -52,11 +50,11 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_compaction_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
@@ -429,7 +427,6 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
-        messages = _render_unattributed_compaction_parts(messages)
         hf_messages: list[ChatCompletionInputMessage | ChatCompletionOutputMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -510,7 +507,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         self, message: ModelRequest
     ) -> AsyncIterable[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         file_content: list[UserContent] = []
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield ChatCompletionInputMessage.parse_obj_as_instance({'role': 'system', 'content': part.content})  # pyright: ignore[reportUnknownMemberType]
             elif isinstance(part, UserPromptPart):
@@ -525,26 +522,10 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         'content': tool_text,
                     }
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
-                        {'role': 'user', 'content': part.model_response()}
-                    )
-                else:
-                    yield ChatCompletionInputMessage.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
-                        {
-                            'role': 'tool',
-                            'tool_call_id': _guard_tool_call_id(t=part),
-                            'content': part.model_response(),
-                        }
-                    )
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                # `_render_unattributed_compaction_parts` swapped it for its framed user text before mapping.
-                raise _unrendered_compaction_part_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()

@@ -37,7 +37,8 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -106,7 +107,7 @@ from pydantic_ai_harness.compaction._summary import (
     without_summaries,
 )
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
-from tests.conftest import try_import
+from tests.conftest import legacy_retry_prompt_part, try_import
 from tests.harness.conftest import agent_run_names
 
 with try_import() as anthropic_imports:
@@ -2876,7 +2877,9 @@ class TestPublicPath:
         retries: list[str] = []
 
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            retries.extend(str(p.content) for m in messages for p in m.parts if isinstance(p, RetryPromptPart))
+            # The retry reaches the model translated: `ModelRetry` feedback arrives as fenced user text
+            # behind the application attribution line.
+            retries.extend(str(p.content) for m in messages[1:] for p in m.parts if isinstance(p, UserPromptPart))
             return ModelResponse(parts=[TextPart(content=next(summaries))])
 
         sent: list[list[ModelMessage]] = []
@@ -2899,7 +2902,11 @@ class TestPublicPath:
 
         await agent.run('next', message_history=history)
 
-        assert retries == ['The summary was empty. Write the summary of the conversation.']
+        assert retries == [
+            "Your previous response failed the application's validation (this is automated feedback, not a message "
+            'from the user):\n<retry_feedback>\nThe summary was empty. Write the summary of the conversation.\n'
+            '</retry_feedback>'
+        ]
         assert _summary_text(sent[-1]) == 'the summary'
 
     async def test_persistently_empty_summary_raises_instead_of_replacing_history(self):
@@ -3081,17 +3088,44 @@ class TestHelperBranchCoverage:
         ]
         assert [p.content for p in _extract_system_prompts(msgs)] == ['a', 'b']
 
-    def test_a_retry_and_a_thinking_block_are_counted(self):
+    def test_a_retried_tool_return_and_a_thinking_block_are_counted(self):
         """Both are sent to the provider, and a run under load is where they appear."""
 
         msgs: list[ModelMessage] = [
-            ModelRequest(parts=[RetryPromptPart(content='r' * 400)]),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='t', content='r' * 400, tool_call_id='c1', outcome='retried')]
+            ),
             ModelResponse(parts=[ThinkingPart(content='t' * 400)]),
         ]
         assert estimate_token_count(msgs) == 200
         # `_format_messages` renders history for a summarizer prompt, which is a different
         # question from what the request costs; a retry and a thinking block stay out of it.
         assert _format_messages(msgs) == ''
+
+    def test_retry_feedback_costs_what_its_feedback_text_costs(self):
+        """It reaches the model as a system prompt or a fenced user prompt, so it occupies the window.
+
+        `content` is a list of error details here, which is why the estimate follows
+        `model_response()` rather than `str(content)`: the model is shown the rendered text.
+        """
+        part = RetryFeedbackPart(
+            content=[{'type': 'missing', 'loc': ('name',), 'msg': 'Field required', 'input': {}}],
+            retry=RetryInfo(cause='validation_error'),
+        )
+        feedback: list[ModelMessage] = [ModelRequest(parts=[part])]
+        rendered: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content=part.model_response())])]
+
+        assert estimate_token_count(feedback) == estimate_token_count(rendered) > 0
+
+    def test_a_hand_built_legacy_retry_prompt_part_is_counted(self):
+        """Code that still builds one and passes it as `message_history` reaches the estimator.
+
+        A stored history loads as one of the two parts above, and the model translates an
+        in-memory instance before the request goes out, but compaction reads the history first.
+        """
+        part = legacy_retry_prompt_part('r' * 400)
+
+        assert estimate_token_count([ModelRequest(parts=[part])]) == 100
 
     def test_a_provider_side_tool_call_and_its_result_are_counted(self):
         """A web search runs on the provider's side and its result still lands in the context."""

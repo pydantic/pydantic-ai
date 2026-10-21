@@ -7,9 +7,10 @@ from typing import Literal, assert_never
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
 from .models import (
-    _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unrendered_compaction_part_error,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -106,7 +107,7 @@ def _map_sampling_tool_result(
     )
 
 
-def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[str, list[mcp_types.SamplingMessage]]:  # noqa: C901
+def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[str, list[mcp_types.SamplingMessage]]:
     """Convert from pydantic-ai messages to MCP sampling messages.
 
     Returns:
@@ -121,14 +122,14 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
         sampling_msgs.append(mcp_types.SamplingMessage(role=role, content=content))
 
     system_prompt: list[str] = []
-    for pai_message in _render_unattributed_compaction_parts(pai_messages):
+    for pai_message in pai_messages:
         if isinstance(pai_message, messages.ModelRequest):
             request_start = len(sampling_msgs)
             tool_results: list[mcp_types.SamplingMessageContentBlock] = []
             if pai_message.instructions is not None:
                 system_prompt.append(pai_message.instructions)
 
-            for part in pai_message.parts:
+            for part in _sendable_request_parts(pai_message.parts):
                 if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
                     raise _unprojected_instruction_delta_error()
                 if isinstance(part, messages.SystemPromptPart):
@@ -146,25 +147,14 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                             content=[
                                 mcp_types.TextContent(type='text', text=part.model_response_str(wrap_if_error=False))
                             ],
-                            isError=part.outcome == 'failed',
+                            isError=part.outcome in messages.ERROR_OUTCOMES,
                         )
                     )
-                elif isinstance(part, messages.RetryPromptPart):
-                    content = mcp_types.TextContent(type='text', text=part.model_response())
-                    if part.tool_name is None:
-                        add_msg('user', content)
-                    else:
-                        tool_results.append(
-                            mcp_types.ToolResultContent(
-                                type='tool_result', toolUseId=part.tool_call_id, content=[content], isError=True
-                            )
-                        )
-                elif isinstance(part, messages.CompactionPart):  # pragma: no cover
-                    # `_render_unattributed_compaction_parts` swapped it for its framed user text above.
-                    raise _unrendered_compaction_part_error()
                 elif isinstance(part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart)):
                     # These parts are not currently sent to MCP sampling.
                     continue
+                elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                    raise _unprepared_part_error(part)
                 else:
                     assert_never(part)
             if tool_results:

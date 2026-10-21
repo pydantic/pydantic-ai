@@ -424,6 +424,7 @@ def test_var_args():
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=UTC),  # type: ignore[reportUnknownMemberType]
             'outcome': 'success',
+            'retry': None,
             'part_kind': 'tool-return',
         }
     )
@@ -673,7 +674,8 @@ def test_a_request_side_compaction_summary_counts_as_text() -> None:
     native = ModelResponse(
         parts=[CompactionPart(content=None, provider_name='openai', provider_details={'encrypted_content': 'x'})]
     )
-    assert _estimate_usage([summary]) == RequestUsage(input_tokens=53, output_tokens=0)
+    # The model receives the summary framed, with its attribution line, so that is what's counted.
+    assert _estimate_usage([summary]) == RequestUsage(input_tokens=79, output_tokens=0)
     assert _estimate_usage([native]) == RequestUsage(input_tokens=50, output_tokens=0)
 
 

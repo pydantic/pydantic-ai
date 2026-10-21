@@ -26,7 +26,8 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -127,10 +128,22 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     elif isinstance(part, InstructionBaselinePart):
         return []
     elif isinstance(part, ToolReturnPart):
-        # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`, so
-        # they arrive here too.
+        # Sent in full, a retried call's feedback included: a retry that answers a call travels as
+        # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
+        # so they arrive here too.
         return [tool_return_text(part)]
-    elif isinstance(part, RetryPromptPart):
+    elif isinstance(part, RetryFeedbackPart):
+        # Retry feedback that answers no tool call. It is stored model-neutral and translated at
+        # request time into a system prompt or a `<validation_errors>`-fenced user prompt, so it
+        # occupies the window like the parts above. `model_response()` rather than
+        # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
+        # and this renders it the way the model sees it.
+        return [part.model_response()]
+    # TODO(v3): remove RetryPromptPart
+    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # The part the two above replaced. A stored history loads as one of them, but code that
+        # builds one by hand and passes it as `message_history` still puts an instance here, and
+        # this reads the history before the model translates it.
         return [str(part.content)]
     # Control bookkeeping rather than message text: it records which tools became available, and
     # the schemas themselves travel in the request's tool definitions. Those schemas are not free
@@ -762,8 +775,10 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
                     calls[part.tool_call_id] = index
         else:
             for part in message.parts:
+                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
                 if isinstance(part, ToolReturnPart) or (
-                    isinstance(part, RetryPromptPart) and part.tool_name is not None
+                    isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    and part.tool_name is not None
                 ):
                     earliest = min(earliest, calls.get(part.tool_call_id, index))
         dependencies.append(earliest)

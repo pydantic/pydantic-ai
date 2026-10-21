@@ -11,7 +11,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    RetryFeedbackPart,
     SystemPromptPart,
     ToolReturnPart,
     UserPromptPart,
@@ -67,7 +67,7 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
                 continue
             seen_runs.add(message.run_id)
         if not isinstance(message, ModelRequest) or any(
-            isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts
+            isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts
         ):
             continue
         prompts = [part for part in message.parts if isinstance(part, UserPromptPart)]
