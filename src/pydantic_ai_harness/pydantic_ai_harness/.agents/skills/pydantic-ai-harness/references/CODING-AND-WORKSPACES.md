@@ -357,8 +357,9 @@ Python up to 3.14.
 - `box_options` passes other `boxlite.BoxOptions` arguments to a new box (`volumes`, `ports`, `secrets`,
   `disk_size_gb`, `user`); the ones the named settings own raise `UserError`. Runtime-wide settings
   (registry logins, home dir) go to `boxlite.Boxlite.init_default(boxlite.Options(...))` before first use.
-- The ref is `WorkspaceRef(provider='boxlite', id='pydantic-ai-<32 hex>')`; any other id raises
-  `ValueError`. Runs never delete the box: `await BoxLiteSandbox().destroy(ref)` (quiet if gone; waits for
+- The ref is `WorkspaceRef(provider='boxlite', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
+  `backend(ref)` or `destroy(ref)` any other id raises `ValueError`. An existing box goes in as
+  `workspace=BoxLiteSandboxBackend(sandbox=box)` (or `ref=` with any name), which history doesn't reattach. Runs never delete the box: `await BoxLiteSandbox().destroy(ref)` (quiet if gone; waits for
   a creation in progress). A box stops, keeping its disk, when the process lets go of it; its ref boots it
   again. One process at a time can use a BoxLite home (`~/.boxlite` or `BOXLITE_HOME`); another gets
   `WorkspaceUnavailableError`.

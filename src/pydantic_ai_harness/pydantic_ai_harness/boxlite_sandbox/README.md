@@ -117,9 +117,7 @@ Pass `workspace='new'` to create a fresh box even when the message history names
 
 A box stops when nothing in this process uses it any more, or when the process exits, and keeps its disk. The next use of its ref boots it again, in this process or in a later one. Only one process at a time can use a BoxLite home directory (`~/.boxlite`, or `BOXLITE_HOME`): another process that tries gets `WorkspaceUnavailableError` until the first one exits.
 
-A ref is trusted input: whoever passes one runs commands in that box. `BoxLiteSandbox` names the boxes it creates `pydantic-ai-` and 32 hex digits, and raises `ValueError` for a ref with any other id, so a ref can't reach boxes other tools make under their own names, which may mount your files. The name isn't proof of origin, though: any process running as your OS user can create a box under such a name, so only pass refs your application stored itself.
-
-Already have a `boxlite.Box`? Pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to a run, with `BoxLiteSandboxBackend` from `pydantic_ai_harness.boxlite_sandbox`, or `ref=WorkspaceRef(provider='boxlite', id=...)` with the box's name, or its id if it has none. Your code chooses that box, so any name works. `BoxLiteSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the box, and the message history only reattaches boxes `BoxLiteSandbox` created, so pass the backend again for a later run.
+Already have a `boxlite.Box`? Pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run, with `BoxLiteSandboxBackend` from `pydantic_ai_harness.boxlite_sandbox`, or `BoxLiteSandboxBackend(ref=WorkspaceRef(provider='boxlite', id=...))` with the box's name, or its id if it has none. `BoxLiteSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the box. See [Which boxes a run can use](#which-boxes-a-run-can-use) for what each way accepts.
 
 ## Other BoxLite options
 
@@ -223,6 +221,19 @@ The VM is the boundary: it has its own kernel and filesystem, and unless `box_op
 - The BoxLite runtime runs in your process with your OS user's permissions, and keeps its state in its home directory.
 - `image` is pulled by tag; pin a digest, such as `python:3.12-slim@sha256:...`, to get the same image every time.
 - `cpus` and `memory_mb` cap a box; nothing limits how many boxes a process creates.
+
+### Which boxes a run can use
+
+Whoever passes a ref runs commands in the box it names. BoxLite can open any box on this machine by name, including boxes other tools made with your folders mounted. So what's accepted depends on where the box comes from:
+
+| Where the box comes from | What's accepted |
+| --- | --- |
+| `BoxLiteSandbox`: a ref in the message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` | Only boxes `BoxLiteSandbox` created, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError` before anything runs. |
+| `BoxLiteSandboxBackend(sandbox=box)` or `BoxLiteSandboxBackend(ref=...)`, built by your code | Any box, including one with mounts or published ports, because your code chose it. |
+
+- A run in a box you passed in writes that box's name into the message history. A later run given only that history raises `ValueError`; it doesn't open the box or create a new one. Pass the backend again, or `workspace='new'` for a fresh box.
+- Durable execution rebuilds the workspace from its ref, so it only works with boxes `BoxLiteSandbox` created.
+- The name doesn't prove where a box came from: any program running as your OS user can create a box with such a name. Only pass refs your application stored itself, and don't build `BoxLiteSandboxBackend(ref=...)` from user input.
 
 ## Configuration
 

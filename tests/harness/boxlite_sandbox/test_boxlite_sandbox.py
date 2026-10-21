@@ -703,6 +703,20 @@ async def test_agent_history_attaches_same_box(fake_boxlite: FakeBoxLite, workin
     assert first.workspace.ref == second.workspace.ref == WorkspaceRef(provider='boxlite', id=name)
 
 
+async def test_history_does_not_reattach_a_box_the_application_passed_in(
+    fake_boxlite: FakeBoxLite, working_dir: str
+) -> None:
+    box = await fake_boxlite.module.Boxlite.default().create(None, name='dev')
+    agent = Agent(TestModel(), capabilities=[BoxLiteSandbox(working_dir=working_dir)])
+    first = await agent.run('go', workspace=BoxLiteSandboxBackend(sandbox=box, working_dir=working_dir))
+    assert first.workspace.ref == WorkspaceRef(provider='boxlite', id='dev')
+    # The history names `dev`, but only the application that chose it can open it again.
+    with pytest.raises(
+        ValueError, match=re.escape("got 'dev'. To use another box, pass `workspace=BoxLiteSandboxBackend")
+    ):
+        await agent.run('go', message_history=first.all_messages())
+
+
 async def test_coder_works_in_the_box(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
     shell_output, read_output = await call_tools(
         [BoxLiteSandbox(working_dir=working_dir), Coder(repo_context=False)],

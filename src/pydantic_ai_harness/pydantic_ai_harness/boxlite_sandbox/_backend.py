@@ -224,7 +224,9 @@ def check_ref(ref: WorkspaceRef) -> None:
     _check_provider(ref)
     if _NAME.fullmatch(ref.id) is None:
         raise ValueError(
-            f'BoxLiteSandbox only uses boxes it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}'
+            f'BoxLiteSandbox only uses boxes it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}. '
+            'To use another box, pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run; '
+            "`workspace='new'` starts a fresh box."
         )
 
 
