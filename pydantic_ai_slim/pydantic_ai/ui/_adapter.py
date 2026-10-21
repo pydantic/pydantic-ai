@@ -655,6 +655,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     ) -> AsyncIterator[NativeEvent]:
         """Run the agent with the protocol-specific run input and stream Pydantic AI events.
 
+        A `UserError` from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results]
+        is re-raised on the first iteration of the returned stream rather than at the call site, so
+        a subclass rejecting a malformed request surfaces that as a protocol error event on the
+        stream. Any other exception still raises at the call site, and nothing else about the run
+        input is deferred.
+
         Args:
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
@@ -679,26 +685,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             workspace: Optional [workspace](../../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
-
-        An exception from [`deferred_tool_results`][pydantic_ai.ui.UIAdapter.deferred_tool_results]
-        is re-raised on the first iteration of the returned stream rather than at the call site, so
-        a subclass raising on a malformed request surfaces that as a protocol error event on the
-        stream. Nothing else about the run input is deferred.
         """
         if conversation_id is None:
             conversation_id = self.conversation_id
 
-        # `deferred_tool_results` is the one part of the run input an implementation is expected to
-        # reject a malformed request from — an AG-UI resume payload that fails the schema advertised
-        # to the client. Handing that exception back as a stream that raises on first iteration puts
-        # it inside `transform_stream`'s error handling, so it reaches the client as a protocol
-        # error event instead of escaping the streaming response as an unhandled server error. Only
-        # the raising path is deferred: every request that resolves keeps deriving its run input
-        # here, so no other error and no `sanitize_messages` warning changes when it fires — which
-        # is also why this block sits where the eager resolution did, ahead of the state warning
-        # below. Only `UserError` is deferred, the exception an implementation raises to reject the
-        # request; any other exception is a bug in the implementation and keeps escaping as a server
-        # error rather than being dressed up as a protocol error the client can do nothing about.
+        # A `UserError` rejecting the request is handed back as a failing stream so it reaches
+        # `transform_stream`'s error handling; the early return keeps the run setup below, like
+        # writing `deps.state`, from running for a request that never starts.
         try:
             if deferred_tool_results is None:
                 deferred_tool_results = self.deferred_tool_results
@@ -711,23 +704,19 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 raise error
                 yield  # pragma: no cover
 
-            # Returning here rather than falling through matters: the run can no longer start, so
-            # none of the setup below may run for it. `deps.state` must not be mutated for a run
-            # that never happens, and a `StateHandler`'s own validation of the client's state must
-            # not raise at the call site and mask this error.
             return rejected_stream()
-        else:
-            frontend_messages = self.messages
-            if message_history:
-                # A client-supplied compaction part would trim the trusted server-side history off the
-                # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
-                frontend_messages = _drop_compaction_parts(frontend_messages)
-            # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
-            # strips unresolved tool calls from the end of the history, and a run without a new prompt
-            # executes the tool calls of whatever response ends up last. Dropping or merging a message after
-            # this call can move an earlier, unchecked response to the end. Do any such change before it.
-            frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
-            message_history = [*(message_history or []), *frontend_messages]
+
+        frontend_messages = self.messages
+        if message_history:
+            # A client-supplied compaction part would trim the trusted server-side history off the
+            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
+            frontend_messages = _drop_compaction_parts(frontend_messages)
+        # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
+        # strips unresolved tool calls from the end of the history, and a run without a new prompt
+        # executes the tool calls of whatever response ends up last. Dropping or merging a message after
+        # this call can move an earlier, unchecked response to the end. Do any such change before it.
+        frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
+        message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
         if toolset:

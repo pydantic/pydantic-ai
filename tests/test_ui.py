@@ -1336,7 +1336,13 @@ async def test_run_stream_skips_deferred_tool_results_when_caller_supplies_them(
 
     events = [event async for event in adapter.run_stream(deferred_tool_results=DeferredToolResults())]
 
-    assert 'malformed resume payload' not in ''.join(events)
+    assert events == snapshot(
+        [
+            '<stream>',
+            "<error type='UserError'>Tool call results were provided, but the message history does not contain a `ModelResponse`.</error>",
+            '</stream>',
+        ]
+    )
 
 
 async def test_run_stream_output_tool_error():
