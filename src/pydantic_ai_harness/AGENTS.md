@@ -107,7 +107,8 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
   `agent_docs/message-history-and-caching.md`: history is append-only, content goes in the channel
   matching who wrote it, framework records are found by type or metadata, never by their text, and
   any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
-  escaping, attributes, no preambles)
+  escaping every registered framing tag through `_framing.wrap()`/`neutralize_tags()`, never a
+  hand-rolled escaper, attributes, no preambles)
 
 ## Writing style
 
