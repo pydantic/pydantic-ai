@@ -7,6 +7,11 @@ on:
   schedule:
     - cron: '20 9 * * 3'
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 if: ${{ needs.provider_health.outputs.ready == 'true' && (github.repository == 'pydantic/pydantic-ai') }}
 permissions:
   contents: read
@@ -19,6 +24,13 @@ network:
     - defaults
     - python
     - api.z.ai
+    # Logfire ingestion endpoints used by shared/otel-logfire.md.
+    - logfire-api.pydantic.dev
+    - logfire-eu.pydantic.dev
+    - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 tools:
   bash: []
   cli-proxy: false
@@ -137,7 +149,10 @@ pre-agent-steps:
       path: feature-candidates.json
       retention-days: 1
       overwrite: true
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
+  - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md

@@ -1,4 +1,6 @@
 import importlib
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -78,13 +80,16 @@ async def test_coder_agent_imports_on_a_non_posix_host(monkeypatch: pytest.Monke
         await agent.run('go', model=TestModel(call_tools=[]))
 
 
-def test_coder_agent_export_is_lazy(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Forget the whole harness package (restored after the test), so neither `pydantic_ai_harness`
-    # nor `pydantic_ai_harness.coder` can import the bundled agent without the test seeing it.
-    for name in [name for name in sys.modules if name.split('.')[0] == 'pydantic_ai_harness']:
-        monkeypatch.delitem(sys.modules, name)
-    importlib.import_module('pydantic_ai_harness.coder')
-    assert 'pydantic_ai_harness.coder._agent' not in sys.modules
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
+def test_coder_agent_export_is_lazy() -> None:
+    # A fresh interpreter, so neither `pydantic_ai_harness` nor `pydantic_ai_harness.coder` can import the
+    # bundled agent without the test seeing it. Re-importing the package in this process instead would
+    # define its typed tool parts a second time, leaving the tool kind registry pointing at classes the
+    # restored modules no longer hold, which breaks pickling those parts in every later test.
+    code = 'import sys, pydantic_ai_harness.coder; print("pydantic_ai_harness.coder._agent" in sys.modules)'
+    env: dict[str, str] = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, check=True, env=env)
+    assert result.stdout.strip() == 'False'
 
 
 def test_coder_unknown_export() -> None:
@@ -102,7 +107,6 @@ def test_coder_members_and_parameters() -> None:
         'RepoContext',
         'SubAgents',
         'ClearToolResults',
-        'WarnNearLimits',
         '_BoundToolOutputs',
         'RepairToolArguments',
         '_DefaultCaching',

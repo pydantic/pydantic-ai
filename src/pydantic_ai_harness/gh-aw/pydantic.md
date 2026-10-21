@@ -22,7 +22,7 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.55.0"
+  version: "0.58.0"
   display-name: Pydantic AI
   description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
   mcp: true
@@ -62,7 +62,7 @@ engine:
     harness-script: |
       const { spawnSync } = require("child_process");
       const { randomBytes } = require("crypto");
-      const { chmodSync, existsSync, mkdtempSync, writeFileSync } = require("fs");
+      const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } = require("fs");
       const { homedir, tmpdir } = require("os");
       const { join } = require("path");
       const { fetchAWFReflect, resolveProviderEndpointFromReflect, deriveBaseUrlFromModelsURL } = require("./awf_reflect.cjs");
@@ -243,7 +243,8 @@ engine:
                   if native:
                       _partial.pop(event.index, None)
                   part = event.part
-                  if isinstance(part, RetryPromptPart):
+                  # TODO(v3): remove RetryPromptPart; releases before 2.57 emit it for a tool retry
+                  if isinstance(part, RetryPromptPart) or part.outcome == 'retried':
                       success = False
                       status = 'retry'
                       output = None
@@ -261,7 +262,7 @@ engine:
                       'success': success,
                       'status': status,
                   }
-                  if not isinstance(part, RetryPromptPart):
+                  if status != 'retry':
                       data['output'] = output
                   if error is not None:
                       data['error'] = error
@@ -463,6 +464,31 @@ engine:
       `;
 
       const main = async () => {
+        // A step that runs before this one can end the run by writing a `noop` to
+        // safe outputs. gh-aw's built-in harnesses then exit before starting the
+        // engine, so no model time is spent (gh-aw's cost-management reference,
+        // "Skip the Agent When It Is Not Needed"). The file is read the way their
+        // `hasNoopInSafeOutputs` reads it: a missing or unreadable file and lines
+        // that are not JSON hold no `noop`.
+        const safeOutputs = process.env.GH_AW_SAFE_OUTPUTS;
+        let safeOutputLines = [];
+        try {
+          if (safeOutputs) safeOutputLines = readFileSync(safeOutputs, "utf8").split("\n");
+        } catch {
+          // A missing or unreadable file holds no noop.
+        }
+        const hasNoop = safeOutputLines.some(line => {
+          try {
+            return JSON.parse(line)?.type === "noop";
+          } catch {
+            return false;
+          }
+        });
+        if (hasNoop) {
+          log(`skipping the engine: an earlier step wrote a noop to ${safeOutputs}`);
+          return;
+        }
+
         const workspace = process.env.GITHUB_WORKSPACE;
         if (!workspace) throw new Error("GITHUB_WORKSPACE is required");
         const promptFile = process.env.GH_AW_PROMPT;

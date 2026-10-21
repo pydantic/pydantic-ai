@@ -42,6 +42,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
 from ..conftest import try_import
+from ..realtime_connections import InferredConnection
 from .conftest import (
     REAL_SDP_OFFER,
     _scrub_ephemeral_secret,  # pyright: ignore[reportPrivateUsage]
@@ -794,17 +795,17 @@ def test_openai_family_webrtc_profiles() -> None:
 # --- hanging up -----------------------------------------------------------------------------------
 
 
-class _OpenCall(RealtimeConnection):
+class _OpenCall(InferredConnection):
     """A sideband connection that stays open until it is closed, like one attached to a live call."""
 
     def __init__(self, events: Sequence[RealtimeCodecEvent] = (), *, error: Exception | None = None) -> None:
         self._events = events
         self._error = error
 
-    async def send(self, content: RealtimeInput) -> None:
+    async def send_input(self, content: RealtimeInput) -> None:
         pass
 
-    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
         if self._error is not None:

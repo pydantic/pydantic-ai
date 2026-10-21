@@ -122,6 +122,7 @@ CodeMode(
 
 - `max_retries` (default 3): sandbox errors (including syntax/type errors) are sent back to the model to redraft, up to this many times.
 - `max_tool_calls` (default 100): nested calls per `run_code` call. A call past the budget fails at its call site; if uncaught, the model gets a retry listing the calls that already started.
+- The run's `UsageLimits(tool_calls_limit=...)` counts nested calls and the `run_code` call that makes them. A nested call that would exceed it ends the run with `UsageLimitExceeded`, even when the snippet catches the error. A call launched early by `speculate` counts from the moment it starts, including one the snippet never claims. A launch the limit refused runs cold if the snippet asks for it.
 - `resource_limits` (default: 30 s execution and 256 MiB heap per snippet): keys `max_duration_secs`, `max_memory`, `max_suspensions` (default 1,000 host interactions per REPL session, shared across snippets). Unknown keys raise `UserError`. Time awaiting tools does not count; sleeps get a separate allowance of `max_duration_secs`. A snippet that hits the time limit is stopped and its REPL session is reset. `'unlimited'` removes time and memory caps only when another boundary supplies them; `max_suspensions` can never be disabled.
 
 ## REPL State
@@ -130,6 +131,16 @@ State persists between `run_code` calls during the same agent run. Imports, vari
 functions carry over until the run ends. The model passes `restart: true` in the `run_code` arguments to
 reset state. A timeout, worker crash, or interrupted eager statement also resets the session, and the
 retry message says so -- the next snippet must recreate its state.
+
+State does not carry over to the next agent run unless `repl_store` is set: an object with async
+`load(ctx) -> bytes | None` and `save(ctx, state: bytes | None)` methods
+(`pydantic_ai_harness.code_mode.CodeModeReplStore`), usually
+keyed by `ctx.conversation_id`. A run that calls `run_code` restores the saved state before its first
+snippet and saves the REPL when it ends; `restart: true` replaces it (`save(ctx, None)` when nothing
+replaces it), and a state saved under other `resource_limits` or that Monty cannot load is dropped so
+the run starts fresh. Return only states the application saved: Monty does not authenticate them. Restored state skips
+the first-snippet type check. Store errors are logged, not raised. The store is not used under durable
+execution.
 
 ## Sandbox Restrictions
 
@@ -187,6 +198,7 @@ CodeMode(
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
     monty_sandbox_url: str | None = None,  # ws:// or wss:// remote Monty worker
+    repl_store: CodeModeReplStore | None = None,  # keep the REPL across agent runs
     dynamic_catalog: bool = False,         # move the tool catalog into dynamic instructions
 )
 ```
@@ -233,15 +245,31 @@ The `run_code` tool return also carries history-only metadata keyed by nested ca
 ```python {test="skip" lint="skip"}
 for msg in result.all_messages():
     for part in msg.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+        if isinstance(part, ToolReturnPart) and part.tool_kind == 'code_mode.run_code':
             tool_calls = part.metadata['tool_calls']    # dict[str, ToolCallPart]
             tool_returns = part.metadata['tool_returns'] # dict[str, ToolReturnPart]
 ```
 
 For an offline test that drives `run_code` with a `FunctionModel`, see [Testing and Debugging](./TESTING-AND-DEBUGGING.md).
 
+## Recognizing `run_code` in Hooks
+
+`run_code` declares the `'code_mode.run_code'` tool kind, so its call parts are promoted to
+`RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). Match it with `isinstance`, not by tool name;
+`code` holds the submitted snippet, and `typed_args` all the arguments validated as `RunCodeArgs`:
+
+```python {test="skip" lint="skip"}
+async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
+    if isinstance(call, RunCodeCallPart) and call.code is not None:
+        ...  # inspect or record call.code
+    return await handler(args)
+```
+
+`run_code` parts recorded before the kind existed load as plain `ToolCallPart`s;
+`ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/code-mode/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/

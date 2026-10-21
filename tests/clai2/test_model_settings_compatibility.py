@@ -7,9 +7,10 @@ from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from pydantic_clai2.models import model_settings
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
-from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu
+from pydantic_clai2.ui.menus.custom_params import edit_custom_params
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
+from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import make_context
 
 
@@ -77,17 +78,18 @@ def test_new_unknown_fields_cannot_be_written_via_editor(tmp_path: Path) -> None
     assert context.store.model_settings('openai:gpt-4o') == {}
 
 
-def test_custom_params_edit_keeps_unknown_fields(tmp_path: Path) -> None:
+async def test_custom_params_edit_keeps_unknown_fields(tmp_path: Path) -> None:
     context, _ = make_context(tmp_path)
     model = 'openai:gpt-4o'
     context.store.save_model_settings(model, {'future_setting': True})
-    menu = CustomParamsMenu(store=context.store, model=model)
-    menu.save(pairs={'chat_template_kwargs.reasoning_level': 30})
+    added = ScriptedDialogs([Pick(value=''), Type(text='chat_template_kwargs.reasoning_level = 30'), Back()])
+    await edit_custom_params(added, store=context.store, model=model)
     assert context.store.model_settings(model) == {
         'future_setting': True,
         'custom_params': {'chat_template_kwargs.reasoning_level': 30},
     }
-    menu.save(pairs={})
+    removed = ScriptedDialogs([Pick(value='chat_template_kwargs.reasoning_level'), Type(text=''), Back()])
+    await edit_custom_params(removed, store=context.store, model=model)
     assert context.store.model_settings(model) == {'future_setting': True}
 
 

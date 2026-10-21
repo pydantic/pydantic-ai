@@ -23,6 +23,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
+    NativeTool,
     PrepareTools,
     ResolveModelId,
     SelectModel,
@@ -44,7 +45,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -61,8 +62,10 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
@@ -72,7 +75,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -455,7 +458,11 @@ class TestXSearchCapability:
         agent = Agent(outer_model, capabilities=[XSearch(fallback_subagent_model=inner_model)])
         result = await agent.run('search X')
         assert result.output == 'gave up'
-        retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+        retry_parts = [
+            part
+            for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+            if part.outcome == 'retried'
+        ]
         assert len(retry_parts) == 1
         assert retry_parts[0].tool_name == 'x_search'
 
@@ -630,6 +637,63 @@ class TestWebFetchCapability:
 
         cap = WebFetch(local=my_fetch)
         assert isinstance(cap.local, Tool)
+
+
+class _NoRestrictionsModel(FunctionModel):
+    """A model with native web search and fetch that applies none of their restricting settings, like Gemini."""
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+class TestUnsupportedNativeToolSettings:
+    """A native tool whose restricting settings the model can't apply is treated as unsupported for the request."""
+
+    @staticmethod
+    def _model(sent: list[tuple[list[str], list[AbstractNativeTool]]]) -> _NoRestrictionsModel:
+        def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(([tool.name for tool in info.function_tools], list(info.model_request_parameters.native_tools)))
+            return ModelResponse(parts=[TextPart('done')])
+
+        return _NoRestrictionsModel(
+            respond, profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool, WebFetchTool}))
+        )
+
+    async def test_unrestricted_native_tool_is_sent(self):
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        await Agent(self._model(sent), capabilities=[WebSearch()]).run('search')
+        assert sent == [([], [WebSearchTool()])]
+
+    async def test_restricted_native_tool_without_fallback_raises(self):
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        agent = Agent(self._model(sent), capabilities=[WebSearch(allowed_domains=['pydantic.dev'], max_uses=2)])
+        with pytest.raises(UserError, match=r'`WebSearchTool.allowed_domains`, `WebSearchTool.max_uses` not supported'):
+            await agent.run('search')
+        assert sent == []
+
+    async def test_restricted_native_tool_uses_local_fallback(self):
+        """The local fallback runs in place of a native tool that would drop its domain filters."""
+
+        def web_fetch(url: str) -> str:
+            return url  # pragma: no cover
+
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        agent = Agent(self._model(sent), capabilities=[WebFetch(allowed_domains=['pydantic.dev'], local=web_fetch)])
+        await agent.run('fetch')
+        assert sent == [(['web_fetch'], [])]
+
+    async def test_restricted_optional_native_tool_is_dropped(self):
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+        agent = Agent(
+            self._model(sent),
+            capabilities=[NativeTool(WebSearchTool(blocked_domains=['example.com'], optional=True))],
+        )
+        await agent.run('search')
+        assert sent == [([], [])]
+
+    def test_wrapper_model_forwards_to_wrapped(self):
+        model = InstrumentedModel(self._model([]))
+        assert model.unsupported_native_tool_settings(WebSearchTool(max_uses=1)) == frozenset({'max_uses'})
 
 
 has_mcp = find_spec('mcp') is not None
@@ -990,11 +1054,13 @@ class TestPrepareToolsCapability:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'secret_tool'. No tools available.",
                             tool_name='secret_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1003,7 +1069,7 @@ class TestPrepareToolsCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='done')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=3),
+                    usage=RequestUsage(input_tokens=61, output_tokens=3),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1752,6 +1818,85 @@ class TestGetModelHook:
         assert [(step, prompt) for step, prompt, _ in selected] == [(1, run_prompt), (2, run_prompt)]
         assert selected == sent
 
+    @pytest.mark.parametrize('replaced_in_for_run', [False, True])
+    async def test_selection_context_run_fields_match_run_context(self, replaced_in_for_run: bool):
+        """On every step, the selector sees the run's `usage_limits`, `deadline`, `run_id` and `conversation_id`.
+
+        Step one is selected during run setup, or, when `for_run` replaces the selector, in the graph like
+        later steps; both must see what the step's `RunContext` holds. The bootstrap selector's context,
+        evaluated before `for_run`, carries them too.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for p in messages[-1].parts):
+                return make_text_response('done')
+            return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+
+        model = FunctionModel(respond)
+        selected: list[tuple[str, int, Any]] = []
+        sent: list[tuple[int, Any]] = []
+
+        def run_fields(ctx: RunContext[None] | ModelSelectionContext[None]) -> Any:
+            return (ctx.usage_limits, ctx.deadline, ctx.run_id, ctx.conversation_id)
+
+        def selector(name: str) -> Callable[[ModelSelectionContext[None]], Model]:
+            def select(ctx: ModelSelectionContext[None]) -> Model:
+                selected.append((name, ctx.run_step, run_fields(ctx)))
+                return model
+
+            return select
+
+        @dataclass
+        class Replacement(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return selector('replacement')
+
+        @dataclass
+        class Recorder(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return selector('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return Replacement() if replaced_in_for_run else self
+
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                sent.append((ctx.run_step, run_fields(ctx)))
+                return request_context
+
+        @dataclass
+        class Observer(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                sent.append((ctx.run_step, run_fields(ctx)))
+                return request_context
+
+        capabilities: list[AbstractCapability[None]] = [Recorder()]
+        if replaced_in_for_run:
+            capabilities.append(Observer())
+        agent = Agent(None, deps_type=NoneType, capabilities=capabilities)
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        usage_limits = UsageLimits(request_limit=10)
+        result = await agent.run('hello', usage_limits=usage_limits, timeout=60)
+        assert result.output == 'done'
+
+        run_deadline = sent[0][1][1]
+        assert isinstance(run_deadline, datetime)
+        expected = (usage_limits, run_deadline, result.run_id, result.conversation_id)
+        assert sent == [(1, expected), (2, expected)]
+        assert sent[0][1][0] is usage_limits
+        names = ['bootstrap', 'replacement', 'replacement'] if replaced_in_for_run else ['bootstrap', 'bootstrap']
+        steps = [1, 1, 2] if replaced_in_for_run else [1, 2]
+        assert selected == [(name, step, expected) for name, step in zip(names, steps)]
+
     @pytest.mark.parametrize('deferred', [False, True])
     async def test_selection_context_with_tool_calls_to_run(self, deferred: bool):
         """A run resuming from tool calls still to run is routed on the history ending in their response.
@@ -1783,6 +1928,89 @@ class TestGetModelHook:
             result = await agent.run(message_history=history)
             assert selected[0] == (None, history)
         assert result.output == 'done'
+
+    async def test_selector_escalates_on_output_validator_retry(self):
+        """A selector escalates once an output validator has rejected an output, and stays escalated after a function tool step.
+
+        The output retry count is run state that a function tool step in between doesn't reset, so the
+        selector doesn't need to find the retry prompt in the messages. It's the count and budget the
+        output validator sees.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        def small_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('draft')
+
+        def large_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            last = messages[-1]
+            assert isinstance(last, ModelRequest)
+            if any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return make_text_response('final')
+            return ModelResponse(parts=[ToolCallPart('lookup', {})])
+
+        small = FunctionModel(small_respond, model_name='small')
+        large = FunctionModel(large_respond, model_name='large')
+        selected: list[tuple[int, int, int, str]] = []
+        validated: list[tuple[str, int, int]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            model = large if ctx.retry >= 1 else small
+            selected.append((ctx.run_step, ctx.retry, ctx.max_retries, model.model_name))
+            return model
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)], retries={'output': 2})
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'facts'
+
+        @agent.output_validator
+        def reject_draft(ctx: RunContext[None], output: str) -> str:
+            validated.append((output, ctx.retry, ctx.max_retries))
+            if output == 'draft':
+                raise ModelRetry('Not good enough.')
+            return output
+
+        result = await agent.run('hello')
+        assert result.output == 'final'
+        assert selected == [(1, 0, 2, 'small'), (2, 1, 2, 'large'), (3, 1, 2, 'large')]
+        assert validated == [('draft', 0, 2), ('final', 1, 2)]
+
+    async def test_selection_context_counts_output_tool_validation_failures(self):
+        """Output tool arguments failing validation count as output retries, against the run's output budget.
+
+        `ToolOutput(max_retries=...)` gives the output tool its own budget, which `max_retries` doesn't reflect.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        class Answer(BaseModel):
+            value: int
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+            value = 42 if retried else 'not a number'
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'value': value})])
+
+        model = FunctionModel(respond)
+        selected: list[tuple[int, int, int]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            selected.append((ctx.run_step, ctx.retry, ctx.max_retries))
+            return model
+
+        agent = Agent(
+            None,
+            deps_type=NoneType,
+            output_type=ToolOutput(Answer, max_retries=5),
+            capabilities=[SelectModel(select)],
+            retries={'output': 1},
+        )
+
+        result = await agent.run('hello')
+        assert result.output == Answer(value=42)
+        assert selected == [(1, 0, 1), (2, 1, 1)]
 
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
@@ -2234,6 +2462,8 @@ class TestGetModelHook:
             def get_model(self) -> Callable[[ModelSelectionContext[str]], Model]:
                 def select(ctx: ModelSelectionContext[str]) -> Model:
                     assert ctx.prompt == 'hello'
+                    # Selected outside a run, so there are no run ids, deadline or limits.
+                    assert (ctx.usage_limits, ctx.deadline, ctx.run_id, ctx.conversation_id) == (None, None, None, None)
                     return selected
 
                 return select
@@ -2249,6 +2479,20 @@ class TestGetModelHook:
         assert await agent.system_prompt_parts(deps='tenant', prompt='hello') == snapshot(
             [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
         )
+
+    async def test_system_prompt_parts_selector_sees_output_retry_budget(self):
+        """`system_prompt_parts()` gives the selector the output budget a run would have, including an override's."""
+        max_retries: list[int] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            max_retries.append(ctx.max_retries)
+            return _text_model('selected')
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)], retries={'output': 2})
+        await agent.system_prompt_parts()
+        with agent.override(retries={'output': 5}):
+            await agent.system_prompt_parts()
+        assert max_retries == [2, 5]
 
     async def test_callable_model_selection_streaming(self):
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:

@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import partial
-from typing import IO, Literal
+from typing import IO
 
 import anyio
 from rich.console import Console, RenderableType
@@ -48,7 +48,14 @@ from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.grep_output import GrepOutput
 from pydantic_clai2.ui.rendering.tool_group import ToolCallGroup
-from pydantic_clai2.ui.rendering.tool_output import ToolOutput, print_tool_header, terminal_text, tool_arguments_text
+from pydantic_clai2.ui.rendering.tool_output import (
+    ColorSystemName,
+    ToolOutput,
+    color_system,
+    print_tool_header,
+    terminal_text,
+    tool_arguments_text,
+)
 
 
 def markdown_style() -> RenderStyle:
@@ -227,15 +234,6 @@ class MarkdownPipeline:
                 self._renderer.render(event)
 
 
-ColorSystemName = Literal['standard', '256', 'truecolor', 'windows']
-
-
-def color_system(console: Console) -> ColorSystemName | None:
-    """The colour system `console` renders with; `None` when it renders no colour."""
-    name = console.color_system
-    return name if name in ('standard', '256', 'truecolor', 'windows') else None
-
-
 def render_markdown(
     *,
     source: str,
@@ -308,12 +306,16 @@ class StreamRenderer:
         self._writer: SmoothWriter | None = None
         self._markdown: MarkdownPipeline | None = None
         self._block: MarkdownBlock | None = None
+        self._output: IO[str] | None = None
+        """Where the console printed when the open part started."""
         self._buffer = ''
         self._index: int | None = None
         self.rendered_text = False
 
     async def on_stream_event(self, event: AgentStreamEvent) -> None:
         """Bind this callback to `Session.on_stream_event`."""
+        if self._markdown is not None and self.console.file is not self._output:
+            await self._follow_console(self._markdown)
         if await self._render_sandbox_call(event):
             return
         if await self._render_with_plugins(event):
@@ -401,8 +403,21 @@ class StreamRenderer:
                 return True
         return False
 
+    async def _follow_console(self, markdown: MarkdownPipeline) -> None:
+        """Go on with the open part where the console prints now, as when the terminal shows another session."""
+        index, thinking, buffer = self._index, self._thinking, self._buffer
+        continuation = markdown.continuation()
+        # The line still arriving goes where the rest of the part does.
+        self._buffer = ''
+        await self.finish()
+        self._index, self._thinking = index, thinking
+        self._start_part(continuation)
+        self._buffer = buffer
+        if self._block is not None:
+            self._block.extend(buffer)
+
     def _start_part(self, continuation: tuple[Parser, str] | None = None) -> None:
-        surface = self.console.file
+        surface = self._output = self.console.file
         self._block = (
             surface.markdown(
                 render=partial(
@@ -512,4 +527,5 @@ class StreamRenderer:
         self._buffer = ''
         self._markdown = None
         self._block = None
+        self._output = None
         self._index = None

@@ -7,6 +7,7 @@ from typing import ClassVar, Literal, assert_never
 
 from pydantic import JsonValue
 
+from .. import _model_errors
 from .._http import to_httpx2_timeout
 from ..exceptions import ContentFilterError, ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
@@ -14,6 +15,7 @@ from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from . import get_user_agent
+from ._sdk_retries import with_max_retries
 from .decision import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -33,7 +35,7 @@ from .decision import (
 )
 
 try:
-    from openai import NOT_GIVEN, APIError, APIStatusError, AsyncOpenAI
+    from openai import NOT_GIVEN, APIConnectionError, APIError, APIStatusError, APITimeoutError, AsyncOpenAI
     from openai.types import Decision
     from openai.types.decision import (
         AnswerAnswerResourceChoice,
@@ -208,7 +210,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                 )
             decision_input = [DecisionInputMessageParam(role='user', content=content)]
         try:
-            response = await self.client.decisions.with_raw_response.create(
+            response = await with_max_retries(self.client, model_settings).decisions.with_raw_response.create(
                 model=self._model_name,
                 input=decision_input,
                 questions=[_question(name, question) for name, question in request.questions.items()],
@@ -216,17 +218,8 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
                 extra_body=model_settings.get('extra_body'),
                 timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
             )
-        except APIStatusError as e:
-            if e.status_code >= 400:
-                raise ModelHTTPError(
-                    status_code=e.status_code,
-                    model_name=self._model_name,
-                    body=e.body,
-                    headers=dict(e.response.headers),
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message='OpenAI Decisions request failed') from e
         except APIError as e:
-            raise ModelAPIError(model_name=self._model_name, message='OpenAI Decisions request failed') from e
+            raise _api_error(e, self._model_name) from e
 
         # The SDK builds its response models without validating them, so the body is validated here.
         try:
@@ -275,6 +268,25 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 def _text(value: JsonValue) -> str:
     """A protocol value as the text the API takes: a string as it is, anything else as JSON."""
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _api_error(e: APIError, model_name: str) -> ModelAPIError:
+    """The model error for an `openai` SDK error, in the error category its status and code imply."""
+    if isinstance(e, APIStatusError) and e.status_code >= 400:
+        return ModelHTTPError.for_category(
+            _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message),
+            status_code=e.status_code,
+            model_name=model_name,
+            body=e.body,
+            headers=dict(e.response.headers),
+            provider_error_code=e.code,
+            provider_error_type=e.type,
+        )
+    if isinstance(e, APIConnectionError):
+        return _model_errors.connection_error(
+            model_name, 'OpenAI Decisions request failed', e, timeout=isinstance(e, APITimeoutError)
+        )
+    return ModelAPIError(model_name=model_name, message='OpenAI Decisions request failed')
 
 
 def _question(name: str, question: DecisionQuestion) -> Question:

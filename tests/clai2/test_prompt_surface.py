@@ -8,7 +8,7 @@ import pytest
 from rich.console import Console
 from rich.text import Text
 from termflow.ansi import make_clipboard_copy
-from termflow.live import ScreenBuffer
+from termflow.live import Region, ScreenBuffer
 from termflow.live.buffer import REVERSE
 from termflow.themes import PALETTES, reset_palette
 
@@ -105,6 +105,33 @@ def test_typing_sends_only_the_changed_cells_without_showing_the_cursor() -> Non
     start = len(screen.terminal.getvalue())
     screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
     assert screen.terminal.getvalue()[start:] == ''
+
+
+def test_an_unchanged_frame_is_not_redrawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    screen = Screen()
+    draws: list[Region] = []
+    draw = screen.surface.view.draw
+
+    def counted(region: Region, focused: bool) -> None:
+        draws.append(region)
+        draw(region, focused)
+
+    monkeypatch.setattr(screen.surface.view, 'draw', counted)
+    screen.surface.paint(ROWS)
+    for _ in range(10):
+        screen.surface.paint(ROWS)
+    assert len(draws) == 1
+    for change in (
+        lambda: screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER')),
+        lambda: screen.write('output\n'),
+        lambda: screen.terminal.resize(width=60, height=24),
+        screen.surface.resize_notice,
+    ):
+        change()
+        screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
+        screen.surface.paint(('TOP', 'DRAFT!', 'BOTTOM', 'FOOTER'))
+    assert len(draws) == 5
+    assert screen.lines()[0] == 'output'
 
 
 def test_editor_growth_takes_rows_from_the_transcript_and_gives_them_back() -> None:

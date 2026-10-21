@@ -9,7 +9,7 @@ from rich.console import Console
 
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
-from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_shell, create_stock_agent as create_agent
+from pydantic_clai2._app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_stock_agent as create_agent
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -17,6 +17,7 @@ from pydantic_clai2.errors import error_message
 from pydantic_clai2.plugins import SessionEndReason, TurnEnd, TurnStart
 from pydantic_clai2.runtime.imported_sessions import ImportSource
 from pydantic_clai2.runtime.launch import launch_session_id
+from pydantic_clai2.runtime.session_runtime import create_shell
 
 
 @asynccontextmanager
@@ -105,6 +106,6 @@ async def run_headless(
                     return 1
                 finally:
                     with CancelScope(shield=True):  # pragma: no branch -- this scope is never cancelled.
-                        await shell.loader.close(reason)
+                        await shell.close(reason)
     print(answer)
     return 0

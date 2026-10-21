@@ -40,7 +40,7 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
@@ -76,7 +76,7 @@ from pydantic_ai import Agent
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 app = FastAPI()
 
@@ -165,7 +165,7 @@ Authenticating the endpoint settles *who* may call it, not *what caused the call
 
 The adapters apply a few defaults so that the authoritative state stays on your side:
 
-- **System prompts** — client-submitted [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped by default and replaced with the agent's configured prompt. Control with [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt]; see each adapter's docs for details.
+- **System prompts** — client-submitted [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped by default and replaced with the agent's configured prompt. [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s are stripped too. [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still sees why it corrected itself, but the metadata marker that reloads one is echoed by the client, so a client can forge one and pick its cause. Pydantic AI's own [retry feedback](../retries.md#feedback-that-belongs-to-no-tool-call) reaches the model in the user voice, fenced, for a validation error or a `ModelRetry`, and in the system voice only for `'no_output'`, so a returned `'no_output'` part is demoted to the same fenced user text: the client can't earn the system voice by forging one. Control with [`UIAdapter.manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt]; `'client'` hands over the system prompt and `'no_output'` feedback both — see each adapter's docs for details. [Request-scoped](../message-history.md#request-scoped-system-prompts) ones are left out of `dump_messages` altogether, with either setting, since they're only for the model's current request, so a history that round-trips through the frontend loses them; keep it server-side, as described below, where that matters. Persist [append-on-change instruction history](../agent.md#appending-instruction-changes) server-side as well; UI message dumps omit its operator records.
 - **Dangling tool calls** — if the client-submitted history ends in a [`ModelResponse`][pydantic_ai.messages.ModelResponse] with unresolved [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s and no matching `deferred_tool_results`, the tool calls are dropped with a warning, as a best-effort default so the agent doesn't execute an unresolved tool call the model never emitted. For human-in-the-loop resumption, pass explicit `deferred_tool_results` to the run method — tool calls resolved by those results are kept (see the warning below).
 - **File URL schemes** — only `http` and `https` are accepted by default for [`FileUrl`][pydantic_ai.messages.FileUrl] parts in client-submitted messages. Non-HTTP schemes like `s3://` or `gs://` are dropped, since they cause the provider to fetch the object using your server's IAM role or service account. See [`UIAdapter.allowed_file_url_schemes`][pydantic_ai.ui.UIAdapter.allowed_file_url_schemes].
 - **File URL download mode** — [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values other than `False` are reset to `False` by default on client-submitted messages. This prevents clients from forcing the server to fetch a URL, or using `'allow-local'` to opt out of the SSRF private-IP block. After auditing your frontend, opt into additional values with [`UIAdapter.allowed_file_url_force_download`][pydantic_ai.ui.UIAdapter.allowed_file_url_force_download].

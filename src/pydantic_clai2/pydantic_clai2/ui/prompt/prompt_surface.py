@@ -18,6 +18,7 @@ from pydantic_clai2.ui.prompt.prompt_selection import LEFT, WHEEL_DOWN, WHEEL_UP
 from pydantic_clai2.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
 from pydantic_clai2.ui.prompt.text_clipboard import copy_text
 from pydantic_clai2.ui.prompt.transcript_view import TranscriptView
+from pydantic_clai2.ui.rendering import theme
 
 ENTER = '\x1b[?1049h\x1b[?25l\x1b[?7l'
 """Alternate screen, hidden cursor, and no autowrap, which `render_diff` assumes."""
@@ -91,6 +92,8 @@ class PromptSurface(io.StringIO):
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript, the only ones a selection covers."""
         self._paint_scheduled = False
+        self._painted_as: tuple[int, int, str] | None = None
+        """The geometry and theme of the last frame; transcript rows wrap and colour by both."""
 
     def isatty(self) -> bool:
         """Preserve Rich and Termflow terminal detection."""
@@ -261,12 +264,25 @@ class PromptSurface(io.StringIO):
         return max(1, width), max(2, height)
 
     def paint(self, rows: tuple[str, ...]) -> None:
-        """Pin `rows` under the transcript and enable the editor's input modes."""
+        """Pin `rows` under the transcript and enable the editor's input modes.
+
+        The editor also repaints on a timer to pick up status changes, so a frame identical to the
+        last one is skipped rather than rebuilt and diffed cell by cell.
+        """
         with self._lock:
             width, height = self._geometry()
-            self._rows = tuple(truncate(row, width) for row in rows[-(height - 2) :]) if height > 2 else ()
+            pinned = tuple(truncate(row, width) for row in rows[-(height - 2) :]) if height > 2 else ()
+            unchanged = (
+                pinned == self._rows
+                and self._modes
+                and not self._dirty
+                and self._previous is not None
+                and self._painted_as == (width, height, theme.name())
+            )
+            self._rows = pinned
             self._live = True
-            self._paint(modes=True)
+            if not unchanged:
+                self._paint(modes=True)
 
     def _paint(self, *, modes: bool = False) -> None:
         width, height = self._geometry()
@@ -290,6 +306,7 @@ class PromptSurface(io.StringIO):
         self._transcript_rows = bottom
         self._dirty = False
         self._painted_at = self.clock()
+        self._painted_as = (width, height, theme.name())
         if text := ''.join(parts):
             self.output.write('\x1b[?2026h' + text + '\x1b[?2026l')
             self.output.flush()

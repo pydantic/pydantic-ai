@@ -4,7 +4,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import KW_ONLY, Field, dataclass
+from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -30,8 +30,15 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
+    ModelRequest,
+    RetryFeedbackPart,
+    RetryInfo,
+    SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    ToolRetryCause,
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
@@ -78,6 +85,7 @@ DispatchOutputDataT = TypeVar('DispatchOutputDataT')
 _TOOL_NAME_PATTERN = re.compile(r'[a-zA-Z0-9_-]{1,64}')
 """The tool-name shape accepted by the strictest supported model providers."""
 _TOOL_AVAILABILITY_DELTA_PART_ADAPTER = TypeAdapter(ToolAvailabilityDeltaPart)
+_RETRY_FEEDBACK_PART_ADAPTER = TypeAdapter(RetryFeedbackPart)
 
 
 DEFAULT_ALLOWED_CONTENT_TYPES = frozenset({'application/json'})
@@ -181,6 +189,37 @@ def resolve_allow_uploaded_files(
 _COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
 
 
+def enqueued_messages_for_client(
+    messages: Sequence[ModelMessage], *, manage_system_prompt: Literal['server', 'client']
+) -> list[ModelMessage]:
+    """The enqueued messages to stream to the frontend.
+
+    When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
+    frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
+    Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
+    current request only, and loaded back they'd become lasting system prompts. So do instruction changes
+    and baselines, which are server-side operator state.
+    """
+    kept: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [
+                part
+                for part in message.parts
+                if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
+                and (
+                    not isinstance(part, SystemPromptPart)
+                    or (manage_system_prompt == 'client' and part.scope != 'request')
+                )
+            ]
+            if not parts:
+                continue
+            if len(parts) != len(message.parts):
+                message = replace(message, parts=parts)
+        kept.append(message)
+    return kept
+
+
 def compaction_payload(part: CompactionPart) -> dict[str, Any]:
     """Serialize a compaction part as a UI payload, omitting fields whose value is `None`.
 
@@ -234,6 +273,61 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part
+
+
+def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
+    """Serialize a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] for a metadata channel.
+
+    Both protocols dump harness retry feedback as a plain message, whose text is lossy — it says
+    nothing about the `retry.cause` that chose its voice — and indistinguishable from a message the client
+    wrote. So the part itself rides alongside it under a `retry_feedback` key in the metadata channel
+    each protocol already uses for Pydantic AI continuity claims (Vercel AI's `providerMetadata`,
+    AG-UI's `encrypted_value`), and that is what `load_messages` reconstructs from.
+
+    Each error's `ctx` is dropped, so this channel discloses no more than the text beside it: `ctx`
+    can hold whatever a `field_validator` was given as context, the rendered feedback never carries
+    it, and the client reads and echoes this channel. Nothing reads it back — the part is
+    reconstructed only to be rendered.
+    """
+    return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json', exclude={'content': {'__all__': {'ctx'}}})
+
+
+_TOOL_RETRY_INFO_ADAPTER: TypeAdapter[RetryInfo[ToolRetryCause]] = TypeAdapter(RetryInfo[ToolRetryCause])
+
+
+def tool_retry_payload(retry: RetryInfo[ToolRetryCause]) -> dict[str, Any]:
+    """Serialize a retried tool return's [`retry`][pydantic_ai.messages.ToolReturnPart.retry] for a metadata channel."""
+    return _TOOL_RETRY_INFO_ADAPTER.dump_python(retry, mode='json', exclude_none=True)
+
+
+def parse_tool_retry(value: object) -> RetryInfo[ToolRetryCause] | None:
+    """Read a retried tool return's `retry` claim from a client-echoed metadata channel.
+
+    The claim is untrusted coming back in, so anything that doesn't validate, such as an unknown
+    cause, reads as `None`. It's metadata for the application only and never reaches the model, so a
+    forged one can mislead an audit but not the run.
+    """
+    try:
+        return _TOOL_RETRY_INFO_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
+
+
+def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:
+    """Rebuild the `RetryFeedbackPart` a dumped message claims to have been made from, or `None`.
+
+    `None` for anything that doesn't validate — including the absent payload of a system message the
+    client wrote — so only a message carrying the adapter's own marker can load as harness feedback.
+
+    Like every claim in that channel the marker is client-echoed, so it proves origin no more than a
+    `tool_kind` claim does: it separates our own dumped feedback from ordinary client system text, and
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] is what keeps a forged one from
+    reaching the model when the server owns the system prompt.
+    """
+    try:
+        return _RETRY_FEEDBACK_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
 
 
 @runtime_checkable
@@ -602,6 +696,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -624,6 +719,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Optional token for cancelling this run from another task.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it completed.
+                See [Bounding a whole run](../../timeouts.md#bounding-a-whole-run).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -638,11 +736,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if conversation_id is None:
             conversation_id = self.conversation_id
 
-        frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+        frontend_messages = self.messages
         if message_history:
             # A client-supplied compaction part would trim the trusted server-side history off the
             # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
             frontend_messages = _drop_compaction_parts(frontend_messages)
+        # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
+        # strips unresolved tool calls from the end of the history, and a run without a new prompt
+        # executes the tool calls of whatever response ends up last. Dropping or merging a message after
+        # this call can move an earlier, unchecked response to the end. Do any such change before it.
+        frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
@@ -684,6 +787,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 conversation_id=conversation_id,
                 run_id=run_id,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -715,6 +819,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -739,6 +844,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Optional token for cancelling this run from another task.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], which is reported like
+                any other first-party cancellation, including to `on_cancel`. See [Bounding a whole run](../../timeouts.md#bounding-a-whole-run).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -760,6 +868,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 conversation_id=conversation_id,
                 run_id=run_id,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -793,6 +902,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
@@ -829,6 +939,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Optional token for cancelling this run from another task.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], which is reported like
+                any other first-party cancellation, including to `on_cancel`. See [Bounding a whole run](../../timeouts.md#bounding-a-whole-run).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -893,6 +1006,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 conversation_id=conversation_id,
                 run_id=run_id,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 deps=deps,
                 output_type=output_type,
                 model=model,

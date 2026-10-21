@@ -45,7 +45,7 @@ def no_pii(output: object) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[
         InputGuardrail(guard=no_secrets),
         OutputGuardrail(guard=no_pii),
@@ -79,7 +79,7 @@ from pydantic_ai_harness import InputGuardrail
 from pydantic_ai_harness.guardrails.detectors import blocked_keywords, redact_secrets
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[InputGuardrail(guard=[redact_secrets, blocked_keywords(['internal-only'])])],
 )
 ```
@@ -240,7 +240,7 @@ def scrub_emails(text: str) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[
         InputGuardrail(guard=scrub_emails),   # strip PII before it reaches the model
         OutputGuardrail(guard=scrub_emails),  # strip PII before it reaches the caller
@@ -342,7 +342,7 @@ def scrub_secrets(info: ToolResultInfo) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[ToolGuardrail(guard=stay_in_the_workspace, result_guard=scrub_secrets)],
 )
 
@@ -387,7 +387,7 @@ def confirm_production(call: ToolCallInfo) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[ToolGuardrail(guard=confirm_production)],
     output_type=[str, DeferredToolRequests],
 )

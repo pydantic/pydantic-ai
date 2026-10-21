@@ -65,6 +65,8 @@ def get_user_by_name(ctx: RunContext[dict[str, int]], name: str) -> int:
 
 Use retries for recoverable model mistakes, not application crashes.
 
+The retry is recorded as that call's own `ToolReturnPart` with `outcome='retried'`, carrying the `ModelRetry` message or the validation errors, and reaches the model on the provider's error channel. Its `retry` (a `RetryInfo`) says why in `cause` (a `ToolRetryCause`): `'validation_error'`, `'model_retry'`, or `'unknown_tool'` / `'unavailable_tool'` for a call rejected before any tool ran, which no tool hook sees. `attempt` is which retry of that tool this is (from 1) and `max_retries` the limit, both `None` when the retry isn't charged to the budget. None of it is sent to the model. Match these when you read history: `RetryPromptPart` is deprecated and no longer emitted, and a retry that answers no tool call is a `RetryFeedbackPart` instead.
+
 Set the agent-wide tool-retry default with `Agent(retries={'tools': N})`, and override it for a single run (or `iter`) with `agent.run(retries={'tools': N})` — explicit per-tool `retries=` and per-toolset `FunctionToolset(max_retries=N)` still win. A bare `int` at run time overrides both budgets (matching construction), so pass a dict like `{'tools': N}` or `{'output': N}` to change just one.
 
 ## Report a Failed Tool Result
@@ -91,7 +93,7 @@ def read_file(path: str) -> str:
     return file_path.read_text()
 ```
 
-The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` and traced as an error in telemetry. Pydantic AI uses the provider's native error field where one exists; otherwise model-visible content is JSON-framed as `{"error": ...}` so the failure remains explicit.
+The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` — the other error outcome beside `'retried'` — and traced as an error in telemetry. Pydantic AI uses the provider's native error field where one exists; otherwise model-visible content is JSON-framed as `{"error": ...}` so the failure remains explicit.
 
 `ToolFailed` can also be raised from an `args_validator` (see below) and from tool validation/execution hooks with the same model-visible and retry-budget behavior. This is useful for converting a third-party exception into a failed result in one place instead of per tool. MCP servers expose the same retry-vs-failed choice via `tool_error_behavior`. For deferred tools, a `ToolFailed` instance can be supplied as a `DeferredToolResults.calls` value to report an external execution failure, just like `ModelRetry` requests a retry from there.
 
@@ -185,7 +187,58 @@ See [Parallel Output Tool Calls](https://pydantic.dev/docs/ai/core-concepts/outp
 
 For tool-call retries, use `ModelRetry` and tool `retries=...`.
 
-For HTTP request retries at the transport layer, use the library's retry configuration separately. Do not assume `ModelRetry` alone solves provider transport failures.
+For HTTP request retries at the transport layer, use the library's retry configuration separately. Do not assume `ModelRetry` alone solves provider transport failures. The provider SDK client retries too, on top of the transport; set `model_settings={'max_retries': 0}` to leave retrying to the transport alone, or another count to change the SDK's.
+
+## Recognize Tools by Kind, Not Name
+
+Tool names can be renamed or prefixed, so never recognize a tool by `tool_name`. Match framework tools with `isinstance` on their typed parts (`ToolSearchCallPart`, `LoadCapabilityReturnPart`, ...).
+
+To make your own tool recognizable, define a `ToolKind` with a namespace, a name and optionally the shapes of the tool's arguments and result. Its id, `'{namespace}.{name}'`, is stored on parts, so never rename it. Register typed parts for it with the `kind` class argument (no `@dataclass` needed), parameterizing the base with the kind's shape, and pass the kind as the tool's `tool_kind`:
+
+```python
+from typing_extensions import TypedDict
+
+from pydantic_ai import Agent, ToolKind
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+
+
+class LookupArgs(TypedDict):
+    sku: str
+
+
+class LookupResult(TypedDict):
+    in_stock: bool
+
+
+lookup = ToolKind('inventory', 'lookup', args=LookupArgs, content=LookupResult)
+
+
+class LookupCallPart(ToolCallPart[LookupArgs], kind=lookup):
+    pass
+
+
+class LookupReturnPart(ToolReturnPart[LookupResult], kind=lookup):
+    pass
+
+
+agent = Agent('openai:gpt-5.2')
+
+
+@agent.tool_plain(tool_kind=lookup)
+def check_stock(args: LookupArgs) -> LookupResult:
+    return {'in_stock': args['sku'].startswith('A')}
+```
+
+- The function can take the kind's `args` shape as its one parameter (the model still sees its fields as parameters) or the fields as separate parameters (`def check_stock(sku: str) -> LookupResult`).
+- `part.typed_args` is the validated `LookupArgs` and `part.typed_content` the validated `LookupResult`, or `None` while the arguments stream in or if they don't fit. Don't redeclare `args` or `content`.
+- The base's type parameter must match the kind's shape (`ToolCallPart[LookupArgs]` for `args=LookupArgs`); a mismatch is a type error and raises `UserError` when the class is defined. A kind without shapes takes a bare `ToolCallPart` / `ToolReturnPart`.
+- A typed part may only add properties. Any field raises `UserError` when the class is defined.
+- `tool_kind` is accepted by `Tool`, the `@agent.tool` / `@agent.tool_plain` / `FunctionToolset.tool` decorators and `ToolDefinition` (e.g. `replace(tool_def, tool_kind=lookup)` in `prepare`), as the `ToolKind` or its id.
+- A run raises `UserError` for a kind that isn't defined, or when the tool's parameters don't fit `args` or its return type doesn't fit `content` (a required field missing or optional, or a mismatched JSON type). Type checkers check the return type already.
+- Call and return parts are promoted whenever a `ModelResponse` / `ModelRequest` is built, so hooks and history processors can use `isinstance(part, LookupCallPart)`.
+- A history whose kind isn't defined still loads, as base parts that keep their `tool_kind`.
+
+See [Typed tool parts](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts).
 
 ## Tool Search and Tool-Level Deferred Loading
 

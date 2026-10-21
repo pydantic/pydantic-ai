@@ -171,8 +171,8 @@ Four things about that module.
 - **`label_catalog` is an ordinary [function tool](../tools.md).** It is
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
-- **No third-party imports.** The engine installs `pydantic-clai2==0.55.0`,
-  `pydantic-ai-harness==0.55.0` and
+- **No third-party imports.** The engine installs `pydantic-clai2` and
+  `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
   `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
@@ -374,6 +374,14 @@ one.
 Order matters, and the compiled lock puts these steps in the right place. In the generated
 workflow, `Setup Python` runs before your `steps:`, then the engine's install and agent
 steps. Your install therefore runs against the same interpreter the engine later uses.
+
+A step can also end a run that has nothing to do by appending
+`{"type":"noop","message":"..."}` to `$GH_AW_SAFE_OUTPUTS`. The engine reads that file
+before it starts CLAI 2 and exits with status 0 when it finds a `noop`, so no model request
+is made. gh-aw's
+[cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
+documents the pattern. When a search query can express the condition, `skip-if-match` or
+`skip-if-no-match` also avoids scheduling the agent job.
 
 ## Credentials
 

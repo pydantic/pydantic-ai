@@ -6,6 +6,7 @@ import io
 import random
 import wave
 from collections.abc import Awaitable, Callable, MutableMapping, Sequence
+from dataclasses import replace
 from typing import Literal, assert_never, overload
 
 import anyio
@@ -18,15 +19,22 @@ from ..messages import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    RetryFeedbackPart,
     SpeechPart,
     SpeechPartDelta,
     TextContent,
+    TextPart,
     UploadedFile,
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import ModelRequestParameters, download_item
+from ..models import (
+    ModelRequestParameters,
+    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from ..settings import ToolChoice
 from ..tools import ToolDefinition
@@ -128,6 +136,18 @@ async def seed_user_content(
         else:
             assert_never(item)
     return result
+
+
+def seed_retry_feedback_text(part: RetryFeedbackPart) -> str:
+    """The text a realtime session seeds retry feedback as.
+
+    A seeded turn has no mid-conversation system role, and a retry answers one response rather than
+    standing over the session, so it goes in as user text. Feedback bound for the system voice takes the
+    `<system>` tagging every model without a mid-conversation system message gets, which keeps the
+    model from reading it as something a person said (https://github.com/pydantic/pydantic-ai/issues/6404).
+    """
+    text = part.model_response()
+    return _wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
 
 
 @overload
@@ -237,6 +257,26 @@ def accumulate_transcript(accumulated: str, text: str) -> tuple[str, str]:
     if stripped and (stripped_text := text.strip()).startswith(stripped):
         return text, stripped_text[len(stripped) :]
     return accumulated + text, text
+
+
+@overload
+def fold_part_transcript(part: TextPart, text: str) -> tuple[TextPart, str]: ...
+
+
+@overload
+def fold_part_transcript(part: SpeechPart, text: str) -> tuple[SpeechPart, str]: ...
+
+
+def fold_part_transcript(part: SpeechPart | TextPart, text: str) -> tuple[SpeechPart | TextPart, str]:
+    """Fold a transcript event's `text` into a model part's text by the rule of `accumulate_transcript`.
+
+    Returns the updated part and the newly appended text.
+    """
+    if isinstance(part, TextPart):
+        content, appended = accumulate_transcript(part.content, text)
+        return replace(part, content=content), appended
+    transcript, appended = accumulate_transcript(part.transcript or '', text)
+    return replace(part, transcript=transcript or None), appended
 
 
 def user_transcript_update(previous: str, text: str, *, cumulative: bool) -> tuple[str, SpeechPartDelta | None]:

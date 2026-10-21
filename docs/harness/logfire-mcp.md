@@ -22,7 +22,7 @@ Set `LOGFIRE_API_KEY`, or pass `auth=` an API key. On your own machine, `auth='o
 from pydantic_ai import Agent
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[LogfireMCP()])
+agent = Agent('{{ openai:medium }}', capabilities=[LogfireMCP()])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -58,7 +58,7 @@ def logfire_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.logfire_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[LogfireMCP(auth=logfire_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[LogfireMCP(auth=logfire_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
@@ -88,7 +88,7 @@ def logfire(ctx: RunContext[Deps]) -> LogfireMCP[Deps] | None:
     return LogfireMCP(auth=ctx.deps.logfire_token, url=url)
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[DynamicCapability(logfire, id='logfire')])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[DynamicCapability(logfire, id='logfire')])
 ```
 
 With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `logfire-mcp`, so `defer_loading=True` works without one. To add more than one `LogfireMCP` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
@@ -97,7 +97,7 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 The default endpoint is Logfire's US region. Set `url=LOGFIRE_EU_MCP_URL` for EU data, or pass the MCP URL of a self-hosted Logfire. The API key's scopes decide which projects and actions are allowed.
 
-The capability adds short guidance to the agent's instructions: the current UTC hour (to the hour rather than the second, so the instructions stay the same across requests and don't miss the prompt cache), a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, that Logfire links should be created only when asked for, and that tool names carry the `logfire_` prefix the server's own text leaves out. `include_instructions=False` turns this off, along with the server's own instructions.
+The capability adds short guidance to the agent's instructions: the current UTC hour (when the hour changes during a conversation, the new hour is appended to the message history rather than rewriting the instructions, so the prompt cache keeps the conversation so far), a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, that Logfire links should be created only when asked for, and that tool names carry the `logfire_` prefix the server's own text leaves out. `include_instructions=False` turns this off, along with the server's own instructions.
 
 ## Tool selection and approval
 
@@ -112,7 +112,7 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 
 capability = LogfireMCP()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     instructions=capability.get_instructions(),
     output_type=[str, DeferredToolRequests],

@@ -36,7 +36,7 @@ from pydantic_ai.embeddings import (
     WrapperEmbeddingModel,
     infer_embedding_model,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelConnectionError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
@@ -653,7 +653,8 @@ class TestCohere:
             with pytest.raises(ModelAPIError) as exc_info:
                 await embedder.embed_query('Hello, world!')
 
-        assert type(exc_info.value) is ModelAPIError
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
         assert exc_info.value.message == 'connection refused'
         assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
 
@@ -1585,7 +1586,7 @@ class TestBedrock:
                     'logfire.msg': 'embeddings amazon.titan-embed-text-v2:0',
                     'gen_ai.usage.input_tokens': 5,
                     'gen_ai.response.model': 'amazon.titan-embed-text-v2:0',
-                    'operation.cost': 5e-07,
+                    'operation.cost': 1e-07,
                     'gen_ai.embeddings.dimension.count': 256,
                 },
             }
@@ -1897,7 +1898,8 @@ class TestGoogle:
             with pytest.raises(ModelAPIError) as exc_info:
                 await embedder.embed_query('Hello, world!')
 
-        assert type(exc_info.value) is ModelAPIError
+        assert type(exc_info.value) is ModelConnectionError
+        assert exc_info.value.phase == 'connect'
         assert exc_info.value.message == 'connection refused'
         assert isinstance(exc_info.value.__cause__, httpx2.ConnectError)
 

@@ -1635,7 +1635,7 @@ async def test_openai_responses_cache_instructions_relocated_once_per_request_in
                 {'role': 'user', 'content': 'Where is order 1234?'},
                 {
                     'name': 'get_order_status',
-                    'arguments': '{"order_id": "1234"}',
+                    'arguments': '{"order_id":"1234"}',
                     'call_id': 'call_1',
                     'type': 'function_call',
                     'id': 'fc_1',
