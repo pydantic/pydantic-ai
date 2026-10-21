@@ -81,6 +81,8 @@ with try_import() as xai_imports:
     from pydantic_ai.providers.xai import XaiProvider
 
 with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.alibaba import AlibabaProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
@@ -663,6 +665,7 @@ def test_google_gemini_3_pro():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,
@@ -689,6 +692,7 @@ def test_google_gemini_2_5_flash():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_video_input': True,
             'supports_thinking': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
@@ -711,6 +715,7 @@ def test_google_gemini_2_5_flash_image():
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_image_output': True,
             'supports_tools': False,
+            'supports_video_input': False,
             'supports_thinking': True,
             'google_supports_thinking_level': False,
             'google_web_search_billed_per_prompt': True,
@@ -736,6 +741,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'google_supports_minimal_thinking_level': False,
             'google_supports_server_side_tool_invocations': True,
             'google_supports_strict_tool_definition': True,
+            'supports_video_input': True,
             'google_supports_tool_combination': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': GoogleJsonSchemaTransformer,
@@ -857,6 +863,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
+            'bedrock_document_cache_point_variant': 'anthropic',
             'bedrock_send_back_thinking_parts': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -932,6 +939,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
+            'bedrock_document_cache_point_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -970,6 +978,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_tool_choice_none_variant': 'anthropic',
+            'bedrock_document_cache_point_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
             'mimics_assistant_message_formatting': True,
             'default_cache_retention': timedelta(seconds=300),
@@ -1008,6 +1017,7 @@ def test_bedrock_amazon_nova_pro():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': True,
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_prompt_caching': True,
@@ -1025,7 +1035,26 @@ def test_bedrock_amazon_nova_2_lite():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': True,
             'supported_native_tools': frozenset({CodeExecutionTool}),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_prompt_caching': True,
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m',),
+            'bedrock_top_k_variant': 'nova',
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_amazon_nova_micro():
+    """Nova Micro is the text-only model in the family, so it is the one Nova that reads no video."""
+    profile = BedrockProvider.model_profile('us.amazon.nova-micro-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
+            'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'bedrock_supports_prompt_caching': True,
             'supports_cache': True,
@@ -1040,7 +1069,11 @@ def test_bedrock_amazon_titan():
     """Titan models — basic Amazon profile, no Nova-specific overrides."""
     profile = BedrockProvider.model_profile('amazon.titan-text-express-v1')
     assert _normalize(profile) == snapshot(
-        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supported_native_tools': frozenset()}
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
+            'supported_native_tools': frozenset(),
+        }
     )
 
 
@@ -1251,6 +1284,7 @@ def test_openrouter_google_gemini_3_pro():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
+            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,
@@ -1300,6 +1334,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_minimal_thinking_level': False,
             'google_supports_server_side_tool_invocations': True,
             'google_supports_strict_tool_definition': True,
+            'supports_video_input': True,
             'google_supports_tool_combination': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
@@ -1465,6 +1500,7 @@ def test_github_copilot_google_gemini_3_pro():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_tool_return_schema': True,
+            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,
@@ -1977,6 +2013,25 @@ def test_vllm_qwen_hf_namespace():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vllm_gemma_video_is_up_to_the_model_class():
+    """Gemma reads video, but neither OpenAI API has a video part, so the model class turns the flag off.
+
+    The provider profile keeps the family's answer; OpenRouter, which maps `video_url`, keeps it too.
+    """
+    family = VLLMProvider.model_profile('google/gemma-3-27b-it')
+    assert family is not None and family.get('supports_video_input') is True
+    provider = VLLMProvider(base_url='http://localhost:8000/v1', api_key='test')
+    chat = OpenAIChatModel('google/gemma-3-27b-it', provider=provider)
+    responses = OpenAIResponsesModel('google/gemma-3-27b-it', provider=provider)
+    openrouter = OpenRouterModel('google/gemma-3-27b-it', provider=OpenRouterProvider(api_key='test'))
+    assert {
+        'chat': chat.profile.get('supports_video_input'),
+        'responses': responses.profile.get('supports_video_input'),
+        'openrouter': openrouter.profile.get('supports_video_input'),
+    } == snapshot({'chat': False, 'responses': False, 'openrouter': True})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_vllm_unknown_falls_back_to_overlay_only():
     profile = VLLMProvider.model_profile('some-unknown-model')
     assert _normalize(profile) == snapshot(
@@ -2346,6 +2401,7 @@ def test_vercel_vertex_gemini():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'google_supports_tool_combination': True,

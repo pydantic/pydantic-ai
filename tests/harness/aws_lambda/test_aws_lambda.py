@@ -9,10 +9,13 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, assert_type
 
 import pytest
-from aws_durable_execution_sdk_python import durable_execution  # pyright: ignore[reportUnknownVariableType]
+from aws_durable_execution_sdk_python import (
+    DurableContext,
+    durable_execution,  # pyright: ignore[reportUnknownVariableType]
+)
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
 from aws_durable_execution_sdk_python.retries import RetryPresets
@@ -147,6 +150,21 @@ class TestDurableAgentHandler:
 
         assert handler({'prompt': 'go'}, ctx) == 'done'
         assert ctx.step_names == ['a__model.request']
+
+    def test_keeps_the_handler_context_type(self) -> None:
+        """The documented handler annotates `context: DurableContext`, which a decorator typed for the
+        structural `DurableStepContext` alone would reject under a type checker."""
+
+        @durable_agent_handler
+        async def handler(event: dict[str, Any], context: DurableContext) -> str:
+            raise NotImplementedError
+
+        @durable_agent_handler(cancel_timeout=30)
+        async def parameterized(event: dict[str, Any], context: DurableContext) -> str:
+            raise NotImplementedError
+
+        assert_type(handler, Callable[[Any, DurableContext], str])
+        assert_type(parameterized, Callable[[Any, DurableContext], str])
 
     def test_parameterized_form_passes_cancel_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         received: list[float] = []
@@ -525,6 +543,20 @@ class TestStepConfig:
         with pytest.raises(UserError, match=r'expected a dict .* or `False`, got str'):
             run_durable(lambda: agent.run('go'), context=ctx)
 
+    def test_non_string_per_tool_config_key_is_rejected(self) -> None:
+        """A pydantic `ValidationError` from a tool call is treated as invalid arguments and sent to
+        the model, so a malformed config must surface as a `UserError` instead."""
+        toolset = FunctionToolset[object](id='tools')
+        toolset.add_function(act, metadata={'aws_lambda': {1: 2}})
+
+        agent = Agent(tool_then_text(), name='a', toolsets=[toolset], capabilities=[AWSLambdaDurability()])
+        ctx = FakeDurableContext()
+
+        with pytest.raises(
+            UserError, match="Tool 'act' has invalid 'aws_lambda' metadata: step config keys must be strings"
+        ):
+            run_durable(lambda: agent.run('go'), context=ctx)
+
 
 class TestNesting:
     """A nested durable run cannot make progress: the handler thread is blocked servicing the
@@ -824,18 +856,23 @@ class TestBridgeFailureModes:
         finally:
             shutdown(loop, owner=thread)
 
-    def test_a_cancelled_step_operation_does_not_hang_the_handler(self) -> None:
-        # `Task.exception()` raises for a cancelled task, so a naive done-callback would strand the
-        # handler thread inside `context.step(...)` until the function timed out.
+    def test_a_cancelled_step_operation_fails_the_step(self) -> None:
+        """`Task.exception()` raises for a cancelled task, so a naive done-callback would strand the
+        handler thread inside `context.step(...)` until the function timed out. The cancellation also
+        has to reach the SDK as an ordinary `Exception`: a `BaseException` skips its step failure
+        handling and crashes the invocation."""
+
         def act() -> str:
             raise asyncio.CancelledError('inner cancel')
 
         agent = build_agent(act)
         ctx = FakeDurableContext()
 
-        # The point of the assertion is that the call returns at all rather than wedging the thread.
-        with pytest.raises(BaseException):
+        step = 'a__function_toolset__<agent>.call_tool:act'
+        with pytest.raises(RuntimeError, match=re.escape(f'Durable step {step!r} was cancelled')):
             run_durable(lambda: agent.run('go'), context=ctx)
+
+        assert [op.name for op in ctx.failed] == [step]
 
     def test_sdk_control_flow_propagates_out_of_the_handler(self) -> None:
         """`SuspendExecution` and friends are `BaseException`s the SDK raises so user code cannot
