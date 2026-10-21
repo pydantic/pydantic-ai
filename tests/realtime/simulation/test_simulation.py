@@ -39,7 +39,14 @@ with try_import() as imports_successful:
     from ._live import LiveMachine, LiveSimulation
     from ._machine import KNOWN_HIT_COUNTS
     from ._openai_server import Dialect
-    from ._openai_simulation import AzureMachine, OpenAIMachine, OpenAIOptions, OpenAISimulation, XaiMachine
+    from ._openai_simulation import (
+        AzureMachine,
+        ElevenLabsMachine,
+        OpenAIMachine,
+        OpenAIOptions,
+        OpenAISimulation,
+        XaiMachine,
+    )
     from ._simulation import FindingReproduced, SessionOptions, Simulation
     from ._wire import SendFault
 
@@ -66,6 +73,7 @@ def exploration_settings() -> settings:
         pytest.param(OpenAIMachine, id='openai'),
         pytest.param(AzureMachine, id='azure'),
         pytest.param(XaiMachine, id='xai'),
+        pytest.param(ElevenLabsMachine, id='elevenlabs'),
         pytest.param(GeminiMachine, id='gemini'),
         pytest.param(LiveMachine, id='gpt-live'),
         pytest.param(ElevenLabsAgentsMachine, id='elevenlabs-agents'),
@@ -1511,6 +1519,36 @@ def test_live_abandoned_calls_owe_nothing() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
+def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> None:
+    """A tool call whose backend gave up still runs, but its result gets no reply: the exchange ends with the reply.
+
+    Found live on Eleven Realtime, which abandons a call the same way when a new response starts: the turn only
+    completed once the abandoned tool finished, if at all.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_text()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish(status='failed')
+        # The reply that delegated is over, and the abandoned call owes nothing, though it still runs.
+        assert sim.tools.pending()
+        assert len(sim.turn_completes) == 1
+        sim.send_text()
+        waiter = sim.wait_for_reply(ticks=0)
+        sim.speak()
+        sim.advance_time(1.0)
+        # The reply to the interjection ends its exchange as it ends, not once the call finishes.
+        assert sim.tools.pending()
+        assert waiter.returned is not None
+        assert len(sim.turn_completes) == 2
+        sim.finish_tool()
+        # Its result goes nowhere, and ends no exchange of its own.
+        assert len(sim.turn_completes) == 2
+
+    run_clean(LiveSimulation(), scenario)
+
+
 def test_live_text_sent_as_a_delegation_starts_is_answered_by_its_reply() -> None:
     """8763c #3 on GPT-Live: text sent while a delegation the client hasn't read yet opens the reply.
 
@@ -1580,7 +1618,7 @@ def run_clean(sim: Simulation, scenario: Callable[[Any], object]) -> None:
         s.check_handoff()
 
 
-@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai', 'elevenlabs'])
 def test_baseline_openai_protocol_conversation(dialect: str) -> None:
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
