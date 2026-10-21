@@ -55,8 +55,8 @@ from pydantic_ai_harness._monty_exec import (
 )
 from pydantic_ai_harness._sub_agent_output import resumable_output_reason, without_resumable_outputs
 
-# Set while a workflow script is executing, so a sub-agent that itself tries to run a workflow can
-# be refused -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
+# Set while a workflow script is executing, so `get_tools` hides `run_workflow` from sub-agents
+# running inside it -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
 # schedules, so concurrently-dispatched sub-agents inherit this flag (the capability is asyncio-only).
 _in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar('pydantic_ai_harness_in_workflow', default=False)
 
@@ -74,9 +74,10 @@ class WorkflowResourceLimits(TypedDict, total=False):
     step, so time spent awaiting sub-agents does not count against it -- neither a single `await`
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
     the host, not running sandbox code. There is no default cap. Set one to bound a pure-CPU
-    `while True` loop, which would otherwise burn a core and block the event loop -- the one
-    runaway the sub-agent budgets do not catch. Sleeping is not execution time either, so when set,
-    the script may also sleep for up to this long in total."""
+    `while True` loop, which would otherwise burn a core in the sandbox worker (and block the
+    workflow thread under Temporal) -- the one runaway the sub-agent budgets do not catch.
+    Sleeping is not execution time either, so when set, the script may also sleep for up to this
+    long in total."""
 
     max_memory: int
     """Maximum sandbox memory, in bytes."""
@@ -98,7 +99,10 @@ _MAX_COMPLETED_DISPATCHES = 20
 _MAX_TASK_PREVIEW_CHARS = 120
 _MAX_RESULT_PREVIEW_CHARS = 300
 _TRUNCATED_MARKER = ' ... [truncated]'
-_REVEAL_ANNOUNCEMENT_PREFIX = 'A new sub-agent is now available to call from inside the'
+# `SystemPromptPart.metadata` keys marking a reveal announcement, so a later step can find it in history.
+_REVEAL_TOOL_KEY = 'dynamic_workflow_tool'
+_REVEAL_AGENT_KEY = 'dynamic_workflow_revealed_agent'
+_STUB_BODY = 'raise NotImplementedError()'
 
 
 def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
@@ -150,9 +154,8 @@ done -- instead of delegating to one sub-agent at a time.
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**.
 - **Importable standard-library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use at the top
-  of the script. Filesystem, environment, and clock operations are not configured for workflow
-  scripts.
+  `unicodedata`, `datetime`, `time`, and `random`. Import what you use at the top of the script.
+  There is no filesystem or environment access.
 - **No clock or randomness**: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`,
   and unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait.
 
@@ -205,7 +208,6 @@ _SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
     'properties': {'task': {'type': 'string'}},
     'required': ['task'],
 }
-_NO_CONFLICTING_TYPE_NAMES: frozenset[str] = frozenset()
 
 
 def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
@@ -229,32 +231,33 @@ def _agent_signature(name: str, agent: AbstractAgent[AgentDepsT, object]) -> Fun
     )
 
 
-def _render_agent_block(
-    signature: FunctionSignature,
-    description: str | None,
-    *,
-    conflicting_type_names: frozenset[str] = _NO_CONFLICTING_TYPE_NAMES,
-) -> str:
-    """Render one sub-agent as the async function signature shown to the model."""
-    return signature.render(
-        '...',
-        description=description,
-        is_async=True,
-        conflicting_type_names=conflicting_type_names,
+def _signature_blocks(
+    catalog: Mapping[str, WorkflowAgent[AgentDepsT]], shown: Sequence[str], *, body: str
+) -> list[str]:
+    """Render the `shown` sub-agents' type definitions and async functions.
+
+    Type names are disambiguated against every agent in `catalog`, which holds the agents the
+    model knew about when `shown` was first presented to it.
+    """
+    signatures = {name: _agent_signature(name, entry.agent) for name, entry in catalog.items()}
+    conflicting = FunctionSignature.get_conflicting_type_names(list(signatures.values()))
+    shown_signatures = [signatures[name] for name in shown]
+    blocks = FunctionSignature.render_type_definitions(shown_signatures, conflicting)
+    blocks.extend(
+        signature.render(
+            body,
+            description=catalog[signature.name].resolved_description,
+            is_async=True,
+            conflicting_type_names=conflicting,
+        )
+        for signature in shown_signatures
     )
+    return blocks
 
 
 def _render_catalog(catalog: Mapping[str, WorkflowAgent[AgentDepsT]], *, max_agent_calls: int) -> str:
     """Render the available sub-agents as async function signatures for the tool description."""
-    signatures = {name: _agent_signature(name, entry.agent) for name, entry in catalog.items()}
-    signature_list = list(signatures.values())
-    conflicting = FunctionSignature.get_conflicting_type_names(signature_list)
-    type_blocks = FunctionSignature.render_type_definitions(signature_list, conflicting)
-    function_blocks = [
-        _render_agent_block(signatures[name], entry.resolved_description, conflicting_type_names=conflicting)
-        for name, entry in catalog.items()
-    ]
-    listing = '```python\n' + '\n\n'.join([*type_blocks, *function_blocks]) + '\n```'
+    listing = '```python\n' + '\n\n'.join(_signature_blocks(catalog, list(catalog), body='...')) + '\n```'
     budget = (
         f'This run can make at most {max_agent_calls} sub-agent calls in total -- one budget shared across '
         'every `run_workflow` call in the run, not per script; plan fan-out width accordingly.'
@@ -262,38 +265,36 @@ def _render_catalog(catalog: Mapping[str, WorkflowAgent[AgentDepsT]], *, max_age
     return f'{_WORKFLOW_BASE_DESCRIPTION}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
 
 
-def _render_reveal(
+def _reveal_announcement(
     name: str,
     catalog: Mapping[str, WorkflowAgent[AgentDepsT]],
     tool_name: str,
-) -> str:
+) -> SystemPromptPart:
     """Announcement enqueued when a sub-agent is revealed mid-run.
 
     Delivered as a system-level conversation message (not folded into the cached tool description),
     so the prompt-cache prefix stays stable while the model still learns the agent is now callable.
+    `catalog` holds the agents up to and including `name`, in reveal order. The metadata marks
+    the part so `_visible_revealed_agents` can find it again.
     """
-    signatures = {agent_name: _agent_signature(agent_name, entry.agent) for agent_name, entry in catalog.items()}
-    signature = signatures[name]
-    conflicting = FunctionSignature.get_conflicting_type_names(list(signatures.values()))
-    type_blocks = FunctionSignature.render_type_definitions([signature], conflicting)
-    function_block = _render_agent_block(
-        signature, catalog[name].resolved_description, conflicting_type_names=conflicting
+    block = '\n\n'.join(_signature_blocks(catalog, [name], body='...'))
+    return SystemPromptPart(
+        content=(
+            f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
+        ),
+        metadata={_REVEAL_TOOL_KEY: tool_name, _REVEAL_AGENT_KEY: name},
     )
-    block = '\n\n'.join([*type_blocks, function_block])
-    return f'{_REVEAL_ANNOUNCEMENT_PREFIX} `{tool_name}` script:\n\n```python\n{block}\n```'
 
 
-def _visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str, names: Sequence[str]) -> set[str]:
-    """Read authored reveal announcements after the latest compaction boundary."""
-    prefix = f'{_REVEAL_ANNOUNCEMENT_PREFIX} `{tool_name}` script:\n\n```python\n'
+def _visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str) -> set[str]:
+    """Names of the sub-agents whose reveal announcement is still in history after the latest compaction."""
     revealed: set[str] = set()
     for message in post_compaction_window(messages):
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, SystemPromptPart) and part.content.startswith(prefix):
-                    # Keep this pattern aligned with the signature rendered by `_agent_signature` from
-                    # `_SUB_AGENT_PARAMS_SCHEMA`; it identifies which revealed agents remain visible.
-                    revealed.update(name for name in names if f'\nasync def {name}(*, task: str)' in part.content)
+                metadata = part.metadata if isinstance(part, SystemPromptPart) else None
+                if metadata is not None and metadata.get(_REVEAL_TOOL_KEY) == tool_name:
+                    revealed.add(metadata[_REVEAL_AGENT_KEY])
     return revealed
 
 
@@ -350,7 +351,7 @@ def _completed_retry_section(completed: list[_CompletedDispatch]) -> str:
     listing = '\n'.join(f'- {line}' for line in lines)
     return (
         '\n\nCompleted sub-agent results from the failed script '
-        '(up to 20 bounded previews; reuse untruncated values instead of re-calling them; '
+        f'(up to {_MAX_COMPLETED_DISPATCHES} bounded previews; reuse untruncated values instead of re-calling them; '
         'their budget was already spent):\n'
         f'{listing}'
     )
@@ -430,8 +431,8 @@ class WorkflowAgent(Generic[AgentDepsT]):
 
     description: str | None = None
     """Description shown to the model in the sub-agent catalog, rendered as the sandbox
-    function's docstring. An explicit value overrides the agent's own `description`.
-    When neither is set, the model sees only the bare signature."""
+    function's docstring. An explicit value, including `''`, overrides the agent's own
+    `description`. When neither is set, the model sees only the bare signature."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -440,8 +441,11 @@ class WorkflowAgent(Generic[AgentDepsT]):
 
     @property
     def resolved_description(self) -> str | None:
-        """The catalog description: the explicit `description`, else the agent's own `description`."""
-        return self.description or self.agent.description
+        """The catalog description: the explicit `description`, else the agent's own `description`.
+
+        An explicit empty string hides the agent's own description.
+        """
+        return self.description if self.description is not None else self.agent.description
 
 
 def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: set[str]) -> str:
@@ -460,6 +464,15 @@ def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: se
     if name in existing_names:
         raise UserError(f'DynamicWorkflow has two sub-agents named {name!r}; names must be unique.')
     return name
+
+
+def validate_workflow_settings(
+    *, max_agent_calls: int, resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None
+) -> None:
+    """Reject settings the toolset cannot run with, so the error points at the constructor call."""
+    if max_agent_calls < 1:
+        raise UserError('DynamicWorkflow `max_agent_calls` must be at least 1.')
+    _resolve_resource_limits(resource_limits)
 
 
 def index_workflow_agents(
@@ -545,9 +558,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     _description: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if self.max_agent_calls < 1:
-            raise UserError('DynamicWorkflow `max_agent_calls` must be at least 1.')
-        _resolve_resource_limits(self.resource_limits)  # validate keys now, not at the first tool call
+        validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         self._rebuild()
 
     def _rebuild(self) -> None:
@@ -600,7 +611,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         if self._announcement_step != ctx.run_step:
             self._in_flight_announcements.clear()
             self._announcement_step = ctx.run_step
-        visible_announcements = _visible_revealed_agents(ctx.messages, self.tool_name, tuple(self._by_name))
+        visible_announcements = _visible_revealed_agents(ctx.messages, self.tool_name)
 
         for entry in tuple(self.agents):
             name = entry.resolved_name
@@ -618,7 +629,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 self._by_name[name] = entry
             self._in_flight_announcements.add(name)
             try:
-                ctx.enqueue(SystemPromptPart(content=_render_reveal(name, self._by_name, self.tool_name)))
+                ctx.enqueue(_reveal_announcement(name, self._catalog_through(name), self.tool_name))
             except UserError as exc:
                 warnings.warn(
                     f'DynamicWorkflow revealed sub-agent {name!r}, but could not enqueue its announcement: '
@@ -655,6 +666,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         return True
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        # Workflows do not nest: a sub-agent running inside a workflow script is not offered its own.
+        if _in_workflow.get():
+            return {}
         # Skip reveal processing while the capability is deferred and unloaded: the newcomers
         # stay pending in `agents` and are folded in and announced on the first step after the
         # model loads the capability.
@@ -735,28 +749,27 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         before the script runs -- costing a retry but no sub-agent budget. Each
         `run_workflow` call is a fresh sandbox with no accumulated state, so the check
         is always sound.
+
+        Every sub-agent is rendered as the model was shown it: the baseline as in the frozen tool
+        description, and each revealed agent as in its announcement, so a type name the model read
+        is the one the checker knows.
         """
-        signatures = [_agent_signature(name, entry.agent) for name, entry in self._by_name.items()]
-        conflicting = FunctionSignature.get_conflicting_type_names(signatures)
+        baseline = {name: entry for name, entry in self._by_name.items() if name in self._baseline_names}
         parts = ['import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal']
-        parts.extend(FunctionSignature.render_type_definitions(signatures, conflicting))
-        parts.extend(
-            signature.render('raise NotImplementedError()', is_async=True, conflicting_type_names=conflicting)
-            for signature in signatures
-        )
+        parts.extend(_signature_blocks(baseline, list(baseline), body=_STUB_BODY))
+        for name in self._by_name:
+            if name not in self._baseline_names:
+                parts.extend(_signature_blocks(self._catalog_through(name), [name], body=_STUB_BODY))
         return '\n\n'.join(parts)
+
+    def _catalog_through(self, name: str) -> dict[str, WorkflowAgent[AgentDepsT]]:
+        """The sub-agents known when `name` was revealed: those before it in reveal order, and itself."""
+        names = list(self._by_name)
+        return {known: self._by_name[known] for known in names[: names.index(name) + 1]}
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if _in_workflow.get():
-            return {
-                'error': (
-                    'Workflows do not nest: this sub-agent was invoked from a workflow and cannot start '
-                    'its own. Return your result to the orchestrating workflow instead.'
-                )
-            }
-
         code = tool_args['code']
         budget_exhausted = False
         completed_dispatches: list[_CompletedDispatch] = []
