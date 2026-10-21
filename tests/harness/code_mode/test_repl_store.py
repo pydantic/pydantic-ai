@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -75,9 +74,9 @@ def _reply(messages: list[ModelMessage], scripts: Mapping[str, Mapping[str, obje
         if args is None:
             return ModelResponse(parts=[TextPart('no code')])
         return ModelResponse(parts=[ToolCallPart('run_code', dict(args))])
-    if isinstance(part, RetryPromptPart):
-        return ModelResponse(parts=[TextPart(f'retry: {part.content}')])
     assert isinstance(part, ToolReturnPart)
+    if part.outcome == 'retried':
+        return ModelResponse(parts=[TextPart(f'retry: {part.content}')])
     return ModelResponse(parts=[TextPart(str(part.content))])
 
 

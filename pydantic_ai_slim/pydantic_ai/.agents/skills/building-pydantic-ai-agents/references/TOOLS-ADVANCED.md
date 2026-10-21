@@ -65,6 +65,8 @@ def get_user_by_name(ctx: RunContext[dict[str, int]], name: str) -> int:
 
 Use retries for recoverable model mistakes, not application crashes.
 
+The retry is recorded as that call's own `ToolReturnPart` with `outcome='retried'`, carrying the `ModelRetry` message or the validation errors, and reaches the model on the provider's error channel. Its `retry` (a `RetryInfo`) says why in `cause` (a `ToolRetryCause`): `'validation_error'`, `'model_retry'`, or `'unknown_tool'` / `'unavailable_tool'` for a call rejected before any tool ran, which no tool hook sees. `attempt` is which retry of that tool this is (from 1) and `max_retries` the limit, both `None` when the retry isn't charged to the budget. None of it is sent to the model. Match these when you read history: `RetryPromptPart` is deprecated and no longer emitted, and a retry that answers no tool call is a `RetryFeedbackPart` instead.
+
 Set the agent-wide tool-retry default with `Agent(retries={'tools': N})`, and override it for a single run (or `iter`) with `agent.run(retries={'tools': N})` — explicit per-tool `retries=` and per-toolset `FunctionToolset(max_retries=N)` still win. A bare `int` at run time overrides both budgets (matching construction), so pass a dict like `{'tools': N}` or `{'output': N}` to change just one.
 
 ## Report a Failed Tool Result
@@ -91,7 +93,7 @@ def read_file(path: str) -> str:
     return file_path.read_text()
 ```
 
-The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` and traced as an error in telemetry. Pydantic AI uses the provider's native error field where one exists; otherwise model-visible content is JSON-framed as `{"error": ...}` so the failure remains explicit.
+The failure is recorded in message history as a `ToolReturnPart` with `outcome='failed'` — the other error outcome beside `'retried'` — and traced as an error in telemetry. Pydantic AI uses the provider's native error field where one exists; otherwise model-visible content is JSON-framed as `{"error": ...}` so the failure remains explicit.
 
 `ToolFailed` can also be raised from an `args_validator` (see below) and from tool validation/execution hooks with the same model-visible and retry-budget behavior. This is useful for converting a third-party exception into a failed result in one place instead of per tool. MCP servers expose the same retry-vs-failed choice via `tool_error_behavior`. For deferred tools, a `ToolFailed` instance can be supplied as a `DeferredToolResults.calls` value to report an external execution failure, just like `ModelRetry` requests a retry from there.
 
@@ -249,6 +251,15 @@ def check_stock(args: LookupArgs) -> LookupResult:
 - A history whose kind isn't defined still loads, as base parts that keep their `tool_kind`.
 
 See [Typed tool parts](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts).
+
+To make a tool step aside when a more general tool is on the agent, set `ToolDefinition.unless_tool_kind` to that tool's kind (e.g. `replace(tool_def, unless_tool_kind=file_read)` in `prepare`); to name a tool in instructions or tool results, use `ctx.tool_name_for_kind(file_read)` instead of a hard-coded name:
+
+- The tool is left out of the step when another tool in it has that kind: not sent to the model, not callable, and not returned by `tool_name_for_kind`. It's the local-tool counterpart of `unless_native`.
+- A deferred (`defer_loading`) tool counts as present, so the answer doesn't change when it is revealed.
+- A tool is only left out in favor of a tool that stays; when tools would each be left out in favor of the other, the one listed first stays. The kind doesn't need to be defined: only ids are compared, so an unknown kind means there's nothing to step aside for.
+- `tool_name_for_kind` returns the prefixed name, `None` when no tool has the kind, and the first in `ctx.tools` order when several do. Instruction functions see the current step's tools; `get_tools` / `prepare_tools` see the previous step's.
+
+See [Superseding a tool by kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind).
 
 ## Tool Search and Tool-Level Deferred Loading
 

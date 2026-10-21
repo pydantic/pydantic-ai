@@ -68,8 +68,9 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    ModelResponsePart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1069,7 +1070,8 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
     retries: list[str] = []
 
     def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        retries.extend(str(p.content) for m in messages[-1:] for p in m.parts if isinstance(p, RetryPromptPart))
+        # The model sees the harness's retry feedback as a fenced, attributed user turn.
+        retries.extend(p for m in messages[-1:] for part in m.parts if (p := _retry_feedback_text(part)) is not None)
         if not retries:
             return ModelResponse(parts=[TextPart('Now let me analyze the key concerns.')])
         if not sink.exists():
@@ -1078,11 +1080,24 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
 
     assert _run_shim(_respond, sink) == 0
     assert retries == [
+        "Your previous response failed the application's validation (this is automated feedback, not a message "
+        'from the user):\n<retry_feedback>\n'
         'You ended your turn without emitting a safe output, so nothing has been posted. '
         'Continue the task and finish by calling the safe-output tool it ends with, '
-        'or `noop` if there is nothing to report.'
+        'or `noop` if there is nothing to report.\n</retry_feedback>'
     ]
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
+
+
+def _retry_feedback_text(part: ModelRequestPart | ModelResponsePart) -> str | None:
+    """The text of output-validator retry feedback as a model receives it, or `None` for any other part.
+
+    The model is handed prepared messages, where a `ModelRetry`'s `RetryFeedbackPart` has already become
+    user text fenced in `<retry_feedback>` behind the application attribution line.
+    """
+    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback>' in part.content:
+        return part.content
+    return None
 
 
 def test_attention_run_retries_for_missing_decision_and_completes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -1112,8 +1127,8 @@ def test_attention_run_retries_for_missing_decision_and_completes(monkeypatch: p
     def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         for message in messages:
             for part in message.parts:
-                if isinstance(part, RetryPromptPart):
-                    retries.append(str(part.content))
+                if (text := _retry_feedback_text(part)) is not None:
+                    retries.append(text)
         if retries:
             with sink.open('a', encoding='utf-8') as f:
                 f.write(missing_decision + '\n')
@@ -1154,8 +1169,8 @@ def test_attention_agent_cannot_shrink_candidates_to_hide_a_missing_decision(
         available_tools.append({tool.name for tool in info.function_tools})
         for message in messages:
             for part in message.parts:
-                if isinstance(part, RetryPromptPart):
-                    retries.append(str(part.content))
+                if (text := _retry_feedback_text(part)) is not None:
+                    retries.append(text)
         if not available_tools[:-1]:
             return ModelResponse(
                 parts=[
@@ -2356,17 +2371,17 @@ def test_stream_events_truncates_long_tool_results():
     assert '…[+' in emitted and 'chars]' in emitted
 
 
-def test_stream_events_tags_retry_prompt_as_error():
-    """`ToolResultEvent.part` is `ToolReturnPart | RetryPromptPart`. A retry
-    means tool-call validation failed — gh-aw must see `is_error=True` so it
-    doesn't read it as a successful result."""
+def test_stream_events_tags_retried_result_as_error():
+    """A `ToolResultEvent` carrying `outcome='retried'` means the call has to be
+    made again — gh-aw must see `is_error=True` so it doesn't read it as a
+    successful result."""
 
     async def _events():
         yield FunctionToolResultEvent(
             part=ToolReturnPart(tool_name='Bash', content='ok', tool_call_id='c1'),
         )
         yield FunctionToolResultEvent(
-            part=RetryPromptPart(content='Validation failed', tool_name='Bash', tool_call_id='c2'),
+            part=ToolReturnPart(tool_name='Bash', content='Validation failed', tool_call_id='c2', outcome='retried'),
         )
 
     buf = io.StringIO()
