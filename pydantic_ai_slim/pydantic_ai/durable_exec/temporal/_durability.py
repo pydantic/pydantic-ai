@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mappi
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeAlias, cast
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
@@ -126,7 +126,7 @@ IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
 """Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
-ContinueAsNewHandler = Callable[[RunContext[AgentDepsT]], Awaitable[None] | None]
+ContinueAsNewHandler: TypeAlias = Callable[[RunContext[AgentDepsT]], Awaitable[None] | None]
 """Sync or async function called when Temporal suggests continuing the workflow as new.
 
 It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including the current

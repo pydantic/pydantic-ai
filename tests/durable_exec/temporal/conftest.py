@@ -103,7 +103,7 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         # `suggestContinueAsNew` is lowered from its default so the continue-as-new tests can reach
         # the suggestion threshold in a handful of turns. Other tests are unaffected: the suggestion
-        # is only read when a `continue_as_new_args` is configured.
+        # is only read when `continue_as_new` is configured.
         dev_server_extra_args=[
             '--dynamic-config-value',
             'frontend.enableServerVersionCheck=false',

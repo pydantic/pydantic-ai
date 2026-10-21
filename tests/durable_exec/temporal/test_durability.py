@@ -189,7 +189,7 @@ with workflow.unsafe.imports_passed_through():
     from ..._inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from ...conftest import IsDatetime, IsInt, IsList, IsStr
+    from ...conftest import IsDatetime, IsInt, IsList, IsSameStr, IsStr
     from ...workspace_fakes import FakeWorkspace
     from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
@@ -2116,7 +2116,16 @@ async def test_durability_continue_as_new_invokes_user_callable(stream: bool, is
                 await agent.run('hello')
 
     assert len(received_contexts) == 1
-    assert [type(message).__name__ for message in received_contexts[0].messages] == ['ModelRequest']
+    assert received_contexts[0].messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
 
 
 async def test_durability_continue_as_new_deferred_by_user_callable():
@@ -2240,20 +2249,58 @@ async def test_durability_continue_as_new_real_workflow_transition(client: Clien
     assert result.output == 'successor received: first request completed'
     assert result.continued_run_id is not None
     assert result.usage == RunUsage(requests=2, input_tokens=7, output_tokens=10, tool_calls=1)
-    assert [type(message).__name__ for message in result.messages] == [
-        'ModelRequest',
-        'ModelResponse',
-        'ModelRequest',
-        'ModelResponse',
-    ]
-    assert [
-        part.content
-        for message in result.messages
-        for part in message.parts
-        if isinstance(part, (UserPromptPart, TextPart, ToolReturnPart))
-    ] == ['start', 'first request completed', 'successor received: first request completed']
-    assert len(_continue_as_new_model_requests) == 2
-    assert [len(messages) for messages in _continue_as_new_model_requests] == [1, 3]
+    # The successor run continues the conversation (same `conversation_id`) under a new `run_id`;
+    # everything up to the tool return was recorded by the predecessor run.
+    predecessor_run_id = IsSameStr()
+    conversation_id = IsSameStr()
+    assert result.messages == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='start', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=predecessor_run_id,
+                conversation_id=conversation_id,
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='record_transition',
+                        args={'value': 'first request completed'},
+                        tool_call_id='transition',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=2, output_tokens=3),
+                model_name='function:_continue_as_new_model_fn:',
+                timestamp=IsDatetime(),
+                run_id=predecessor_run_id,
+                conversation_id=conversation_id,
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='record_transition',
+                        content='first request completed',
+                        tool_call_id='transition',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=predecessor_run_id,
+                conversation_id=conversation_id,
+            ),
+            ModelResponse(
+                parts=[TextPart(content='successor received: first request completed')],
+                usage=RequestUsage(input_tokens=5, output_tokens=7),
+                model_name='function:_continue_as_new_model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=conversation_id,
+            ),
+        ]
+    )
+    assert result.messages[3].run_id != result.messages[0].run_id
+    # The predecessor's request, then the successor's, which resends the carried-over history.
+    assert _continue_as_new_model_requests == [result.messages[:1], result.messages[:3]]
 
 
 async def test_durability_continue_as_new_outside_workflow_is_passthrough():
