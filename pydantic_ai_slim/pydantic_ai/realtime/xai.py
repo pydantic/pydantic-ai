@@ -68,6 +68,7 @@ from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._lifecycle import InputId
+from ._openai_lifecycle import AudioCommit, OpenAILifecycle
 from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
@@ -299,6 +300,13 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             interrupts_response_on_speech=interrupts_response_on_speech,
             model_name=model_name,
             model_name_getter=model_name_getter,
+            manual_turns=manual_turns,
+        )
+        # With turn detection off, xAI doesn't commit audio it heard no speech in, so a commit it never acknowledged
+        # is a turn only if it did. With it on, xAI ignores a commit of ours altogether (no acknowledgement, no error;
+        # checked live): it commits only what its VAD hears.
+        self._lifecycle = OpenAILifecycle(
+            transcribes=input_transcription_enabled, commits_need_speech=manual_turns, acknowledges_commits=manual_turns
         )
         self._conversation_id = conversation_id
         # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
@@ -438,17 +446,17 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
             self._audio_is_latest_input = False
         # Audio still in the buffer is committed by the request, and answered by its response.
-        sent_before: list[InputId] | None = None
+        commit: AudioCommit | None = None
         if self._audio_uncommitted:
             # Whatever went out before the request joins the conversation ahead of the turn it commits.
-            sent_before = self._lifecycle.audio_commit_sent()
+            commit = self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
         try:
             await super()._create_response(input_indexes, answers)
         except BaseException:
-            if sent_before is not None:
-                self._lifecycle.audio_commit_failed(sent_before)
+            if commit is not None:
+                self._lifecycle.audio_commit_failed(commit)
             raise
 
     async def _attempt_reconnect(self) -> bool:

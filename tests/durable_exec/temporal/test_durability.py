@@ -73,8 +73,13 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelOverloadedError,
+    ModelRateLimitError,
     ModelRetry,
+    ModelTimeoutError,
+    ModelUnavailableError,
     SkipModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -117,6 +122,7 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
@@ -361,6 +367,10 @@ def _broken_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     raise ValueError('not a model error')
 
 
+def _timeout_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelTimeoutError('timeout-model', 'Request timed out.', phase='read')
+
+
 def _describe(error: Exception) -> str:
     if isinstance(error, ModelHTTPError):
         return f'{type(error).__name__} {error.status_code} {error.retry_after} {error.body}'
@@ -394,6 +404,26 @@ streamed_model_error_agent = _model_error_agent(
     'durability_streamed_model_error', FunctionModel(stream_function=_overloaded_stream_fn), streamed=True
 )
 other_error_agent = _model_error_agent('durability_other_error', FunctionModel(_broken_model_fn))
+timeout_agent = Agent(
+    FunctionModel(_timeout_model_fn),
+    name='durability_timeout_error',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ModelTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await timeout_agent.run('hello')).output
+        except ModelTimeoutError as error:
+            # What a retry policy's `non_retryable_error_types` matched, on the activity failure the error rebuilt from.
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{type(error).__name__} {error.phase} {application_error.type}'
 
 
 @workflow.defn
@@ -428,6 +458,99 @@ async def test_durability_model_error_reaches_workflow_with_its_type(client: Cli
             task_queue=TASK_QUEUE,
         )
     assert output == "ModelHTTPError 503 7.0 {'error': 'overloaded'}"
+
+
+async def test_durability_categorized_model_error_reaches_workflow_as_its_category(client: Client):
+    """Workflow code catches a model activity's `ModelTimeoutError` as itself, while the retry policy sees the
+    `ModelAPIError` type it saw before error categories existed."""
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ModelTimeoutWorkflow], plugins=[AgentPlugin(timeout_agent)]
+    ):
+        output = await client.execute_workflow(
+            ModelTimeoutWorkflow.run, id=ModelTimeoutWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == 'ModelTimeoutError read ModelAPIError'
+
+
+# --- Model errors that `non_retryable_model_errors` stops Temporal from retrying ---
+
+_non_retryable_attempts: list[str] = []
+
+
+def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    _non_retryable_attempts.append(prompt.content)
+    if prompt.content == 'context_window':
+        raise ModelHTTPError.for_category(ModelContextWindowExceededError, status_code=400, model_name='test-model')
+    if prompt.content == 'overloaded':
+        raise ModelOverloadedError('test-model', 'Model is overloaded.')
+    raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
+
+
+non_retryable_agent = Agent(
+    FunctionModel(_non_retryable_model_fn),
+    name='durability_non_retryable_model_errors',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+            non_retryable_model_errors=[ModelContextWindowExceededError, ModelUnavailableError],
+        )
+    ],
+)
+
+
+@workflow.defn
+class NonRetryableModelErrorWorkflow:
+    @workflow.run
+    async def run(self, error_kind: str) -> str:
+        try:
+            return (await non_retryable_agent.run(error_kind)).output
+        except ModelAPIError as error:
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{type(error).__name__} {application_error.type} non_retryable={application_error.non_retryable}'
+
+
+@pytest.mark.parametrize(
+    ('error_kind', 'attempts', 'expected'),
+    [
+        pytest.param(
+            'context_window',
+            1,
+            'ModelContextWindowExceededError ModelHTTPError non_retryable=True',
+            id='listed-category',
+        ),
+        pytest.param(
+            'overloaded', 1, 'ModelOverloadedError ModelAPIError non_retryable=True', id='subclass-of-listed-category'
+        ),
+        pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='unlisted-category'),
+    ],
+)
+async def test_durability_non_retryable_model_errors(client: Client, error_kind: str, attempts: int, expected: str):
+    """A model error that's an instance of a class in `non_retryable_model_errors` fails the activity on its first
+    attempt and still reaches workflow code as its own class, with the `ApplicationError` type a retry policy saw
+    before; any other model error is retried as the retry policy says."""
+    _non_retryable_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableModelErrorWorkflow],
+        plugins=[AgentPlugin(non_retryable_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableModelErrorWorkflow.run,
+            args=[error_kind],
+            id=f'{NonRetryableModelErrorWorkflow.__name__}_{error_kind}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert _non_retryable_attempts == [error_kind] * attempts
 
 
 async def test_durability_non_model_error_still_reaches_workflow_as_activity_error(client: Client):

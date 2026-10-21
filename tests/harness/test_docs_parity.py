@@ -151,6 +151,7 @@ _CAPABILITY_PAGE_META = {
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrap Sandbox'),

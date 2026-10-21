@@ -2,10 +2,12 @@ from __future__ import annotations as _annotations
 
 import base64
 import dataclasses
+import difflib
 import hashlib
 import html
 import mimetypes
 import os
+import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
@@ -2389,6 +2391,10 @@ SerializedInstructionId: TypeAlias = Annotated[
 """An [`InstructionId`][pydantic_ai.messages.InstructionId] that persists as the string it renders to."""
 
 
+InstructionChangePolicy: TypeAlias = Literal['rewrite', 'append']
+"""How changes to an instruction block are delivered; see [`InstructionPart.on_change`][pydantic_ai.messages.InstructionPart.on_change]."""
+
+
 @dataclass(repr=False)
 class InstructionPart:
     """A single instruction part with metadata about its origin.
@@ -2410,6 +2416,16 @@ class InstructionPart:
     Static instructions (`dynamic=False`) come from literal strings passed to `Agent(instructions=...)`.
     Dynamic instructions (`dynamic=True`) come from `@agent.instructions` functions, `TemplateStr`,
     or toolset `get_instructions()` methods.
+    """
+
+    on_change: InstructionChangePolicy = 'rewrite'
+    """How changes to this part are delivered.
+
+    `'rewrite'` replaces the instruction prefix on each request. `'append'` preserves the initial
+    prefix and appends full replacements to trusted message history when this block changes,
+    including withdrawal when it stops contributing content. Requires an addressable `id`;
+    otherwise a warning is emitted and the part uses `'rewrite'`. Evaluation frequency and
+    `dynamic` cache placement are unchanged. Compaction starts a new baseline.
     """
 
     name: str | None = None
@@ -2461,6 +2477,133 @@ class InstructionPart:
 
 
 @dataclass(repr=False, kw_only=True)
+class InstructionDeltaPart:
+    """Replace or withdraw one operator-authored instruction from this point in history onward.
+
+    Earlier statements remain in history; the latest statement for an id is effective. This is
+    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
+    """
+
+    id: SerializedInstructionId
+    """The id of the block being replaced, as on its [`InstructionPart`][pydantic_ai.messages.InstructionPart.id].
+
+    Serialized as the string it renders to. A change written by a newer version, for a source namespace this
+    one doesn't know, loads with `None` here, and the next request opens a new window instead of applying it.
+    """
+
+    content: str | None
+    """The complete replacement text, or `None` to withdraw the block."""
+
+    base_hash: str | None = None
+    """The SHA-256 hex digest of the block's text this change replaces, or `None` if it replaces none.
+
+    A model can then send the change as a diff against the text it sent before, and only when that text
+    is still what this change was computed against: if a history processor dropped an earlier change,
+    the hashes differ and the model sends `content` in full instead.
+    """
+
+    part_kind: Literal['instruction-delta'] = 'instruction-delta'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
+        """Render this change as a `<context>` element that replaces the block's earlier one.
+
+        A replacement is rendered as a `<context_diff>` element instead, holding a unified diff against
+        `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
+        shorter than the full replacement.
+
+        Args:
+            inline_system: Whether the receiving model supports mid-conversation system messages, per its
+                profile's `supports_inline_system_prompts`. When `False`, the model gets this text as
+                `<system>`-tagged user text, and a withdrawal says that it stays in effect. Defaults to
+                `True` for callers with no model to ask, such as token estimates and search.
+            previous: The block's text as the model last received it, if known.
+        """
+        if self.content is not None:
+            full = _context_element(self.id, self.content)
+            if (
+                previous is not None
+                and self.base_hash is not None
+                and _instruction_text_hash(previous) == self.base_hash
+            ):
+                diff = _context_diff_element(self.id, previous, self.content)
+                if len(diff) < len(full):
+                    return diff
+            return full
+        elif inline_system:
+            content = 'This context has been withdrawn.'
+        else:
+            content = 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
+        return _context_element(self.id, content)
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the replacement in traces only when content capture is enabled."""
+        return [_otel_messages.TextPart(type='text', content=self.render())] if settings.include_content else []
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _instruction_text_hash(text: str) -> str:
+    """The digest an `InstructionDeltaPart.base_hash` records for the text it replaces."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+_CLOSING_FRAMING_TAG = re.compile(r'</(context_diff|context|system)\s*>', re.IGNORECASE)
+
+
+def _neutralize_closing_tags(content: str) -> str:
+    """Escape closing framing tags in a block's text, so the text can't end its own element early."""
+    return _CLOSING_FRAMING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
+
+
+def _id_attribute(instruction_id: InstructionId | None) -> str:
+    """The `id` attribute naming a block, or nothing for a change a newer version wrote that this one can't address."""
+    return f' id="{html.escape(str(instruction_id))}"' if instruction_id is not None else ''
+
+
+def _context_element(instruction_id: InstructionId | None, content: str) -> str:
+    """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces."""
+    return f'<context{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(content)}\n</context>'
+
+
+def _context_diff_element(instruction_id: InstructionId | None, previous: str, content: str) -> str:
+    """Tag a unified diff from a block's previous text to its new text with the block's id."""
+    diff = '\n'.join(
+        difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
+    )
+    return f'<context_diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context_diff>'
+
+
+_SUPERSESSION_SENTENCE = (
+    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+)
+
+
+def _render_append_parts(parts: Sequence[InstructionPart]) -> list[InstructionPart]:  # pyright: ignore[reportUnusedFunction]
+    """Render the prefix's append-mode blocks as tagged `<context>` elements, followed once by how later ones apply.
+
+    Each addressable append-mode part is wrapped in a `<context id>` element. The last of them is followed by
+    one sentence telling the model that a later [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]
+    with the same id replaces it and stays in effect, which models need to keep following an update on later
+    turns, whether it arrives as system content or `<system>`-wrapped in a user turn. Other parts go out as
+    written: agent history never holds an unaddressable append-mode part (it is downgraded to `'rewrite'` with
+    a warning), but a `before_model_request` hook or a direct caller can still supply one.
+
+    History stores only the content, so each model renders its own prefix, and renders it identically on
+    every request.
+    """
+    tagged = [index for index, part in enumerate(parts) if part.on_change == 'append' and part.id is not None]
+    rendered = list(parts)
+    for index in tagged:
+        part = parts[index]
+        content = _context_element(part.id, part.content)
+        if index == tagged[-1]:
+            content = f'{content}\n{_SUPERSESSION_SENTENCE}'
+        rendered[index] = replace(part, content=content)
+    return rendered
+
+
+@dataclass(repr=False, kw_only=True)
 class ToolAvailabilityDeltaPart:
     """Records that the set of tools available to the model changed at this point.
 
@@ -2497,6 +2640,88 @@ class ToolAvailabilityDeltaPart:
         """
         changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class InstructionDigest:
+    """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
+
+    Only what decides whether the block is unchanged: a later request can keep its window's prefix only if
+    every rewrite-mode block is still the same, in the same place.
+    """
+
+    id: SerializedInstructionId = None
+    """The block's [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id], if it has one."""
+
+    dynamic: bool = False
+    """The block's [`InstructionPart.dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which decides its cache placement."""
+
+    content_hash: str
+    """The SHA-256 hex digest of the block's content."""
+
+    part_kind: Literal['instruction-digest'] = 'instruction-digest'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    @classmethod
+    def of(cls, part: InstructionPart) -> InstructionDigest:
+        """The digest of a rewrite-mode `part`."""
+        return cls(id=part.id, dynamic=part.dynamic, content_hash=_instruction_text_hash(part.content))
+
+    def matches(self, part: InstructionPart) -> bool:
+        """Whether `part` is a rewrite-mode block this digest records unchanged."""
+        return part.on_change != 'append' and self == InstructionDigest.of(part)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _baseline_block_kind(value: Any) -> str:
+    """Discriminate an `InstructionBaselinePart` block; an `InstructionPart` may be serialized without `part_kind`."""
+    kind = (
+        cast(dict[str, Any], value).get('part_kind') if isinstance(value, dict) else getattr(value, 'part_kind', None)
+    )
+    return 'instruction-digest' if kind == 'instruction-digest' else 'instruction'
+
+
+@dataclass(repr=False, kw_only=True)
+class InstructionBaselinePart:
+    """The instructions a request was sent with, recorded where a run of `on_change='append'` requests starts.
+
+    A request records this when it opens a window: the first request with an
+    [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change] block, and each request whose
+    prefix has to change anyway (a rewritten block changed, a block's policy changed, compaction). Every
+    request in the window is sent the same prefix, with each append-mode block at its value here, followed in
+    history by the [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s since. An empty
+    `instructions` list ends the window, so earlier changes stop applying.
+
+    It's never sent to a model: it records what the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] were made of, so a later request can
+    tell whether it can keep the prefix and what its append-mode blocks said. Like a system prompt, it's
+    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
+    """
+
+    instructions: list[
+        Annotated[
+            Annotated[InstructionPart, pydantic.Tag('instruction')]
+            | Annotated[InstructionDigest, pydantic.Tag('instruction-digest')],
+            pydantic.Discriminator(_baseline_block_kind),
+        ]
+    ]
+    """The request's instruction parts, in order.
+
+    Append-mode blocks are recorded in full, since their changes are computed against them. Rewrite-mode
+    blocks are recorded as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest], which is enough
+    to tell whether one changed, so a long block that is rewritten on every request isn't stored again each
+    time.
+    """
+
+    part_kind: Literal['instruction-baseline'] = 'instruction-baseline'
+    """Part type identifier, used as a discriminator for deserialization."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Contribute nothing to traces: the instructions it records are reported with the request itself."""
+        return []
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -3259,7 +3484,9 @@ ModelRequestPart = Annotated[
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
     | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]
-    | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')],
+    | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')]
+    | Annotated[InstructionDeltaPart, pydantic.Tag('instruction-delta')]
+    | Annotated[InstructionBaselinePart, pydantic.Tag('instruction-baseline')],
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""
@@ -3570,9 +3797,15 @@ class ModelResponse:
     def cost(self) -> genai_types.PriceCalculation:
         """Calculate the cost of the usage.
 
-        Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices). Raises `ValueError` when the response
+        omitted usage information, since its cost would be incomplete.
         """
         assert self.model_name, 'Model name is required to calculate price'
+        if self.usage.unmeasured_requests:
+            raise ValueError(
+                'Cannot calculate the price of a response that omitted usage information '
+                '(`usage.unmeasured_requests` is non-zero)'
+            )
         return calculate_price_for_usage(
             self.usage,
             model_name=self.model_name,
@@ -4037,12 +4270,35 @@ def _repair_dangling_tool_calls(
     return repaired
 
 
+def _move_parts_from_between_tool_results(request: ModelRequest) -> ModelRequest:
+    """Move the parts sitting between a request's tool results to right after the last of them.
+
+    Content enqueued during parallel tool calls sits right after its own call's result in history, but
+    providers such as Anthropic and OpenAI need the results answering a turn together, ahead of other content.
+    Only that shape changes: parts ahead of the first result or after the last keep their place, and so do
+    `ToolAvailabilityDeltaPart`s, which the model's own preparation renders where they are.
+    """
+    indices = [index for index, part in enumerate(request.parts) if _is_tool_result_part(part)]
+    if not indices:
+        return request
+    first, last = indices[0], indices[-1]
+    between = request.parts[first : last + 1]
+    moved = [
+        part for part in between if not (_is_tool_result_part(part) or isinstance(part, ToolAvailabilityDeltaPart))
+    ]
+    if not moved:
+        return request
+    kept = [part for part in between if _is_tool_result_part(part) or isinstance(part, ToolAvailabilityDeltaPart)]
+    return replace(request, parts=[*request.parts[:first], *kept, *moved, *request.parts[last + 1 :]])
+
+
 def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Normalize the history's shape by merging consecutive same-role messages into one.
 
     Neither adds nor removes content — it only combines adjacent `ModelRequest`s (or adjacent
     synthetic `ModelResponse`s) that providers expect as a single turn, and within a merged request
-    hoists tool results ahead of user-facing parts (where providers require them). Runs last, after
+    hoists tool results ahead of user-facing parts (where providers require them). A request that isn't
+    merged only has the parts between its tool results moved after them. Runs last, after
     the repair passes have settled call/result pairing, so it operates on a valid history and never
     separates a result from the call it answers.
     """
@@ -4086,7 +4342,7 @@ def _merge_consecutive_messages(messages: list[ModelMessage]) -> list[ModelMessa
                 )
                 clean_messages[-1] = merged_message
             else:
-                clean_messages.append(message)
+                clean_messages.append(_move_parts_from_between_tool_results(message))
         elif isinstance(message, ModelResponse):  # pragma: no branch
             if (
                 last_message
@@ -4227,7 +4483,9 @@ def sanitize_messages(
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
-            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s,
+            [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and
+            [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s.
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -4424,7 +4682,7 @@ def _sanitize_request_parts(
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
-        if strip_system_prompts and isinstance(part, SystemPromptPart):
+        if strip_system_prompts and isinstance(part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart)):
             stripped_system_prompt = True
             continue
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
@@ -5186,17 +5444,28 @@ ModelResponseStreamEvent = Annotated[
 class EnqueuedMessagesEvent:
     """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
 
-    Emitted at delivery time, carrying the delivered message objects themselves — the same objects
-    held in the run's message history, exactly as they landed there (with `timestamp` / `run_id` /
+    Emitted at delivery time, carrying the delivered content itself — the same objects held in the
+    run's message history, exactly as they landed there (with `timestamp` / `run_id` /
     `conversation_id` stamped). A history processor that replaces history with new message objects
-    does not affect the event, but in-place mutation of a delivered message will be visible through it.
+    does not affect the event, but in-place mutation of delivered content will be visible through it.
+
+    Content enqueued during a tool call goes into the [`ModelRequest`][pydantic_ai.messages.ModelRequest]
+    carrying that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. Its
+    `messages` then holds a request of its own with the delivered parts, a view of what was delivered rather
+    than a message in history, and `parts` holds those parts as they sit in history. Events are emitted in
+    the order their content lands in history.
     """
 
     enqueue_id: str
-    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced these messages."""
+    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced this content."""
 
     messages: tuple[ModelMessage, ...]
-    """The messages delivered into the run's message history."""
+    """The delivered messages: the ones added to the run's message history, or, for content that went into a
+    tool call's request, a request of its own holding the delivered `parts`."""
+
+    parts: tuple[ModelRequestPart, ...] = ()
+    """The parts added to the request carrying a tool call's return, as they sit in history, or `()` when the
+    content was added as its own `messages`."""
 
     event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
     """Event type identifier, used as a discriminator."""
@@ -5571,7 +5840,11 @@ class RealtimeSessionErrorEvent:
     _: KW_ONLY
 
     type: str | None = None
-    """Provider error category, e.g. `invalid_request_error` or `server_error`."""
+    """Provider error category, e.g. `invalid_request_error` or `server_error`.
+
+    It can also be a category Pydantic AI defines for a condition it detects itself:
+    `'tool_calls_abandoned'` means Eleven Realtime abandoned tool calls whose results hadn't been sent yet, so
+    those results won't reach the model."""
     code: str | None = None
     """Provider error code, if any."""
     recoverable: bool = True

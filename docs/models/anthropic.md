@@ -373,7 +373,7 @@ print(result.output)
 
 When you use `anthropic_cache_instructions` with both static and dynamic [instructions](../agent.md#instructions), Pydantic AI automatically places the cache boundary at the optimal point. Static instructions (from `Agent(instructions=...)`) are sorted before dynamic instructions (from `@agent.instructions` functions or [toolsets](../toolsets.md)), and the cache point is placed after the last static instruction part.
 
-This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary and don't cause cache invalidation.
+This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary, so a change doesn't invalidate the cached static instructions. It does invalidate the cached conversation after them, so for instructions that change mid-conversation, use [`on_change='append'`](../agent.md#appending-instruction-changes), which appends each change to the history instead; [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
 ```python {test="skip"}
 from datetime import date
@@ -602,6 +602,10 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 !!! note "Placement"
     Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
 
+### Refusals on repeated prompts
+
+Claude's `reasoning_extraction` classifier can refuse a conversation that repeats the same user prompt while the model's earlier reasoning is in context, and a refusal is more likely right after an instruction changes, whether the instructions are rewritten or [appended](../agent.md#appending-instruction-changes). Conversations with varied prompts and tool loops were unaffected in testing. The refusal propagates as a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If you hit it, configure a [fallback model](overview.md#fallback-model) or strip thinking from history with [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory].
+
 ### Turn-scoped system messages
 
 A [request-scoped](../message-history.md#request-scoped-system-prompts) `SystemPromptPart` (`scope='request'`) is sent as a [turn-scoped system message](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#turn-scoped-system-messages): a `{'role': 'system'}` entry with `clear_at: 'next_user_message'`, which the API stops rendering once a later user turn exists, including one that only carries tool results. Pydantic AI sends every one of them with every request, current or not, and adds the `mid-conversation-system-clear-at-2026-08-21` beta header for you.
@@ -660,7 +664,7 @@ The output mode is chosen on the run's first request and kept for the rest of th
 
 **Claude Fable 5.1**, **Claude Opus 5.5**, **Claude Sonnet 5.5**, and **Claude Haiku 5.5** bind each thinking block to the conversation prefix that produced it. Anthropic [documents a 400](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting) (`The block is bound to a different conversation`) when replaying history after `system`, `tools`, or earlier `messages` change. Two ordinary Pydantic AI features change the prefix:
 
-- a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, and
+- a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, unless it uses [`on_change='append'`](../agent.md#appending-instruction-changes), and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
 
 Both are the same instability that [costs you a provider's prompt cache](../capabilities/caching.md#what-invalidates-a-cache): a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
