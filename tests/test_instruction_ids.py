@@ -15,14 +15,14 @@ persisted configuration keys on.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ModelRequestContext
-from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._instructions import AgentInstructions, normalize_instructions, normalize_toolset_instruction_parts
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
@@ -325,6 +325,72 @@ async def test_a_wrapper_relays_a_key_a_wrapper_it_wraps_issued_itself():
     agent = Agent(toolsets=[RelayingWrapper(inner, id='outer')])
 
     assert await run_and_capture(agent) == [InstructionPart(content='Inner.', id=toolset_instruction_id('inner'))]
+
+
+async def test_a_named_wrapper_relays_an_unnamed_toolsets_block_without_claiming_it():
+    """A block relayed from a toolset without an `id` stays without one, rather than taking the wrapper's.
+
+    The wrapper didn't write it, so addressing it by the wrapper's key would point at text the wrapper
+    doesn't own, and two such blocks would share one key.
+    """
+    agent = Agent(toolsets=[RelayingWrapper(InstructionsToolset(['First.', 'Second.']), id='wrapper')])
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='First.', dynamic=True),
+        InstructionPart(content='Second.', dynamic=True),
+    ]
+
+
+@dataclass
+class AddingWrapper(WrapperToolset[Any]):
+    """A wrapper that relays what it wraps and adds a block of its own.
+
+    A dataclass field rather than `RelayingWrapper`'s constructor argument holds the id, so the copy
+    `for_run` makes of a wrapper around a `CombinedToolset` keeps it.
+    """
+
+    wrapper_id: str = 'wrapper'
+
+    @property
+    def id(self) -> str | None:
+        return self.wrapper_id
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        relayed = normalize_toolset_instruction_parts(await super().get_instructions(ctx))
+        return [*relayed, InstructionPart(content='Own.', name='own')]
+
+
+async def test_a_named_wrapper_adding_a_block_owns_only_that_block():
+    """Only what the wrapper's own `get_instructions` writes gets its key; what it relays keeps its author's."""
+    wrapped = CombinedToolset([InstructionsToolset('Anonymous.'), InstructionsToolset('Named.', id='leaf')])
+    agent = Agent(toolsets=[AddingWrapper(wrapped)])
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Own.', name='own', id=toolset_instruction_id('wrapper', 'own')),
+        InstructionPart(content='Anonymous.', dynamic=True),
+        InstructionPart(content='Named.', dynamic=True, id=toolset_instruction_id('leaf')),
+    ]
+
+
+class RewritingWrapper(RelayingWrapper):
+    """A wrapper that rewrites the text it wraps before passing it on."""
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        relayed = normalize_toolset_instruction_parts(await super().get_instructions(ctx))
+        return [replace(part, content=part.content.upper()) for part in relayed]
+
+
+async def test_a_named_wrapper_owns_a_block_it_rewrote():
+    """A block the wrapper changed is its own text, so it's addressed by the wrapper's key."""
+    agent = Agent(toolsets=[RewritingWrapper(InstructionsToolset('Anonymous.'), id='wrapper')])
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='ANONYMOUS.', dynamic=True, id=toolset_instruction_id('wrapper'))
+    ]
 
 
 async def test_wrapping_a_toolset_whose_id_cannot_be_a_key_leaves_it_working():
