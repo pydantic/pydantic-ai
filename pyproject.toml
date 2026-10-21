@@ -188,8 +188,9 @@ constraint-dependencies = [
     "soupsieve>=2.9.0",
     "certifi>=2026.10.19",
 ]
-# `gradio` (an examples dependency) caps `pillow<13`, which would hold the lock below the
-# `pillow>=13.0.0` security floor above. Remove once a `gradio` release allows Pillow 13.
+# `gradio` (an examples dependency) caps `pillow<13`, even in its latest release, so without
+# this override the `pillow>=13.0.0` security floor above leaves `uv lock` unsatisfiable.
+# Remove once a `gradio` release allows Pillow 13.
 override-dependencies = ["pillow>=13.0.0"]
 # `browser-use` pins every one of its dependencies exactly (anyio, openai, anthropic, groq, pillow, ...),
 # so resolving `pydantic-ai-harness[browser-use]` here would hold the whole workspace to those versions.
