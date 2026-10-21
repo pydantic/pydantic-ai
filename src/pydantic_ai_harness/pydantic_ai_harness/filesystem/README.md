@@ -168,7 +168,8 @@ is called in the run:
 
 - `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
   files through `read_file` are not reduced again.
-- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own.
+- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own and a relative
+  `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
 
 A `FileSystem` tool can't be called under a new name yet, such as under `PrefixTools`, because
