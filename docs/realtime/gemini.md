@@ -235,9 +235,22 @@ drop cut off an exchange the resumed session no longer has (see
 
 ## Provider-specific quirks
 
-- A text turn sent while a reply is in flight is answered in order on Gemini 2.5. On Gemini 3.1 it
-  interrupts the active reply, emits `RealtimeResponseInterruptedEvent`, and records any partial
-  reply as interrupted before answering the text turn.
+- What happens to text (or a tool result) that reaches the model while it generates a reply depends on the model:
+  - The native-audio models finish the reply, and answer the text in a turn after it.
+  - `gemini-3.1-flash-live-preview`, `gemini-3.8-live`, and Vertex's `gemini-live-2.5-flash` cut the reply off: they
+    emit `RealtimeResponseInterruptedEvent`, the partial reply is recorded as interrupted, and the next turn answers
+    the text. `gemini-3.1-flash-live-preview` also cancels the tool calls the cut-off turn was waiting on, and makes
+    them again.
+
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] and
+  [`RealtimeTurnCompleteEvent`](events.md#the-turn-boundary) wait for the reply to the text. Where the text went out
+  just as a reply began, before the session saw it start, telling which reply answers the text takes the
+  `google_input_cuts_off_reply` profile flag: the cut-off reply then answers only what started it. It is on for
+  `gemini-3.1-flash-live-preview` and `gemini-3.8-live`, which report where in the audio the user started speaking,
+  telling a reply the user spoke over apart from one text cut off. It is off for Vertex's `gemini-live-2.5-flash`,
+  which reports no speech, and for the native-audio models, so there a wait for such text can end with the reply
+  already under way. For a model not covered (`gemini-3.8-live-extended-thinking`, say) that cuts its reply off
+  this way and reports speech, turn the flag on with `profile=`.
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).

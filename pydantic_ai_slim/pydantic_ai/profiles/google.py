@@ -390,6 +390,12 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # a model sending only one boundary would never finish an empty answer. `GoogleRealtimeModel.profile`
     # keeps it on for Vertex AI only, the one surface it was verified on.
     profile['google_closes_tool_call_turn_separately'] = is_half_cascade
+    # Verified live 2026-10-19/20: text sent while `gemini-3.1-flash-live-preview` or `gemini-3.8-live` generates a
+    # reply cuts it off (`interrupted`, `turn_complete`), and the next turn answers it; speech that cuts it off is
+    # reported first (`voice_activity`), which tells the two apart. Vertex's `gemini-live-2.5-flash` cuts a reply off
+    # for text too, but reports no `voice_activity`, so a speech barge-in can't be told apart: it is left off, as is
+    # `gemini-2.5-flash-native-audio-preview-09-2025`, which finishes the reply and answers the text after it.
+    profile['google_input_cuts_off_reply'] = model_name.startswith('gemini-3.1-flash-live') or is_3_8_live
     # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the
     # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
     # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
@@ -492,6 +498,13 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         # `$defs`/`$ref` and `anyOf [X, null]` have no OpenAPI-subset equivalent, so definitions are
         # inlined and a nullable union becomes the plain type plus `nullable: true`.
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
+        if self.defs.get(key) is False:
+            raise UserError(
+                "Gemini's OpenAPI schema cannot represent a boolean `false` definition, which rejects all inputs."
+            )
+        return super()._walk_def(key, siblings)
 
     def _handle_object(self, schema: JsonSchema) -> JsonSchema:
         # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither

@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
+    SpeechPart,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -121,10 +122,16 @@ class FakeWebSocket:
         self._incoming = [frame if isinstance(frame, str) else json.dumps(frame) for frame in incoming]
         self.sent: list[str] = []
         self.closed = False
+        self.drained = asyncio.Event()
+        """Set once a connection held open asks for a frame past the scripted ones.
+
+        The connection only asks for its next frame once the session has taken in the previous one, so by then
+        every scripted frame has been applied."""
 
     async def recv(self) -> str:
         if not self._incoming:
             if self.hold_open:
+                self.drained.set()
                 await asyncio.Event().wait()
             raise websockets.exceptions.ConnectionClosedOK(Close(1000, ''), None)
         return self._incoming.pop(0)
@@ -1934,7 +1941,7 @@ async def test_a_reply_ends_with_its_last_audio_not_its_text() -> None:
     )
     assert events == [
         AudioDelta(data=b'\x00\x01'),
-        OutputTranscript(text='Hello!', is_final=True),
+        OutputTranscript(text='Hello!', is_final=True, item_id='resp_1'),
         AudioDelta(data=b'\x00\x01'),
         ResponseDone(provider_response_id='resp_1', provider_details=_CONVERSATION),
         _VOICED_USAGE,
@@ -2166,11 +2173,11 @@ async def test_user_transcript_maps_to_final_input_transcript() -> None:
 
 
 async def test_response_complete_after_the_boundary_is_dropped() -> None:
-    # `agent_response_complete` (text mode only, gated behind `client_events`) trails the
-    # `agent_response` that already closed the turn, so it must not emit a second boundary.
+    # `agent_response_complete` (gated behind `client_events`) trails the `agent_response` that already closed the
+    # turn, so it must not emit a second boundary.
     events, _ = await _events(
         [
-            {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!'}},
+            {'type': 'agent_response', 'agent_response_event': {'agent_response': 'Hello!', 'event_id': 2}},
             {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
@@ -2183,10 +2190,32 @@ async def test_response_complete_closes_an_audio_only_turn() -> None:
     events, _ = await _events(
         [
             {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 1}},
-            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 1}},
         ]
     )
     assert events == [AudioDelta(data=b'\x00\x01'), ResponseDone(provider_details=_CONVERSATION)]
+
+
+async def test_response_complete_of_an_earlier_turn_leaves_the_reply_under_way_alone() -> None:
+    # Verified live: in audio mode it arrives once the turn's audio has played out, long after that turn's reply
+    # ended, so a later turn's reply can be under way by then.
+    audio = base64.b64encode(b'\x00\x01').decode()
+    events, _ = await _events(
+        [
+            {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 2}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 1}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': 'Hi!', 'event_id': 2, 'response_id': 'resp_2'},
+            },
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
+        ]
+    )
+    assert events == [
+        AudioDelta(data=b'\x00\x01'),
+        OutputTranscript(text='Hi!', is_final=True, item_id='resp_2'),
+        ResponseDone(provider_response_id='resp_2', provider_details=_CONVERSATION),
+    ]
 
 
 async def test_a_boundary_with_nothing_streamed_is_dropped() -> None:
@@ -2344,12 +2373,14 @@ async def test_a_correction_of_an_earlier_message_leaves_the_reply_being_voiced_
     )
     assert events == [
         AudioDelta(data=b'\x00\x01'),
-        OutputTranscript(text='I am now going to check the weather in Berlin for you.', is_final=True),
+        OutputTranscript(
+            text='I am now going to check the weather in Berlin for you.', is_final=True, item_id='resp_before_call'
+        ),
         ResponseDone(provider_response_id='resp_before_call', provider_details=_CONVERSATION),
         ToolCall(tool_call_id='call_1', tool_name='get_weather', args='{"city":"Berlin"}', response_usage_follows=True),
         SessionUsage(usage=RequestUsage(), response_scoped=True),
         AudioDelta(data=b'\x00\x01'),
-        OutputTranscript(text=answer, is_final=True),
+        OutputTranscript(text=answer, is_final=True, item_id='resp_answer'),
         RealtimeResponseInterruptedEvent(),
         ResponseDone(
             interrupted=True,
@@ -2386,10 +2417,80 @@ async def test_a_correction_of_an_earlier_message_ends_the_streamed_reply_withou
         ]
     )
     assert events[-3:] == [
-        OutputTranscript(text='The weather in Berlin is', is_final=False),
+        OutputTranscript(text='The weather in Berlin is', is_final=False, item_id='resp_answer'),
         RealtimeResponseInterruptedEvent(),
         ResponseDone(interrupted=True, provider_details=_CONVERSATION),
     ]
+
+
+async def test_corrections_after_the_replies_ended_revise_what_history_recorded() -> None:
+    """A barge-in during playback of a turn whose replies have all ended, as recorded live.
+
+    Synthesis outruns playback, so both messages of the turn (what the agent said before calling the tool, and its
+    answer to the result) have ended with their last audio by the time the user cuts in. ElevenLabs' corrections say
+    what was heard of each: history swaps in copies, in the same positions, of the cut-off message cut down to what
+    was heard and of the answer, never heard, with no transcript, each keeping what the agent said. A snapshot of
+    history taken before is left as it was.
+    """
+    answer = 'It is sunny and 21 degrees in Berlin.'
+    ws = FakeWebSocket(
+        [
+            HANDSHAKE_FRAME,
+            *_SPOKEN_BEFORE_THE_CALL,
+            {'type': 'audio', 'audio_event': {'audio_base_64': base64.b64encode(b'\x00\x01').decode(), 'event_id': 10}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': answer, 'event_id': 10, 'response_id': 'resp_answer'},
+            },
+            _VOICED,
+            {'type': 'interruption', 'interruption_event': {'event_id': 47}},
+            _CUT_BEFORE_THE_CALL,
+            _correction('resp_answer', answer, ''),
+        ]
+    )
+    ws.hold_open = True
+    model = _model(RestRecorder(agent_json(tools=[WEATHER_TOOL_REMOTE])))
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return f'It is sunny in {city}.'
+
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='off')
+
+    before: list[ModelMessage] = []
+    with patched_connect(ws):
+        async with agent.realtime(model, model_settings=settings).session() as session:
+            with anyio.fail_after(10):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeResponseInterruptedEvent):
+                        before = session.all_messages()
+                        break
+                # The corrections make no event of their own: they only revise history.
+                await ws.drained.wait()
+
+    def spoken(messages: list[ModelMessage]) -> list[tuple[str | None, dict[str, Any] | None, str]]:
+        return [
+            (part.transcript, part.provider_details, message.state)
+            for message in messages
+            if isinstance(message, ModelResponse)
+            for part in message.parts
+            if isinstance(part, SpeechPart)
+        ]
+
+    assert spoken(before) == [
+        ('I am now going to check the weather in Berlin for you.', None, 'complete'),
+        (answer, None, 'complete'),
+    ]
+    assert spoken(session.all_messages()) == [
+        (
+            'I am now going to...',
+            {'original_transcript': 'I am now going to check the weather in Berlin for you.'},
+            'interrupted',
+        ),
+        (None, {'original_transcript': answer}, 'interrupted'),
+    ]
+    assert [type(message) for message in session.all_messages()] == [type(message) for message in before]
 
 
 async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None:
@@ -2595,7 +2696,7 @@ async def test_malformed_event_payload_is_recoverable_and_leaves_turn_state_alon
             {'type': 'audio', 'audio_event': {}},
             {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 1}},
             {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 2}},
-            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 3}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
     error, *rest = events
@@ -2613,7 +2714,7 @@ async def test_corrupted_audio_base64_is_a_recoverable_error() -> None:
         [
             {'type': 'audio', 'audio_event': {'audio_base_64': '!!!!', 'event_id': 1}},
             {'type': 'audio', 'audio_event': {'audio_base_64': audio, 'event_id': 2}},
-            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 3}},
+            {'type': 'agent_response_complete', 'agent_response_complete_event': {'event_id': 2}},
         ]
     )
     error, *rest = events
@@ -2706,7 +2807,7 @@ async def test_a_text_turn_is_answered_by_the_response_it_starts() -> None:
                 ),
                 AudioDelta(data=b'\x00\x01'),
             ],
-            [OutputTranscript(text='Hello!', is_final=True)],
+            [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')],
             [
                 ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
                 ResponseEnded(
@@ -2740,7 +2841,7 @@ async def test_a_barge_in_leaves_the_truncated_reply_with_the_cut_off_response()
             ],
             [RealtimeResponseInterruptedEvent()],
             [
-                OutputTranscript(text='Once...', is_final=True),
+                OutputTranscript(text='Once...', is_final=True, item_id='resp_1'),
                 ResponseDone(
                     interrupted=True, provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}
                 ),
@@ -2792,7 +2893,7 @@ async def test_a_barge_in_the_users_words_overtake_still_ends_the_cut_off_respon
                     status='cancelled',
                     provider_details={'conversation_id': 'conv_1'},
                 ),
-                StaleEvent(event=OutputTranscript(text='Once...', is_final=True)),
+                StaleEvent(event=OutputTranscript(text='Once...', is_final=True, item_id='resp_1')),
             ],
         ]
     )
