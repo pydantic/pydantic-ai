@@ -1887,10 +1887,11 @@ async def test_retry_attempts_count_on_the_budget_each_retry_is_charged_to():
 
     @agent.output_validator
     async def reject_bad(ctx: RunContext[object], output: Answer | str) -> Answer | str:
-        if isinstance(output, str):
-            validator_retries.append(ctx.retry)
-            if output == 'bad':
-                raise ModelRetry('the answer has to be a number')
+        # The output tool call never validates, so only text output reaches the validator.
+        assert isinstance(output, str)
+        validator_retries.append(ctx.retry)
+        if output == 'bad':
+            raise ModelRetry('the answer has to be a number')
         return output
 
     result = await agent.run('how many?')
