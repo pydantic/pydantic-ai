@@ -8,11 +8,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
-
 from pydantic_ai import Agent, RunContext, Tool, ToolKind
 from pydantic_ai.capabilities import PrefixTools, Toolset
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolKindLike
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition, ToolPrepareFunc
@@ -179,14 +176,10 @@ def test_only_a_tool_that_stays_supersedes():
     assert _offered_tools(agent) == [['read_file', 'read_index']]
 
 
-def test_undefined_kind_raises():
-    agent = Agent(
-        tools=[
-            Tool(read_notes, prepare=_with(unless_tool_kind='test_unless_tool_kind.undefined')),
-        ]
-    )
-    with pytest.raises(UserError, match=r"declares `unless_tool_kind='test_unless_tool_kind\.undefined'`"):
-        _offered_tools(agent)
+def test_an_undefined_kind_is_nothing_to_step_aside_for():
+    # Only ids are compared, so a capability can name another package's kind without importing it.
+    agent = Agent(tools=[Tool(read_notes, prepare=_with(unless_tool_kind='another_package.file_read'))])
+    assert _offered_tools(agent) == [['read_notes']]
 
 
 def test_tool_name_for_kind_names_the_prefixed_tool():

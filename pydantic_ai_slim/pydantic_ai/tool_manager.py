@@ -73,11 +73,6 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
     """
     for tool in tools.values():
         tool_def = tool.tool_def
-        if (unless_kind_id := tool_def.unless_tool_kind) is not None and unless_kind_id not in _TOOL_KINDS:
-            raise UserError(
-                f'Tool {tool_def.name!r} declares `unless_tool_kind={unless_kind_id!r}`, which is not a defined '
-                '`ToolKind`. Import the module that defines the kind before running the agent.'
-            )
         kind_id = tool_def.tool_kind
         if kind_id is None:
             continue
