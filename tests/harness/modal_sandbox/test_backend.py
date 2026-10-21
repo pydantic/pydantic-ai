@@ -768,7 +768,7 @@ class TestCreate:
                     await anyio.sleep(0)
         assert [record.getMessage() for record in caplog.records] == [
             'Created Modal sandbox sb-owned after every caller waiting for it was cancelled; it keeps running '
-            'until its `sandbox_timeout` ends it unless you terminate it with `ModalSandbox().destroy(...)`'
+            "until its `sandbox_timeout` ends it unless you terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`"
         ]
 
     @pytest.mark.parametrize('operation', ['run', 'write_bytes'])
@@ -1028,6 +1028,17 @@ class TestFilesystem:
             await backend.read_bytes(str(tmp_path / 'missing'))
         with pytest.raises(IsADirectoryError):
             await backend.read_bytes(str(tmp_path))
+
+    @pytest.mark.parametrize('code', [-1, 2, 137])
+    async def test_a_read_whose_file_check_fails_is_refused(self, fake_modal: FakeModal, code: int) -> None:
+        # Only a clean pass reaches the unbounded SDK read; a check Modal killed at its deadline must not.
+        backend = await started()
+        await backend.write_bytes('/tmp/a.txt', b'body')
+        fake_modal.kind_probe_exit = code
+        with pytest.raises(
+            WorkspaceError, match=f"Could not check what '/tmp/a.txt' is in the Modal sandbox: the check exited {code}"
+        ):
+            await backend.read_bytes('/tmp/a.txt')
 
     async def test_symlinks_follow_relative_chained_dangling_and_looping_targets(
         self, fake_modal: FakeModal, tmp_path: Path
