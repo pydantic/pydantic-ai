@@ -33,7 +33,8 @@ from pydantic_ai import (
     NativeToolCallPart,
     NativeToolReturnPart,
     PromptedOutput,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -2440,13 +2441,7 @@ async def test_output_validator_retry_gets_the_same_answer(allow_model_requests:
             'text': 'Delete everything.',
             'done': [
                 {'tool_call': {'name': 'final_result', 'args': {'response': True}}},
-                {
-                    'retry': """\
-Be sure.
-
-Fix the errors and try again.\
-"""
-                },
+                {'tool_return': {'name': 'final_result', 'content': '{"error":"Be sure."}'}},
             ],
         }
     )
@@ -2473,7 +2468,7 @@ async def test_history_from_another_model(allow_model_requests: None):
         ),
         ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_2')]),
         ModelResponse(parts=[TextPart('Rain.'), CompactionPart(content=None)]),
-        ModelRequest(parts=[RetryPromptPart('Say more.')]),
+        ModelRequest(parts=[RetryFeedbackPart('Say more.', retry=RetryInfo(cause='model_retry'))]),
         ModelResponse(parts=[TextPart('It is raining.'), CompactionPart(content='Weather was discussed.')]),
     ]
     agent = Agent(mock_model(record), output_type=bool, instructions='Was the user told the weather?')
@@ -2492,10 +2487,10 @@ async def test_history_from_another_model(allow_model_requests: None):
                 {'assistant': 'Rain.'},
                 {
                     'retry': """\
-Validation feedback:
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
 Say more.
-
-Fix the errors and try again.\
+</retry_feedback>\
 """
                 },
                 {'assistant': 'It is raining.'},

@@ -57,7 +57,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -1540,7 +1540,11 @@ class SessionCore:
         pruned = self._pruned_calls
 
         def is_pruned(part: ModelRequestPart | ModelResponsePart) -> bool:
-            return isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) and part.tool_call_id in pruned
+            # TODO(v3): remove `RetryPromptPart`; a history a caller passed can still hold one
+            return (
+                isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart))  # pyright: ignore[reportDeprecated]
+                and part.tool_call_id in pruned
+            )
 
         if not any(is_pruned(part) for part in message.parts):
             return message

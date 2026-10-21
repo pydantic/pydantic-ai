@@ -1377,6 +1377,12 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
         # session span renders it as an object.
         'model_request_parameters': {'type': 'object'},
     }
+    # Each response's `chat` span reports the session's instructions, like a classic run's.
+    chat = next(s for s in exporter.get_finished_spans() if s.name.startswith('chat'))
+    assert chat.attributes is not None
+    assert json.loads(str(chat.attributes['gen_ai.system_instructions'])) == [
+        {'type': 'text', 'content': 'Keep answers concise.'}
+    ]
 
 
 async def test_session_span_marks_seeded_history_boundary() -> None:
