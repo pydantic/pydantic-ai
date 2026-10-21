@@ -176,7 +176,7 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Whether this model returns citations for documents with citations enabled.
 
     Other models reject a request that enables citations (`"This model doesn't support citations."`), so
-    [`include_citations`][pydantic_ai.settings.ModelSettings.include_citations] is ignored for them. Verified against
+    [`citations`][pydantic_ai.settings.ModelSettings.citations] is ignored for them. Verified against
     Bedrock `us-east-1` on 2026-10-20: Claude models return citations; Amazon Nova, Meta Llama, Mistral Pixtral and
     DeepSeek reject the request.
 
