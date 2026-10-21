@@ -22,6 +22,7 @@ from typing_extensions import TypeAliasType
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import context_window_fraction
 from .._tool_execution import (
@@ -78,7 +79,6 @@ from ..messages import (
 )
 from ..models import (
     ModelRequestParameters,
-    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
@@ -506,7 +506,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
             if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                 texts.append(part.content)
             elif isinstance(part, SystemPromptPart):
-                texts.append(_wrap_in_system_tags(part.content))
+                texts.append(wrap(SYSTEM_TAG, part.content))
             else:
                 raise error
     if not texts:
