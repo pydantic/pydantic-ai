@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
@@ -107,6 +108,7 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
 )
 from pydantic_ai_harness.compaction._summary import (
     SUMMARY_METADATA_KEY,
+    SUMMARY_TIME_METADATA_KEY,
     is_summary_part,
     summary_request,
     without_summaries,
@@ -224,10 +226,8 @@ def _summary_text(messages: Sequence[ModelMessage]) -> str:
 
 
 def _ours(summary: str) -> CompactionPart:
-    """The `CompactionPart` `SummarizingCompaction` writes for *summary*."""
-    [part] = summary_request(summary).parts
-    assert isinstance(part, CompactionPart)
-    return part
+    """The `CompactionPart` `SummarizingCompaction` writes for *summary*, written at any time."""
+    return CompactionPart(content=summary, metadata={SUMMARY_METADATA_KEY: True, SUMMARY_TIME_METADATA_KEY: IsStr()})
 
 
 def _anthropic_blocks(messages: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
