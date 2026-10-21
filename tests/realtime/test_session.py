@@ -8467,10 +8467,11 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -8482,6 +8483,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         execution_prerequisites=(),
         completion=completion,
         response_usage_follows=True,
+        response_continues=False,
         run_step=0,
         reserved_budget=True,
         order_index=0,
@@ -8523,10 +8525,11 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -8539,6 +8542,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
             execution_prerequisites=(),
             completion=asyncio.Event(),
             response_usage_follows=True,
+            response_continues=False,
             run_step=0,
             reserved_budget=True,
             order_index=0,

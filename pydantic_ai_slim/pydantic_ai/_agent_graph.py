@@ -2940,6 +2940,10 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         # holds. Copy it so selectors can't mutate graph state through the context.
         messages=list(ctx.state.message_history),
         usage=ctx.state.usage,
+        usage_limits=ctx.deps.usage_limits,
+        deadline=ctx.deps.deadline,
+        run_id=ctx.state.run_id,
+        conversation_id=ctx.state.conversation_id,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
     await ctx.deps.enter_model(model)

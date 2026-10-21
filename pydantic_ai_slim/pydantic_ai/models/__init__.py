@@ -137,7 +137,7 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
-    from ..usage import RunUsage
+    from ..usage import RunUsage, UsageLimits
 else:
     # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
     # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
@@ -536,6 +536,39 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
 
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
+
+    usage_limits: UsageLimits | None = None
+    """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run, as
+    [`RunContext.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] holds them.
+
+    During a run this is always set: if no limits were passed, the run enforces the default
+    [`UsageLimits()`][pydantic_ai.usage.UsageLimits]. It is only `None` when a model is selected outside a
+    run, as by [`system_prompt_parts()`][pydantic_ai.agent.AbstractAgent.system_prompt_parts]. Treat it as
+    read-only: it is the live object the run enforces against.
+    """
+
+    deadline: datetime | None = None
+    """The time (timezone-aware, in UTC) by which this run must finish, or `None` if it has no deadline,
+    as [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] holds it.
+
+    Set from `timeout=` on the agent run methods, or inherited from an enclosing run. The run's clock
+    starts before its first model is selected, so the time a selector takes counts toward it.
+    """
+
+    run_id: str | None = None
+    """Unique identifier for the agent run, as [`RunContext.run_id`][pydantic_ai.tools.RunContext.run_id] holds it.
+
+    The `run_id` argument to `Agent.run` (etc.), or a fresh UUID7. Inside a durable workflow or flow,
+    the default is derived from the workflow or flow run instead, so it stays the same when the engine
+    re-executes the run. `None` when a model is selected outside a run.
+    """
+
+    conversation_id: str | None = None
+    """Unique identifier for the conversation this run belongs to, as
+    [`RunContext.conversation_id`][pydantic_ai.tools.RunContext.conversation_id] holds it.
+
+    `None` when a model is selected outside a run.
+    """
 
 
 class Model(AbstractModel, Generic[InterfaceClient]):

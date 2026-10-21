@@ -461,14 +461,23 @@ class _AzureContentFilterResult(BaseModel):
 
 
 class _AzureInnerError(BaseModel):
-    code: str
-    content_filter_result: _AzureContentFilterResult
+    code: str | None = None
+    content_filter_result: _AzureContentFilterResult | None = None
+
+
+class _AzureContentFilter(BaseModel):
+    """An entry of the top-level `content_filters` list the Responses API sends for a blocked prompt."""
+
+    blocked: bool | None = None
+    source_type: str | None = None
+    content_filter_results: _AzureContentFilterResult | None = None
 
 
 class _AzureError(BaseModel):
     code: str
-    message: str
+    message: str | None = None
     innererror: _AzureInnerError | None = None
+    content_filters: list[_AzureContentFilter] | None = None
 
 
 def _resolve_openai_image_generation_size(
@@ -540,10 +549,14 @@ def _check_azure_content_filter(
             if error_data.code == 'content_filter':
                 provider_details: dict[str, Any] = {'finish_reason': 'content_filter'}
 
-                if error_data.innererror:
+                if error_data.innererror and error_data.innererror.content_filter_result:
                     provider_details['content_filter_result'] = error_data.innererror.content_filter_result.model_dump(
                         exclude_none=True
                     )
+                if error_data.content_filters:
+                    provider_details['content_filters'] = [
+                        content_filter.model_dump(exclude_none=True) for content_filter in error_data.content_filters
+                    ]
 
                 return ModelResponse(
                     parts=[],  # Empty parts to trigger content filter error in agent graph

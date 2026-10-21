@@ -1584,6 +1584,13 @@ class GoogleRealtimeConnection(RealtimeConnection):
         )
 
     @property
+    def _talks_through_tool_calls(self) -> bool:
+        # A model whose asynchronous calls' results cut into what it's saying (`scheduling: INTERRUPT`) keeps
+        # talking in the turn that made them while they run (recorded on the native-audio models). Extended
+        # thinking, which takes no scheduling, ends what it says before the call and answers after the result.
+        return self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
+
+    @property
     def _answers_tool_calls_per_response(self) -> bool:
         # A blocking tool-call frame is answered once, when every call has its result. A non-blocking
         # call's result cuts into the speech on its own, so it may get an answer of its own.
@@ -2032,13 +2039,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 self._turn_open = True
                 # Every call in the frame belongs to one model response, which Gemini answers once all of
                 # them have results. `response_usage_follows` keeps them together until the frame's usage
-                # below closes the response.
+                # below closes the response, unless the model talks on in it while they run.
                 events.append(
                     ToolCall(
                         tool_call_id=call_id,
                         tool_name=name,
                         args=to_json(call.args or {}).decode(),
-                        response_usage_follows=True,
+                        response_usage_follows=not self._talks_through_tool_calls,
+                        response_continues=self._talks_through_tool_calls,
                     )
                 )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
@@ -2063,7 +2071,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     )
                 )
             )
-        elif message.tool_call is not None and message.tool_call.function_calls:
+        elif message.tool_call is not None and message.tool_call.function_calls and not self._talks_through_tool_calls:
             # A tool-call frame carries no usage of its own (the turn's usage comes with a later
             # `turn_complete`), but the calls above were promised some: an empty report closes their
             # response now, since Gemini answers only once it has their results.
