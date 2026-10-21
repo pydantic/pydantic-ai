@@ -1055,7 +1055,7 @@ class TestInjection:
         assert len(captured[0]) == 2
         assert '- version two' in captured[0][1]
         history = second.all_messages()
-        assert _memory_request_indexes(history) == [1, len(first.all_messages()) + 1]
+        assert _memory_request_indexes(history) == [0, len(first.all_messages())]
         assert 'new run' in _user_text(history[len(first.all_messages()) : len(first.all_messages()) + 1])
 
         captured.clear()
