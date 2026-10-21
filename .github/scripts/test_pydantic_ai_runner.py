@@ -2943,7 +2943,7 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
         pytest.param(True, 3, id='cut-off'),
     ],
 )
-def test_num_turns_counts_every_model_request_on_every_outcome(
+def test_num_turns_counts_subagent_requests_whether_finished_or_cut_off(
     cut_off: bool, num_turns: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     # A 6-minute run budget, so the run starts outside the parent's time reserve with `Task` offered.
