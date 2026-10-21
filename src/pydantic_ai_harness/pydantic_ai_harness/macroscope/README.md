@@ -67,8 +67,8 @@ CLI self-updates on use, so a fresh install satisfies this.
 
 The model cannot fix these setup problems, so the tool raises `UserError` and the
 run stops rather than spending tool retries on them. A missing binary reports the
-install command, or names the path when `command` is one, a binary that cannot be
-launched reports the OS error, and a review that never starts (usually because you
+install command (or names the path, when `command` is a path), a binary that cannot
+be launched reports the OS error, and a review that never starts (usually because you
 are not signed in) tells you to run `macroscope` to finish setup, or to fix the
 configured `base` if the CLI reports an unknown ref. The exception is a review that
 fails to start with a `base` the model passed: that is reported to the model as a
