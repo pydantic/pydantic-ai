@@ -26,8 +26,10 @@ are inverses for payloads whose byte length is >= threshold. Payloads below
 the threshold pass through unchanged.
 
 The tree has to be JSON-shaped: a message object or a `dump_python()` tree
-(which carries `bytes` and `datetime` values) raises `TypeError`, because
-nothing in it would match the shapes above.
+(which carries `bytes` and `datetime` values) raises `TypeError`. A message
+object matches none of the shapes above, and the binary payloads of a
+`dump_python()` tree are `bytes`, not base64, so they would silently stay
+inline.
 
 A dict the walker does not externalize but which carries a reserved key
 (`_EXTERNAL_MARKER` or `_LITERAL_KEY`) is written wrapped as
