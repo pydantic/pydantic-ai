@@ -368,6 +368,10 @@ async def test_bedrock_sends_the_summary_in_user_voice(allow_model_requests: Non
             sent.append(kwargs)
             raise _Sent
 
+        def converse_stream(self, **kwargs: Any) -> None:
+            sent.append(kwargs)
+            raise _Sent
+
     model = BedrockConverseModel(
         'us.anthropic.claude-sonnet-5-5-v1:0', provider=BedrockProvider(bedrock_client=cast(Any, Client()))
     )
