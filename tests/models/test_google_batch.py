@@ -11,6 +11,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 
@@ -25,7 +26,8 @@ from pydantic_ai.settings import ModelSettings
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import BatchJob, BatchJobDestination, File, JobError, JobState
+    from google.genai import Client
+    from google.genai.types import BatchJob, BatchJobDestination, File, HttpOptions, JobError, JobState
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -127,6 +129,41 @@ async def test_gemini_batch_create_validates_requests(allow_model_requests: None
         await other_model.batch_create([request])
     with pytest.raises(UserError, match='does not match the batch request group'):
         await other_key.batch_create([request])
+
+
+async def test_gemini_batch_group_is_the_credential_the_client_sends(allow_model_requests: None) -> None:
+    """A credential set through header overrides, rather than the client's API key, keeps clients' requests apart."""
+
+    def model(api_key: str = 'placeholder', **headers: str) -> GoogleModel:
+        client = Client(api_key=api_key, http_options=HttpOptions(headers=headers))
+        return GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(client=client))
+
+    async def group(model: GoogleModel) -> str:
+        return (await model.batch_encode(_request())).group
+
+    tenant = model(**{'x-goog-api-key': 'tenant-key'})
+    groups = [
+        await group(model()),
+        await group(tenant),
+        await group(model(**{'X-Goog-Api-Key': 'other-tenant-key'})),
+        await group(model(Authorization='Bearer token')),
+    ]
+    assert len(set(groups)) == len(groups)
+    # The HTTP client's own credential headers count too, unless the request's replace them.
+    http_client = httpx2.AsyncClient(headers={'Authorization': 'Bearer token'})
+    assert (
+        await group(
+            GoogleModel(
+                'gemini-2.5-flash-lite', provider=GoogleProvider(api_key='placeholder', http_client=http_client)
+            )
+        )
+        == groups[3]
+    )
+    # Overriding the API key header with the API key is the same credential.
+    assert await group(model(api_key='tenant-key')) == groups[1]
+    assert 'tenant-key' not in groups[1]
+    with pytest.raises(UserError, match='does not match the batch request group'):
+        await model().batch_create([await tenant.batch_encode(_request())])
 
 
 async def test_gemini_batch_handles_check_their_group_and_status(allow_model_requests: None) -> None:

@@ -247,12 +247,24 @@ def _to_batch(
     )
 
 
+_CREDENTIAL_HEADERS = ('x-goog-api-key', 'authorization')
+"""The headers a Gemini API request authenticates with; the SDK adds and changes its other headers as it goes."""
+
+
 def _batch_group(model: GoogleModel) -> str:
-    # The Gemini API authenticates with the API key alone; the SDK adds and changes its own headers as it goes.
-    api_key = _batch_client(model)._api_client.api_key or ''  # pyright: ignore[reportPrivateUsage]
+    api_client = _batch_client(model)._api_client  # pyright: ignore[reportPrivateUsage]
+    # The SDK sends the API key as a header, which `http_options.headers` can override, and which joins the HTTP
+    # client's own headers, so the credential is what those headers end up sending rather than the client's `api_key`.
+    client_headers = api_client._async_httpx_client.headers  # pyright: ignore[reportPrivateUsage]
+    request_headers = (api_client._http_options.headers or {}).items()  # pyright: ignore[reportPrivateUsage]
+    credential: list[list[str]] = []
+    for name in _CREDENTIAL_HEADERS:
+        # A request's headers replace the client's of the same name, and differently cased ones are each sent.
+        sent = sorted(value for key, value in request_headers if key.lower() == name)
+        credential.append(sent or client_headers.get_list(name))
     group: _Group = {
         'endpoint': hashlib.sha256(model.base_url.encode()).hexdigest(),
-        'credential': hashlib.sha256(api_key.encode()).hexdigest(),
+        'credential': hashlib.sha256(json.dumps(credential).encode()).hexdigest(),
         'model': model.model_name,
     }
     return json.dumps(group, sort_keys=True)
