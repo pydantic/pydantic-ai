@@ -32,6 +32,7 @@ def per_run_connection(
 ) -> DynamicToolset[AgentDepsT]:
     """Call `auth` at the start of each run and `connect` with the token it returns; `None` or `''` means no tools.
 
+    `auth` is bound when the toolset is built, as a string `auth` is; per-run state comes from its `ctx`.
     Registered once under a fixed `id`, as durable execution requires. `expects` names the token in the error raised
     when `auth` returns `'oauth'`.
     """
