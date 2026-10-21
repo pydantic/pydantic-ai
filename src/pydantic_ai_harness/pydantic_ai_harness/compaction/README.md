@@ -651,8 +651,11 @@ newest tail message still survives.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
 text items of a multi-part prompt; images, audio, and cache points pass through untouched.
-Harness-added content on the user channel, such as a background tool's result, isn't a user turn and is
-never retained, including in a turn an earlier compaction kept. This supersedes `preserve_first_user_message` (which keeps only the first).
+Harness-added content on the user channel, such as a background tool's result, isn't a user turn: it is
+left out of what `keep_user_messages` and `preserve_first_user_message` carry over from the summarized
+prefix (including from a turn an earlier compaction kept), and summarized as data rather than as the
+user's intent. The recent suffix compaction leaves unsummarized is kept as is, harness content included.
+This supersedes `preserve_first_user_message` (which keeps only the first).
 
 ```python
 SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)
