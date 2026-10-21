@@ -4505,12 +4505,12 @@ class TestDynamicCatalog:
     @pytest.mark.parametrize(
         ('tool_search', 'selector'),
         [
-            pytest.param(ToolSearch[None](strategy='keywords'), ['add', 'forecast'], id='other-deferred-tool-native'),
-            pytest.param(ToolSearch[None](strategy='bm25'), 'all', id='no-local-search'),
+            pytest.param(ToolSearch[object](strategy='keywords'), ['add', 'forecast'], id='other-deferred-tool-native'),
+            pytest.param(ToolSearch[object](strategy='bm25'), 'all', id='no-local-search'),
         ],
     )
     async def test_deferred_tool_stays_declared_when_only_native_search_can_find_it(
-        self, tool_search: ToolSearch[None], selector: Any
+        self, tool_search: ToolSearch[object], selector: Any
     ) -> None:
         """A deferred tool is declared for the native search when the local `search_tools` can't find it.
 
@@ -4523,14 +4523,14 @@ class TestDynamicCatalog:
             declared.append([(t.name, t.defer_loading) for t in info.model_request_parameters.function_tools])
             return ModelResponse(parts=[TextPart('done')])
 
-        agent: Agent[None, str] = Agent(
+        agent: Agent[object, str] = Agent(
             FunctionModel(model_fn),
             tools=[
                 Tool(add),
                 Tool(_forecast, name='forecast', defer_loading=True),
                 Tool(_forecast, name='native_forecast', defer_loading=True),
             ],
-            capabilities=[tool_search, CodeMode(tools=selector, dynamic_catalog=True)],
+            capabilities=[tool_search, CodeMode[object](tools=selector, dynamic_catalog=True)],
         )
         await agent.run('Weather in Paris?')
 
@@ -4545,10 +4545,10 @@ class TestDynamicCatalog:
             instruction_parts.extend(info.model_request_parameters.instruction_parts or ())
             return ModelResponse(parts=[TextPart('done')])
 
-        anonymous = FunctionToolset[None]([Tool(add)], instructions='Add carefully.')
-        named = FunctionToolset[None]([Tool(_forecast, name='forecast')], id='weather', instructions='Be sunny.')
-        agent: Agent[None, str] = Agent(
-            FunctionModel(model_fn), toolsets=[anonymous, named], capabilities=[CodeMode(dynamic_catalog=True)]
+        anonymous = FunctionToolset[object]([Tool(add)], instructions='Add carefully.')
+        named = FunctionToolset[object]([Tool(_forecast, name='forecast')], id='weather', instructions='Be sunny.')
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn), toolsets=[anonymous, named], capabilities=[CodeMode[object](dynamic_catalog=True)]
         )
         await agent.run('Hi')
 
