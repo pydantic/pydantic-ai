@@ -15,7 +15,8 @@ from pydantic_ai_harness._provenance import tagged_text
 _TASK_REPORT_ORIGIN = 'pydantic-ai-harness.subagents.report.v1'
 """The `origin` in the metadata of the `TextContent` that carries a background task's output."""
 
-# TODO: switch to `pydantic_ai._framing.wrap()` once it lands. Same rule as `CodeMode`'s `</system>` neutralization.
+# TODO: switch to `wrap()` from the public `pydantic_ai.framing` module once it lands. Same rule as `CodeMode`'s
+# `</system>` neutralization.
 # The `<` of anything a model would read as the frame's end tag: `</task_output>`, with or without spaces,
 # attributes or a self-closing slash, or cut off at the end of the body, where the frame's own end tag would
 # complete it. The hyphenated `</task-output>` that older reports used is matched too.
