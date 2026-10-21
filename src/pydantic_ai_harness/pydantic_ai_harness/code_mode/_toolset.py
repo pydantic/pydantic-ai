@@ -469,6 +469,12 @@ def _base_description(*, has_os: bool, has_mount: bool) -> str:
 
 def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     """Build the functions-header paragraph for the `run_code` tool description."""
+    if has_sync and not has_async:
+        return (
+            '\nThe following functions are available inside the sandbox. Call them directly '
+            '(do **not** redefine or import them). All parameters are keyword-only.'
+            ' All tool functions are synchronous: call them directly, e.g. `tool_name(arg=value)`.'
+        )
     base = (
         '\nThe following functions are available inside the sandbox. These functions are already defined'
         ' in the sandbox; call them by name without redefining or importing them.'
@@ -486,8 +492,6 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
             ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
             ' and wait APIs.'
         )
-    if has_sync and not has_async:
-        return base + (' All tool functions are synchronous: call them directly, e.g. `tool_name(arg=value)`.')
     return base + (
         ' Async functions (`async def`) must be invoked with `await`,'
         ' e.g. `await tool_name(arg=value)`.'
