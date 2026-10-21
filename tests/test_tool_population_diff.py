@@ -92,7 +92,7 @@ def _later() -> str:
     return 'later ran'
 
 
-def _add_function_agent(model: Any) -> Agent[Any, str]:
+def _add_function_agent(model: Any, *capabilities: AbstractCapability[Any]) -> Agent[Any, str]:
     """Cause 1: `FunctionToolset.add_function()` called from inside a tool."""
     toolset = FunctionToolset[Any]()
 
@@ -101,7 +101,7 @@ def _add_function_agent(model: Any) -> Agent[Any, str]:
         toolset.add_function(_later, name='later')
         return 'unlocked'
 
-    return Agent(model, toolsets=[toolset])
+    return Agent(model, toolsets=[toolset], capabilities=list(capabilities))
 
 
 def _dynamic_toolset_agent(model: Any) -> Agent[Any, str]:
@@ -685,6 +685,38 @@ async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainl
         [(tool['name'], tool.get('defer_loading', False)) for tool in kwargs['tools']]
         for kwargs in get_mock_chat_completion_kwargs(client)
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
+
+
+async def test_anthropic_tool_choice_excluding_a_newcomer_does_not_reveal_it(allow_model_requests: None):
+    """A `tool_choice` that leaves the newcomer out of the request leaves its reveal out too.
+
+    Anthropic rejects a `tool_addition` naming a tool the request doesn't declare.
+    """
+    usage = BetaUsage(input_tokens=1, output_tokens=1)
+    client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaToolUseBlock(id='c1', input={}, name='unlock', type='tool_use')], usage),
+            completion_message([BetaTextBlock(text='done', type='text')], usage),
+        ]
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+
+    class RestrictToUnlock(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.model_settings = merge_model_settings(
+                request_context.model_settings, ModelSettings(tool_choice=ToolOrOutput(function_tools=['unlock']))
+            )
+            return request_context
+
+    result = await _add_function_agent(model, RestrictToUnlock()).run('go')
+
+    assert result.output == 'done'
+    assert _deltas(result.all_messages()) == [['later']]
+    requests = get_mock_chat_completion_kwargs(client)
+    assert [[tool['name'] for tool in kwargs['tools']] for kwargs in requests] == [['unlock'], ['unlock']]
+    assert not [node for node in _walk(requests[1]['messages']) if node.get('type') == 'tool_addition']
 
 
 def _responses_text() -> Any:

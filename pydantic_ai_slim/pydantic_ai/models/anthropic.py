@@ -1640,8 +1640,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
         # and must not add the beta either.
         function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
+        declared_tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
         if self.tool_addition_mode == 'by_reference' and any(
-            name in model_request_parameters.declared_tool_defs
+            name in declared_tool_defs
             and name in function_tool_defs
             and model_request_parameters.visibility_of(name) != 'visible'
             for message in messages
@@ -2394,7 +2395,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
         # names from it — so this changes no current behavior. It keeps the filter honest against the
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
-        declared_tool_names = set(model_request_parameters.declared_tool_defs)
+        # Read after the `tool_choice` restriction, which leaves tools out of the request: a reveal naming
+        # one of those would be just as unknown as one naming a tool that's gone.
+        declared_tool_names = set(self._tool_choice_declarations(model_settings, model_request_parameters)[0])
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
         # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
