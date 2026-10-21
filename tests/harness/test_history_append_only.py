@@ -326,6 +326,10 @@ _HISTORY = (('messages', 'user-prompt'), ('messages', 'model-response'), ('messa
 
 ALLOWED: dict[str, Allowed] = {
     'ClearToolResults': Allowed(_COMPACTION, _HISTORY),
+    'DeduplicateFileReads': Allowed(
+        'Clears superseded file reads in place, as documented, when the model reads a file again',
+        (('messages', 'tool-return'),),
+    ),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of
