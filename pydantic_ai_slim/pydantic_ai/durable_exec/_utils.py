@@ -166,8 +166,8 @@ class DurableModel(WrapperModel):
         if isinstance(result, StreamedActivityResult):
             response, replay_events = result.response, result.events
         else:
-            # The live deltas were delivered inside the durable unit; workflow-side, each part
-            # replays as one event carrying its full content, keeping the deltas out of the recorded result.
+            # The durable unit consumed the live stream, delivering it to any in-boundary handler;
+            # workflow-side, each part replays as one event carrying its full content.
             response, replay_events = result, True
         yield CompletedStreamedResponse(
             response,
