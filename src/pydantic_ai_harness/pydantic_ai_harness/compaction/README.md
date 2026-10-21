@@ -188,8 +188,8 @@ by the implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
 and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart`
-content, `RetryPromptPart` content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most
-recent `ModelRequest.instructions` are now counted too, so the same history measures higher and an
+content, retry content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most recent
+`ModelRequest.instructions` are now counted too, so the same history measures higher and an
 unchanged `max_tokens` compacts earlier. How much earlier depends on how much of the history is
 thinking blocks, retries, and instructions; on a thinking-heavy tool-calling history it can be
 several times the old count. What each strategy clears is unchanged -- only when it runs.
@@ -490,6 +490,12 @@ or spacing, is escaped, so a tool return can't close its message and forge anoth
 early. Each tool return is capped, after that escaping, at `tool_return_max_chars` (default 500)
 characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to
 render each return whole, when the summarizer's context window is large enough to absorb the payloads.
+Content a harness capability added on the user channel and tagged with an `origin` in its
+`TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a
+`BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot. Tagged content is
+rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
+`role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
+treat it as the user's requests or standing constraints; other summary requests are unchanged.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
 do not cap the summary-request payload.
 
@@ -648,8 +654,12 @@ retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token 
 newest tail message still survives.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
-text items of a multi-part prompt; images, audio, and cache points pass through untouched. This
-supersedes `preserve_first_user_message` (which keeps only the first).
+text items of a multi-part prompt; images, audio, and cache points pass through untouched.
+Harness-added content on the user channel, such as a background tool's result, isn't a user turn: it is
+left out of what `keep_user_messages` and `preserve_first_user_message` carry over from the summarized
+prefix (including from a turn an earlier compaction kept), and summarized as data rather than as the
+user's intent. The recent suffix compaction leaves unsummarized is kept as is, harness content included.
+This supersedes `preserve_first_user_message` (which keeps only the first).
 
 ```python
 SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)

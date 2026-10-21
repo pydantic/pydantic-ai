@@ -161,15 +161,26 @@ Rendering requires `pydantic-handlebars` (install `pydantic-ai-slim[spec]`). It 
 ## Prompt-cache trade-off
 
 The resolved value lands in the agent's **system instructions**. Provider prompt caches (Anthropic,
-OpenAI, etc.) key strictly by prefix -- `tools -> system -> messages` -- so any change to the system
-block invalidates the cached prefix for the affected runs.
+OpenAI, etc.) key strictly by prefix -- `tools -> system -> messages` -- so each distinct value has
+its own cached prefix.
+
+Within one conversation (runs that continue from `message_history`), a new value doesn't rewrite
+that prefix. The block keeps the value the conversation started with, and the new version is
+[appended](../agent.md#appending-instruction-changes) to the history as a
+replacement, so the cached conversation behind it stays reusable. That's also why the prompt is
+sent inside a `<context id="capability:managed-prompt-support_agent">` element from the first
+request. Appended changes reach the model as system messages, so keep the prompt, and the `deps`
+fields `render_template=True` fills in, to text you control: see
+[keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
+
+Across conversations, the value a new conversation starts with decides its prefix:
 
 | Mode | Cache impact |
 | --- | --- |
 | Pinned `label='production'`, no rollout split | **Cache-stable.** The value only changes on a deliberate prompt rollout, which is the same cost as a redeploy. |
 | Percentage rollout across labels (no `label=`) | Different runs land on different labels -> splits the cache into one lane per label. |
 | `targeting_key` per user/tenant with multiple labels in play | Cache lanes per assigned label; deterministic per key but still N lanes overall. |
-| Mid-traffic label flip in the Logfire UI | One-shot cold-invalidation for everyone on that label. |
+| Mid-traffic label flip in the Logfire UI | New conversations on that label start on a cold prefix; conversations already under way append the new value. |
 
 In short: pinning a `label` keeps the cache hot; using `ManagedPrompt` as an A/B platform is opt-in
 cache cost. If you don't need rollouts, `label='production'` is the recommended default.
@@ -203,6 +214,14 @@ When `name` is a prompt name (not a `Variable`), pass `logfire_instance=` to dec
 on a specific Logfire instance instead of the module-level default. `default` is required when
 `name` is a prompt name and is ignored when you pass a `Variable` (which already carries its own
 default and instance).
+
+The capability's `id` is derived from the prompt: `ManagedPrompt('support_agent', ...)` and a
+`Variable` named `prompt__support_agent` both get `managed-prompt-support_agent`. It names the
+prompt's instruction block, so a new version can be appended to a conversation rather than
+rewriting it. Two `ManagedPrompt`s with different names on one agent each get their own block, and
+two with the same name raise a `UserError` when the agent is built, since they're one prompt stated
+twice. Pass `id=` to override the derived one. Earlier releases left the `id` unset and accepted
+two of one name, so an agent built that way now needs a distinct `id` on each.
 
 ## How it composes
 

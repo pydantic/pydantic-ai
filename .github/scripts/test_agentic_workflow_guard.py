@@ -883,7 +883,7 @@ jobs:
 
 
 def test_daily_aic_guardrail_rejects_the_compiled_default(tmp_path: Path):
-    """The shape every lock carried before `max-daily-ai-credits: -1`."""
+    """The shape every lock carried before `max-daily-ai-credits: -1`, as gh-aw v0.86 compiles it."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         """
@@ -896,6 +896,10 @@ jobs:
         id: daily-effective-workflow-guardrail
         if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_daily_aic_workflow_guardrail.cjs');
+            await main();
 """,
     )
 
@@ -903,6 +907,30 @@ jobs:
 
     assert [v.check for v in violations] == ['daily-aic-guardrail']
     assert '`max-daily-ai-credits: -1`' in violations[0].message
+
+
+def test_daily_aic_guardrail_rejects_the_renamed_step_after_a_compiler_upgrade(tmp_path: Path):
+    """gh-aw v0.92.6 compiles the step under a new id; it still runs the same guardrail script."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-ai-credits-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const path = require('path');
+            const actionsDir = path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions');
+            const { main } = require(path.join(actionsDir, 'check_daily_aic_workflow_guardrail.cjs'));
+            await main();
+""",
+    )
+
+    assert [v.check for v in check_daily_aic_guardrail(lock)] == ['daily-aic-guardrail']
 
 
 def test_daily_aic_guardrail_rejects_a_disable_set_only_in_an_import(tmp_path: Path):
@@ -916,6 +944,9 @@ jobs:
       - name: Check daily workflow token guardrail
         id: daily-effective-workflow-guardrail
         if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_daily_aic_workflow_guardrail.cjs');
 """,
     )
 
@@ -931,6 +962,9 @@ jobs:
     steps:
       - name: Check workflow lock file
         id: check-lock-file
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_workflow_timestamp_api.cjs');
 """,
     )
 
