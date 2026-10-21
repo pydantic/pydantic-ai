@@ -96,6 +96,9 @@ _MAX_MATCH_COLUMNS = 4096
 _RG_ONLY_GLOB = re.compile(r'\*\*|[{}\\]|\[\^|^[!/]')
 """Glob syntax `rg --glob` gives a meaning `fnmatch` lacks: `**`, `{a,b}`, escapes, `[^...]`, and a leading `!` or `/`."""
 
+_WILDCARD = re.compile(r'[*?\[]')
+"""Characters that make a glob path component match more than its own text."""
+
 READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     {'read_file', 'list_directory', 'search_files', 'find_files', 'file_info', *RIPGREP_TOOL_NAMES}
 )
@@ -227,6 +230,30 @@ class _Scope:
     @lacks_ripgrep.setter
     def lacks_ripgrep(self, value: bool) -> None:
         self.bounds.lacks_ripgrep = value
+
+
+def _directories_holding(glob: str, prefix: str) -> list[str]:
+    """`rg` globs covering every path below `prefix` that `glob` can match with `fnmatch`, or none to search it all.
+
+    Every `fnmatch` match of `glob` starts with its leading directories that hold no wildcard, so
+    `src/*.py` needs only `src/**`. A path is matched both as it is below `prefix` and with `prefix`
+    joined in front, so each spelling gets its own glob.
+    """
+    literal: list[str] = []
+    for part in glob.split('/')[:-1]:
+        if part in ('', '.', '..') or _WILDCARD.search(part):
+            break
+        literal.append(part)
+    if not literal:
+        return []
+    globs = ['/'.join(literal) + '/**']
+    if prefix != '.':
+        above = prefix.split('/')
+        if literal[: len(above)] == above[: len(literal)]:
+            if len(literal) <= len(above):
+                return []  # With `prefix` in front, every path starts with the glob's directories.
+            globs.append('/'.join(literal[len(above) :]) + '/**')
+    return globs
 
 
 def _fall_back_from_ripgrep(scope: _Scope) -> None:
@@ -1602,7 +1629,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # miss `src/pkg/m.py`. Such a glob is matched with `fnmatch` below instead, as without `rg`,
         # unless it uses syntax only `rg` understands.
         fnmatch_only = bool(include_glob and '/' in include_glob and not _RG_ONLY_GLOB.search(include_glob))
-        command_glob = include_glob.removeprefix(prefix + '/') if include_glob and prefix != '.' else include_glob
+        if include_glob and fnmatch_only:
+            # `rg` still skips what the glob cannot match, so the output cap is spent on candidates.
+            command_globs = _directories_holding(include_glob, prefix) if entry.is_dir else []
+        elif include_glob:
+            command_globs = [include_glob.removeprefix(prefix + '/') if prefix != '.' else include_glob]
+        else:
+            command_globs = []
 
         def selected(record: Record) -> bool:
             path = posixpath.normpath(record.path)
@@ -1636,7 +1669,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     '--max-columns',
                     str(_MAX_MATCH_COLUMNS),
                     '--max-columns-preview',
-                    *(['--glob', command_glob] if command_glob and not fnmatch_only else []),
+                    *(argument for glob in command_globs for argument in ('--glob', glob)),
+                    *(['--hidden'] if include_hidden else []),
                     '--regexp',
                     pattern,
                     '--',
@@ -1818,6 +1852,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         prepare, permitted = self._batch_authorizer(scope, resolved)
         include_hidden = bool(glob and _explicit_hidden(glob))
         arguments = ['--files', '--sort', 'path', *(['--glob', glob] if glob is not None else [])]
+        if include_hidden:
+            arguments.append('--hidden')
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
@@ -1976,6 +2012,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         ]
         if glob is not None:
             arguments.extend(['--glob', glob])
+        if include_hidden:
+            arguments.append('--hidden')
         if file_type is not None:
             arguments.extend(['--type', file_type])
         if ignore_case:

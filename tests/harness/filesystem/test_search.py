@@ -421,12 +421,59 @@ async def test_include_glob_with_rg_only_syntax_still_goes_to_rg(tmp_path: Path)
     assert await tools.search_files('needle', include_glob='/src/*.py', workspace=workspace) == 'src/a.py:1:needle'
 
 
-async def test_include_glob_is_also_matched_below_the_search_directory(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ('include_glob', 'expected'),
+    [
+        ('pkg/*.py', 'src/pkg/m.py:1:needle'),
+        ('src/pkg/*.py', 'src/pkg/m.py:1:needle'),
+        ('src/*.py', 'src/a.py:1:needle\nsrc/pkg/m.py:1:needle'),
+        ('docs/*.py', 'No matches found.'),
+    ],
+)
+async def test_include_glob_is_also_matched_below_the_search_directory(
+    tmp_path: Path, include_glob: str, expected: str
+) -> None:
+    """A glob matches a path as it is below the search directory or as it is below the root."""
     (tmp_path / 'src' / 'pkg').mkdir(parents=True)
+    (tmp_path / 'src' / 'a.py').write_text('needle\n')
     (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    (tmp_path / 'docs').mkdir()
+    (tmp_path / 'docs' / 'd.py').write_text('needle\n')
     tools = FileSystem[None]().get_toolset()
     assert isinstance(tools, FileSystemToolset)
     found = await tools.search_files(
-        'needle', path='src', include_glob='pkg/*.py', workspace=LocalWorkspaceBackend(tmp_path)
+        'needle', path='src', include_glob=include_glob, workspace=LocalWorkspaceBackend(tmp_path)
     )
-    assert found == 'src/pkg/m.py:1:needle'
+    assert found == expected
+
+
+async def test_include_glob_with_a_slash_keeps_rg_to_its_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`rg` searches only the glob's leading directories, so matches elsewhere can't fill the output cap."""
+    (tmp_path / 'aaa').mkdir()
+    for n in range(50):
+        (tmp_path / 'aaa' / f'{n}.py').write_text('needle\n' * 20)
+    (tmp_path / 'src' / 'pkg').mkdir(parents=True)
+    (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._ripgrep._MAX_OUTPUT_BYTES', 2_000)
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    assert await tools.search_files('needle', include_glob='src/*.py', workspace=workspace) == 'src/pkg/m.py:1:needle'
+
+
+async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
+    """A hidden directory the glob names is searched, as the walker and the POSIX fallback already do."""
+    (tmp_path / '.github' / 'workflows').mkdir(parents=True)
+    (tmp_path / '.github' / 'workflows' / 'ci.yml').write_text('needle\n')
+    (tmp_path / '.cache').mkdir()
+    (tmp_path / '.cache' / 'x.yml').write_text('needle\n')
+    tools = FileSystem[None](tools=['grep', 'list_files']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    found = '.github/workflows/ci.yml:1:needle'
+    assert await tools.search_files('needle', include_glob='.github/*.yml', workspace=workspace) == found
+    assert await tools.search_files('needle', include_glob='.github/**/*.yml', workspace=workspace) == found
+    assert await tools.grep('needle', glob='.github/**', workspace=workspace) == found
+    assert await tools.list_files(glob='.github/**', workspace=workspace) == '.github/workflows/ci.yml'
