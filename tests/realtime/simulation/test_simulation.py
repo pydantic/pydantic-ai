@@ -1203,9 +1203,14 @@ def test_request_sent_after_a_tool_raised_is_answered_xai() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai')), scenario)
 
 
-@known('SIM-43')
-def test_known_live_failed_call_leaves_its_round_owed() -> None:
-    """A delegated round of three calls, one of which raises: the other two results ask for a reply that never comes."""
+def test_live_call_that_raises_gives_up_its_delegated_round() -> None:
+    """A delegated round of three calls, one of which raises while the backend response that asked is still running.
+
+    The backend resumes only from every output of its round, so the round is given up: its other results ask for no
+    reply, and the delegation no longer holds the turn clock, so a reply asked for afterwards is answered and ends.
+    (SIM-43: each result asked for a reply of its own that never came, and the delegation suspended the clock for
+    good.)
+    """
 
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate(deliver=False)
@@ -1214,8 +1219,30 @@ def test_known_live_failed_call_leaves_its_round_owed() -> None:
         sim.backend_call()
         sim.finish_tool(outcome='error')
         sim.settle()
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
 
-    reproduce('SIM-43', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
+
+
+def test_live_call_that_raises_after_its_siblings_answered_gives_up_its_delegated_round() -> None:
+    """The backend response has ended and the other results are out, waited for, when the last call raises (SIM-43)."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.backend_call(count=3)
+        sim.backend_finish()
+        sim.finish_tool()
+        sim.finish_tool()
+        sim.wait_for_reply()
+        sim.finish_tool(outcome='error')
+        sim.settle()
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
 
 
 @known('SIM-37')

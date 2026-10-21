@@ -2573,6 +2573,7 @@ class RealtimeSession:
             raise
         except BaseException as e:
             self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
+            self._connection._tool_call_unanswered(call_part.tool_call_id)  # pyright: ignore[reportPrivateUsage]
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.

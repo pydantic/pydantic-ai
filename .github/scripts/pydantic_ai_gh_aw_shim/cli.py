@@ -1482,7 +1482,7 @@ async def run(
     duration_ms = round((time.perf_counter() - started) * 1000)
     messages = result.all_messages()
     tool_calls = count_tool_calls(messages)
-    num_turns = sum(isinstance(m, ModelResponse) for m in messages)
+    num_turns = run_usage.requests
     logger.info('tool calls observed: %d, turns: %d', tool_calls, num_turns)
 
     text = str(result.output or '')

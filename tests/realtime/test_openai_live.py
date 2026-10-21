@@ -913,6 +913,43 @@ async def test_a_late_completion_does_not_end_a_delegation_mid_continuation() ->
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_a_call_that_raised_gives_up_its_round() -> None:
+    """The backend resumes only from every output of its round, so a call whose tool raised leaves none to continue.
+
+    The round is given up as a failed backend would be: no `response.create`, a sibling's result goes nowhere, and the
+    delegation no longer suspends the turn clock.
+    """
+    connection = _Recorder()
+    _open_delegation(connection, call_ids=('c1', 'c2'))
+    await connection.terminal()
+
+    connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+    await connection.send(ToolResult('c2', output='rainy'))
+    assert connection.sent == []
+
+
+async def test_a_call_that_raised_while_its_response_runs_gives_up_the_round_at_its_terminal() -> None:
+    """The response that asked for the calls may still be running: the round is given up once it ends."""
+    connection = _Recorder()
+    _open_delegation(connection, call_ids=('c1', 'c2'))
+    await connection.send(ToolResult('c2', output='rainy'))
+    connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
+    assert connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+    await connection.terminal()
+    assert connection.sent == ['response.item.create']
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_call_from_no_delegation_left_unanswered_changes_nothing() -> None:
+    connection = _connection()
+    _open_delegation(connection, call_ids=('c1',))
+    connection._tool_call_unanswered('unknown')  # pyright: ignore[reportPrivateUsage]
+    assert connection._delegations['d1'].pending_tool_calls == {'c1'}  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_tool_result_text_content_reaches_the_backend() -> None:
     """A `ToolReturn`'s text `content` goes to the backend as a message after the call's output."""
     sent: list[dict[str, Any]] = []
