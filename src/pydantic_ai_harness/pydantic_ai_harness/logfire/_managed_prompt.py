@@ -132,7 +132,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
 
     render_template: bool = False
     """When `True`, render the resolved prompt as a Handlebars template against the agent's
-    `deps` (the same mechanism as [`TemplateStr`][pydantic_ai.TemplateStr]); `{{field}}` is
+    `deps` (the same mechanism as [`TemplateStr`][pydantic_ai.template.TemplateStr]); `{{field}}` is
     filled from `deps`. Requires `pydantic-handlebars` (install `pydantic-ai-slim[spec]`).
     Anyone who can edit the prompt in Logfire can then place any `deps` value in the system prompt.
     A remote prompt that fails to compile falls back to the code default with a `RuntimeWarning`,

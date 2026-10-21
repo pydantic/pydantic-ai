@@ -390,7 +390,7 @@ Parameters: `name` (positional; declared as the variable `prompt__<name>`, with 
 underscores; ASCII letters, digits, hyphens, and underscores only), or a prebuilt
 `logfire.variables.Variable` (not a `TemplateVariable`); `default` (required with a name); `label`;
 `targeting_key` and `attributes` (static or `ctx -> value`); `render_template=False` (Handlebars against
-`deps`, compiled once per run); `logfire_instance`. Call `logfire.configure()` in your app to
+`deps`; needs `pydantic-ai-slim[spec]`); `logfire_instance`. Call `logfire.configure()` in your app to
 get remote values. Until then, and whenever no remote value is published, `default` is used.
 
 Gotchas: pin `label='production'` to keep the provider prompt cache warm, because rollouts across
