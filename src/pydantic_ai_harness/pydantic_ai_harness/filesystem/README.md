@@ -119,6 +119,44 @@ working directory but inside `root_dir` use `..` components. Containment,
 access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
 
+### Tool kinds
+
+Each tool declares a [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts) in the `file_system`
+namespace, named after the tool: `read_file` has the kind
+`file_system.read_file`, exported as `READ_FILE_KIND`, and likewise
+`WRITE_FILE_KIND`, `EDIT_FILE_KIND`, `LIST_DIRECTORY_KIND`, `SEARCH_FILES_KIND`,
+`FIND_FILES_KIND`, `CREATE_DIRECTORY_KIND`, `FILE_INFO_KIND`, `LIST_FILES_KIND`,
+and `GREP_KIND`. The kind is part of the tool's definition rather than its name,
+so another capability or a history processor can recognize these tools by kind
+instead of comparing tool names. Each kind declares the shape of its tool's
+arguments (`ReadFileArgs`, `WriteFileArgs`, and so on), and a call whose
+arguments fit it is promoted to a typed part (`ReadFileCallPart`,
+`WriteFileCallPart`, and so on) in a run's messages and in a loaded history,
+with the validated arguments as `typed_args`:
+
+```python
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai_harness.filesystem import ReadFileCallPart
+
+
+def paths_read(messages: list[ModelMessage]) -> list[str]:
+    return [
+        args['path']
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ReadFileCallPart) and (args := part.typed_args) is not None
+    ]
+```
+
+`read_file` also has a typed return part, `ReadFileReturnPart`, for a return
+whose outcome is `'success'`, which includes a `Path not found: <path>` result.
+Its `content` is the text with its header, or `[header, BinaryContent]` for an
+image or PDF. The kind declares no content shape, since `ToolKind` takes a class
+and not a union, so `typed_content` is untyped. The other tools return text
+written for the model rather than a format to parse, so their returns stay plain
+`ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
+carry their outcomes as structured data.
+
 ## Events
 
 `FileSystem` emits typed capability events in the `file_system` namespace so a
@@ -245,10 +283,15 @@ applies the same rule to absolute symlink targets.
   `root_dir` are still rejected, but a symlink leading outside is not detected,
   and a link to `.env` does not match the patterns. That is exact for storage
   without symlinks, such as an object store.
-- **A guardrail, not isolation.** The checks run before each operation, so a
-  symlink swapped in between the check and the use is not caught, and `Shell`
-  commands ignore `root_dir` entirely. Use a sandbox workspace when the agent or
-  the tree is untrusted.
+- **A guardrail, not isolation.** Containment and allow, deny, and read-only
+  patterns are functional guardrails. `LocalWorkspace` does not establish a
+  security isolation boundary, even with command execution disabled. Bypasses
+  within the workspace process's existing OS authority are correctness bugs.
+  The checks run before each operation, so a symlink swapped between the check
+  and the use is not caught, and `Shell` commands ignore `root_dir` entirely.
+  For isolation, use a sandbox workspace and configure its boundary to protect
+  the required resources. Files inside that boundary are not automatically
+  confidential from the agent.
 - **Bounded walks.** `search_files` and `find_files` stop after 10,000
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.

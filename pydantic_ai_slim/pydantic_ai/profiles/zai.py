@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 
-from . import ModelProfile
+from . import InlineDefsJsonSchemaTransformer, ModelProfile
 
 
 class ZaiModelProfile(ModelProfile, total=False):
@@ -50,6 +50,9 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
     `zai_supports_reasoning_effort=True`. GLM-5.3 always reasons and cannot disable thinking, flagged via
     `thinking_always_enabled=True`.
 
+    GLM-5.3 stringifies nested tool arguments whose schema is a `$ref` into `$defs`, so its schemas
+    are inlined via `InlineDefsJsonSchemaTransformer`. See https://github.com/pydantic/pydantic-ai/issues/10243.
+
     The provider-specific request/response shape (e.g. the `reasoning_content` field used by Z.AI's API)
     is configured in `ZaiProvider.model_profile()` rather than here. Providers that serve GLM models under
     a different id scheme (e.g. Cerebras's `zai-glm-*`, which doesn't match the `glm-*` prefixes above)
@@ -66,4 +69,5 @@ def zai_model_profile(model_name: str) -> ModelProfile | None:
     )
     if model_lower.startswith('glm-5.3'):
         profile['zai_reasoning_effort_mapping'] = _GLM_5_3_REASONING_EFFORT_MAPPING
+        profile['json_schema_transformer'] = InlineDefsJsonSchemaTransformer
     return profile

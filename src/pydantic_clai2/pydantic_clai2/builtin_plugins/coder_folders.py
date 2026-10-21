@@ -10,7 +10,6 @@ from pathlib import Path
 from sqlite3 import Error as SQLiteError
 from typing import TYPE_CHECKING, Generic
 
-import anyio
 from anyio import to_thread
 
 from pydantic_clai2.plugins import DepsT
@@ -341,5 +340,5 @@ class FolderMenu(Generic[DepsT]):
 
 
 async def edit_agent_folders(source: CoderSource[DepsT], dialogs: Dialogs) -> list[str]:
-    """The **Agent folders** row's action: the folder list for the directory CLAI runs in."""
-    return await FolderMenu(source, project=Path(await anyio.Path.cwd())).run(dialogs)
+    """The **Agent folders** row's action: the folder list for the directory the session works in."""
+    return await FolderMenu(source, project=source.host.workspace).run(dialogs)

@@ -166,9 +166,14 @@ class ModelProfile(TypedDict, total=False):
     supports_auto_cache: bool
     """Whether the provider has a server-managed automatic prompt-caching mode the request can switch on. Default: `False`.
 
-    When True, the unified `cache` setting uses that mode, which places and moves the cache breakpoint
-    itself. Otherwise the library places explicit cache breakpoints at the end of the tool definitions,
-    the static instructions, and the conversation. Only meaningful when `supports_cache` is True.
+    The unified `cache` setting consults it only when `supports_cache` is True: then, if this is True, the
+    conversation is cached with that mode, which places and moves the cache breakpoint itself; otherwise the
+    library places an explicit breakpoint at the end of the conversation too, as it does at the end of the tool
+    definitions and the static instructions.
+
+    On Anthropic, the explicit `anthropic_cache` setting consults it whatever `supports_cache` says: if this is
+    True, the request carries the top-level `cache_control` parameter; otherwise `anthropic_cache` falls back
+    to a breakpoint on the last block.
     """
 
     supported_cache_retentions: tuple[CacheRetention, ...]
@@ -266,9 +271,9 @@ class ModelProfile(TypedDict, total=False):
     When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
     rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
     stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
-    so it is wrapped in an `assistant_thinking` tag naming the model and provider that produced it rather
-    than in the model's own thinking tags. The cost is that the model still reports the reasoning's authorship
-    inaccurately when asked about it: naming the source in the tag does not change the answer it gives.
+    so it is wrapped in an `assistant_thinking` tag rather than in the model's own thinking tags. The cost
+    is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
+    source in the tag would not change.
 
     This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
     OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in

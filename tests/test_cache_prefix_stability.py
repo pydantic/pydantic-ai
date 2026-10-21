@@ -40,11 +40,17 @@ from pydantic import AnyUrl, BaseModel, model_serializer
 
 from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.messages import (
+    BinaryContent,
+    ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -62,6 +68,10 @@ with try_import() as ag_ui_reasoning_successful:
     # `ReasoningMessage`, the reasoning carrier, landed in ag-ui-protocol 0.1.11; older installs
     # (e.g. the `lowest-versions` CI job, pinned to 0.1.10) lack it, so that dump path is skipped.
     from ag_ui.core import ReasoningMessage  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+with try_import() as ag_ui_multimodal_successful:
+    # Typed multimodal input content, which carries `vendor_metadata`, landed in ag-ui-protocol 0.1.15.
+    from ag_ui.core import ImageInputContent  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 with try_import() as openai_imports_successful:
     from openai.types.chat import ChatCompletionMessage
@@ -376,6 +386,191 @@ async def test_openai_spaced_tool_call_args_roundtrip_wire_stable(
     original_body, roundtripped_body = bodies
     assert roundtripped_body == original_body
     assert '"arguments": "{\\"city\\":\\"Paris\\",\\"days\\":2}"' in original_body
+
+
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_roundtrip, id='vercel'),
+        pytest.param(_vercel_stream_roundtrip, id='vercel_stream'),
+        pytest.param(
+            _ag_ui_roundtrip_latest,
+            id='ag_ui-0_1_11',
+            marks=pytest.mark.skipif(
+                not ag_ui_reasoning_successful(), reason='ag-ui-protocol < 0.1.11 (no ReasoningMessage)'
+            ),
+        ),
+    ],
+)
+async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
+    allow_model_requests: None,
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+):
+    """Another model's thinking re-sends to Anthropic with an identical request body after a UI round-trip.
+
+    Anthropic can't replay a foreign `ThinkingPart` natively, so it sends it as text in an
+    `<assistant_thinking>` tag. UI adapters deliberately don't round-trip `ModelResponse.model_name` or
+    `provider_name`, so the tag must not be rendered from them, or the re-sent prefix misses the cache.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('What is 17 * 23?')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart('17 * 23 is 391.', signature='openai-signature', provider_name='openai'),
+                TextPart('391'),
+            ],
+            model_name='gpt-5.2',
+            provider_name='openai',
+        ),
+    ]
+
+    bodies: list[str] = []
+    for messages in (history, roundtrip(history)):
+        client = MockAnthropic.create_mock(
+            completion_message([BetaTextBlock(text='OK', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+        )
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_chat_completion_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert '<assistant_thinking>\\n17 * 23 is 391.\\n</assistant_thinking>' in original_body
+    assert roundtripped_body == original_body
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
+@pytest.mark.parametrize(
+    'prompts,ag_ui_version',
+    [
+        pytest.param([UserPromptPart('A1'), UserPromptPart('B1')], '0.1.11', id='text'),
+        pytest.param([UserPromptPart('A1'), UserPromptPart('B1')], '0.1.10', id='text-0_1_10'),
+        pytest.param(
+            [
+                UserPromptPart(['A1', BinaryContent(b'\x89PNG', media_type='image/png')]),
+                UserPromptPart([ImageUrl('https://example.com/b.png', vendor_metadata={'detail': 'high'}), 'B1']),
+                UserPromptPart('C1'),
+            ],
+            '0.1.15',
+            id='media',
+            marks=pytest.mark.skipif(
+                not ag_ui_multimodal_successful(), reason='ag-ui-protocol < 0.1.15 (no typed multimodal content)'
+            ),
+        ),
+        pytest.param(
+            [
+                UserPromptPart('A1'),
+                RetryFeedbackPart('bad', retry=RetryInfo(cause='validation_error')),
+                UserPromptPart('B1'),
+            ],
+            '0.1.11',
+            id='retry',
+        ),
+    ],
+)
+async def test_openai_multiple_user_prompts_ag_ui_roundtrip_wire_stable(
+    allow_model_requests: None, prompts: list[ModelRequestPart], ag_ui_version: str
+):
+    """A request with several `UserPromptPart`s re-sends with an identical request body after an AG-UI round-trip.
+
+    Each prompt has to come back as its own `UserPromptPart`, rather than merged into one prompt that OpenAI
+    renders as one user message instead of one per prompt. Validation feedback is sent as a user message of its own
+    too, and reloads as the `RetryFeedbackPart` it was dumped from, which has to stay separate in the same way.
+    """
+    history: list[ModelMessage] = [ModelRequest(parts=prompts), ModelResponse(parts=[TextPart('OK')])]
+
+    roundtripped = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version=ag_ui_version))
+    assert len(roundtripped[0].parts) == len(prompts)
+
+    bodies: list[str] = []
+    for messages in (history, roundtripped):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
+    assert [m['role'] for m in json.loads(original_body)].count('user') == len(prompts) + 1
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'prompts',
+    [
+        pytest.param([UserPromptPart('A1'), UserPromptPart('B1')], id='text'),
+        pytest.param(
+            [
+                UserPromptPart(['A1', BinaryContent(b'\x89PNG', media_type='image/png')]),
+                UserPromptPart([ImageUrl('https://example.com/b.png', vendor_metadata={'detail': 'high'}), 'B1']),
+                UserPromptPart('C1'),
+            ],
+            id='media',
+        ),
+    ],
+)
+async def test_openai_multiple_user_prompts_roundtrip_wire_stable(
+    allow_model_requests: None, prompts: list[UserPromptPart]
+):
+    """A request with several `UserPromptPart`s re-sends with an identical request body after a Vercel AI round-trip.
+
+    All of a request's prompts go into one user `UIMessage`, so `load_messages` has to tell where each one begins
+    to rebuild them, rather than merging them into one prompt that OpenAI renders as one user message instead of
+    one per prompt.
+    """
+    history: list[ModelMessage] = [ModelRequest(parts=prompts), ModelResponse(parts=[TextPart('OK')])]
+
+    roundtripped = _vercel_roundtrip(history)
+    assert [type(part) for part in roundtripped[0].parts] == [UserPromptPart] * len(prompts)
+
+    bodies: list[str] = []
+    for messages in (history, roundtripped):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
+    assert [m['role'] for m in json.loads(original_body)].count('user') == len(prompts) + 1
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_retry_feedback_after_user_prompt_vercel_roundtrip_wire_stable(allow_model_requests: None):
+    """System-voice feedback authored after a user prompt keeps its place through a Vercel AI round-trip.
+
+    Reloaded ahead of the prompt instead, it would open the first request, where it goes out as
+    `<system>`-tagged user text rather than a system message, and the request would re-send different bytes.
+    """
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('how many?'),
+                RetryFeedbackPart('the answer has to be a number', retry=RetryInfo(cause='model_retry')),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('OK')]),
+    ]
+
+    roundtripped = _vercel_roundtrip(history)
+    assert [type(part) for part in roundtripped[0].parts] == [UserPromptPart, RetryFeedbackPart]
+
+    bodies: list[str] = []
+    for messages in (history, roundtripped):
+        client = MockOpenAI.create_mock(
+            openai_completion_message(ChatCompletionMessage(content='OK', role='assistant'))
+        )
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        await Agent(model).run('Reply with exactly: OK', message_history=messages)
+        bodies.append(json.dumps(get_mock_openai_kwargs(client)[0]['messages']))
+
+    original_body, roundtripped_body = bodies
+    assert roundtripped_body == original_body
 
 
 def _json_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
