@@ -81,9 +81,8 @@ class _Relays:
             pending: list[AbstractToolset[Any]] = [self.author]
             while pending:
                 node = pending.pop()
-                if id(node) not in tree:
-                    tree.add(id(node))
-                    pending.extend(node._instruction_children())  # pyright: ignore[reportPrivateUsage]
+                tree.add(id(node))
+                pending.extend(node._instruction_children())  # pyright: ignore[reportPrivateUsage]
             self._tree = tree
         return id(toolset) in self._tree
 
