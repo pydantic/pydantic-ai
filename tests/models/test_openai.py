@@ -6411,7 +6411,7 @@ _AZURE_PROMPT_BLOCKED_MESSAGE = (
 
 
 @pytest.mark.parametrize(
-    'body',
+    ('body', 'provider_details'),
     [
         pytest.param(
             {
@@ -6428,16 +6428,32 @@ _AZURE_PROMPT_BLOCKED_MESSAGE = (
                 ],
                 'innererror': {'code': 'ContentFiltered'},
             },
+            {
+                'finish_reason': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+            },
             id='reported-body',
         ),
         pytest.param(
             {'error': {'code': 'content_filter', 'message': _AZURE_PROMPT_BLOCKED_MESSAGE, 'innererror': {}}},
+            {'finish_reason': 'content_filter'},
             id='innererror-without-code',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter'}},
+            {'finish_reason': 'content_filter'},
+            id='code-only',
         ),
     ],
 )
 def test_responses_azure_prompt_filter_error_without_filter_result(
-    allow_model_requests: None, body: dict[str, Any]
+    allow_model_requests: None, body: dict[str, Any], provider_details: dict[str, Any]
 ) -> None:
     """Azure's Responses API can send an `innererror` without `content_filter_result` for a blocked prompt."""
     mock_client = MockOpenAIResponses.create_mock(
@@ -6456,7 +6472,7 @@ def test_responses_azure_prompt_filter_error_without_filter_result(
         Agent(m).run_sync('bad prompt')
 
     assert exc_info.value.body is not None
-    assert json.loads(exc_info.value.body)[0]['provider_details'] == {'finish_reason': 'content_filter'}
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == provider_details
 
 
 async def test_openai_response_filter_error(allow_model_requests: None):
