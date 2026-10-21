@@ -1040,6 +1040,14 @@ class TestFilesystem:
         ):
             await backend.read_bytes('/tmp/a.txt')
 
+    async def test_a_read_whose_file_check_died_with_the_sandbox_is_unavailable(self, fake_modal: FakeModal) -> None:
+        # Modal kills a terminated sandbox's commands with 137; that is the sandbox's state, not the path's.
+        backend = await started()
+        fake_modal.kind_probe_exit = 137
+        fake_modal.sandboxes[0].poll_result = 0
+        with pytest.raises(WorkspaceUnavailableError, match='no longer running'):
+            await backend.read_bytes('/tmp/a.txt')
+
     async def test_symlinks_follow_relative_chained_dangling_and_looping_targets(
         self, fake_modal: FakeModal, tmp_path: Path
     ) -> None:

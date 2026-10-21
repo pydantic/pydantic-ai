@@ -376,7 +376,10 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             if (code := await probe.wait.aio()) == 1:
                 raise OSError(f'Not a regular file in the Modal sandbox: {path!r}')
             if code != 0:
-                raise WorkspaceError(f'Could not check what {path!r} is in the Modal sandbox: the check exited {code}.')
+                # A check killed because the sandbox died is the sandbox's failure, not this path's.
+                raise await _probe(sandbox, exec_probe=True) or WorkspaceError(
+                    f'Could not check what {path!r} is in the Modal sandbox: the check exited {code}.'
+                )
             return await sandbox.filesystem.read_bytes.aio(path)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
