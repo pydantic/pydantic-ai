@@ -5,11 +5,13 @@ from typing import Literal, assert_never
 from urllib.parse import urlparse
 
 import pytest
+from pydantic import JsonValue
 
 from pydantic_ai import (
     Agent,
     BinaryContent,
     Citation,
+    CompactionPart,
     ContentCitationAnchor,
     DocumentCitationSource,
     MarkerCitationAnchor,
@@ -24,11 +26,12 @@ from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 from .citation_utils import citations_from_messages
+from .conftest import content_blocks
 
 with try_import() as anthropic_available:
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicCompaction, AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_available:
@@ -932,6 +935,98 @@ async def test_native_citation_replay_after_persisted_history(
     history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
     second_result = await agent.run('Continue.', message_history=history)
     assert second_result.output
+
+
+RETURNS_POLICY = BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain')
+SHIPPING_POLICY = BinaryContent(data=b'Orders ship within two business days.', media_type='text/plain')
+WARRANTY_POLICY = BinaryContent(data=b'Every product has a two-year warranty.', media_type='text/plain')
+
+
+def _replayed_document_indices(body: dict[str, JsonValue]) -> list[list[JsonValue]]:
+    """The `document_index` of each replayed document citation, per text block that has citations."""
+    return [
+        [citation.get('document_index') for citation in citations if isinstance(citation, dict)]
+        for block in content_blocks(body, 'text')
+        if isinstance(citations := block.get('citations'), list)
+    ]
+
+
+@pytest.mark.moves_cache_prefix(reason='compaction replaces the history before it')
+async def test_anthropic_document_citation_replay_after_compacted_history(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Document citations replay correctly once compaction has left the earlier history out.
+
+    The first answer cites the returns policy. The second prompt is large enough to be compacted, and Anthropic
+    answers it from the compaction summary, without citations. Later requests start at the compaction block, so the
+    returns answer and its document are no longer sent. The warranty policy sent after compaction is cited, and its
+    citation is replayed with the index it has in the request that is actually sent: 0.
+    """
+    if not anthropic_available():
+        pytest.skip('anthropic dependencies not installed')
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        settings=ANTHROPIC_SETTINGS,
+    )
+    agent = Agent(
+        model,
+        model_settings=ModelSettings(citations=True),
+        capabilities=[AnthropicCompaction(token_threshold=50_000)],
+    )
+    # About 55k tokens, over the threshold, with no line ending in a space, which pre-commit would strip.
+    padding = ' '.join(['The quick brown fox jumps over the lazy dog.'] * 5000)
+
+    returns = await agent.run(['What is the return window? Cite the document.', RETURNS_POLICY])
+    shipping = await agent.run(
+        [f'Background notes: {padding}\n\nHow long does shipping take? Cite the document.', SHIPPING_POLICY],
+        message_history=returns.all_messages(),
+    )
+    assert any(isinstance(part, CompactionPart) for part in shipping.new_messages()[-1].parts)
+    warranty = await agent.run(
+        ['How long is the warranty? Cite the document.', WARRANTY_POLICY], message_history=shipping.all_messages()
+    )
+    assert citations_from_messages(warranty.new_messages())
+    await agent.run('Thanks. Repeat the warranty in one sentence.', message_history=warranty.all_messages())
+
+    # Only the warranty answer is sent with a citation.
+    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0]])
+
+
+@pytest.mark.moves_cache_prefix(reason='the last request leaves the first exchange out of the history')
+async def test_anthropic_document_citation_replay_after_history_trimmed(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+) -> None:
+    """A document citation follows its document to its new position when earlier history is left out.
+
+    The shipping policy is the second document when it's cited (index 1). Leaving the first exchange out makes it the
+    only document, so the citation is replayed with index 0. Index 1 would make Anthropic reject the request.
+    """
+    if not anthropic_available():
+        pytest.skip('anthropic dependencies not installed')
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        settings=ANTHROPIC_SETTINGS,
+    )
+    agent = Agent(model, model_settings=ModelSettings(citations=True))
+
+    returns = await agent.run(['What is the return window? Cite the document.', RETURNS_POLICY])
+    shipping = await agent.run(
+        ['How long does shipping take? Cite the document.', SHIPPING_POLICY], message_history=returns.all_messages()
+    )
+    [shipping_answer] = [
+        part for part in shipping.new_messages()[-1].parts if isinstance(part, TextPart) and part.citations
+    ]
+    assert [citation['document_index'] for citation in (shipping_answer.provider_details or {})['citations']] == [1]
+
+    # What a history processor that keeps only the latest exchange would send.
+    result = await agent.run(
+        'Thanks. Repeat the shipping time in one sentence.', message_history=shipping.all_messages()[2:]
+    )
+    assert result.output
+
+    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0]])
 
 
 def read_shipping_policy() -> BinaryContent:

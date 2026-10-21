@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import base64
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -182,13 +182,12 @@ def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[s
 
 
 def _map_citation_for_replay(
-    citation: dict[str, Any], document_texts: list[str | None]
+    citation: dict[str, Any], document_texts: Sequence[str | None]
 ) -> BetaTextCitationParam | None:
     """Rebuild a citation Anthropic returned from its raw data on the text part, or return `None` to leave it out.
 
-    `document_texts` holds the text of each document block in the request, in Anthropic's document index order, or
-    `None` for documents that aren't plain text. A character citation is only rebuilt if its range still selects its
-    cited text from that document.
+    `document_texts` holds the text of each document block before the cited text in the request, in Anthropic's
+    document index order, or `None` for documents that aren't plain text with citations enabled.
     """
     cited_text = citation.get('cited_text')
     if not isinstance(cited_text, str):
@@ -214,12 +213,17 @@ def _map_citation_for_replay(
         or not isinstance(document_index, int)
         or not isinstance(start, int)
         or not isinstance(end, int)
-        or not 0 <= document_index < len(document_texts)
+        or not 0 <= start < end
     ):
         return None
-    document_text = document_texts[document_index]
-    if document_text is None or not 0 <= start < end or document_text[start:end] != cited_text:
-        return None
+    # Anthropic numbers documents by their position in the request, which moves when earlier history is left out, so
+    # the citation goes to the document that holds its cited text at its range: the original one if it still does,
+    # otherwise the only other one. With none, or several others, the citation is left out.
+    matches = [index for index, text in enumerate(document_texts) if text is not None and text[start:end] == cited_text]
+    if document_index not in matches:
+        if len(matches) != 1:
+            return None
+        document_index = matches[0]
     return BetaCitationCharLocationParam(
         type='char_location',
         cited_text=cited_text,
@@ -230,34 +234,45 @@ def _map_citation_for_replay(
     )
 
 
-def _citation_document_texts(messages: Sequence[BetaMessageParam]) -> list[str | None]:
-    """Return the text of each document in `messages` in Anthropic's document index order.
+def _add_replayed_citations(
+    messages: Sequence[BetaMessageParam], replayed_citations: dict[int, list[dict[str, Any]]]
+) -> None:
+    """Add the citations Anthropic returned to the replayed text blocks of the finished request.
 
-    The text is `None` for documents that aren't plain text or don't have citations enabled. Anthropic counts every
-    document block in the request, across all messages and including those in tool results. If this numbering is ever
-    wrong, the cited text no longer matches and the citation is sent as plain text.
+    `replayed_citations` maps the `id()` of each replayed text block to its raw citations. Anthropic numbers every
+    `document` block in the request, wherever it's nested, such as in a tool result or a fetched page, so the request
+    is walked in order and each text block gets the citations that still match the documents before it.
     """
-    result: list[str | None] = []
+    document_texts: list[str | None] = []
 
-    def add_documents(
-        blocks: str | Iterable[BetaContentBlockParam] | Iterable[beta_tool_result_block_param.Content],
-    ) -> None:
-        if isinstance(blocks, str):
-            return
-        # The SDK also allows response content block models here, which are never documents.
-        for block in (block for block in blocks if isinstance(block, dict)):
-            if block['type'] == 'tool_result':
-                add_documents(block.get('content', ''))
-            elif block['type'] == 'document':
-                source, citations = block['source'], block.get('citations')
-                if source['type'] == 'text' and citations is not None and citations.get('enabled'):
-                    result.append(source['data'])
-                else:
-                    result.append(None)
+    def visit(value: object) -> None:
+        if isinstance(value, list):
+            for item in cast(list[object], value):
+                visit(item)
+        elif _utils.is_str_dict(value):
+            if (raw_citations := replayed_citations.get(id(value))) is not None:
+                if citations := [
+                    param
+                    for citation in raw_citations
+                    if _utils.is_str_dict(citation) and (param := _map_citation_for_replay(citation, document_texts))
+                ]:
+                    value['citations'] = citations
+            elif value.get('type') == 'document':
+                source, citations_config = value.get('source'), value.get('citations')
+                document_texts.append(
+                    source['data']
+                    if _utils.is_str_dict(source)
+                    and source.get('type') == 'text'
+                    and _utils.is_str_dict(citations_config)
+                    and citations_config.get('enabled')
+                    else None
+                )
+            else:
+                for item in value.values():
+                    visit(item)
 
     for message in messages:
-        add_documents(message['content'])
-    return result
+        visit(message['content'])
 
 
 def _with_document_citations(
@@ -2454,6 +2469,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         include_citations = model_settings.get('citations', False)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
+        replayed_citations: dict[int, list[dict[str, Any]]] = {}
         # Cross-provider files are dropped silently here, not raised via
         # `_validate_uploaded_file_provider`; intentional per https://github.com/pydantic/pydantic-ai/issues/4338 (ignore over raise).
         pending_container_uploads = [
@@ -2747,19 +2763,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
-                            citations: list[BetaTextCitationParam] = []
+                            text_block = BetaTextBlockParam(text=response_part.content, type='text')
                             raw_citations = (response_part.provider_details or {}).get('citations')
                             if response_part.provider_name == self.system and isinstance(raw_citations, list):
-                                document_texts = _citation_document_texts(anthropic_messages)
-                                citations = [
-                                    param
-                                    for citation in cast(list[Any], raw_citations)
-                                    if _utils.is_str_dict(citation)
-                                    and (param := _map_citation_for_replay(citation, document_texts))
-                                ]
-                            text_block = BetaTextBlockParam(text=response_part.content, type='text')
-                            if citations:
-                                text_block['citations'] = citations
+                                # Added once the request is finished, when every document's position is known.
+                                replayed_citations[id(text_block)] = cast(list[dict[str, Any]], raw_citations)
                             assistant_content_params.append(text_block)
                     elif isinstance(response_part, ToolCallPart):
                         tool_use_block_param = BetaToolUseBlockParam(
@@ -3043,6 +3051,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _drop_unpaired_native_tool_calls(anthropic_messages)
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
+        _add_replayed_citations(anthropic_messages, replayed_citations)
 
         if pending_container_uploads:
             for message in anthropic_messages:
