@@ -12,7 +12,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard
 
-import anyio
 import httpx
 import pytest
 from httpx import AsyncClient, MockTransport, Request, Response
@@ -175,30 +174,37 @@ class TestDiskMediaStore:
         await store.put(b'tagged twice', context=MediaContext(metadata={'writer': 'second'}))
         assert await store.get_metadata(uri) == {'writer': 'second'}
 
-    async def test_concurrent_puts_of_the_same_bytes_all_succeed(self, tmp_path: Path) -> None:
+    async def test_concurrent_puts_of_the_same_bytes_all_succeed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Writers racing on one digest each use their own temporary file.
 
-        With a temporary path shared by every writer, the first `replace` moved
-        the file out from under the others, which then raised `FileNotFoundError`.
+        The first writer's `replace` runs a whole second `put` before it
+        renames its own file. With a temporary path shared by every writer, the
+        second writer's rename moved the file out from under the first, which
+        then raised `FileNotFoundError`.
         """
         store = DiskMediaStore(tmp_path)
-        data = b'\x05' * (4 * 1024 * 1024)
+        data = b'raced'
         context = MediaContext(metadata={'k': 'v'})
-        uris: list[str] = []
+        real_replace = Path.replace
+        interleaved: list[str] = []
 
-        async def put() -> None:
-            uris.append(await store.put(data, context=context))
+        def replace_after_another_writer(self: Path, target: Path) -> Path:
+            if not interleaved:
+                interleaved.append('running')
+                interleaved.append(store._sync_put(data, context))  # pyright: ignore[reportPrivateUsage]
+            return real_replace(self, target)
 
-        async with anyio.create_task_group() as tg:
-            for _ in range(8):
-                tg.start_soon(put)
+        monkeypatch.setattr(Path, 'replace', replace_after_another_writer)
+        uri = await store.put(data, context=context)
 
-        assert uris == [media_uri_for(data)] * 8
-        assert await store.get(uris[0]) == data
-        assert await store.get_metadata(uris[0]) == {'k': 'v'}
+        assert interleaved == ['running', uri]
+        assert await store.get(uri) == data
+        assert await store.get_metadata(uri) == {'k': 'v'}
         assert sorted(p.name for p in tmp_path.iterdir()) == [
-            f'{parse_media_uri(uris[0])}.bin',
-            f'{parse_media_uri(uris[0])}.bin.meta.json',
+            f'{parse_media_uri(uri)}.bin',
+            f'{parse_media_uri(uri)}.bin.meta.json',
         ]
 
     async def test_failed_write_leaves_no_temporary_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
