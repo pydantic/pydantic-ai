@@ -69,6 +69,9 @@ class _RecordedBody:
     def stream(self, *_: Any, **__: Any) -> Iterator[bytes]:
         yield self.body
 
+    def close(self) -> None:
+        pass
+
 
 @dataclass
 class _Replay:

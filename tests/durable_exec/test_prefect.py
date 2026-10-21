@@ -48,7 +48,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
     RunContext,
     RunTimedOut,
     TextPart,
@@ -181,7 +180,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsSameStr, IsStr
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..realtime_connections import InferredConnection
@@ -694,7 +693,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -773,7 +772,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -793,7 +792,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -953,7 +952,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -1168,7 +1167,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id, so its durable Prefect wrapper is built
     # under a stable id; the `billing` function toolset carries the capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
@@ -2125,7 +2124,7 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     mock_task_ctx = MagicMock()
 
     def key_for(tool_call_id: str) -> str | None:
-        part = RetryPromptPart(content='retry', tool_name='tool', tool_call_id=tool_call_id)
+        part = legacy_retry_prompt_part(content='retry', tool_name='tool', tool_call_id=tool_call_id)
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
 
     assert key_for('pyd_ai_first') == key_for('pyd_ai_second')

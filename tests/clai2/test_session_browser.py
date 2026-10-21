@@ -4,7 +4,7 @@ import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from io import StringIO
-from itertools import chain, repeat
+from itertools import chain, count, repeat
 from pathlib import Path, PurePath
 
 import pytest
@@ -244,6 +244,23 @@ def test_idle_refresh_and_storage_errors_stay_in_menu(monkeypatch: pytest.Monkey
     monkeypatch.setattr(module.time, 'monotonic', lambda: 0.0)
     assert widget.loop() == ''
     assert 'Cannot read this session' in widget.notice
+
+
+def test_moving_the_selection_never_waits_on_a_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refreshes wait for a poll without a key, so a held arrow key never waits on storage."""
+    widget, _ = browser(keys=[Key.ENTER, Key.DOWN, Key.UP, Key.DOWN, '', 'ctrl-c'])
+    refresh = widget.refresh
+    refreshed: list[str | None] = []
+
+    def counted(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
+        refreshed.append(widget.selected_id)
+        return refresh(query, limit, archived)
+
+    widget.refresh = counted
+    # Every key arrives long after the last refresh.
+    monkeypatch.setattr(module.time, 'monotonic', count(step=1.0).__next__)
+    assert widget.loop() == ''
+    assert refreshed == ['three']
 
 
 def test_render_long_cards_all_modes_and_empty_projects() -> None:
