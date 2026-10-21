@@ -59,7 +59,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolReturnPart,
     NativeToolSearchReturnPart,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -1565,7 +1564,12 @@ class TestCodeMode:
 
         result = await Agent(FunctionModel(model_fn), capabilities=[CodeMode[object]()]).run('fail to spawn')
 
-        retry = next(p for m in result.all_messages() for p in m.parts if isinstance(p, RetryPromptPart))
+        retry = next(
+            p
+            for m in result.all_messages()
+            for p in m.parts
+            if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
+        )
         assert 'spawn failed' in str(retry.content)
         assert threads_after_retry == []
 

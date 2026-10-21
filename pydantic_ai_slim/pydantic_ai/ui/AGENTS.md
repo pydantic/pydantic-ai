@@ -9,6 +9,37 @@ The inbound half of that last rule lives in `ag_ui/_forward_compat.py`: AG-UI's 
 
 Tests for version-gated behavior belong behind `requires_ag_ui('<version>')` in `tests/test_ag_ui.py`, never behind the module-level `imports_successful()` gate: a name that only exists above the floor in that import block skips the entire module on CI's `test-lowest-versions` job, which is the only job that exercises the floor these gates exist for.
 
+## Inbound messages never gain harness provenance on their own
+
+`RetryFeedbackPart` dumps in the voice the model is shown it in, which its `retry.cause` decides: a
+user-role message for a `'validation_error'` or `'model_retry'`, a system-role one for `'no_output'`.
+Either way that is, on the wire, the same shape as a message the client wrote — so `load_messages`
+reconstructs the part **only** from the adapter's own `retry_feedback` metadata claim (Vercel AI's
+`providerMetadata`, AG-UI's `encrypted_value`), and everything else stays a plain prompt part. Keep that
+an explicit branch on both roles in both adapters when you touch either loader.
+
+The claim is client-echoed, so it separates provenance rather than proving it: a well-formed forged
+marker does rebuild the part, and it can name any cause. Only `'no_output'` reaches the model in the
+system voice, so whenever the server owns the system prompt `sanitize_messages` demotes a
+client-returned `'no_output'` part to the same fenced, attributed user text the other causes get. The
+wording doesn't matter: what earns the system voice is provenance, and a client part has none, so even
+the framework's own fixed directives don't keep it when a client sends them. The user-voice causes go
+out fenced behind the application attribution line, which a client could write as plain user text
+anyway. A future part belongs in that strip (or that demotion) when it can carry **client-controlled
+content** into the system voice. `ToolAvailabilityDeltaPart` becomes a `SystemPromptPart` too and is deliberately left out: it can only name tools the developer registered,
+and [7104](https://github.com/pydantic/pydantic-ai/pull/7104#discussion_r3732386493) settled that as
+the framework's pinned trust model, not an oversight.
+
+`strip_system_prompts=False` (`manage_system_prompt='client'`) therefore lets a client-authored
+`'no_output'` `RetryFeedbackPart` reach the model in the system voice with whatever text it carries,
+exactly as it already lets a client-authored `SystemPromptPart` through. That is the setting's meaning
+— the client owns the system prompt — so reach for it only when the client is as trusted as the server.
+
+The marker is also an outbound channel, and it may carry no more than the rendered text beside it.
+`retry_feedback_payload` strips each error's `ctx` before the part rides out, because the client reads
+and echoes that channel. Strip in the payload helper, not at the call sites — there are two, and a
+third would inherit the disclosure by default.
+
 ## Adapter properties are shared concepts the adapter itself consumes
 
 An unread field on a protocol's run input is not a gap. `run_input` is public, so every field is already reachable as `adapter.run_input.<field>`; a property that only forwards one adds no capability and takes on a permanent public-API commitment. AG-UI's `context`, `forwardedProps` and `parentRunId` are deliberately left that way — see [7106](https://github.com/pydantic/pydantic-ai/pull/7106#discussion_r3723844005), which closed [7105](https://github.com/pydantic/pydantic-ai/issues/7105) by documenting the wiring instead of exposing `AGUIAdapter.context`.
