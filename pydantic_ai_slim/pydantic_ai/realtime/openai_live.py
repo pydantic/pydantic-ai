@@ -644,6 +644,14 @@ class _LiveLifecycle(InferredLifecycle):
     Text reaches Live as commentary, which it places on its timeline (`session.commentary.appended`) and answers in
     the speech under way, if any, rather than in a reply of its own: text placed while a reply goes on is answered by
     that reply once it says anything more (`AnswersRevised.claimed`), and by the next reply otherwise.
+
+    The tool calls a delegated backend response asks for are the reply's, but the reply doesn't end with them: Live
+    goes on speaking while the backend waits for their results ("Okay, checking the forecast ... now."), and only the
+    backend's answer is what it says with them in hand. So a reply that called tools goes on until a delegation
+    settles (`delegation_settled()`), with what Live says meanwhile, or until the backend calls more tools in a
+    continuation, which are a response of their own, after the results it was continued with, as in a standard run.
+    Any delegation settling ends it, not only the one that asked for its calls: what Live says next is that
+    delegation's outcome, which is a reply of its own.
     """
 
     transcripts_lag_replies = False
@@ -655,10 +663,48 @@ class _LiveLifecycle(InferredLifecycle):
         """The provider message being mapped has the model take the turn (see `_open_response()`)."""
         self._placed_text: list[InputId] = []
         """Text placed on Live's timeline while the reply under way goes on, which its next output answers."""
+        self._round_reported = False
+        """The backend response that asked for the open response's tool calls reported its usage: it is over, and a
+        call that comes now is a continuation's."""
+        self._settles = False
+        """The provider message being mapped settles a delegation, whichever one the open response's calls came from."""
 
     def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         took_turn, self.turn_taken = self.turn_taken, False
         return took_turn
+
+    def frame_for(self, codec: Sequence[RealtimeCodecEvent]) -> RealtimeFrame:
+        try:
+            return super().frame_for(codec)
+        finally:
+            self._settles = False
+
+    def delegation_settled(self) -> None:
+        """The provider message being mapped settles a delegation: it owes nothing more.
+
+        Its backend usage report ends the open response, if that called tools (of this delegation or another one still
+        owed its results): what Live says next is the settled delegation's outcome, a reply of its own.
+        """
+        self._settles = True
+
+    def _event(
+        self, event: RealtimeCodecEvent, *, takes_turn: bool = False
+    ) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
+        if not (isinstance(event, SessionUsage) and event.response_scoped and self._calls_awaiting_usage):
+            return super()._event(event, takes_turn=takes_turn)
+        # A delegated backend response is over. The reply that called the tools goes on, unless this settles them.
+        before: list[LifecycleEvent] = []
+        after: list[LifecycleEvent] = []
+        if not self._settles:
+            self._round_reported = True
+            return before, after
+        self._settles = False
+        ended = self._open
+        # The usage is the reply's if the backend response it reports asked for the reply's calls, and otherwise
+        # the answer's (which it then waits for, as usage between responses does).
+        self._end(before if self._round_reported else after, status='completed', finish_reason='tool_call')
+        self._ended_by_usage = ended
+        return before, after
 
     def calls_abandoned(self, call_ids: Sequence[str]) -> None:
         """The delegated backend that asked for these calls gave up: no reply will answer their results."""
@@ -670,6 +716,9 @@ class _LiveLifecycle(InferredLifecycle):
             self._placed_text.append(input_id)
 
     def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        if isinstance(event, ToolCall) and self._round_reported and self._open is not None:
+            # A continuation's call, made with the results of the open response's: a response of its own.
+            self._end(before, status='completed', finish_reason='tool_call')
         super()._output(event, before, after)
         if (response_id := self._open) is not None and (claimed := tuple(self._placed_text)):
             # The reply goes on past the text: Live speaks to it here, not in a reply of its own.
@@ -687,6 +736,7 @@ class _LiveLifecycle(InferredLifecycle):
     ) -> None:
         # Text the reply never spoke past is the next reply's to answer.
         self._placed_text.clear()
+        self._round_reported = False
         super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
 
 
@@ -830,7 +880,9 @@ class OpenAILiveConnection(RealtimeConnection):
         delegation.pending_tool_calls.discard(tool_call_id)
         delegation.stalled = True
         if not delegation.response_in_flight:
-            self._settle_delegation(delegation, gave_up=True)
+            # Settled outside any provider message, so no backend usage report follows to end the reply that called
+            # the tools: the turn clock, which the delegation no longer holds, ends it.
+            self._settle_delegation(delegation, gave_up=True, in_frame=False)
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
@@ -1623,12 +1675,15 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         return [SessionUsage(RequestUsage(unmeasured_requests=unmeasured_requests))]
 
-    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> None:
+    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool, in_frame: bool = True) -> None:
         """Account for one finished backend response, closing the delegation once it owes nothing.
 
         A delegation suspends the turn clock, so leaving a dead one in the map would keep the session
         from ever reporting another turn boundary: a backend that fails or stops short has to close
         it just as a completed one does.
+
+        `in_frame` says it is settled by the provider message being mapped, whose backend usage report then ends the
+        reply that called the tools (see `_LiveLifecycle.delegation_settled()`).
         """
         delegation.response_in_flight = False
         if gave_up or delegation.stalled:
@@ -1645,6 +1700,8 @@ class OpenAILiveConnection(RealtimeConnection):
             self._continuations_due.append(delegation)
             return
         self._delegations.pop(delegation.id, None)
+        if in_frame:
+            self._lifecycle.delegation_settled()
         self._heard_voice()
 
     def _map_backend_usage(self, response: Response) -> list[RealtimeCodecEvent]:

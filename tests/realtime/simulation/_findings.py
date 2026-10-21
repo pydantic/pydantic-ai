@@ -19,7 +19,7 @@ they stay, and have no pinned scenario to retire.
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -192,13 +192,10 @@ def _cut_off_where_speech_is_unreported(sim: Simulation, violation: InvariantVio
 
 
 def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A response already under way when the input arrived ended the wait for the input's own reply.
-
-    Or, for a wait on a tool round: a response the provider started on its own ended it before the round's answer.
-    """
+    """A response already under way when the input arrived ended the wait for the input's own reply."""
     input_ = sim.truth.input(violation.context.get('input', ''))
     if input_ is None:
-        return _tool_round_reply_taken(sim, violation)
+        return False
     # Under way as far as the client could see: it hadn't read the response's end when the input went out.
     return any(
         response.seq_start < input_.seq
@@ -212,32 +209,18 @@ def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolat
     )
 
 
-def _tool_round_reply_taken(sim: Simulation, violation: InvariantViolation) -> bool:
-    responses = sim.truth.responses.values()
-    round_ = sim.truth.responses.get(violation.context.get('response', ''))
-    if round_ is None or not round_.tool_calls:
-        return False
-    answer = next((response for response in responses if set(round_.tool_calls) & set(response.answers)), None)
-    return any(
-        response.trigger == 'auto'
-        and response.seq_start > round_.seq_start
-        and response is not answer
-        and (answer is None or (response.seq_end is not None and response.seq_end < answer.seq_start))
-        for response in responses
-    )
-
-
 RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     id='8763c #3',
     title=(
         'where the provider gives no signal, a response it started before an input arrived, but that the client '
         "hadn't read yet, is taken for that input's reply, so `wait_for_reply()` returns when it ends: on a Gemini "
         'native-audio model (which finishes its reply rather than cutting it off for the input), on Vertex '
-        "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), on ElevenLabs "
-        'Agents, and on GPT-Live for a delegation the model starts on its own while a delegated tool round is owed '
-        'its answer (fixed where the provider says: the OpenAI protocol asks again for a request server VAD '
-        'overtook, Gemini 3.x hands an input that cut a reply off to the next, GPT-Live answers text '
-        'in the reply under way, and ElevenLabs Agents names the typed turns a reply answers)'
+        "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), and on ElevenLabs "
+        'Agents (fixed where the provider says: the OpenAI protocol asks again for a request server VAD overtook, '
+        'Gemini 3.x hands an input that cut a reply off to the next, GPT-Live answers text in the reply under way, '
+        'and ElevenLabs Agents names the typed turns a reply answers; and on GPT-Live for a delegation the model '
+        'starts on its own while a delegated tool round is owed its answer, which the reply that called the tools '
+        'now goes on past)'
     ),
     tracked_by='a provider signal that tells which reply answers an input sent as another started',
     evidence='simulated',
@@ -254,26 +237,6 @@ KNOWN_FINDINGS: list[Finding] = [
     RECEIVE_LOOP_SEND_FAILURE,
 ]
 """Checked in order: the more specific findings for a code come before the more general ones."""
-
-
-def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse] | None = None) -> bool:
-    """A response went on after its first tool call: it said more, or called another tool in a later message.
-
-    Any response, unless `responses` narrows it to the ones a violation names.
-    """
-    truth = sim.truth
-    return any(
-        any(truth.word_seq[word] > first for word in response.words)
-        or any(truth.tool_calls[call_id].seq > first for call_id in response.tool_calls)
-        for response in (truth.responses.values() if responses is None else responses)
-        if response.tool_calls
-        for first in [truth.tool_calls[response.tool_calls[0]].seq]
-    )
-
-
-def _reply_continued_across_a_round(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A response the violation names continued after its first tool call."""
-    return _continued_after_calling(sim, _context_responses(sim, violation) or [])
 
 
 def _in_flight_at_the_result(sim: Simulation, violation: InvariantViolation) -> bool:
@@ -340,21 +303,6 @@ ASYNC_SPEECH_BETWEEN_RESULTS = Finding(
     providers=GEMINI,
     matches=_spoke_between_results,
     accepted=True,
-)
-
-
-LIVE_REPLY_SPLIT_BY_TOOL_ROUND = Finding(
-    id='SIM-18',
-    title=(
-        'on GPT-Live, a spoken reply that goes on across a delegated tool round is recorded in two pieces around '
-        "the tool's return (the GPT-Live counterpart of #8760); when the model has started another reply by then, "
-        "the delegation's later tool call is recorded in that reply instead, with the words around it"
-    ),
-    tracked_by='per-response-id state, so a response the session already recorded can be continued; found by this simulator',
-    evidence='recorded',
-    codes=frozenset({'response.duplicated', 'response.mixed', 'response.truncated'}),
-    providers=frozenset({'gpt-live'}),
-    matches=_reply_continued_across_a_round,
 )
 
 
@@ -607,7 +555,6 @@ KNOWN_FINDINGS.extend(
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
-        LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         ASYNC_SPEECH_BETWEEN_RESULTS,
         PROVIDER_REPLY_BEFORE_ANY_ECHO,
