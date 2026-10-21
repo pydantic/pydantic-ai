@@ -413,6 +413,7 @@ def create_input(
     state: Any = None,
     context: list[Context] | None = None,
     forwarded_props: Any = None,
+    resume: list[ResumeEntry] | None = None,
 ) -> RunAgentInput:
     """Create a RunAgentInput for testing."""
     thread_id = thread_id or uuid_str()
@@ -424,6 +425,7 @@ def create_input(
         context=context or [],
         tools=tools or [],
         forwarded_props=forwarded_props,
+        resume=resume,
     )
 
 
@@ -9182,27 +9184,19 @@ def _resume_input(*resume: ResumeEntry) -> RunAgentInput:
     `resume[]` set would be stripped as a dangling tail with a warning — either way a test
     asserting on `RUN_ERROR` would pass (or fail) for the wrong reason.
     """
-    return RunAgentInput(
-        thread_id=uuid_str(),
-        run_id=uuid_str(),
-        state={},
-        messages=[
-            UserMessage(id='m1', content='clean up'),
-            AssistantMessage(
-                id='m2',
-                tool_calls=[
-                    ToolCall(
-                        id=entry.interrupt_id.removeprefix(INTERRUPT_ID_PREFIX),
-                        type='function',
-                        function=FunctionCall(name='delete_file', arguments='{"path": ".env"}'),
-                    )
-                    for entry in resume
-                ],
-            ),
-        ],
-        tools=[],
-        context=[],
-        forwarded_props=None,
+    return create_input(
+        UserMessage(id='m1', content='clean up'),
+        AssistantMessage(
+            id='m2',
+            tool_calls=[
+                ToolCall(
+                    id=entry.interrupt_id.removeprefix(INTERRUPT_ID_PREFIX),
+                    type='function',
+                    function=FunctionCall(name='delete_file', arguments='{"path": ".env"}'),
+                )
+                for entry in resume
+            ],
+        ),
         resume=list(resume),
     )
 
@@ -9282,6 +9276,39 @@ async def test_resume_one_invalid_payload_fails_the_whole_run() -> None:
 
 
 @pytestmark_interrupts
+async def test_resume_unmatched_prefixed_id_fails_the_whole_run() -> None:
+    """A well-prefixed id that binds to no pending call still fails the run.
+
+    The `resume[]` mapping itself accepts the entry — the no-op mapping test above pins
+    that — but at run level the entry contributes an approval for a tool call the history
+    never proposed, so the run ends in a `RUN_ERROR` and the valid sibling approval is
+    not applied either.
+    """
+    executed: list[str] = []
+
+    agent = Agent(model=TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:  # pragma: no cover
+        # Body never runs: the run errors before the agent resumes / the call is denied.
+        executed.append(path)
+        return f'deleted {path}'
+
+    run_input = _resume_input(ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'approved': True}))
+    # The helper derives the history's tool calls from the entries, so appending the extra
+    # entry afterwards leaves its id well-prefixed while matching no pending call.
+    run_input.resume.append(
+        ResumeEntry(interrupt_id='int-tc-does-not-exist', status='resolved', payload={'approved': True})
+    )
+
+    events = await _collect_adapter_events(agent, run_input)
+
+    assert [e['type'] for e in events] == snapshot(['RUN_STARTED', 'RUN_ERROR'])
+    assert 'Tool call results need to be provided for all deferred tool calls' in events[-1]['message']
+    assert executed == [], 'the run must fail before the sibling approval executes its tool'
+
+
+@pytestmark_interrupts
 async def test_resume_valid_denial_stays_silent() -> None:
     """A valid `approved: false` still denies silently — no `RUN_ERROR`.
 
@@ -9328,6 +9355,51 @@ async def test_resume_valid_denial_stays_silent() -> None:
     assert executed == [], 'a denied tool must not execute'
     tool_results = [e for e in events if e['type'] == 'TOOL_CALL_RESULT' and e['toolCallId'] == 'tc-001']
     assert [e['content'] for e in tool_results] == snapshot(['too destructive'])
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome'] == snapshot({'type': 'success'})
+
+
+@pytestmark_interrupts
+async def test_deferred_tool_results_take_precedence_over_malformed_resume() -> None:
+    """Caller-supplied `deferred_tool_results` win over the client's `resume[]`, even a malformed one.
+
+    The documented promise: pass your own results and the client's `resume[]` is ignored
+    entirely, including a payload missing its required `approved` key — a denial-by-default
+    if the adapter consulted the entry at all. The supplied approval is what the run applies.
+    """
+    executed: list[str] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield 'acknowledged'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        executed.append(path)
+        return f'deleted {path}'
+
+    events = await _collect_adapter_events(
+        agent,
+        _resume_input(ResumeEntry(interrupt_id='int-tc-001', status='resolved', payload={'missing': 'approved'})),
+        deferred_tool_results=DeferredToolResults(approvals={'tc-001': True}),
+    )
+
+    assert [e['type'] for e in events] == snapshot(
+        [
+            'RUN_STARTED',
+            'TOOL_CALL_RESULT',
+            'TEXT_MESSAGE_START',
+            'TEXT_MESSAGE_CONTENT',
+            'TEXT_MESSAGE_END',
+            'RUN_FINISHED',
+        ]
+    )
+    assert executed == ['.env'], 'the supplied approval was applied, not the malformed resume entry'
+    tool_results = [e for e in events if e['type'] == 'TOOL_CALL_RESULT' and e['toolCallId'] == 'tc-001']
+    assert [e['content'] for e in tool_results] == snapshot(['deleted .env'])
     run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
     assert run_finished['outcome'] == snapshot({'type': 'success'})
 
