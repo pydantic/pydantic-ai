@@ -590,6 +590,11 @@ class TestAccessPatterns:
             await toolset.write_file('.GIT/config', '[core]\n', workspace=ws)
         with pytest.raises(ModelRetry, match=r"'apps/\.Env' is protected \(matches '\*\*/\.env'\)"):
             await toolset.write_file('apps/.Env', 'X=1\n', workspace=ws)
+        # Folding turns `ß` into `ss`, which `?` no longer matches, so the original spelling still counts.
+        single = FileSystem[None](read_only_patterns=['private/?.txt']).get_toolset()
+        assert isinstance(single, FileSystemToolset)
+        with pytest.raises(ModelRetry, match=r"'private/ß\.txt' is protected \(matches 'private/\?\.txt'\)"):
+            await single.write_file('private/ß.txt', 'X=1\n', workspace=ws)
 
     async def test_default_read_only_patterns_protect_a_git_file(self, tmp_path: Path) -> None:
         # In a git worktree or submodule `.git` is a file naming the git directory; rewriting it

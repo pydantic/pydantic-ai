@@ -14,14 +14,14 @@ def matches(path: str, pattern: str, *, ignore_case: bool = False) -> bool:
     root-level `secrets.yaml` -- there's no leading directory to match.
     Retrying with the `**/` prefix stripped covers the zero-directory case.
     """
+    spellings = [(path, pattern, fnmatch.fnmatch)]
     if ignore_case:
-        path, pattern = path.casefold(), pattern.casefold()
-    match = fnmatch.fnmatchcase if ignore_case else fnmatch.fnmatch
-    if match(path, pattern):
-        return True
-    if pattern.startswith('**/'):
-        return match(path, pattern[3:])
-    return False
+        # Folding can change a string's length (`ß` becomes `ss`), so a `?` that matches the
+        # original spelling may not match the folded one: folding adds a way to match.
+        spellings.append((path.casefold(), pattern.casefold(), fnmatch.fnmatchcase))
+    return any(
+        match(name, glob) or (glob.startswith('**/') and match(name, glob[3:])) for name, glob, match in spellings
+    )
 
 
 def first_matching_pattern(path: str, patterns: Sequence[str]) -> str | None:
@@ -31,7 +31,8 @@ def first_matching_pattern(path: str, patterns: Sequence[str]) -> str | None:
     case: on a case-insensitive filesystem (the macOS and Windows default) `.GIT/config` is
     `.git/config`, and the workspace reports a path in the case it was written, so a
     case-sensitive match would let a differently cased spelling past. On a case-sensitive
-    filesystem this only protects more.
+    filesystem this only protects more. It is exact for literal text; a `?` or `[...]` can still miss a
+    name whose case folding changes its length, such as `SS` for `ß` on APFS.
     """
     parts = path.split('/')
     paths = ['/'.join(parts[:end]) for end in range(1, len(parts) + 1)]
