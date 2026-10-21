@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     NativeTool,
+    PrefixTools,
     PrepareTools,
     ResolveModelId,
     SelectModel,
@@ -793,19 +794,38 @@ class TestMCPCapability:
         await agent.run(
             'hi', capabilities=[MCP(url='https://mcp.example.com/a', headers={'X-Run': '1'}, native=True, local=False)]
         )
-        # A credential rotated in the userinfo or query, or a trailing slash, still names the same server.
-        tokened = Agent(model, capabilities=[MCP(url='https://mcp.example.com/a?token=old', native=True, local=False)])
-        await tokened.run(
-            'hi', capabilities=[MCP(url='https://user:new@mcp.example.com/a/?token=new#top', native=True, local=False)]
+        # A credential rotated in the userinfo, a fragment or a trailing slash still names the same server.
+        tokened = Agent(
+            model, capabilities=[MCP(url='https://old@mcp.example.com/a?tenant=x', native=True, local=False)]
         )
+        await tokened.run(
+            'hi', capabilities=[MCP(url='https://new@mcp.example.com/a/?tenant=x#top', native=True, local=False)]
+        )
+        # The query can select a tenant, so a query change might be a different server: ask for an explicit id.
         with pytest.raises(
             UserError,
-            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+            match=re.escape('or the same one where they configure one server, for example with a rotated credential'),
         ):
             await tokened.run(
-                'hi', capabilities=[MCP(url='https://mcp.example.com/b?token=old', native=True, local=False)]
+                'hi', capabilities=[MCP(url='https://old@mcp.example.com/a?tenant=y', native=True, local=False)]
             )
-        assert seen == [['https://mcp.example.com/a'], ['https://user:new@mcp.example.com/a/?token=new#top']]
+        # A wrapper given an `id` chose it, even one equal to the wrapped capability's derived id, so the
+        # run-level wrapper overrides the agent's capability rather than colliding with it.
+        await agent.run(
+            'hi',
+            capabilities=[
+                PrefixTools(
+                    wrapped=MCP(url='https://mcp.example.com/b', native=True, local=False),
+                    prefix='b',
+                    id='mcp.example.com',
+                )
+            ],
+        )
+        assert seen == [
+            ['https://mcp.example.com/a'],
+            ['https://new@mcp.example.com/a/?tenant=x#top'],
+            ['https://mcp.example.com/b'],
+        ]
 
     def test_mcp_local_toolset_id_derived(self):
         """MCP stamps a derived id on the local `MCPToolset` so it can be used with durable

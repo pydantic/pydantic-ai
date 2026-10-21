@@ -130,10 +130,11 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     def _derived_id_source(self) -> str | None:
         if self.id is None or self.id != self._telemetry_url_derived_id or self.url is None:
             return None
-        # The server endpoint, without the userinfo, query or fragment that can carry a credential:
-        # a run that restates the same server with a rotated token is still the same server.
+        # The server endpoint without its userinfo or fragment, which never select a server. The query
+        # is kept: it can select a tenant, so two URLs that differ only there may be two servers, and
+        # telling them apart takes an explicit `id`.
         parsed = urlparse(self.url)
-        return f'{parsed.scheme.lower()}://{parsed.hostname}:{parsed.port}{parsed.path.rstrip("/")}'
+        return f'{parsed.scheme.lower()}://{parsed.hostname}:{parsed.port}{parsed.path.rstrip("/")}?{parsed.query}'
 
     def _derive_id(self, url: str | None) -> str | None:
         """Derive a stable id for this capability from `url`.
