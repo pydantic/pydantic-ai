@@ -18,12 +18,7 @@ from .._context_size import mark_initial_input_tokens
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
-    ModelContextWindowExceededError,
     ModelHTTPError,
-    ModelOverloadedError,
-    ModelRateLimitError,
-    ModelServerError,
-    ModelUnavailableError,
     UserError,
 )
 from ..messages import (
@@ -445,7 +440,7 @@ def _map_api_error(
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         status = e.status if isinstance(e.status, str) else None
-        category = _error_category(status, e.message)
+        category = _model_errors.google_status_category(status, e.message)
         # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
         response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         return ModelHTTPError.for_category(
@@ -459,36 +454,6 @@ def _map_api_error(
             in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
-
-
-_CONTEXT_WINDOW_ERROR_MESSAGES = ('input token count', 'number of tokens allowed')
-"""Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
-
-The full message is `The input token count (N) exceeds the maximum number of tokens allowed (M)`; the file-upload
-variant drops the leading clause.
-"""
-
-
-def _error_category(status: str | None, message: object) -> _model_errors.HTTPErrorCategory | None:
-    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`.
-
-    Gemini sends `RESOURCE_EXHAUSTED` for both rate limits and exhausted quota, with the same message, so it's
-    always a rate limit.
-    """
-    match status:
-        case 'RESOURCE_EXHAUSTED':
-            return ModelRateLimitError
-        case 'UNAVAILABLE':
-            # Like `The model is overloaded. Please try again later.`
-            return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
-        case 'INTERNAL':
-            return ModelServerError
-        case 'INVALID_ARGUMENT' if isinstance(message, str) and any(
-            m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
-        ):
-            return ModelContextWindowExceededError
-        case _:
-            return None
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:

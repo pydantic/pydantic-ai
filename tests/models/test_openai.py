@@ -6404,6 +6404,77 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
         agent.run_sync('bad prompt')
 
 
+_AZURE_PROMPT_BLOCKED_MESSAGE = (
+    "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. "
+    'Please modify your prompt and retry.'
+)
+
+
+@pytest.mark.parametrize(
+    ('body', 'provider_details'),
+    [
+        pytest.param(
+            {
+                'message': _AZURE_PROMPT_BLOCKED_MESSAGE,
+                'type': 'invalid_request_error',
+                'param': 'prompt',
+                'code': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+                'innererror': {'code': 'ContentFiltered'},
+            },
+            {
+                'finish_reason': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+            },
+            id='reported-body',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter', 'message': _AZURE_PROMPT_BLOCKED_MESSAGE, 'innererror': {}}},
+            {'finish_reason': 'content_filter'},
+            id='innererror-without-code',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter'}},
+            {'finish_reason': 'content_filter'},
+            id='code-only',
+        ),
+    ],
+)
+def test_responses_azure_prompt_filter_error_without_filter_result(
+    allow_model_requests: None, body: dict[str, Any], provider_details: dict[str, Any]
+) -> None:
+    """Azure's Responses API can send an `innererror` without `content_filter_result` for a blocked prompt."""
+    mock_client = MockOpenAIResponses.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
+            body=body,
+        )
+    )
+
+    m = OpenAIResponsesModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+
+    with pytest.raises(
+        ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+    ) as exc_info:
+        Agent(m).run_sync('bad prompt')
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == provider_details
+
+
 async def test_openai_response_filter_error(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content=None, role='assistant'),

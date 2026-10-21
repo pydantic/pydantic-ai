@@ -75,7 +75,7 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -1812,6 +1812,85 @@ class TestGetModelHook:
         assert [(step, prompt) for step, prompt, _ in selected] == [(1, run_prompt), (2, run_prompt)]
         assert selected == sent
 
+    @pytest.mark.parametrize('replaced_in_for_run', [False, True])
+    async def test_selection_context_run_fields_match_run_context(self, replaced_in_for_run: bool):
+        """On every step, the selector sees the run's `usage_limits`, `deadline`, `run_id` and `conversation_id`.
+
+        Step one is selected during run setup, or, when `for_run` replaces the selector, in the graph like
+        later steps; both must see what the step's `RunContext` holds. The bootstrap selector's context,
+        evaluated before `for_run`, carries them too.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for p in messages[-1].parts):
+                return make_text_response('done')
+            return ModelResponse(parts=[ToolCallPart('advance', '{}')])
+
+        model = FunctionModel(respond)
+        selected: list[tuple[str, int, Any]] = []
+        sent: list[tuple[int, Any]] = []
+
+        def run_fields(ctx: RunContext[None] | ModelSelectionContext[None]) -> Any:
+            return (ctx.usage_limits, ctx.deadline, ctx.run_id, ctx.conversation_id)
+
+        def selector(name: str) -> Callable[[ModelSelectionContext[None]], Model]:
+            def select(ctx: ModelSelectionContext[None]) -> Model:
+                selected.append((name, ctx.run_step, run_fields(ctx)))
+                return model
+
+            return select
+
+        @dataclass
+        class Replacement(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return selector('replacement')
+
+        @dataclass
+        class Recorder(AbstractCapability[None]):
+            def get_model(self) -> Callable[[ModelSelectionContext[None]], Model]:
+                return selector('bootstrap')
+
+            async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+                return Replacement() if replaced_in_for_run else self
+
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                sent.append((ctx.run_step, run_fields(ctx)))
+                return request_context
+
+        @dataclass
+        class Observer(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                sent.append((ctx.run_step, run_fields(ctx)))
+                return request_context
+
+        capabilities: list[AbstractCapability[None]] = [Recorder()]
+        if replaced_in_for_run:
+            capabilities.append(Observer())
+        agent = Agent(None, deps_type=NoneType, capabilities=capabilities)
+
+        @agent.tool_plain
+        def advance() -> str:
+            return 'advanced'
+
+        usage_limits = UsageLimits(request_limit=10)
+        result = await agent.run('hello', usage_limits=usage_limits, timeout=60)
+        assert result.output == 'done'
+
+        run_deadline = sent[0][1][1]
+        assert isinstance(run_deadline, datetime)
+        expected = (usage_limits, run_deadline, result.run_id, result.conversation_id)
+        assert sent == [(1, expected), (2, expected)]
+        assert sent[0][1][0] is usage_limits
+        names = ['bootstrap', 'replacement', 'replacement'] if replaced_in_for_run else ['bootstrap', 'bootstrap']
+        steps = [1, 1, 2] if replaced_in_for_run else [1, 2]
+        assert selected == [(name, step, expected) for name, step in zip(names, steps)]
+
     @pytest.mark.parametrize('deferred', [False, True])
     async def test_selection_context_with_tool_calls_to_run(self, deferred: bool):
         """A run resuming from tool calls still to run is routed on the history ending in their response.
@@ -2377,6 +2456,8 @@ class TestGetModelHook:
             def get_model(self) -> Callable[[ModelSelectionContext[str]], Model]:
                 def select(ctx: ModelSelectionContext[str]) -> Model:
                     assert ctx.prompt == 'hello'
+                    # Selected outside a run, so there are no run ids, deadline or limits.
+                    assert (ctx.usage_limits, ctx.deadline, ctx.run_id, ctx.conversation_id) == (None, None, None, None)
                     return selected
 
                 return select

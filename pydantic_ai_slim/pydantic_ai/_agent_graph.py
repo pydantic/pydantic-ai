@@ -2932,6 +2932,10 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         usage=ctx.state.usage,
         retry=ctx.state.output_retries_used,
         max_retries=ctx.deps.max_output_retries,
+        usage_limits=ctx.deps.usage_limits,
+        deadline=ctx.deps.deadline,
+        run_id=ctx.state.run_id,
+        conversation_id=ctx.state.conversation_id,
     )
     model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
     await ctx.deps.enter_model(model)
