@@ -5045,11 +5045,12 @@ async def test_prefect_mcp_auth_function_connects_each_run_as_its_own_user(block
 
     app = server.http_app(stateless_http=True, json_response=True)
     # A `localhost` URL keeps the module's VCR cassettes from intercepting the in-process requests.
+    # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
     client: httpx.AsyncClient | httpx2.AsyncClient
     if is_mcp_sdk_v2():
-        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
-    else:  # pragma: lax no cover — only the FastMCP 3 runs of the matrix take this branch
-        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
     toolset = MCPToolset[str]('http://localhost/mcp', id='auth_mcp', http_client=client, auth=lambda ctx: ctx.deps)
     agent = Agent(
         TestModel(call_tools=['whoami']),
