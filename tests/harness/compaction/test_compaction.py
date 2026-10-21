@@ -1672,6 +1672,30 @@ Summary 3.\
             for part in message.parts
         )
 
+    async def test_sliding_window_drops_a_report_merged_into_the_preserved_first_request(self):
+        """An `asap` report delivered with the user's prompt shares its request, but isn't kept with it."""
+        report = DelegationTask(
+            id='a' * 32, agent_name='worker', prompt='p', conversation_id='c', outcome='ok', output='x' * 10_000
+        ).report()
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('original task'), report]),
+            _assistant('got it'),
+            _user('follow-up 1'),
+            _assistant('done'),
+            _user('follow-up 2'),
+        ]
+        sw = SlidingWindowCompaction(max_messages=3, keep_messages=2, preserve_first_user_message=True)
+        result = await sw.before_model_request(_make_ctx(messages), _make_request_context(messages))
+        first = result.messages[0]
+        assert isinstance(first, ModelRequest)
+        assert len(first.parts) == 1 and _user_texts([first]) == ['original task']
+        assert not any(
+            is_task_report(part)
+            for message in result.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
     async def test_sliding_window_no_duplicate_when_in_window(self):
         """First user message should not be duplicated if already in the kept window."""
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=5, preserve_first_user_message=True)

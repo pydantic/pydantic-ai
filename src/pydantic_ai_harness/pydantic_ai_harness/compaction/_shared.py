@@ -910,14 +910,17 @@ def prepend_first_user_message(
 
     If the first `ModelRequest` containing a `UserPromptPart` in *original*
     was discarded (its index is before *cutoff*) and is not already in *trimmed*,
-    prepend it.
+    prepend it. Harness data merged into that request, such as a `SubAgents` task
+    report delivered with the user's prompt, is left out: it isn't the user's turn,
+    and keeping it would hold it outside the window on every run.
     """
     first = find_first_user_message(original)
     if first is None:
         return trimmed
     idx = original.index(first)
     if idx < cutoff and first not in trimmed:
-        return [first, *trimmed]
+        genuine = [part for part in first.parts if not is_harness_data(part)]
+        return [first if len(genuine) == len(first.parts) else replace(first, parts=genuine), *trimmed]
     return trimmed
 
 
