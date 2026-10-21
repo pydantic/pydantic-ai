@@ -50,11 +50,6 @@ def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('done')])
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'  # Temporal's test server requires an asyncio event loop.
-
-
 async def test_review_runs_as_a_temporal_activity(tmp_path: Path) -> None:
     command = tmp_path / 'macroscope'
     command.write_text(f"#!/bin/sh\nprintf '%s\\n' review_id=rev-1 '{_ISSUE_LINE}' issue_status=completed >&2\n")

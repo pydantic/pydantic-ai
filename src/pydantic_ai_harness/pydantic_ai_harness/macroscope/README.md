@@ -8,8 +8,8 @@ agent and hand the findings back for validation and fixing.
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships as
-editor plugins (Claude Code, Codex, Cursor, OpenCode). This capability gives a
-Pydantic AI agent the same review-and-fix loop.
+editor plugins (Claude Code, Codex, Cursor, OpenCode). There is no way to give a
+Pydantic AI agent the same review-and-fix loop from your own code.
 
 ## The solution
 
@@ -40,10 +40,10 @@ print(result.output)
 
 The capability drives the `macroscope` binary installed in the agent's
 [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/): your machine
-with `LocalWorkspace`, or the sandbox when the run uses one. A run without a
-workspace fails at its start. The review runs in the workspace's working
-directory, which should be the repository. The capability cannot install or
-authenticate on your behalf, so do this once wherever the review runs:
+with `LocalWorkspace`, or the sandbox when the run uses one. A run without a workspace fails at its start. The review runs in
+the workspace's working directory, which should be the repository. The
+capability cannot install or authenticate on your behalf, so do this once
+wherever the review runs:
 
 1. Install the CLI:
 
@@ -61,8 +61,9 @@ authenticate on your behalf, so do this once wherever the review runs:
 
    This writes `~/.macroscope/config.yaml`.
 
-The tool runs `macroscope codereview --raw`. Builds without `--raw` are too old;
-the CLI updates itself on use.
+The tool invokes `macroscope codereview --raw` for machine-readable streaming
+output, which needs a recent CLI build. The installer fetches the latest and the
+CLI self-updates on use, so a fresh install satisfies this.
 
 The model cannot fix setup problems either, so they end the run with `UserError`:
 
@@ -94,7 +95,7 @@ starts, the model gets a retry.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `base` | `None` | Git ref to diff against. `None` omits `--base` so the CLI auto-detects the base branch itself (and creates its own review worktree). The model's per-call `base` overrides this field. A `base` that starts with `-` is rejected. |
+| `base` | `None` | Git ref to diff against. `None` omits `--base` so the CLI auto-detects the base branch itself (and creates its own review worktree). A per-call `base` argument, then this field, take precedence when set. A `base` that starts with `-` is rejected. |
 | `command` | `'macroscope'` | Binary name or path. Override for a non-default install location. Cannot start with `-` or contain `=`. |
 | `timeout` | `600.0` | Maximum seconds to wait for a review. |
 | `guidance` | `None` | Custom review guidance for the system prompt. `None` contributes the default validate-then-fix guidance; `''` contributes none. |
@@ -102,17 +103,19 @@ starts, the model gets a retry.
 
 ## Scope and composition
 
-Pair it with `FileSystem` or `Shell` so the agent can read code and apply fixes. To
-keep fixes off your working tree, give the agent a separate worktree as its
-workspace. A large review returns every finding in one tool result; add
-`ToolOutputLimits` to cap its size.
+This capability surfaces findings only. It does not edit files, create worktrees, or
+commit -- validating and fixing findings is the agent's job, using its other
+capabilities. Pair it with `FileSystem` or `Shell` to let the agent read code and
+apply fixes, and consider running the agent in an isolated worktree if you want fixes
+kept off your working tree.
 
 ## Durable execution
 
-Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on Temporal, each review runs in its own activity, which
-gets `timeout` plus 30 seconds. The workspace therefore stops a slow review first,
-and the model still gets the findings that arrived. To set a different activity
-limit, use `SetToolMetadata` as in
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/)
+on Temporal, each review runs in its own activity, which gets `timeout` plus 30
+seconds. The workspace therefore stops a slow review first, and the model still
+gets the findings that arrived. To set a different activity limit, use
+`SetToolMetadata` as in
 [Temporal command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts).
 
 The activities are named after the capability's `id`, which defaults to

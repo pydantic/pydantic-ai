@@ -18,8 +18,8 @@ the tools it already has -- this capability surfaces findings only.
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships
-as editor plugins (Claude Code, Codex, Cursor, OpenCode). This capability gives
-a Pydantic AI agent the same review-and-fix loop.
+as editor plugins (Claude Code, Codex, Cursor, OpenCode). There is no way to
+give a Pydantic AI agent the same review-and-fix loop from your own code.
 
 ## Usage
 
@@ -61,8 +61,9 @@ cannot fix setup problems either, so they end the run with `UserError`:
 If the review fails to start with a `base` the model chose, the model gets a
 retry instead, so it can change or drop the ref.
 
-The tool runs `macroscope codereview --raw`. Builds without `--raw` are too old;
-the CLI updates itself on use.
+The tool invokes `macroscope codereview --raw` for machine-readable streaming
+output, which needs a recent CLI build. The installer fetches the latest and the
+CLI self-updates on use, so a fresh install satisfies this.
 
 ## The tool
 
@@ -99,8 +100,8 @@ Macroscope(
 )
 ```
 
-- The model's per-call `base` overrides the field. A `base` that starts with
-  `-` is rejected, so it cannot reach the CLI as an option.
+- A per-call `base` argument takes precedence over the field. A `base` that
+  starts with `-` is rejected, so it cannot reach the CLI as an option.
 - `command` cannot start with `-` or contain `=`; put the CLI on the
   workspace's `PATH` instead.
 - On timeout, the workspace stops the CLI (see [The tool](#the-tool) for what
@@ -110,10 +111,11 @@ Macroscope(
 
 ## Scope and composition
 
-Pair it with `FileSystem` or `Shell` so the agent can read code and apply
-fixes. To keep fixes off your working tree, give the agent a separate worktree
-as its workspace. A large review returns every finding in one tool result; add
-[Tool Output Limits](tool-output-limits.md) to cap its size.
+This capability surfaces findings only. It does not edit files, create
+worktrees, or commit -- validating and fixing findings is the agent's job,
+using its other capabilities. Pair it with `FileSystem` or `Shell` to let the
+agent read code and apply fixes, and consider running the agent in an isolated
+worktree if you want fixes kept off your working tree.
 
 ## Durable execution
 
