@@ -8,7 +8,6 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
-from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -47,6 +46,8 @@ from pydantic_ai_harness.compaction._shared import (
     exceeds,
     find_safe_cutoff,
     find_token_cutoff,
+    harness_data_origin,
+    is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
@@ -120,14 +121,6 @@ _BRIDGE_PREFIX = 'This summary was produced by a different model than the one co
 
 _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
 """Model-request metadata marking a user turn retained by `keep_user_messages`."""
-
-# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
-# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
-# `BackgroundTools` results and `TrajectoryJudge` feedback. `Memory` marks its snapshot with a bare string
-# instead, so it isn't recognized yet: a known gap. The rule is temporary: once core provenance
-# (`CapabilityPart`) lands, recognize that instead of this metadata convention.
-_HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
-"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
 
 
 def _model_name(model: str | AbstractModel | None) -> str | None:
@@ -230,7 +223,7 @@ def _format_messages(
         if isinstance(msg, ModelRequest):
             kept = _is_kept_user_message(msg)
             for part in msg.parts:
-                if isinstance(part, UserPromptPart) and (origin := _harness_data_origin(part)) is not None:
+                if isinstance(part, UserPromptPart) and (origin := harness_data_origin(part)) is not None:
                     elements.append(_harness_data_element(origin, _user_prompt_text(part), tool_return_max_chars))
                 elif kept:
                     # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
@@ -295,30 +288,6 @@ def _message_element(
     return f'<message role="{role}"{name_attr}>\n{body}\n</message>'
 
 
-def _harness_data_origin(part: UserPromptPart) -> str | None:
-    """The `origin` of user-channel content a harness capability added, or `None` for anything else.
-
-    A part counts when its first item is a `TextContent` whose metadata names a harness origin: that tag
-    marks the whole part, as a `BackgroundTools` result marks the files and text that follow it. A part
-    that only mentions such content later, after what the user wrote, is never relabeled.
-    """
-    # TODO: switch to the core provenance field once it exists.
-    match part.content:
-        case [TextContent(metadata=metadata), *_] if (
-            is_str_dict(metadata)
-            and isinstance(origin := metadata.get('origin'), str)
-            and origin.startswith(_HARNESS_ORIGIN_PREFIX)
-        ):
-            return origin
-        case _:
-            return None
-
-
-def _is_harness_data(part: ModelRequestPart) -> bool:
-    """Whether *part* is user-channel content a harness capability added."""
-    return isinstance(part, UserPromptPart) and _harness_data_origin(part) is not None
-
-
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
     """Harness-added content as a `<harness_data>` element labeled with its *origin*, never as a user message."""
     body = _neutralize_transcript_tags(content)
@@ -363,7 +332,7 @@ def _first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
             isinstance(part, UserPromptPart)
             and not is_pinned(part)
             and not is_receipt_part(part)
-            and not _is_harness_data(part)
+            and not is_harness_data(part)
             for part in message.parts
         ):
             return message
@@ -383,7 +352,7 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
         part
         for part in message.parts
         if not is_receipt_part(part)
-        and not _is_harness_data(part)
+        and not is_harness_data(part)
         and not (
             isinstance(part, SystemPromptPart) and (part.content.startswith(_SUMMARY_PREFIX) or part.content in carried)
         )
@@ -717,7 +686,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 continue
             if _is_kept_user_message(msg):
                 # A turn kept by an earlier compaction may hold harness data from before it was told apart.
-                genuine = [part for part in msg.parts if not _is_harness_data(part)]
+                genuine = [part for part in msg.parts if not is_harness_data(part)]
                 if len(genuine) == len(msg.parts):
                     out.append(msg)
                 elif genuine:
@@ -729,7 +698,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if isinstance(part, UserPromptPart)
                 and not is_pinned(part)
                 and not is_receipt_part(part)
-                and not _is_harness_data(part)
+                and not is_harness_data(part)
             ]
             if not user_parts:
                 continue
@@ -875,7 +844,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             tool_return_max_chars=self.tool_return_max_chars,
         )
         prompt = self.summary_prompt.format(messages=formatted)
-        if any(_is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
+        if any(is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
             prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
 
         if previous_summary is not None:
