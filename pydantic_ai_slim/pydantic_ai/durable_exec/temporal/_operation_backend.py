@@ -24,6 +24,7 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
+from pydantic_ai.exceptions import ModelAPIError
 
 from ._activity_execution import execute_activity
 from ._model_errors import model_errors_as_application_errors, rebuilt_model_errors
@@ -163,6 +164,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
         resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
+        non_retryable_model_errors: tuple[type[ModelAPIError], ...] = (),
         runtime: object | None = None,
     ) -> None:
         super().__init__(
@@ -172,6 +174,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
             ),
         )
         self._deps_type = deps_type
+        self._non_retryable_model_errors = non_retryable_model_errors
         self._runtime = runtime
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
@@ -195,7 +198,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
             semantic_params = transport.load(cast(WireT, (params, deps)), runtime=self._runtime)
             async with heartbeating():
                 if model_operation:
-                    with model_errors_as_application_errors():
+                    with model_errors_as_application_errors(self._non_retryable_model_errors):
                         return await operation.handler(semantic_params)
                 return await operation.handler(semantic_params)
 

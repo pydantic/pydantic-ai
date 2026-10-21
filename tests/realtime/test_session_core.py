@@ -68,6 +68,7 @@ from pydantic_ai.realtime._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     StaleEvent,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -514,6 +515,31 @@ def test_a_tool_calling_response_can_release_an_input_after_it_ended() -> None:
     # (A response that ended claims nothing more.)
     with pytest.raises(AssertionError):
         feed(session_core, AnswersRevised(response_id='r1', claimed=(1,)))
+
+
+def test_abandoned_tool_calls_owe_nothing_though_they_run_on() -> None:
+    """The provider answers none of the abandoned calls' results, sent or still to come: the exchange can end."""
+    result = ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='shipped', tool_call_id='call_1')])
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Order 4411, and 4412?'), solicits=True),
+        started('r1', 0),
+        ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1'),
+        ToolCall('call_2', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1', finish_reason='tool_call'),
+        InputSent(input_id=1, solicits=True, tool_call_id='call_1'),
+        ToolReturned(tool_call_id='call_1', request=result),
+    )
+    wait = session_core.wait_tokens()
+    assert session_core.result_asks_reply('call_2')
+    feed(session_core, ToolCallsAbandoned(tool_call_ids=('call_1', 'call_2')))
+    assert session_core.still_owed(wait) == frozenset()
+    assert not session_core.reply_outstanding()
+    # The call still running settles later: its result asks for no reply, and is recorded all the same.
+    assert not session_core.result_asks_reply('call_2')
+    feed(session_core, InputSent(input_id=2, solicits=True, tool_call_id='call_2'))
+    assert not session_core.reply_outstanding()
+    assert session_core.requests_ahead() == 0
 
 
 def test_a_wait_taken_once_the_tool_result_is_out_still_follows_a_released_input() -> None:
