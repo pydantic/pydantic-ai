@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import posixpath
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from typing import TypeVar
 
@@ -185,6 +185,19 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
         if '\x00' in argument:
             raise ValueError('argv elements must not contain NUL bytes')
     return list(command)
+
+
+def check_env(env: Mapping[str, str] | None) -> None:
+    """Raise unless `env` maps non-empty names without `=` or NUL to strings without NUL.
+
+    A local VM engine passes them on as C strings, which would cut a value short at a NUL.
+    """
+    if env is None:
+        return
+    if any(type(key) is not str or type(value) is not str for key, value in env.items()):
+        raise TypeError('env keys and values must be strings')
+    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
+        raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
 
 
 def check_working_dir(value: str | None) -> None:
