@@ -5048,7 +5048,7 @@ async def test_prefect_mcp_auth_function_connects_each_run_as_its_own_user(block
     client: httpx.AsyncClient | httpx2.AsyncClient
     if is_mcp_sdk_v2():
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
-    else:
+    else:  # pragma: lax no cover — only the FastMCP 3 runs of the matrix take this branch
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
     toolset = MCPToolset[str]('http://localhost/mcp', id='auth_mcp', http_client=client, auth=lambda ctx: ctx.deps)
     agent = Agent(
