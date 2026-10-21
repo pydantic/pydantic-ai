@@ -17,6 +17,8 @@ from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
     OutputToolset,
+    build_retried_tool_return,
+    retried_return_from_legacy,
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -35,7 +37,6 @@ from .exceptions import (
 )
 from .messages import (
     _TOOL_KINDS,  # pyright: ignore[reportPrivateUsage]
-    RetryPromptPart,
     ToolCallPart,
     ToolReturn,
     _shape_name,  # pyright: ignore[reportPrivateUsage]
@@ -285,11 +286,28 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
 
 
+def _record_attempt(error: ToolRetryError, *, attempt: int | None, max_retries: int | None) -> ToolRetryError:
+    """Stamp a retried tool return with the attempt the tool manager just charged for it."""
+    part = error.tool_retry
+    if isinstance(part, _messages.ToolReturnPart) and part.retry is not None and attempt is not None:
+        part.retry = replace(part.retry, attempt=attempt, max_retries=max_retries)
+    return error
+
+
+class _UnknownTool(ModelRetry):
+    """A `ModelRetry` refusing a call to a tool name that doesn't exist.
+
+    A distinct type only so the retried result can record `cause='unknown_tool'`; it reaches the
+    model as an ordinary retry, exactly like the `ModelRetry` it replaced.
+    """
+
+
 class _ToolUnavailable(ModelRetry):
     """A `ModelRetry` refusing a call because the tool is not available yet.
 
-    A distinct type only so `_make_validation_failure` can recognise it. It
-    reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
+    A distinct type only so `_make_validation_failure` can recognise it and the retried result can
+    record `cause='unavailable_tool'`. It reaches the model as an ordinary retry, exactly like the
+    `ModelRetry` it replaced.
 
     Carries the tool it refused: the refusal is raised while resolving, before the caller has
     bound the resolved tool, and the budget this failure is charged against is the tool's own
@@ -492,22 +510,48 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
         return tool.tool_def if tool is not None else None
 
-    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
-        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
+    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> int:
+        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries, else return the attempt.
+
+        The attempt is 1-based: the retry this failure makes, on the count `max_retries` limits.
+        """
         assert self.ctx is not None
+        retries = self.ctx.retries.get(name, 0)
         # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
         # (the count starts at 0 and only ever grows, so it would never equal a negative target).
-        if self.ctx.retries.get(name, 0) >= max_retries:
+        if retries >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
                 'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
             ) from error
+        return retries + 1
 
     @staticmethod
-    def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
-        """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
-        m = RetryPromptPart.from_error(error, tool_name=name, tool_call_id=call.tool_call_id)
-        return ToolRetryError(m)
+    def _wrap_error_as_retry(
+        name: str,
+        call: ToolCallPart,
+        error: ValidationError | ModelRetry,
+        *,
+        attempt: int | None,
+        max_retries: int | None,
+    ) -> ToolRetryError:
+        """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
+        cause = (
+            'unknown_tool'
+            if isinstance(error, _UnknownTool)
+            else 'unavailable_tool'
+            if isinstance(error, _ToolUnavailable)
+            else None
+        )
+        return _record_attempt(
+            ToolRetryError(
+                build_retried_tool_return(
+                    error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
+                )
+            ),
+            attempt=attempt,
+            max_retries=max_retries,
+        )
 
     @staticmethod
     def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:
@@ -724,9 +768,10 @@ class ToolManager(Generic[AgentDepsT]):
                 if not wrap_validation_errors:
                     raise
                 name = call.tool_name
-                self._check_max_retries(name, validated.tool.max_retries, e)
+                max_retries = validated.tool.max_retries
+                attempt = self._check_max_retries(name, max_retries, e)
                 self.failed_tools.add(name)
-                raise self._wrap_error_as_retry(name, call, e) from e
+                raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
             except ToolFailed as e:
                 if not wrap_validation_errors:
                     raise
@@ -770,7 +815,7 @@ class ToolManager(Generic[AgentDepsT]):
                 msg = 'No tools are available yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
-            raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+            raise _UnknownTool(f'Unknown tool name: {name!r}. {msg}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
             raise _ToolUnavailable(unavailable, tool)
         return name, tool
@@ -850,12 +895,18 @@ class ToolManager(Generic[AgentDepsT]):
         # leave the tool with nothing left when it is later called properly and fails for real.
         # Later refusals of the same tool charge normally, so a model that never takes the
         # correction still ends the run.
+        attempt: int | None = None
         if isinstance(error, _ToolUnavailable) and name not in self.availability_refused:
             self.availability_refused.add(name)
         else:
-            self._check_max_retries(name, max_retries, cause)
+            attempt = self._check_max_retries(name, max_retries, cause)
             self.failed_tools.add(name)
-        validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
+        charged_max_retries = max_retries if attempt is not None else None
+        validation_error = (
+            _record_attempt(error, attempt=attempt, max_retries=charged_max_retries)
+            if isinstance(error, ToolRetryError)
+            else self._wrap_error_as_retry(name, call, error, attempt=attempt, max_retries=charged_max_retries)
+        )
         return ValidatedToolCall(
             call=call,
             tool=tool,
@@ -1157,9 +1208,9 @@ class ToolManager(Generic[AgentDepsT]):
             )
         except ToolRetryError as e:
             cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
-            self._check_max_retries(name, tool.max_retries, cause)
+            attempt = self._check_max_retries(name, tool.max_retries, cause)
             self.failed_tools.add(name)
-            raise
+            raise _record_attempt(e, attempt=attempt, max_retries=tool.max_retries)
 
         # Gated like `failed_tools` above: raw-mode (streaming) callers leave retry-budget state untouched.
         if wrap_validation_errors:
@@ -1278,9 +1329,10 @@ class ToolManager(Generic[AgentDepsT]):
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise
-            self._check_max_retries(name, validated.tool.max_retries, e)
+            max_retries = validated.tool.max_retries
+            attempt = self._check_max_retries(name, max_retries, e)
             self.failed_tools.add(name)
-            raise self._wrap_error_as_retry(name, validated.call, e) from e
+            raise self._wrap_error_as_retry(name, validated.call, e, attempt=attempt, max_retries=max_retries) from e
 
         _usage_attribution.record_tool_call(usage)
 
@@ -1502,16 +1554,17 @@ class ToolManager(Generic[AgentDepsT]):
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
-                _messages.RetryPromptPart(
-                    content=tool_call_result.message,
-                    tool_name=call.tool_name,
-                    tool_call_id=call.tool_call_id,
+                build_retried_tool_return(
+                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
                 )
             )
-        if isinstance(tool_call_result, _messages.RetryPromptPart):
-            tool_call_result.tool_name = call.tool_name
-            tool_call_result.tool_call_id = call.tool_call_id
-            raise ToolRetryError(tool_call_result)
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            raise ToolRetryError(
+                retried_return_from_legacy(
+                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                )
+            )
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
         # the handler's original value verbatim so handle_call's contract — "what the
         # tool would have returned" — is preserved for plain-vs-wrapped inputs.

@@ -263,3 +263,21 @@ def test_instructions_see_the_current_steps_tools():
 
     agent.run_sync('hello')
     assert instructions_by_step == ['File reader: None', 'File reader: read_file']
+
+
+def test_prepare_hooks_see_the_previous_steps_tools():
+    """A `prepare` runs while the step's tools are collected, so it sees the previous step's, or none on the first."""
+    seen_by_step: dict[int, str | None] = {}
+
+    async def record(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+        seen_by_step.setdefault(ctx.run_step, ctx.tool_name_for_kind(FILE_READ))
+        return tool_def
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_notes', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model), tools=[Tool(read_notes, prepare=record), Tool(read_file, tool_kind=FILE_READ)])
+    agent.run_sync('hello')
+    assert list(seen_by_step.values()) == [None, 'read_file']

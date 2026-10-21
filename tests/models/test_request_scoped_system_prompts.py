@@ -702,18 +702,23 @@ WEATHER_PARAMETERS = ModelRequestParameters(
 
 @contextmanager
 def converse_request_bodies(model: BedrockConverseModel) -> Generator[list[dict[str, Any]]]:
-    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too."""
+    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too.
+
+    `request()` uses `ConverseStream` for a Claude model whose maximum output it sends as the default `maxTokens`.
+    """
     captured: list[dict[str, Any]] = []
 
     def capture(request: Any, **_: Any) -> None:
         captured.append(json.loads(request.body))
 
-    event = 'before-send.bedrock-runtime.Converse'
-    model.client.meta.events.register_last(event, capture)
+    events = ['before-send.bedrock-runtime.Converse', 'before-send.bedrock-runtime.ConverseStream']
+    for event in events:
+        model.client.meta.events.register_last(event, capture)
     try:
         yield captured
     finally:
-        model.client.meta.events.unregister(event, capture)
+        for event in events:
+            model.client.meta.events.unregister(event, capture)
 
 
 async def send(model: Model, history: list[ModelMessage], settings: ModelSettings | None = None) -> None:
