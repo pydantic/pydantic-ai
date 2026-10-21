@@ -41,6 +41,7 @@ openai_extras = {
     'openai-realtime',
     'openai-responses-websocket',
     'xai-realtime',
+    'elevenlabs-realtime',
 }
 openai_requirements = [requirement for requirement in slim if requirement.name == 'openai']
 assert len(openai_requirements) == len(openai_extras) + 1

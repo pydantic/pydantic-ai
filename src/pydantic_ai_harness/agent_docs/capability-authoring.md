@@ -211,16 +211,18 @@ budget that should take the *smaller* of two values.
 
 Pick by asking what the capability's toolset registers:
 
-- **Fixed tool names** (`read_file`, `run_command`, `write_memory`) --
+- **Fixed tool names** (`read_file`, `run_command`, `write_plan`) --
   declare a default `id`, *unless* the capability's configuration is an access
   boundary. Two of them could never coexist anyway; they collided on the tool
   name. Declaring the id turns that late, confusing toolset error into a merge,
   which is what lets two packaged harnesses that each carry the capability
   compose.
 - **Fixed tool names, but the configuration is an access boundary**
-  (`FileSystem` allow/deny patterns, `Shell` command lists) -- the default merge
-  is the wrong answer, because unioning two allow-lists *widens* what the agent
-  can reach, and neither author asked for the other's paths. Either leave the
+  (`FileSystem` allow/deny patterns, `Shell` command lists, `Memory`'s store
+  and namespace) -- the default merge is the wrong answer, because unioning two
+  allow-lists *widens* what the agent can reach, and neither author asked for the
+  other's paths; merging two `Memory` scopes keeps one tenant's notebook and
+  drops the other. Either leave the
   capability anonymous, so two of it keep colliding on the tool name and the
   user has to choose, or declare a default `id` **and** write a `combine` that
   narrows rather than unions. Do not take the default and hope.

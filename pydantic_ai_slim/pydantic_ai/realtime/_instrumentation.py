@@ -22,8 +22,10 @@ from .._instrumentation import (
     InstrumentationNames,
     annotate_tool_call_otel_metadata,
     build_tool_definitions,
+    mcp_telemetry_history_ids,
     model_metric_attributes,
     model_request_parameters_attributes,
+    model_request_telemetry_url_ids,
     provider_attributes,
     record_exception,
     redact_binary_content,
@@ -208,7 +210,16 @@ class SessionInstrumentation:
         # `logfire.json_schema` entry marks the attribute as a JSON array so the Logfire UI
         # deserializes and renders it as a conversation rather than as a string.
         if messages:
-            attributes['pydantic_ai.all_messages'] = safe_to_json(settings.messages_to_otel_messages(messages)).decode()
+            mcp_url_ids = (
+                frozenset(model_request_telemetry_url_ids(self.model_request_parameters))
+                if self.model_request_parameters is not None
+                else frozenset[str]()
+            )
+            attributes['pydantic_ai.all_messages'] = safe_to_json(
+                settings.messages_to_otel_messages(
+                    messages, mcp_url_ids=mcp_telemetry_history_ids(messages, mcp_url_ids)
+                )
+            ).decode()
             if new_message_index is not None:
                 attributes['pydantic_ai.new_message_index'] = new_message_index
             schema_properties['pydantic_ai.all_messages'] = {'type': 'array'}
@@ -306,7 +317,7 @@ class SessionInstrumentation:
             # instrumented model uses, so realtime `chat` spans can't drift from the classic path.
             if self.model_request_parameters is not None:
                 annotate_tool_call_otel_metadata(response, self.model_request_parameters)
-            settings.handle_messages(input_messages, response, span)
+            settings.handle_messages(input_messages, response, span, self.model_request_parameters)
             span.set_attributes(
                 response_attributes(response, response.model_name or self.model_name, price_calculation)
             )

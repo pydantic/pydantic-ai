@@ -136,11 +136,13 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 | Event | When | Fields |
 | --- | --- | --- |
 | `AskUserRequestedEvent` | before the answerer is called, or before a deferred call pauses the run | `request` |
-| `AskUserAnsweredEvent` | after it returns or times out, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out` |
+| `AskUserAnsweredEvent` | after it returns, times out, or raises, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out`, `failed` |
 
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
-start and end in step with the run. Subscribe with `@on_event` on a capability or through the
-run's event stream:
+start and end in step with the run. When the answerer raises, the answered event carries
+`failed=True` and a cancelled response, then the error propagates and fails the run. A run
+cancelled while the answerer waits emits no answered event, so also clear waiting state when the
+run ends. Subscribe with `@on_event` on a capability or through the run's event stream:
 
 ```python
 from pydantic_ai import RunContext
@@ -181,8 +183,14 @@ the user declines.
 
 ## Two of them
 
-`AskUser` declares no default `id`. Two on one agent collide on the `ask_user_question` tool
-name: two answerers is a conflict, not one configuration stated twice.
+`AskUser` declares the default `id` `'ask_user'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `AskUser`s on one agent that
+share it are one answerer stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `ask_user_question`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Tracing
 

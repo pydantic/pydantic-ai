@@ -228,10 +228,10 @@ starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
-with the raw `ZAI_API_KEY` value in the `Authorization` header. Both
-`TOKENS_LIMIT` windows must be valid: unit `3` / number `5` is the 5-hour
-window, and unit `6` / number `1` is the weekly window. `percentage` is the
-percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
+with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
+`TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
+unit `3` / number `5` is the 5-hour window, and unit `6` / number `1` is the weekly window.
+`percentage` is the percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
 epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
 a missing reset field or a null reset with consumed quota is invalid. A missing
 or malformed required window makes health unknown and keeps agent workflows
@@ -305,6 +305,7 @@ provider-health check, an operator may deliberately enable a disabled workflow.
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
 | `awf-binary-version` | a lock whose `install_awf_binary.sh` pin differs from the `GH_AW_INFO_AWF_VERSION` gh-aw compiled it against, or that carries a pin the lock declares no such version for | `engine.command` makes gh-aw skip its own AWF install, so `shared/pre-steps.md` re-runs the installer with a version written by hand. A gh-aw upgrade moves the bundled version and leaves that pin behind, and the older binary then rejects the newer firewall config — the agent job dies before the model starts. Bump the pin in the same change as the compiler. The skip is tracked upstream at [github/gh-aw#58340](https://github.com/github/gh-aw/issues/58340) — retire this check and the hand-written pre-step once gh-aw installs the firewall binary independently of the engine. |
 | `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | That key is the API proxy's AI-credits *pricing* table, not reporting metadata — a model priced there gets charged, and AWF caps a run at 10,000 credits that no frontmatter field lifts (`max-ai-credits` only drops gh-aw's own budget, and the schema types it `exclusiveMinimum: 0`). One ordinary request costs tens of thousands, so every agent job 403s on its first call with `ai_credits_limit_exceeded`. The weekly spend report reads token counts from each run's `agent_usage.json`, so nothing here needs the overlay. |
+| `daily-aic-guardrail` | a lock that compiles gh-aw's daily AI-credits guardrail step, matched by the script it runs (`check_daily_aic_workflow_guardrail.cjs`) | On every activation the guardrail lists the artifacts of each run from the past 24h to total their AI credits: about 700 REST calls per CI Review activation in [run 39522281523](https://github.com/pydantic/pydantic-ai/actions/runs/39522281523). That spend exhausted the repo's `GITHUB_TOKEN` rate limit. AI credits do not measure the Z.AI Coding Plan quota; provider health gates that quota. Disable the guardrail with `max-daily-ai-credits: -1` in each source's own frontmatter. gh-aw removes the guardrail only for that value. A `-1` in an import such as `shared/engine-zai.md` only drops `GH_AW_MAX_DAILY_AI_CREDITS`: the scan step compiles but skips, and the conclusion job's `if: always()` cache restore, write, save and `aic-usage-cache` upload still run whenever the conclusion job runs. |
 | `logfire-import` / `logfire-compiled` / `logfire-network` | a Z.AI source missing `shared/otel-logfire.md`, a lock missing the compiled OTLP settings, or a compiled firewall missing any of the six Logfire ingest hosts | Three Z.AI workflows reached `main` without trace export (#19). The import and compiled settings enable export; the firewall must allow the ingest hosts or it silently blocks traces. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
