@@ -70,6 +70,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     Toolset,
     durable_operation,
 )
@@ -103,7 +104,13 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -2718,6 +2725,45 @@ async def test_flow_retry_keeps_run_deadline() -> None:
     first, retried = deadlines
     assert first is not None
     assert retried == first
+
+
+async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
+    """A model selector sees the run's flow-derived IDs and deadline on every step, and again on a flow retry."""
+    selections: list[tuple[int, str | None, str | None, datetime | None]] = []
+
+    def select(ctx: ModelSelectionContext[object]) -> Model:
+        selections.append((ctx.run_step, ctx.run_id, ctx.conversation_id, ctx.deadline))
+        assert ctx.model is not None
+        return ctx.model
+
+    agent = Agent(
+        TestModel(),
+        name='retry_selector_agent',
+        capabilities=[SelectModel(select), PrefectDurability[object]()],
+    )
+
+    @agent.tool_plain
+    def advance() -> str:
+        return 'advanced'
+
+    attempts: list[tuple[str, str, str]] = []
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        context = FlowRunContext.get()
+        assert context is not None and context.flow_run is not None
+        result = await agent.run('go', timeout=3600)
+        attempts.append((str(context.flow_run.id), result.run_id, result.conversation_id))
+        if len(attempts) == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    await flaky()
+    [(flow_run_id, run_id, conversation_id)] = set(attempts)
+    assert run_id == f'{flow_run_id}:0'
+    deadline = selections[0][3]
+    assert deadline is not None
+    assert selections == [(step, run_id, conversation_id, deadline) for _ in attempts for step in (1, 2)]
 
 
 async def test_flow_retry_keeps_each_concurrent_run_deadline() -> None:

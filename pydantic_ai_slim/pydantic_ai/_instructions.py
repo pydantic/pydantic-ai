@@ -27,13 +27,22 @@ from pydantic_ai.messages import (
 from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
-from .tools import SystemPromptFunc
 
-AgentInstruction = TemplateStr[AgentDepsT] | str | InstructionPart | SystemPromptFunc[AgentDepsT]
+InstructionFunc = _system_prompt.PromptFunc[AgentDepsT, str | InstructionPart]
+"""A function computing an instruction: it may or may not take `RunContext`, may or may not be async,
+and returns text, an [`InstructionPart`][pydantic_ai.messages.InstructionPart], or `None`.
+
+A returned `InstructionPart` declares its [`name`][pydantic_ai.messages.InstructionPart.name] and
+[`on_change`][pydantic_ai.messages.InstructionPart.on_change] policy from inside the function, the way
+a registering decorator would. Whatever it says about `dynamic`, a computed part counts as dynamic."""
+
+AgentInstruction = TemplateStr[AgentDepsT] | str | InstructionPart | InstructionFunc[AgentDepsT]
 """One instruction: literal text, a function computing it, or an `InstructionPart` declaring both the
 text and how it should be treated — its [`name`][pydantic_ai.messages.InstructionPart.name] (qualified
-into an id against whatever source contributes it) and whether it counts as
-[`dynamic`][pydantic_ai.messages.InstructionPart.dynamic] for prompt caching."""
+into an id against whatever source contributes it), its
+[`on_change`][pydantic_ai.messages.InstructionPart.on_change] policy, and whether it counts as
+[`dynamic`][pydantic_ai.messages.InstructionPart.dynamic] for prompt caching. A function can return an
+`InstructionPart` to declare the same from inside it."""
 
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
 
@@ -68,6 +77,12 @@ class SourcedInstruction(Generic[AgentDepsT]):
 
     name: str | None = None
     id: InstructionId | None = None
+    source: InstructionSource | None = None
+    """The source a name the instruction declares when it's evaluated is qualified against.
+
+    Set even where `id` is `None` because the recipe is unnamed, so a function that names the part it
+    returns is addressed the same as one named where it was registered.
+    """
     dynamic: bool = False
     on_change: InstructionChangePolicy = 'rewrite'
     framework_default: bool = False
@@ -124,7 +139,10 @@ def explicitly_appended_blocks(
 
 
 def sourced_instruction(
-    instruction: AgentInstruction[AgentDepsT], source: InstructionSource | None
+    instruction: AgentInstruction[AgentDepsT],
+    source: InstructionSource | None,
+    *,
+    name_source: InstructionSource | None = None,
 ) -> SourcedInstruction[AgentDepsT]:
     """Attribute one instruction recipe to the source that authored it.
 
@@ -134,7 +152,9 @@ def sourced_instruction(
     stays unaddressable.
 
     A caller passes `None` for a recipe its source does not speak for -- a callable the agent was
-    built with, or instructions belonging to a single run rather than to the agent.
+    built with, or instructions belonging to a single run rather than to the agent. `name_source`,
+    which defaults to `source`, is what a function that names the part it returns is qualified
+    against: the agent's callables speak for nobody until they do.
     """
     name = instruction.name if isinstance(instruction, InstructionPart) else None
     if name is not None:
@@ -143,7 +163,58 @@ def sourced_instruction(
         instruction,
         name=name,
         id=InstructionId(source, name=name) if source is not None else None,
+        source=name_source or source,
         dynamic=not isinstance(instruction, (str, InstructionPart)),
+    )
+
+
+async def resolve_instruction_function(
+    sourced: SourcedInstruction[AgentDepsT],
+    function: TemplateStr[AgentDepsT] | InstructionFunc[AgentDepsT],
+    run_context: RunContext[AgentDepsT],
+) -> InstructionPart | None:
+    """Run the instruction function `sourced` was registered as, returning the part it contributes, if any.
+
+    An append-mode part is kept when empty so its withdrawal can be recorded.
+    """
+    result = await _system_prompt.SystemPromptRunner[AgentDepsT, str | InstructionPart](function).run(run_context)
+    if isinstance(result, InstructionPart):
+        part = _computed_part(sourced, result)
+    else:
+        part = InstructionPart(
+            content=result or '',
+            name=sourced.name,
+            id=sourced.id,
+            dynamic=sourced.dynamic,
+            on_change=sourced.on_change,
+        )
+    return part if part.content or part.on_change == 'append' else None
+
+
+def _computed_part(sourced: SourcedInstruction[AgentDepsT], result: InstructionPart) -> InstructionPart:
+    """Resolve a part an instruction function returned against the recipe it was registered as.
+
+    The part's `name` and `on_change` apply as if the function had been registered with them: a name is
+    qualified against the recipe's source, and either side asking to append wins over the `'rewrite'`
+    default. A name the registration already declared can't be renamed from inside the function.
+    """
+    name = sourced.name
+    instruction_id = sourced.id
+    if result.name is not None and result.name != sourced.name:
+        validate_instruction_name(result.name)
+        if sourced.name is not None:
+            raise UserError(
+                f'An instruction function registered with name {sourced.name!r} returned a part named '
+                f'{result.name!r}; leave the returned part unnamed or use the same name.'
+            )
+        name = result.name
+        instruction_id = InstructionId(sourced.source, name=name) if sourced.source is not None else None
+    return InstructionPart(
+        content=result.content,
+        name=name,
+        id=instruction_id,
+        dynamic=True,
+        on_change=sourced.on_change if sourced.on_change == 'append' else result.on_change,
     )
 
 
@@ -184,20 +255,11 @@ async def resolve_sourced_instructions(
                 flush_group()
             group_key = sourced.id
             group.append(InstructionPart(content=content, id=sourced.id))
-        else:
-            content = await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context)
-            if content or sourced.on_change == 'append':
-                part = InstructionPart(
-                    content=content or '',
-                    name=sourced.name,
-                    id=sourced.id,
-                    dynamic=sourced.dynamic,
-                    on_change=sourced.on_change,
-                )
-                if group:
-                    pending_parts.append(part)
-                else:
-                    parts.append(part)
+        elif (part := await resolve_instruction_function(sourced, instruction, run_context)) is not None:
+            if group:
+                pending_parts.append(part)
+            else:
+                parts.append(part)
     flush_group()
     return parts
 
