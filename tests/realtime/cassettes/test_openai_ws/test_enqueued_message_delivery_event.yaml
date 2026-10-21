@@ -1,0 +1,350 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: event_EKYAJHKJJ8m8PEkrEIoO1
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EKYAJ13DCyUWd7G3nibdM
+      model: gpt-realtime
+      output_modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1788570199
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      type: realtime
+      instructions: Reply exactly "DELIVERED".
+      output_modalities:
+      - text
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          turn_detection:
+            type: server_vad
+            create_response: true
+            interrupt_response: true
+          transcription:
+            model: gpt-realtime-whisper
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  data:
+    type: session.updated
+    event_id: event_EKYAJSrrrwK1Uja1F2IGq
+    session:
+      type: realtime
+      object: realtime.session
+      id: sess_EKYAJ13DCyUWd7G3nibdM
+      model: gpt-realtime
+      output_modalities:
+      - text
+      instructions: Reply exactly "DELIVERED".
+      tools: []
+      tool_choice: auto
+      max_output_tokens: inf
+      tracing: null
+      truncation: auto
+      prompt: null
+      expires_at: 1788570199
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: gpt-realtime-whisper
+            language: null
+            prompt: null
+          noise_reduction: null
+          turn_detection:
+            type: server_vad
+            threshold: 0.5
+            prefix_padding_ms: 300
+            silence_duration_ms: 200
+            idle_timeout_ms: null
+            create_response: true
+            interrupt_response: true
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+          speed: 1.0
+      include: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Reply now.
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_EKYAJXW0ZNHgApf11X6v1
+    previous_item_id: null
+    item:
+      id: item_EKYAJzGuDAR4qTpbQ9tU5
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Reply now.
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_EKYAJKZLuYLrjjNkWMmch
+    previous_item_id: null
+    item:
+      id: item_EKYAJzGuDAR4qTpbQ9tU5
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Reply now.
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: event_EKYAJEK8kkUOMVJCErmEn
+    response:
+      object: realtime.response
+      id: resp_EKYAJAJGj43ntV9JT38eG
+      status: in_progress
+      status_details: null
+      output: []
+      conversation_id: conv_EKYAJ6fAlAJV6pfQu7vfi
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage: null
+      metadata: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: event_EKYAJBecI0GSiVZakqWbF
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    output_index: 0
+    item:
+      id: item_EKYAJckocCIaujBaQD6EA
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: event_EKYAJNbtN3IIw2V4sfbeM
+    previous_item_id: item_EKYAJzGuDAR4qTpbQ9tU5
+    item:
+      id: item_EKYAJckocCIaujBaQD6EA
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: event_EKYAJrBaiNSGBGM1FRwHP
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    item_id: item_EKYAJckocCIaujBaQD6EA
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_EKYAJ94iu0pEOkfoBtONW
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    item_id: item_EKYAJckocCIaujBaQD6EA
+    output_index: 0
+    content_index: 0
+    delta: DEL
+    obfuscation: j4p85YArtzfGL
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_EKYAKbIVp2Gj5L3AsX0rk
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    item_id: item_EKYAJckocCIaujBaQD6EA
+    output_index: 0
+    content_index: 0
+    delta: IVER
+    obfuscation: CnDKODcsYb6E
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.delta
+    event_id: event_EKYAKGnJEWeB6XwI0K5yD
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    item_id: item_EKYAJckocCIaujBaQD6EA
+    output_index: 0
+    content_index: 0
+    delta: ED
+    obfuscation: aZtI4CVmPdHnw2
+- kind: message
+  direction: received
+  data:
+    type: response.output_text.done
+    event_id: event_EKYAK2J7MBImPHWErlsUr
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    item_id: item_EKYAJckocCIaujBaQD6EA
+    output_index: 0
+    content_index: 0
+    text: DELIVERED
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: event_EKYAKcxCen8CmGvNns26x
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    item_id: item_EKYAJckocCIaujBaQD6EA
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: DELIVERED
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.done
+    event_id: event_EKYAKhjnHhIt5DSscecOQ
+    previous_item_id: null
+    item:
+      id: item_EKYAJckocCIaujBaQD6EA
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: DELIVERED
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: event_EKYAKIRtfhZczlFsAEgE7
+    response_id: resp_EKYAJAJGj43ntV9JT38eG
+    output_index: 0
+    item:
+      id: item_EKYAJckocCIaujBaQD6EA
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: output_text
+        text: DELIVERED
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: event_EKYAK9q2TVWXLJlJsZDzz
+    response:
+      object: realtime.response
+      id: resp_EKYAJAJGj43ntV9JT38eG
+      status: completed
+      status_details: null
+      output:
+      - id: item_EKYAJckocCIaujBaQD6EA
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: output_text
+          text: DELIVERED
+      conversation_id: conv_EKYAJ6fAlAJV6pfQu7vfi
+      output_modalities:
+      - text
+      max_output_tokens: inf
+      audio:
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          voice: alloy
+      usage:
+        total_tokens: 19
+        input_tokens: 14
+        output_tokens: 5
+        input_token_details:
+          text_tokens: 14
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 5
+          audio_tokens: 0
+      metadata: null

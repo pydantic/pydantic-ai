@@ -24,7 +24,6 @@ with try_import() as anthropic_available:
     )
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 

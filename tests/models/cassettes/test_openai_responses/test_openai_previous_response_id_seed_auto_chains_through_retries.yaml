@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -37,20 +37,20 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '1467'
+      - '1810'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '802'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '510'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -61,17 +61,18 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1776377854
-      created_at: 1776377853
+      completed_at: 1788212248
+      created_at: 1788212248
       error: null
       frequency_penalty: 0.0
-      id: resp_0435eb6c2aa8e9eb0069e15ffdbb848195ab503209f100317f
+      id: resp_089c555e8fb26536006a95f418124487d2925f1494269f7b44
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
       model: gpt-4.1-2025-04-14
+      moderation: null
       object: response
       output:
       - content:
@@ -79,7 +80,7 @@ interactions:
           logprobs: []
           text: Hello
           type: output_text
-        id: msg_0435eb6c2aa8e9eb0069e15ffe56b4819587eaac6a6c786706
+        id: msg_089c555e8fb26536006a95f41866f087d2a6172c992ea4b599
         role: assistant
         status: completed
         type: message
@@ -87,8 +88,9 @@ interactions:
       presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
-      prompt_cache_retention: null
+      prompt_cache_retention: in_memory
       reasoning:
+        context: null
         effort: null
         summary: null
       safety_identifier: null
@@ -101,9 +103,23 @@ interactions:
           type: text
         verbosity: medium
       tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
       tools:
       - description: null
         name: get_weather
+        output_schema: null
         parameters:
           additionalProperties: false
           properties:
@@ -120,6 +136,7 @@ interactions:
       usage:
         input_tokens: 40
         input_tokens_details:
+          cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 3
         output_tokens_details:
@@ -134,15 +151,13 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
       - '457'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=Wd0GUrhL.mfpt__BYuSnzo6fFLD6I.hXZQKSnQW4ro8-1776377853.6917653-1.0.1.1-VozUb1Q1rGdedibygdT_szkLU9P9RBnCCwFRDbOKAPJpMPQCTax0VN2W0uBN0S2zQG8uZNlyTOaTJ9UqhQwCB7UwHhKfw9upLMHgTMpzUJEokABaq5LHz3b5TNoiSPaC
       host:
       - api.openai.com
     method: POST
@@ -151,7 +166,7 @@ interactions:
       - content: What's the weather in New York?
         role: user
       model: gpt-4.1
-      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffdbb848195ab503209f100317f
+      previous_response_id: resp_089c555e8fb26536006a95f418124487d2925f1494269f7b44
       store: true
       stream: false
       tool_choice: auto
@@ -171,20 +186,20 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '1522'
+      - '1865'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1205'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '1118'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -195,31 +210,33 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1776377855
-      created_at: 1776377854
+      completed_at: 1788212249
+      created_at: 1788212248
       error: null
       frequency_penalty: 0.0
-      id: resp_0435eb6c2aa8e9eb0069e15ffeb3fc81959cd2d1e915a8c7ea
+      id: resp_089c555e8fb26536006a95f418e35c87d2b2dd87804a697227
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
       model: gpt-4.1-2025-04-14
+      moderation: null
       object: response
       output:
       - arguments: '{"city":"New York"}'
-        call_id: call_P1vN20XNjvNyIm0VshHYzmSA
-        id: fc_0435eb6c2aa8e9eb0069e15fffae50819597bbbe870015ea70
+        call_id: call_alvVcMLLxsySZfL2LFXRURkk
+        id: fc_089c555e8fb26536006a95f419cee087d2a847d8b5a04ee050
         name: get_weather
         status: completed
         type: function_call
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffdbb848195ab503209f100317f
+      previous_response_id: resp_089c555e8fb26536006a95f418124487d2925f1494269f7b44
       prompt_cache_key: null
-      prompt_cache_retention: null
+      prompt_cache_retention: in_memory
       reasoning:
+        context: null
         effort: null
         summary: null
       safety_identifier: null
@@ -232,9 +249,23 @@ interactions:
           type: text
         verbosity: medium
       tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
       tools:
       - description: null
         name: get_weather
+        output_schema: null
         parameters:
           additionalProperties: false
           properties:
@@ -251,6 +282,7 @@ interactions:
       usage:
         input_tokens: 56
         input_tokens_details:
+          cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 16
         output_tokens_details:
@@ -265,28 +297,26 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
       - '621'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=Wd0GUrhL.mfpt__BYuSnzo6fFLD6I.hXZQKSnQW4ro8-1776377853.6917653-1.0.1.1-VozUb1Q1rGdedibygdT_szkLU9P9RBnCCwFRDbOKAPJpMPQCTax0VN2W0uBN0S2zQG8uZNlyTOaTJ9UqhQwCB7UwHhKfw9upLMHgTMpzUJEokABaq5LHz3b5TNoiSPaC
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - call_id: call_P1vN20XNjvNyIm0VshHYzmSA
+      - call_id: call_alvVcMLLxsySZfL2LFXRURkk
         output: |-
           Location not recognized. The tool only supports the airport code "NYC". Call again with city="NYC".
 
           Fix the errors and try again.
         type: function_call_output
       model: gpt-4.1
-      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffeb3fc81959cd2d1e915a8c7ea
+      previous_response_id: resp_089c555e8fb26536006a95f418e35c87d2b2dd87804a697227
       store: true
       stream: false
       tool_choice: auto
@@ -306,20 +336,20 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '1519'
+      - '1862'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '1290'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '1001'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -330,31 +360,33 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1776377857
-      created_at: 1776377856
+      completed_at: 1788212251
+      created_at: 1788212250
       error: null
       frequency_penalty: 0.0
-      id: resp_0435eb6c2aa8e9eb0069e1600000608195818a61245c018620
+      id: resp_089c555e8fb26536006a95f41a624c87d28e4dd4baddfb0bc2
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
       model: gpt-4.1-2025-04-14
+      moderation: null
       object: response
       output:
       - arguments: '{"city":"NYC"}'
-        call_id: call_N2BikjqNxghwNIwHl2XKfb0F
-        id: fc_0435eb6c2aa8e9eb0069e16000fad08195bb4d519c2d62b811
+        call_id: call_NP4ZYWCcjva7uSRchwRbnCyq
+        id: fc_089c555e8fb26536006a95f41b29f487d2b7b97bcfbb6dfaec
         name: get_weather
         status: completed
         type: function_call
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: resp_0435eb6c2aa8e9eb0069e15ffeb3fc81959cd2d1e915a8c7ea
+      previous_response_id: resp_089c555e8fb26536006a95f418e35c87d2b2dd87804a697227
       prompt_cache_key: null
-      prompt_cache_retention: null
+      prompt_cache_retention: in_memory
       reasoning:
+        context: null
         effort: null
         summary: null
       safety_identifier: null
@@ -367,9 +399,23 @@ interactions:
           type: text
         verbosity: medium
       tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
       tools:
       - description: null
         name: get_weather
+        output_schema: null
         parameters:
           additionalProperties: false
           properties:
@@ -386,6 +432,7 @@ interactions:
       usage:
         input_tokens: 110
         input_tokens_details:
+          cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 16
         output_tokens_details:
@@ -400,25 +447,23 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
       - '495'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=Wd0GUrhL.mfpt__BYuSnzo6fFLD6I.hXZQKSnQW4ro8-1776377853.6917653-1.0.1.1-VozUb1Q1rGdedibygdT_szkLU9P9RBnCCwFRDbOKAPJpMPQCTax0VN2W0uBN0S2zQG8uZNlyTOaTJ9UqhQwCB7UwHhKfw9upLMHgTMpzUJEokABaq5LHz3b5TNoiSPaC
       host:
       - api.openai.com
     method: POST
     parsed_body:
       input:
-      - call_id: call_N2BikjqNxghwNIwHl2XKfb0F
+      - call_id: call_NP4ZYWCcjva7uSRchwRbnCyq
         output: Sunny, 72F
         type: function_call_output
       model: gpt-4.1
-      previous_response_id: resp_0435eb6c2aa8e9eb0069e1600000608195818a61245c018620
+      previous_response_id: resp_089c555e8fb26536006a95f41a624c87d28e4dd4baddfb0bc2
       store: true
       stream: false
       tool_choice: auto
@@ -438,20 +483,20 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '1565'
+      - '1908'
       content-type:
       - application/json
-      openai-organization:
-      - pydantic-28gund
       openai-processing-ms:
-      - '2413'
-      openai-project:
-      - proj_dKobscVY9YJxeEaDJen54e3d
+      - '526'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -462,17 +507,18 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1776377859
-      created_at: 1776377857
+      completed_at: 1788212251
+      created_at: 1788212251
       error: null
       frequency_penalty: 0.0
-      id: resp_0435eb6c2aa8e9eb0069e160015f14819589a941eb8f14e5a5
+      id: resp_089c555e8fb26536006a95f41b967087d28f5751be0b2b603d
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
       model: gpt-4.1-2025-04-14
+      moderation: null
       object: response
       output:
       - content:
@@ -480,16 +526,17 @@ interactions:
           logprobs: []
           text: The weather in New York is sunny and 72°F.
           type: output_text
-        id: msg_0435eb6c2aa8e9eb0069e16003516081958ff28fb508f53045
+        id: msg_089c555e8fb26536006a95f41bdf3887d2895915f274d262dc
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: resp_0435eb6c2aa8e9eb0069e1600000608195818a61245c018620
+      previous_response_id: resp_089c555e8fb26536006a95f41a624c87d28e4dd4baddfb0bc2
       prompt_cache_key: null
-      prompt_cache_retention: null
+      prompt_cache_retention: in_memory
       reasoning:
+        context: null
         effort: null
         summary: null
       safety_identifier: null
@@ -502,9 +549,23 @@ interactions:
           type: text
         verbosity: medium
       tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
       tools:
       - description: null
         name: get_weather
+        output_schema: null
         parameters:
           additionalProperties: false
           properties:
@@ -521,6 +582,7 @@ interactions:
       usage:
         input_tokens: 139
         input_tokens_details:
+          cache_write_tokens: 0
           cached_tokens: 0
         output_tokens: 14
         output_tokens_details:

@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI browser voice agent example: audio goes to OpenAI or Azure Realtime over WebRTC while a server sideband runs tools and keeps the API key private."
+---
+
 This example is a browser voice agent where the **browser exchanges audio with the provider (OpenAI
 or Azure OpenAI) directly over WebRTC** (lowest latency), while a
 [Pydantic AI sideband](../realtime/deployment.md#browser-webrtc-server-sideband) on the server runs the agent's tools,

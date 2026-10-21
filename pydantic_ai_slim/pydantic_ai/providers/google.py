@@ -4,6 +4,8 @@ import os
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Literal, overload
 
+import httpx2
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import (
     DEFAULT_HTTP_TIMEOUT,
@@ -26,6 +28,15 @@ except ImportError as _import_error:
         'Please install the `google-genai` package to use the Google provider, '
         'you can use the `google` optional group — `pip install "pydantic-ai-slim[google]"`'
     ) from _import_error
+
+
+def _create_google_httpx2_client() -> httpx2.AsyncClient:
+    """Create the HTTP client a Google provider owns, with a 20-minute timeout instead of `DEFAULT_HTTP_TIMEOUT`.
+
+    Google [recommends](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) a 20-minute read timeout
+    for long decode. The Gateway's Google route creates this client too.
+    """
+    return create_async_httpx2_client(timeout=httpx2.Timeout(20 * 60, connect=5))
 
 
 class BaseGoogleProvider(Provider[Client], ABC):
@@ -70,16 +81,17 @@ class BaseGoogleProvider(Provider[Client], ABC):
         ownership wiring consistent.
         """
         if http_client is None:
-            http_client = create_async_httpx2_client()
+            http_client = _create_google_httpx2_client()
             self._own_http_client = http_client
-            self._http_client_factory = create_async_httpx2_client
+            self._http_client_factory = _create_google_httpx2_client
         else:
             # 3 frames up from the helper: this method, the provider `__init__` calling it, and the
             # user's `GoogleProvider(...)` call, which is where the warning should land.
             warn_if_legacy_httpx_client(http_client, consumer='Google providers', stacklevel=3)
         # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
         # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout
-        # here (ms) so requests actually time out.
+        # here (ms) so requests actually time out. The SDK sends it as a scalar, which would set the
+        # connect and pool timeouts too; a client we created caps those at its own (see `_http.py`).
         timeout_seconds = http_client.timeout.read or DEFAULT_HTTP_TIMEOUT
         timeout_ms = int(timeout_seconds * 1000)
         return HttpOptions(
@@ -108,7 +120,7 @@ class GoogleProvider(BaseGoogleProvider):
     def __init__(
         self,
         *,
-        api_key: str,
+        api_key: str | None = None,
         http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
@@ -130,7 +142,8 @@ class GoogleProvider(BaseGoogleProvider):
 
         Args:
             api_key: The [API key](https://ai.google.dev/gemini-api/docs/api-key) to
-                use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
+                use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable,
+                or the legacy `GEMINI_API_KEY` environment variable (`GOOGLE_API_KEY` takes precedence).
             client: A pre-initialized client to use. Stored as-is, so a client built for Google Cloud
                 (`Client(vertexai=True, ...)`, or its current spelling `Client(enterprise=True, ...)`)
                 is used on that transport even though `name` stays `'google'`. `GoogleModel` reads the

@@ -1,14 +1,13 @@
 from __future__ import annotations as _annotations
 
-import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, assert_never, overload
 
-from typing_extensions import assert_never, overload
+import anyio
 
 from .. import _utils, usage
 from .._instrumentation import get_instructions
@@ -18,13 +17,14 @@ from ..messages import (
     BinaryContent,
     CompactionPart,
     FilePart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -44,7 +44,11 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -149,6 +153,7 @@ class FunctionModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -174,7 +179,7 @@ class FunctionModel(Model):
         assert isinstance(response, ModelResponse), response
         response.model_name = self._model_name
         # Add usage data if not already present
-        if not response.usage.has_values():  # pragma: no branch
+        if not response.usage.has_values() and not response.usage.unmeasured_requests:
             response.usage = _estimate_usage(
                 chain(messages, [response]),
                 allow_tool_availability_deltas=self.tool_addition_mode is not None,
@@ -189,6 +194,7 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
+        _check_instruction_deltas_projected(messages)
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -222,7 +228,10 @@ class FunctionModel(Model):
                 _iter=response_stream,
             )
         finally:
-            await response_stream.aclose()
+            # Closing can wait for a pending pull's lock before reaching the user's
+            # generator, so protect the entire close from an already-cancelled scope.
+            with anyio.CancelScope(shield=True):
+                await response_stream.aclose()
 
     @property
     def provider(self) -> None:
@@ -416,6 +425,12 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
+def _check_instruction_deltas_projected(messages: Iterable[ModelMessage]) -> None:
+    """Reject canonical instruction changes before they reach the user's callback, like any adapter would."""
+    if _has_instruction_state(messages):
+        raise _unprojected_instruction_delta_error()
+
+
 def _estimate_usage(  # noqa: C901
     messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
 ) -> usage.RequestUsage:
@@ -432,17 +447,17 @@ def _estimate_usage(  # noqa: C901
     response_tokens = 0
     for message in messages:
         if isinstance(message, ModelRequest):
-            for part in message.parts:
+            for part in _sendable_request_parts(message.parts):
                 if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
-                elif isinstance(part, RetryPromptPart):
-                    request_tokens += _estimate_string_tokens(part.model_response())
-                elif isinstance(part, ToolAvailabilityDeltaPart):
-                    if not allow_tool_availability_deltas:
-                        raise _unsynthesized_tool_availability_delta_error()
+                elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                    raise _unprojected_instruction_delta_error()
+                elif isinstance(part, ToolAvailabilityDeltaPart) and allow_tool_availability_deltas:
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, _UnpreparedPart):
+                    raise _unprepared_part_error(part)
                 elif isinstance(part, SpeechPart):
                     # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
                     # user speech can arrive unconverted; estimate from the transcript like the
@@ -481,18 +496,15 @@ def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
         return 0
 
     if isinstance(content, str):
-        return len(_TOKEN_SPLIT_RE.split(content.strip()))
+        return _utils.estimate_string_tokens(content)
 
     tokens = 0
     for part in content:
         if isinstance(part, str | TextContent):
             text = part if isinstance(part, str) else part.content
-            tokens += len(_TOKEN_SPLIT_RE.split(text.strip()))
+            tokens += _utils.estimate_string_tokens(text)
         elif isinstance(part, BinaryContent):
             tokens += len(part.data)
         # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.
 
     return tokens
-
-
-_TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')

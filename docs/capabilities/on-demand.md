@@ -1,3 +1,7 @@
+---
+description: "Load Pydantic AI capabilities on demand like Agent Skills: the model sees a one-line catalog entry and pulls in instructions and tools only when needed."
+---
+
 # On-Demand Capabilities
 
 A capability is a bundle of instructions and/or tools, optionally with settings and hooks. A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](../tools-advanced.md#tool-search)).
@@ -23,7 +27,7 @@ def refund_status(order_id: str) -> str:
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     instructions='You are a customer support assistant.',
     capabilities=[refunds],
 )
@@ -32,9 +36,14 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability may have tools; they stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
 ```
+
+The catalog is tagged so that when it changes between runs of a conversation, for example because a capability was added, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the cached prompt.
 
 The model does not receive the refund instructions or the `refund_status` tool definition yet, so it has no reason to call the tool. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool definition until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
 
@@ -42,7 +51,7 @@ The model does not receive the refund instructions or the `refund_status` tool d
 2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result and exposes the `refund_status` definition on the next request.
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
-Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one.
+Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one. A `load_capability` tool call for a capability that is already active, or one that an earlier call in the same response already loads, is answered with a retry prompt instead of a second copy of its instructions.
 
 Searching cannot reveal a capability-owned tool: it stays hidden until its capability loads. In runs that also have searchable deferred tools, the catalog explicitly steers the model to load the capability rather than search for its tools; in capability-only runs — where no search surface exists — the catalog omits any mention of searching.
 
@@ -92,7 +101,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         MCP(
             url='https://mcp.example.com/analytics',
@@ -176,7 +185,7 @@ refunds = Capability(
 
 
 @refunds.tool
-def refund_status(ctx: RunContext[None], order_id: str) -> str:
+def refund_status(ctx: RunContext, order_id: str) -> str:
     """Look up the refund status for an order."""
     return f'Order {order_id}: refund issued on 2026-05-01.'
 ```
@@ -188,7 +197,7 @@ In addition to `@capability.tool` and `@capability.tool_plain`, you can pass exi
 For anything beyond instructions, function tools, toolsets, and descriptions — model settings, hooks, native tools, wrapper toolsets, or custom per-run logic — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. When subclassing, override [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] if the catalog entry needs to vary by run.
 
 !!! note "Setting `id` for durable execution"
-    A toolset contributed by a capability — via `Capability(tools=[...])` or an [`MCP`](mcp.md) server running locally — inherits its `id` from the capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id]. [Durable execution](../durable_execution/overview.md) identifies each leaf toolset by its `id`, so pass `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')` when combining a capability with Temporal, DBOS, or Prefect. Temporal requires an `id` for every leaf toolset and DBOS for every MCP server — both raise at construction without one. (`MCP` also derives one from the server URL when no `id` is given.) A URL-derived `id` can collide when two different servers share a host and final path segment (`https://a.com/api` and `https://a.com/v2/api` both derive `a.com-api`); DBOS raises at construction and Temporal when the worker starts, so pass an explicit `id` to disambiguate them.
+    A toolset contributed by a capability — via `Capability(tools=[...])` or an [`MCP`](mcp.md) server running locally — inherits its `id` from the capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id]. [Durable execution](../durable_execution/overview.md) identifies each leaf toolset by its `id`, so pass `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')` when combining a capability with Temporal, DBOS, or Prefect. Temporal requires an `id` for every leaf toolset and DBOS for every MCP server — both raise at construction without one. (`MCP` also derives one from the server URL's hostname when no `id` is given.) Two servers on the same host (`https://a.com/api` and `https://a.com/v2/api` both derive `a.com`) are rejected when the agent is constructed, so pass an explicit `id` to each.
 
 ## Beyond instructions: tools, settings, hooks, native tools {#beyond-instructions}
 
@@ -213,7 +222,7 @@ class DeepReasoning(AbstractCapability[Any]):
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         DeepReasoning(
             id='deep-reasoning',
@@ -236,9 +245,9 @@ from pydantic_ai.capabilities import AbstractCapability
 
 
 @dataclass
-class AccountSecurityWorkflow(AbstractCapability[None]):
-    id: str = 'account-security'
-    description: str = 'Use when the next action may be destructive.'
+class AccountSecurityWorkflow(AbstractCapability):
+    id: str | None = 'account-security'
+    description: str | None = 'Use when the next action may be destructive.'
     defer_loading: bool = True
 
     def get_instructions(self) -> str:
@@ -249,7 +258,7 @@ class AccountSecurityWorkflow(AbstractCapability[None]):
         return args
 
 
-agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow()])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[AccountSecurityWorkflow()])
 ```
 
 !!! note "Checking other capabilities"
@@ -264,7 +273,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         WebSearch(
             local='duckduckgo',
@@ -326,8 +335,8 @@ def revoke_sessions(ctx: RunContext[Store], account_id: str) -> str:
 
 @dataclass
 class AccountSecurity(AbstractCapability[Store]):
-    id: str = 'account-security'
-    description: str = 'Use for suspicious logins, account takeover, or session revocation.'
+    id: str | None = 'account-security'
+    description: str | None = 'Use for suspicious logins, account takeover, or session revocation.'
     defer_loading: bool = True
 
     def get_instructions(self) -> str:
@@ -346,7 +355,7 @@ class AccountSecurity(AbstractCapability[Store]):
 
 
 support_agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     deps_type=Store,
     instructions='You are a customer-support agent for an e-commerce store.',
     capabilities=[orders, AccountSecurity()],
@@ -367,7 +376,7 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 
 
 @dataclass
-class RunbookRequired(AbstractCapability[None]):
+class RunbookRequired(AbstractCapability):
     """Bounces a tool call back until the matching runbook has been loaded."""
 
     requirements: dict[str, str] = field(default_factory=dict)
@@ -394,7 +403,7 @@ refund_policy = Capability(
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         refund_policy,
         RunbookRequired(requirements={'issue_refund': 'refund-policy'}),
@@ -439,7 +448,7 @@ from pydantic_ai.capabilities import Capability
 
 
 def load_skill(path: Path) -> Capability:
-    _, frontmatter, body = path.read_text().split('---', 2)
+    _, frontmatter, body = path.read_text(encoding='utf-8').split('---', 2)
     meta = yaml.safe_load(frontmatter)
     return Capability(
         id=meta['id'],
@@ -450,7 +459,7 @@ def load_skill(path: Path) -> Capability:
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     instructions='You are a customer support assistant.',
     capabilities=[load_skill(p) for p in Path('skills').glob('*.md')],
 )

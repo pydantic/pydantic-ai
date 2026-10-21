@@ -49,6 +49,29 @@ cancellation, message compaction, event handling, discovery, validation, calls, 
 same backend and config resolver as framework operations, so do not maintain a second registration
 path for them.
 
+A toolset the run holds reaches the durable unit through the run context, so an engine that
+serializes it (or dispatches the unit elsewhere) sees none and the unit enters its own, as every unit
+did before. When a unit does reach one, it enters that toolset on first use and leaves it entered for
+the run, which the durable container closes: that is the deliberate exception to the rule below, and
+it is what lets an `MCPToolset` hold one session per run instead of one per unit. Declare it with the
+`'enter-in-durable-unit'` lifecycle, which is only for engines whose units run in the container's own
+process; connecting still happens inside a unit, so the engine retries it. A `DynamicToolset` built
+with `per_run_step=False` is held the same way, except that the run resolves it first: that factory
+runs in container code, so it carries the same determinism requirement as every other factory that
+runs there.
+
+Workspaces are routed by the base, not by engines: when a construction-time capability overrides
+`get_workspace`, `_bind_workspace_operation` binds one operation, `CapabilityOperationId('workspace',
+operation='call')`, configured and retried like any capability operation (bind nothing otherwise, so
+agents without a supplier keep their pinned names). `_prepare_workspace` installs a `DurableWorkspace`
+around the selected workspace inside the container; each of its calls, `ensure` included, is one
+`WorkspaceCall`. The `WorkspaceEnsurer` companion runs `ensure` before the run body, with a locked lazy
+fallback on first call, so parallel units share one environment. Inside a unit, `_unit_workspace`
+gives the call the plain workspace: the live one in-process, or on Temporal the one rebuilt from the
+serialized ref. Expected workspace errors cross as data and are re-raised with their original type;
+Temporal lists `WorkspaceError` as a workflow-failure type; an uncaught builtin error keeps Temporal's
+default and fails the workflow task.
+
 Assume a durable unit may execute more than once if the process fails after the side effect but
 before its checkpoint commits. Document the engine's guarantees and require idempotency or expose
 an engine-native at-most-once option where available. Keep workflow-side code deterministic. Enter

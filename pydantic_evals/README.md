@@ -39,7 +39,7 @@ class MatchAnswer(Evaluator[str, str]):
     def evaluate(self, ctx: EvaluatorContext[str, str]) -> float:
         if ctx.output == ctx.expected_output:
             return 1.0
-        elif isinstance(ctx.output, str) and ctx.expected_output.lower() in ctx.output.lower():
+        elif ctx.expected_output is not None and ctx.expected_output.lower() in ctx.output.lower():
             return 0.8
         return 0.0
 

@@ -8,9 +8,9 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
@@ -20,9 +20,12 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -76,7 +79,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic, google or openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1240,6 +1242,27 @@ async def test_unrenderable_delta_raises_user_error_not_assertion(allow_model_re
         await model.request(history, None, ModelRequestParameters())
 
 
+async def test_unrendered_retry_feedback_raises_user_error_not_assertion(allow_model_requests: None) -> None:
+    """`RetryFeedbackPart` reaches an adapter the same way, and gets told the same thing.
+
+    It is the other part that only becomes sendable at `prepare_messages` time — translated into the
+    prompt part its `cause` calls for rather than projected into an exchange — so the public
+    `Model.request` that skips that step leaves it raw in front of the adapter just as an
+    availability delta does.
+    """
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='x'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='how many?')]),
+        ModelResponse(parts=[TextPart(content='lots')]),
+        ModelRequest(
+            parts=[RetryFeedbackPart(content='the answer has to be a number', retry=RetryInfo(cause='model_retry'))]
+        ),
+    ]
+
+    with pytest.raises(UserError, match=r'prepare_messages'):
+        await model.request(history, None, ModelRequestParameters())
+
+
 def test_a_mixed_corpus_reveal_gets_the_mechanism_not_just_the_news() -> None:
     """The same model answers differently per request, which is why the parameters are needed.
 
@@ -1731,6 +1754,63 @@ def test_standing_system_prompt_stays_ahead_of_sorted_tool_returns() -> None:
         'standing',
         TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`first_tool`'),
     ]
+
+
+_ANNOUNCEMENT = f'<system>{TOOL_AVAILABILITY_ANNOUNCEMENT.format(names="`first_tool`")}</system>'
+
+
+@pytest.mark.parametrize(
+    'authored, expected',
+    [
+        pytest.param(
+            [ToolAvailabilityDeltaPart(tools_added=['first_tool']), UserPromptPart(content='go')],
+            [(UserPromptPart, _ANNOUNCEMENT), (UserPromptPart, 'go')],
+            id='delta-first',
+        ),
+        pytest.param(
+            [
+                SystemPromptPart(content='standing'),
+                ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                UserPromptPart(content='go'),
+            ],
+            [(SystemPromptPart, 'standing'), (UserPromptPart, _ANNOUNCEMENT), (UserPromptPart, 'go')],
+            id='after-standing-prompt',
+        ),
+        pytest.param(
+            [
+                ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_1'),
+            ],
+            [(ToolReturnPart, 'loaded'), (UserPromptPart, _ANNOUNCEMENT)],
+            id='before-tool-return',
+        ),
+    ],
+)
+def test_first_request_announcement_is_not_standing_system_prompt(
+    authored: list[ModelRequestPart], expected: list[tuple[type[ModelRequestPart], object]]
+) -> None:
+    """An announcement opening the first request stays in the conversation instead of being hoisted (#7899).
+
+    Only the `SystemPromptPart`s the history was authored with count as the standing prompt, which
+    non-inline adapters lift into the provider's system field; the rendered announcement is not one.
+    """
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart(content='unused')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+    tool = ToolDefinition(name='first_tool', defer_loading=True)
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=authored)],
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
+
+    [request] = prepared
+    assert isinstance(request, ModelRequest)
+    rendered: list[tuple[type[ModelRequestPart], object]] = []
+    for part in request.parts:
+        assert isinstance(part, SystemPromptPart | UserPromptPart | ToolReturnPart)
+        rendered.append((type(part), part.content))
+    assert rendered == expected
 
 
 async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_model_requests: None) -> None:

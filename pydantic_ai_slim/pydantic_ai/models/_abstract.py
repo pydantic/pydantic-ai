@@ -10,8 +10,7 @@ from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
 from types import TracebackType
-
-from typing_extensions import Self
+from typing import Self
 
 __all__ = ('AbstractModel',)
 
@@ -46,6 +45,17 @@ class AbstractModel(ABC):
     def model_id(self) -> str:
         """The fully qualified model name in `'provider:model_name'` format."""
         return f'{self.system}:{self.model_name}'
+
+    @property
+    def context_window(self) -> int | None:
+        """The maximum number of tokens the model can handle at once, input and output combined, or `None` when unknown.
+
+        Models with a profile read it from the profile's `context_window`, which is filled from
+        [genai-prices](https://github.com/pydantic/genai-prices) when no profile layer sets it. Wrapper
+        models report their wrapped model's; a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]
+        reports the smallest among its candidates.
+        """
+        return None
 
     @property
     def label(self) -> str:

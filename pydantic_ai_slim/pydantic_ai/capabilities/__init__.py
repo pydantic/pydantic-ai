@@ -11,6 +11,7 @@ from pydantic_ai.native_tools._tool_search import (
 from pydantic_ai.output import OutputContext
 
 from ._dynamic import CapabilityFunc, DynamicCapability
+from ._on_event import on_event
 from ._tool_search import ToolSearch
 from .abstract import (
     AbstractCapability,
@@ -34,6 +35,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .caching import Caching
 from .capability import Capability
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
@@ -43,6 +45,7 @@ from .hooks import Hooks, HookTimeoutError
 from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
+from .local_workspace import LocalWorkspace
 from .mcp import MCP
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
@@ -74,10 +77,12 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
     name: cls
     for cls in (
         NativeTool,
+        Caching,
         RaiseContentFilterError,
         ImageGeneration,
         IncludeToolReturnSchemas,
         Instrumentation,
+        LocalWorkspace,
         MCP,
         PrefixTools,
         PrepareTools,
@@ -123,13 +128,16 @@ __all__ = [
     'WrapOutputValidateHandler',
     'WrapOutputProcessHandler',
     'NativeTool',
+    'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'Caching',
     'Capability',
     'CAPABILITY_TYPES',
     'ImageGeneration',
     'Instrumentation',
     'IncludeToolReturnSchemas',
+    'LocalWorkspace',
     'MCP',
     'PrefixTools',
     'PrepareOutputTools',

@@ -1,3 +1,7 @@
+---
+description: "Use scoring libraries such as Ragas and DeepEval inside Pydantic Evals by wrapping their metrics as evaluators, without a hard dependency on any framework."
+---
+
 # Third-Party Integrations
 
 Pydantic Evals does not take a hard dependency on any particular metrics framework. When a team

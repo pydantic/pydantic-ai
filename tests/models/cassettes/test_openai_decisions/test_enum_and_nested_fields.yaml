@@ -1,0 +1,84 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/decisions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "515"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        input: I was charged twice on my personal card.
+        questions:
+        - type: choice
+          name: team
+          instructions: "{\"field\": \"team\", \"question\": \"Which team owns it?\", \"goal\": \"Assign a support ticket.\"}"
+          choices:
+          - value: billing
+          - value: bug
+        - type: predicate
+          name: customer.vip
+          instructions: "{\"field\": \"customer.vip\", \"context\": [\"customer: Who is writing in.\"], \"question\": \"Are they on an enterprise plan?\", \"goal\": \"Assign a support ticket.\"}"
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - x-request-id,retry-after,server-timing-total
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "141"
+      server-timing-total:
+      - "141.806"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        answers:
+        - type: choice
+          name: team
+          choice: billing
+          probabilities:
+          - value: billing
+            probability: 1.0
+          - value: bug
+            probability: 0.0
+          confidence: 1.0
+        - type: predicate
+          name: customer.vip
+          probability: 0.49
+        usage:
+          input_tokens: 319
+          input_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 319
+  recorded_at: 2026-10-07T07:54:25.954609+00:00
