@@ -1055,8 +1055,9 @@ class TestInjection:
         assert len(captured[0]) == 2
         assert '- version two' in captured[0][1]
         history = second.all_messages()
-        assert _memory_request_indexes(history) == [0, len(first.all_messages())]
-        assert 'new run' in _user_text(history[len(first.all_messages()) : len(first.all_messages()) + 1])
+        # The run's history ends with the new prompt, its snapshot and the response; earlier requests are unchanged.
+        assert _memory_request_indexes(history) == [0, len(history) - 2]
+        assert _user_text(history[-3:-2]) == 'new run'
 
         captured.clear()
         third = await agent.run('unchanged', message_history=history)
