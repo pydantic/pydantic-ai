@@ -43,7 +43,7 @@ def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
 
 async def _read_repeatedly(
     tmp_path: Path,
-    capability: AbstractCapability[object],
+    capability: AbstractCapability[object] | list[AbstractCapability[object]],
     reads: int,
     history: list[ModelMessage] | None = None,
 ) -> list[list[ModelMessage]]:
@@ -59,7 +59,13 @@ async def _read_repeatedly(
             )
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(respond), capabilities=[FileSystem[object](content_hashes=False), capability])
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[
+            FileSystem[object](content_hashes=False),
+            *(capability if isinstance(capability, list) else [capability]),
+        ],
+    )
     await agent.run('Read it', message_history=history, workspace=LocalWorkspaceBackend(tmp_path))
     return requests
 
@@ -212,3 +218,16 @@ async def test_clear_tool_results_batches_around_a_typed_result_whose_metadata_c
         ['old', '[tool result cleared]', READ, READ],
     ]
     assert all(type(part) is ReadFileReturnPart for part in _returns(requests[-1]))
+
+
+async def test_clear_tool_results_does_not_count_from_another_strategys_clears(tmp_path: Path) -> None:
+    capabilities: list[AbstractCapability[object]] = [
+        DeduplicateFileReads[object](file_key=_file_key),
+        ClearToolResults[object](max_messages=4, keep_pairs=1),
+    ]
+    requests = await _read_repeatedly(tmp_path, capabilities, reads=2)
+
+    # On the third request `DeduplicateFileReads` clears the superseded `read_1` first. That clear is not
+    # one of `ClearToolResults`', so its count still covers all five messages, and it clears `read_1` too.
+    third = _returns(requests[2])
+    assert [part.content for part in third] == ['[tool result cleared]', READ]

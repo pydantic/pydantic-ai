@@ -10,10 +10,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Any, Protocol, Self, assert_never, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionBaselinePart,
@@ -935,11 +936,11 @@ def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | 
     is_plain = type(part) is ToolReturnPart
     if not is_plain and part.tool_kind != READ_FILE_KIND.id:
         return None
-    metadata: object = part.metadata
+    metadata = part.metadata
     if metadata is None:
         metadata = {CLEARED_TOOL_RESULT_METADATA: True}
-    elif isinstance(metadata, dict):
-        metadata = {**cast('dict[str, Any]', metadata), CLEARED_TOOL_RESULT_METADATA: True}
+    elif is_str_dict(metadata):
+        metadata = {**metadata, CLEARED_TOOL_RESULT_METADATA: True}
     elif not is_plain:
         # `is_cleared_return` only falls back to the content for plain parts, so a cleared typed part
         # without the mark would go unrecognized, and `ClearToolResults` would count from the start of
@@ -949,16 +950,20 @@ def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | 
 
 
 def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
-    """Whether compaction cleared *part*, judged by the mark `_cleared_return` leaves in its metadata.
+    """Whether a compaction using *placeholder* cleared *part*.
 
-    A plain `ToolReturnPart` whose content is *placeholder* also counts: histories cleared before the
-    mark existed only ever cleared plain parts. A typed result's content is the tool's output, which
-    may equal the placeholder by coincidence, so it only counts when marked.
+    The content must be *placeholder*, so another strategy's clears, which use their own placeholder,
+    don't count. A typed result must also carry the mark `_cleared_return` leaves in its metadata, as
+    its content is the tool's output and may equal the placeholder by coincidence. A plain
+    `ToolReturnPart` counts without the mark: histories cleared before the mark existed only ever
+    cleared plain parts.
     """
-    metadata: object = part.metadata
-    if isinstance(metadata, dict) and cast('dict[str, Any]', metadata).get(CLEARED_TOOL_RESULT_METADATA) is True:
-        return True
-    return type(part) is ToolReturnPart and str(part.content) == placeholder
+    if str(part.content) != placeholder:
+        return False
+    metadata = part.metadata
+    return type(part) is ToolReturnPart or (
+        is_str_dict(metadata) and metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
+    )
 
 
 def rebuild_with_cleared(
