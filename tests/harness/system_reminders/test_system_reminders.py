@@ -117,9 +117,8 @@ _ORIGIN = {'origin': 'pydantic-ai-harness.system_reminders.reminder.v1'}
 
 def _fired_text(messages: list[ModelMessage]) -> str | None:
     """The reminder text added this turn, its system prompts and any quoted data joined, or None if nothing fired."""
-    last = messages[-1] if messages else None
-    if not isinstance(last, ModelRequest):
-        return None
+    last = messages[-1]
+    assert isinstance(last, ModelRequest)
     notes = [part.content for part in last.parts if isinstance(part, SystemPromptPart) and part.metadata == _ORIGIN]
     if not notes:
         return None
