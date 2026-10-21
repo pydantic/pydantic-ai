@@ -1,0 +1,710 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: >-
+      https://api.anthropic.com/v1/files/file_01BAxdWjsEoSUsMGEN5QYvMC/content?beta=true
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename*=utf-8''numbers_and_squares.csv
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/csv
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |
+        Number,Square
+        1,1
+        2,4
+        3,9
+        4,16
+        5,25
+  recorded_at: 2026-10-19T22:25:14.801752+00:00
+- request:
+    method: GET
+    uri: https://api.anthropic.com/v1/files/file_01BAxdWjsEoSUsMGEN5QYvMC?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        type: file
+        id: file_01BAxdWjsEoSUsMGEN5QYvMC
+        size_bytes: 36
+        created_at: 2026-10-19T22:25:10.572565Z
+        expires_at: null
+        filename: numbers_and_squares.csv
+        mime_type: text/csv
+        downloadable: true
+  recorded_at: 2026-10-19T22:25:15.024198+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "401"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Write and run Python code using pandas that creates a CSV file with the numbers
+              1 to 5 and their squares, then save it to disk so it can be downloaded.
+            type: text
+        model: claude-sonnet-4-6
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 3000
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-6ad698b9000000008558ecaa225e9e7e-3490bb46a9e94329-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CgCP1D9SdB1u5UuQ37QGr","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2310,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}    }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants me to write"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Python"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" code using pandas to create a CSV"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" file with numbers 1-"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"5 and their squares, then"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" save it to disk for"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" download."}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EpsDCqgBCBIYAipAk2iWobOX7Gbs38QV0GNeIDr5/tsSta90W2TD6wFz0A3C83pMBV/630UB4eIIEjUn+Wc0Uyx7e7/X+tolohX9ujIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBEwoRY2xhdWRlLXNvbm5ldC00LTaoAbux2tYGEgy5j3W/rrG1l3Qj5ewaDKF635hmYfy02mNuyCIwUFVPu+OTe5AzCgFcorjdhFg27taoJv5Nmn1qid9eSWQ1cmQKyEfaYbf22R00GlVDKp8Bw5CkWPGRf70nrhGEmwfMudoM6yt14mdVnADCcZmgPIQZFYYhC1AUglojuJKYlubLqTsb+M/LBfsdjvXMU4RtmB1S7iVrh06SNO96RdG31BTm9rsdL+sfX6kfVdlxeQZ2qn5p4bK3axFFHdwOw++7qPdozJqP6XK2q+r/ViJPQTURaRzqfiaLWaRTOX1P56WjRkjyXYrA34cb+7nSTyUXGAE="}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Sure"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"! I'll write the"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Python script"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" run"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it simultaneously"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"."}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"server_tool_use","id":"srvtoolu_01DYgvm7dwhi1z8Qmqg8BWez","name":"text_editor_code_execution","input":{}}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nd\": \"c"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"reate\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":", \"path"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\": \"/tm"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"p/squar"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"es.py\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":", \"file"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"_text\":"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" \"impor"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"t panda"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"s as pd"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\nimpor"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"t os\\n\\"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"n# Crea"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"te the "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"data\\nd"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ata = {"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n    \\"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"Number"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\": lis"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"t(range"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"(1, 6))"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":",\\n    "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"Squar"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"e\\\": [x"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"**2 for"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" x in r"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ange(1,"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" 6)]\\n}"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n\\n# C"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"reate a"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" DataFr"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ame\\ndf"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" = pd.D"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ataFram"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"e(data)"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n\\n# S"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ave to "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"CSV\\nou"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"tput_pa"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"th = \\\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"/tmp/nu"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"mbers_a"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nd_squa"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"res.csv"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"\\ndf."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"to_csv("}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"output_"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"path, i"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ndex=Fa"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"lse)\\n\\"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nprint("}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\"✅ Dat"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"aFrame "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"created"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" succes"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"sfully!"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\\")\\npr"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"int()\\n"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"print(d"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"f.to_st"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ring(in"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"dex=Fal"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"se))\\np"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"rint()\\"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"nprint("}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"f\\\"📁 CS"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"V saved"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":" to: {o"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"utput_p"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ath}\\\")"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\nprint"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"(f\\\"📦 F"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ile siz"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"e: {os."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"path.ge"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"tsize(o"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"utput_p"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ath)} b"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ytes\\\")"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\\n\"}"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text_editor_code_execution_tool_result","tool_use_id":"srvtoolu_01DYgvm7dwhi1z8Qmqg8BWez","content":{"type":"text_editor_code_execution_create_result","is_file_update":false}}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"server_tool_use","id":"srvtoolu_01F8xGkhTwrZpmqYdiNm7XiF","name":"bash_code_execution","input":{}}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"nd\": \"p"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"ython /"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"tmp/squ"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"ares.py"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":" && cp "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"/tmp/nu"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"mbers_a"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"nd_squa"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"res.csv"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":" $OUTPU"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"T_DIR/n"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"umbers_"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"and_squ"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"ares.cs"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"v\"}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01F8xGkhTwrZpmqYdiNm7XiF","content":{"type":"bash_code_execution_result","stdout":"✅ DataFrame created successfully!\n\n Number  Square\n      1       1\n      2       4\n      3       9\n      4      16\n      5      25\n\n📁 CSV saved to: /tmp/numbers_and_squares.csv\n📦 File size: 36 bytes\n","stderr":"","return_code":0,"content":[{"type":"bash_code_execution_output","file_id":"file_01BAxdWjsEoSUsMGEN5QYvMC"}]}}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"Everything"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" ran"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" perfectly"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"! Here's a"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" breakdown"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" of what the code did:"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"\n\n###"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"🐍 Code"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" Walk"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"through"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"\n|"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" Step | Description"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" |\n|---|"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"---|\n| **"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"Data"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" Creation** | Built"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" a dictionary with `"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"Number` (1–"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"5) and `Square` ("}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"their"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" squares) as keys |"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"\n| **DataFrame**"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" | Used"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" `"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"pd.DataFrame()` to convert"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" the dictionary into a structured"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" table"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" |\n| **CSV"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" Export"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"** | Used"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" `df.to_csv()"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"` with"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" `index=False` to save"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" without"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" the"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" row"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" index |\n\n### 📄"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" CSV"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" Output"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"\n```"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"\nNumber"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":","}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"Square\n1,1\n2"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":",4\n3,9"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"\n4,16\n5,25"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"\n```\n\nThe file"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" `"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"numbers_and_squares.csv"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"` has"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" been saved"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" is ready to"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" download!"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"🎉"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01L5uYuESJrPW4HD1bm6iL7A","expires_at":"2026-10-19T23:25:10.860730Z"}},"usage":{"input_tokens":7782,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":592,"output_tokens_details":{"thinking_tokens":39},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}}
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-19T22:25:14.529634+00:00

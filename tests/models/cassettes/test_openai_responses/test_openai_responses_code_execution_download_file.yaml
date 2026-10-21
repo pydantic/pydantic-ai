@@ -1,0 +1,210 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: >-
+      https://api.openai.com/v1/containers/cntr_6ad698da0b1081909b2340f7f9c9686406f5d811a4ee9af8/files/cfile_6ad698de70fc8191a9e8bc4945f5751f/content
+    headers:
+      accept:
+      - application/binary
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      host:
+      - api.openai.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-disposition:
+      - attachment; filename="file.csv"; filename*=UTF-8''numbers_and_squares.csv
+      content-length:
+      - "42"
+      openai-processing-ms:
+      - "378"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    body:
+      type: text
+      content: "number,square\r\n1,1\r\n2,4\r\n3,9\r\n4,16\r\n5,25\r\n"
+  recorded_at: 2026-10-19T22:25:35.546712+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "329"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.5
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        - code_interpreter_call.outputs
+        input:
+        - role: user
+          content: Create a CSV file with the numbers 1 to 5 and their squares
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: code_interpreter
+          container:
+            type: auto
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "5206"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_03f6693241f87726006ad698d9b4a087d194519264e7a15f81
+        object: response
+        created_at: 1792448729
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792448734
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.5-2026-04-23
+        moderation: null
+        output:
+        - id: rs_03f6693241f87726006ad698dc118887d18dc8045106802d72
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq1pjeKk3SVjtatIkhlKnbqL4Nk3E5H3EFhANG5sQehXf9dXk8ihtTJe14izR3ntOFj-PtGVV2lRU8MXO7rRfzbI-wDr1CTDoMlOcGH9Mq7qI8akKZEgeVwdVtLOFcbKbc94Ver25oR9H9hO1GiuRCz84MejD-Xy-ThyX-fQBKcXqrU0KEcni-amR1QzXhOOtxbYNnLOLo7JwPxl3xX3lu3Id14LjPnklHjSh7rWAlXnhiVj7vc7SzCy4NT1mACalDljBXf8_PgTTf2LhJlCDE1twGNw1ZbVQ-KSFv5ubKYuuvnNPA4GaZ3E9xjXc8KUf_4uB_QMV935oKOYbl7tjLqoeknE82L2rIlOzAipwGc-suRC1UI7pub-LT_Q8dUebc4jtuf-jdXTqgKtFOveOwwD5VBON_t-qrvSZTyjp6TMoLJIWo1RV4cENz4iaHmOX4nrwyobJ5Q1zJtP-ISqqIlmpF4egoRv5gChmP_jtQrODfzUoGQE29Rmfm2chV5stbwTor1hToU3DvAl0ollDEvE6Ls6oWjBxQJQk5soXZpQ1Nt8w-3arbLSVAZwx98VkAdpV3IB9saiH6kxnXD2l0Hzi1a6_DnoNJ9Q0p46K_Z-Mg_r1lBfpYiadetHdKxiUGXHcu7lfp-ts72D-MVcmbc_8n0tfxJmU8jB4AaC73D5YIAq2u2dFmgs8TD0jwyQdh5hALo0mHIwN9IIVykASfLyzjOfx61IR8n1F2GwE-XODIKTcxay8LCwDPmbRyzSfVfBa5QY5AxFdOZO2rx9mLEqREFGyB11qUuv6B7GeaLdphBemmhLRRSjx00TWwL1gwQIHyqJOI3l3nMTe1Cwh1V6GG5aYg61qvRqag3Mp1tkF4q6P5ROnM3ca80Ulw_J9QSU6zL-HUBVVNOpSmTvthD3B3dXXqxzm3RsH35nzmRsCx7UQhWHHDbCJ582lnPnvjFrFz57a-ZRLzue7rZif1ZZFe5u-r2LiyRuPj2Ph71IznAlC0THqDpno0O9m5gD3y7EG7EUH4PbKiEn5Ta8edo1QxN5pZgUTg5NaiaXTgtKyRpsta8ouG8NneLRa8VRcvWLhmL9PttYzaT36u85NLLBv2LlTeYjsnShj8xOye4hMHUm9sKT6aZA9ysSjihlF_TEkxgr5xH5pALLQQq341CgqhX5p75sO-7E4BdjvG4AjM8VH8v7xb-Jk00zac8ldfmGWVJNlxoJ3tsviPIaK7P9JiyAopE2LXs994nyjFFtJWRVbQ_oODvx_hxJro9TWiX-_f1VAGvvpEG9LhUYsmWTA_-gWZYUBypQ9ySAz43pySwfLZ0FAKWAVTCRED4ygB2GsCp7kN4dyVzb03kbJM19UnqouE7qeNCowP0JyFue9Ucm74-gRsqJZTdJB3WVfKcOgAvvQUvJUjNsSX5UeYixTrVaib79MO-eGP94kxKTVQPmMDfqP7TheSvArAWLDccw0LfIRUbzHvGXWcCHBRXVEfUfoIoV3jhJpdb3lGfVeS6AxCGn7wmZdKJdn66UOuVMI9b9fnmfLjsgo0bE03zzjZsE8vtJLpFLf_2WlMQRt3BJ8btTum5dQ_yPTbvl26PGScsCcFisVTC6ovJ85R4_tZf30kjdHnZ_z7bTrLQrE9J9OMj5hCQNWO37AMiatswtnFccEA0ltQyAR986BmY9rnkyDRm7rKVDLoQruU_lx_b3OM0JQ5mpihhdVogYwvGQoOToCkzv-EftJOpf8hOmUhmeW9NCufprgdKwSObkDFMrGtLEM9fAqLNjgLeGKjcxN5FMwX9AkUaG28xjNmM4Uyfw==
+          summary: []
+        - id: ci_03f6693241f87726006ad698dc85fc87d1ab507117f6209819
+          type: code_interpreter_call
+          status: completed
+          code: |
+            import csv
+
+            path = "/mnt/data/numbers_and_squares.csv"
+            with open(path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["number", "square"])
+                for n in range(1, 6):
+                    writer.writerow([n, n*n])
+
+            path
+          container_id: cntr_6ad698da0b1081909b2340f7f9c9686406f5d811a4ee9af8
+          outputs:
+          - type: logs
+            logs: "'/mnt/data/numbers_and_squares.csv'"
+        - id: msg_03f6693241f87726006ad698de2f5887d1b63f8f9332c63437
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations:
+            - type: container_file_citation
+              container_id: cntr_6ad698da0b1081909b2340f7f9c9686406f5d811a4ee9af8
+              end_index: 98
+              file_id: cfile_6ad698de70fc8191a9e8bc4945f5751f
+              filename: numbers_and_squares.csv
+              start_index: 57
+            logprobs: []
+            text: "Created the CSV file: [Download numbers_and_squares.csv](sandbox:/mnt/data/numbers_and_squares.csv)"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: code_interpreter
+          container:
+            type: auto
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 1365
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 138
+          output_tokens_details:
+            reasoning_tokens: 30
+          total_tokens: 1503
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-19T22:25:34.960284+00:00

@@ -191,6 +191,7 @@ try:
         BetaAdvisorToolResultBlock,
         BetaAdvisorToolResultBlockParam,
         BetaBase64PDFSourceParam,
+        BetaBashCodeExecutionResultBlock,
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
@@ -343,6 +344,15 @@ _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
 # `AsyncAnthropicBedrockMantle`) expose the full Messages API, including both tool-search variants, so they
 # keep the `bm25` default.
 _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
+_DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES = 100 * 1024 * 1024
+# The Files API used to download code execution files is only available on the direct `AsyncAnthropic` client,
+# not on the Bedrock/Vertex/Foundry transports.
+_FILES_API_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrock,
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+    AsyncAnthropicVertex,
+)
 # Anthropic web-tool availability is client/platform-specific:
 # * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
 #   are unavailable.
@@ -737,6 +747,26 @@ class AnthropicModelSettings(ModelSettings, total=False):
     a summary that replaces the compacted messages.
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/compaction) for more details.
+    """
+
+    anthropic_download_code_execution_files: bool
+    """Whether to automatically download files that the [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] wrote to disk in its sandbox.
+
+    When enabled, each file that code run by the code execution tool wrote to disk is downloaded from the Anthropic
+    Files API and returned as a [`FilePart`][pydantic_ai.messages.FilePart], with the file's name as the content's
+    `identifier`. This costs two extra API calls per file (its content and its metadata).
+
+    The Files API is only available on the direct Anthropic client, not on Bedrock, Vertex, or Foundry.
+    """
+
+    anthropic_download_code_execution_files_max_bytes: int
+    """The maximum total size, in bytes, of the files downloaded for one response when
+    [`anthropic_download_code_execution_files`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_download_code_execution_files]
+    is enabled. Defaults to 100 MiB.
+
+    A file that would exceed what's left of the budget is skipped with a warning without being downloaded, based on the
+    size the Files API reports, and the cap is also enforced while reading; smaller files after it can still be
+    downloaded.
     """
 
 
@@ -1220,7 +1250,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
-            return self._process_response(response, model_request_parameters, model_settings)
+            model_response = self._process_response(response, model_request_parameters, model_settings)
+            if model_settings.get('anthropic_download_code_execution_files'):
+                file_ids = [
+                    file_id
+                    for block in response.content
+                    if isinstance(block, BetaBashCodeExecutionToolResultBlock)
+                    for file_id in _code_execution_file_ids(block)
+                ]
+                model_response.parts = [
+                    *model_response.parts,
+                    *await _download_anthropic_files(
+                        self.client,
+                        file_ids,
+                        max_bytes=model_settings.get(
+                            'anthropic_download_code_execution_files_max_bytes',
+                            _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES,
+                        ),
+                        provider_name=self._provider.name,
+                    ),
+                ]
+            return model_response
         # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
         # that breaks the stream off, both while it opens and while it's read.
         async with response.source:
@@ -2074,10 +2124,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
+            _model_settings=model_settings,
             _response=response,
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
+            _client=self.client,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
         )
 
@@ -2865,7 +2917,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     'encrypted_content'
                                 ]
                             assistant_content_params.append(compaction_block)
-                    elif isinstance(response_part, FilePart):  # pragma: no cover
+                    elif isinstance(response_part, FilePart):
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
                     elif isinstance(response_part, SpeechPart):  # pragma: no cover
@@ -3635,16 +3687,19 @@ class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
 
     _model_name: AnthropicModelName
+    _model_settings: AnthropicModelSettings
     _response: _AnthropicEventStream
     _provider_name: str
     _model_id_namespace: str
     _provider_url: str
+    _client: AsyncAnthropicClient
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
+            _file_ids: list[str] = []
             ignored_server_tool_use_indices: set[int] = set()
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
@@ -3743,6 +3798,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                             part=_map_code_execution_tool_result_block(current_block, self.provider_name),
                         )
                     elif isinstance(current_block, BetaBashCodeExecutionToolResultBlock):
+                        # The bash tool is the only one that references files written to disk; collect their IDs
+                        # from the typed block so they can be downloaded below.
+                        _file_ids.extend(_code_execution_file_ids(current_block))
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
                             part=_map_bash_code_execution_tool_result_block(current_block, self.provider_name),
@@ -3899,6 +3957,18 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
+
+            if self._model_settings.get('anthropic_download_code_execution_files'):
+                for file_part in await _download_anthropic_files(
+                    self._client,
+                    _file_ids,
+                    max_bytes=self._model_settings.get(
+                        'anthropic_download_code_execution_files_max_bytes',
+                        _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES,
+                    ),
+                    provider_name=self._provider_name,
+                ):
+                    yield self._parts_manager.handle_part(vendor_part_id=file_part.id, part=file_part)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -4551,6 +4621,68 @@ def _map_mcp_server_result_block(
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )
+
+
+def _code_execution_file_ids(block: BetaBashCodeExecutionToolResultBlock) -> list[str]:
+    """The IDs of files the bash code execution tool wrote to disk, read from a typed tool-result block.
+
+    Only the bash tool (running code that writes to disk) references downloadable files; the text editor tool's
+    results and execution errors don't, so those yield no file IDs.
+    """
+    content = block.content
+    if not isinstance(content, BetaBashCodeExecutionResultBlock):
+        return []
+    return [output.file_id for output in content.content]
+
+
+async def _download_anthropic_files(
+    client: AsyncAnthropicClient, file_ids: list[str], *, max_bytes: int, provider_name: str
+) -> list[FilePart]:
+    """Download the files code execution wrote to disk from the Anthropic Files API, up to `max_bytes` in total.
+
+    Duplicate IDs are downloaded only once. Code execution containers are short-lived, so a download can fail (expired
+    container, rate limit, transient error); such a file, or one that doesn't fit in what's left of `max_bytes`, is
+    skipped with a warning rather than discarding the otherwise-successful response.
+    """
+    file_ids = list(dict.fromkeys(file_ids))
+    if not file_ids:
+        return []
+    # The Files API is only available on the direct Anthropic client, not the Bedrock/Vertex/Foundry transports,
+    # which don't expose `client.beta.files`.
+    if isinstance(client, _FILES_API_UNSUPPORTED_CLIENTS):
+        warnings.warn(
+            f'Cannot download {len(file_ids)} code execution file(s): the Anthropic Files API is only available on '
+            'the direct Anthropic client, not on Bedrock, Vertex, or Foundry.',
+            UserWarning,
+            stacklevel=2,
+        )
+        return []
+    file_parts: list[FilePart] = []
+    remaining_bytes = max_bytes
+    for file_id in file_ids:
+        try:
+            metadata = await client.beta.files.retrieve_metadata(file_id=file_id)
+            data: bytes | None = None
+            # The metadata's size lets us skip an oversized file without requesting it, but the cap is still enforced
+            # while reading in case the content is larger than reported.
+            if metadata.size_bytes <= remaining_bytes:
+                async with client.beta.files.with_streaming_response.download(file_id=file_id) as response:
+                    data = await _utils.read_at_most(response.iter_bytes(), remaining_bytes)
+        except (APIStatusError, APIConnectionError, httpx2.TransportError) as e:
+            warnings.warn(f'Failed to download code execution file {file_id}: {e}', UserWarning, stacklevel=2)
+            continue
+        if data is None:
+            warnings.warn(
+                f'Skipped code execution file {metadata.filename!r} ({file_id}): it exceeds the {remaining_bytes} bytes '
+                'left of `anthropic_download_code_execution_files_max_bytes`.',
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        remaining_bytes -= len(data)
+        content = BinaryContent(data=data, media_type=metadata.mime_type, identifier=metadata.filename)
+        file_parts.append(FilePart(content=BinaryContent.narrow_type(content), id=file_id, provider_name=provider_name))
+    return file_parts
 
 
 def _effective_thinking_type(

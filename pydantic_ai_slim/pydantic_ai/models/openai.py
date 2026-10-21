@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import itertools
 import json
+import mimetypes
 import warnings
 from collections import deque
 from collections.abc import (
@@ -23,7 +24,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, Never, TypeVar, assert_never, cast, get_args, overload
 
-from httpx2 import Timeout as HTTPX2Timeout
+from httpx2 import Timeout as HTTPX2Timeout, TransportError as HTTPX2TransportError
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
@@ -1140,6 +1141,28 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     The [`OpenAICompaction`][pydantic_ai.models.openai.OpenAICompaction] capability
     sets this automatically in its default (stateful) mode.
+    """
+
+    openai_download_code_execution_files: bool
+    """Whether to automatically download files that the [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] wrote to disk in its sandbox.
+
+    When the code interpreter saves a file to disk, the model references it as a citation rather than including its
+    contents in the response. When this setting is enabled, each referenced file is downloaded from the container files
+    API and returned as a [`FilePart`][pydantic_ai.messages.FilePart], with the file's name as the content's
+    `identifier`. This costs one extra API call per file.
+
+    This is distinct from
+    [`openai_include_code_execution_outputs`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_code_execution_outputs],
+    which returns the outputs the interpreter produces inline (logs and generated images) without any extra API calls.
+    """
+
+    openai_download_code_execution_files_max_bytes: int
+    """The maximum total size, in bytes, of the files downloaded for one response when
+    [`openai_download_code_execution_files`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_download_code_execution_files]
+    is enabled. Defaults to 100 MiB.
+
+    Downloads are read as they stream in, so a file that would exceed what's left of the budget is abandoned before it's
+    fully buffered and skipped with a warning; smaller files cited after it can still be downloaded.
     """
 
     openai_background: bool
@@ -2436,6 +2459,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
+_DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES = 100 * 1024 * 1024
+
 
 class _Hasher(Protocol):
     def update(self, data: bytes, /) -> None: ...
@@ -2798,7 +2823,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             response = await self._responses_retrieve(response_id, settings)
             # The retrieved response replaces the suspended one, the last message, and continues from what came before.
             return _with_history_digest(
-                self._process_response(response, settings, model_request_parameters),
+                await self._process_response_with_files(response, settings, model_request_parameters),
                 self._resumed_history_to_record(messages[:-1], suspended, settings),
             )
         elif self.profile.get('openai_responses_requires_streaming', False):
@@ -2829,9 +2854,36 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(response, ModelResponse):
                 return response
             return _with_history_digest(
-                self._process_response(response, settings, model_request_parameters),
+                await self._process_response_with_files(response, settings, model_request_parameters),
                 self._history_to_record(messages, settings),
             )
+
+    async def _process_response_with_files(
+        self,
+        response: responses.Response,
+        settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        """`_process_response`, plus the files code execution wrote to disk if `openai_download_code_execution_files` is set."""
+        # `_process_response` collects the citations for files the code interpreter wrote to disk as it maps the
+        # response, so we can download them here (it's sync, downloading is async).
+        container_file_citations: list[responses.response_output_text.AnnotationContainerFileCitation] | None = (
+            [] if settings.get('openai_download_code_execution_files') else None
+        )
+        model_response = self._process_response(
+            response, settings, model_request_parameters, container_file_citations=container_file_citations
+        )
+        if container_file_citations:
+            file_parts = await _download_container_files(
+                self.client,
+                container_file_citations,
+                max_bytes=settings.get(
+                    'openai_download_code_execution_files_max_bytes', _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES
+                ),
+                provider_name=self.system,
+            )
+            model_response.parts = [*model_response.parts, *file_parts]
+        return model_response
 
     def _history_to_record(
         self, messages: Sequence[ModelMessage], settings: OpenAIResponsesModelSettings
@@ -2947,7 +2999,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 sr: StreamedResponse = _ModelResponseStreamedResponse(
                     model_request_parameters=model_request_parameters,
                     _model_response=_with_history_digest(
-                        self._process_response(response, settings, model_request_parameters),
+                        await self._process_response_with_files(response, settings, model_request_parameters),
                         self._resumed_history_to_record(messages[:-1], suspended, settings),
                     ),
                 )
@@ -2994,8 +3046,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         response: responses.Response,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        container_file_citations: list[responses.response_output_text.AnnotationContainerFileCitation] | None = None,
     ) -> ModelResponse:
-        """Process a non-streamed response, and prepare a message to return."""
+        """Process a non-streamed response, and prepare a message to return.
+
+        If `container_file_citations` is provided, the citations for files the code interpreter wrote to disk are
+        collected into it as the response is mapped, so the caller can download them (see
+        `openai_download_code_execution_files`).
+        """
         response = check_json_response(self.model_name, response)
         if error := response.error:
             raise _response_error(self.model_name, error.code, error.message, in_stream=False)
@@ -3014,6 +3073,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if isinstance(item, responses.ResponseReasoningItem):
                 items.extend(_map_reasoning_item(item, self.system))
             elif isinstance(item, responses.ResponseOutputMessage):
+                if container_file_citations is not None:
+                    container_file_citations.extend(_container_file_citations(item))
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputRefusal):
                         refusal_text = content.refusal
@@ -3146,6 +3207,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             finish_reason = 'content_filter'
             provider_details.pop('finish_reason', None)
             provider_details['refusal'] = refusal_text
+            if container_file_citations is not None:
+                container_file_citations.clear()
 
         return ModelResponse(
             parts=items,
@@ -3213,6 +3276,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
+            _client=self.client,
             _provider_timestamp=provider_timestamp,
             _history=history,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
@@ -5019,6 +5083,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _provider_name: str
     _model_id_namespace: str
     _provider_url: str
+    _client: AsyncOpenAI
     _tool_call_ids_are_response_scoped: bool
     _process_provider_details: Callable[[responses.Response], dict[str, Any] | None]
     _provider_timestamp: datetime | None = None
@@ -5087,6 +5152,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # filter commentary from final-answer text as it streams, rather than having to
             # buffer the whole part), or on `output_text.done` if no delta was received.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            # Citations for files the code interpreter wrote to disk, downloaded as `FilePart`s after the stream
+            # completes when `openai_download_code_execution_files` is set.
+            _file_citations: list[responses.response_output_text.AnnotationContainerFileCitation] = []
             mcp_list_tools_return_ids: set[str] = set()
             pending_tool_search_call_ids: deque[str] = deque()
             function_call_args: dict[str, str] = {}
@@ -5194,6 +5262,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             _, return_part = _map_mcp_list_tools(item, self.provider_name)
                             yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
                             mcp_list_tools_return_ids.add(item.id)
+                        # A stream resumed with `starting_after` doesn't replay the `output_item.done` of a message
+                        # that completed before the cursor, so also collect file citations from the full response.
+                        # Duplicates of citations already collected are only downloaded once.
+                        elif isinstance(item, responses.ResponseOutputMessage) and self._model_settings.get(
+                            'openai_download_code_execution_files'
+                        ):
+                            _file_citations.extend(_container_file_citations(item))
 
                     self._record_usage(chunk.response)
                     self._store_conversation_id(chunk.response)
@@ -5493,6 +5568,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             vendor_part_id=chunk.item.id,
                             part=_map_compaction_item(chunk.item, self.provider_name),
                         )
+                    elif isinstance(chunk.item, responses.ResponseOutputMessage) and self._model_settings.get(
+                        'openai_download_code_execution_files'
+                    ):
+                        # Collect the citations for files the code interpreter wrote to disk from the final,
+                        # typed message, the same way `_process_response` does, to download them below.
+                        _file_citations.extend(_container_file_citations(chunk.item))
 
                 elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                     # Use same vendor_part_id as raw CoT for first summary (index 0) so they merge into one ThinkingPart
@@ -5536,7 +5617,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # content already accumulated via delta events
 
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                    # Collect annotations if the setting is enabled
+                    # Collect raw annotations for `provider_details` if the setting is enabled.
                     if self._model_settings.get('openai_include_raw_annotations'):
                         # The event types `annotation` as a model union declared in the event's own module,
                         # whose members are distinct classes from the identically shaped ones
@@ -5711,6 +5792,19 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             if self._refusal_text:
                 self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if not self._has_refusal and self._model_settings.get('openai_download_code_execution_files'):
+                # Download the files the code interpreter wrote to disk after the stream completes, so the resulting
+                # `parts` ordering matches the non-streaming path. Skip it entirely on a refused response.
+                for file_part in await _download_container_files(
+                    self._client,
+                    _file_citations,
+                    max_bytes=self._model_settings.get(
+                        'openai_download_code_execution_files_max_bytes',
+                        _DEFAULT_DOWNLOAD_CODE_EXECUTION_FILES_MAX_BYTES,
+                    ),
+                    provider_name=self._provider_name,
+                ):
+                    yield self._parts_manager.handle_part(vendor_part_id=f'{file_part.id}-file', part=file_part)
 
         # This is used to resume suspended background streams with `starting_after`.
         if self.state == 'suspended' and self._last_sequence_number is not None:
@@ -6797,3 +6891,62 @@ def _map_mcp_call(
             provider_name=provider_name,
         ),
     )
+
+
+def _container_file_citations(
+    message: responses.ResponseOutputMessage,
+) -> list[responses.response_output_text.AnnotationContainerFileCitation]:
+    """The citations of files the code interpreter wrote to disk, read from a message's typed text annotations."""
+    return [
+        annotation
+        for content in message.content
+        if isinstance(content, responses.ResponseOutputText)
+        for annotation in content.annotations
+        if isinstance(annotation, responses.response_output_text.AnnotationContainerFileCitation)
+    ]
+
+
+async def _download_container_files(
+    client: AsyncOpenAI,
+    citations: list[responses.response_output_text.AnnotationContainerFileCitation],
+    *,
+    max_bytes: int,
+    provider_name: str | None,
+) -> list[FilePart]:
+    """Download the files the code interpreter wrote to disk, up to `max_bytes` in total.
+
+    Each file is downloaded only once, even if cited repeatedly. Containers are short-lived, so a download can fail
+    (expired container, rate limit, transient error); such a file, or one that doesn't fit in what's left of
+    `max_bytes`, is skipped with a warning rather than discarding the otherwise-successful response.
+    """
+    file_parts: list[FilePart] = []
+    downloaded_file_ids: set[str] = set()
+    remaining_bytes = max_bytes
+    for citation in citations:
+        if citation.file_id in downloaded_file_ids:
+            continue
+        downloaded_file_ids.add(citation.file_id)
+        file_name = f'{citation.filename!r} ({citation.file_id})'
+        try:
+            async with client.containers.files.content.with_streaming_response.retrieve(
+                file_id=citation.file_id, container_id=citation.container_id
+            ) as response:
+                data = await _utils.read_at_most(response.iter_bytes(), remaining_bytes)
+        except (APIStatusError, APIConnectionError, HTTPX2TransportError) as e:
+            warnings.warn(f'Failed to download code execution file {file_name}: {e}', UserWarning, stacklevel=2)
+            continue
+        if data is None:
+            warnings.warn(
+                f'Skipped code execution file {file_name}: it exceeds the {remaining_bytes} bytes left of '
+                '`openai_download_code_execution_files_max_bytes`.',
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        remaining_bytes -= len(data)
+        media_type = mimetypes.guess_type(citation.filename)[0] or 'application/octet-stream'
+        content = BinaryContent(data=data, media_type=media_type, identifier=citation.filename)
+        file_parts.append(
+            FilePart(content=BinaryContent.narrow_type(content), id=citation.file_id, provider_name=provider_name)
+        )
+    return file_parts
