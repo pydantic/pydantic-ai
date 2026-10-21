@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import anyio
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
 from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
@@ -133,6 +134,13 @@ class _ExecuteHookGuard(AbstractCapability[AgentDepsT]):
         result: Any,
     ) -> Any:
         raise self.error_factory()
+
+
+def _validation_error() -> ValidationError:
+    """A real `ValidationError`, like one a hook validating the call's arguments against a model raises."""
+    with pytest.raises(ValidationError) as exc_info:
+        TypeAdapter(int).validate_python('not a number')
+    return exc_info.value
 
 
 class _BackgroundRealtimeConnection(InferredConnection):
@@ -426,8 +434,18 @@ class TestBackgroundTools:
             ('before', lambda: ToolFailed('not allowed'), 'outcome="failed">\nnot allowed\n</tool_result>'),
             ('after', lambda: ToolFailed('result withheld'), 'outcome="failed">\nresult withheld\n</tool_result>'),
             ('before', lambda: ModelRetry(''), 'outcome="failed">\nModelRetry\n</tool_result>'),
+            ('before', _validation_error, '"type":"int_parsing"'),
+            ('after', _validation_error, 'Input should be a valid integer'),
         ],
-        ids=['before-retry', 'after-retry', 'before-failed', 'after-failed', 'empty-retry'],
+        ids=[
+            'before-retry',
+            'after-retry',
+            'before-failed',
+            'after-failed',
+            'empty-retry',
+            'before-invalid',
+            'after-invalid',
+        ],
     )
     async def test_execute_hook_errors_have_readable_follow_ups(
         self, stage: Literal['before', 'after'], error_factory: Callable[[], Exception], expected: str
@@ -444,15 +462,20 @@ class TestBackgroundTools:
         assert _follow_up_seen(result.all_messages(), expected)
         assert result.output == 'done'
 
-    async def test_execute_hook_retry_exhaustion_terminates_run(self) -> None:
-        guard = _ExecuteHookGuard[object](stage='before', error_factory=lambda: ModelRetry('try again'))
+    @pytest.mark.parametrize(
+        'error_factory', [lambda: ModelRetry('try again'), _validation_error], ids=['retry', 'invalid']
+    )
+    async def test_execute_hook_retry_exhaustion_terminates_run(self, error_factory: Callable[[], Exception]) -> None:
+        guard = _ExecuteHookGuard[object](stage='before', error_factory=error_factory)
         agent = Agent(_model_calling('guarded'), capabilities=[BackgroundTools(), guard])
 
         @agent.tool_plain(metadata={'background': True}, retries=0)
         async def guarded() -> str:
             return 'unreachable'  # pragma: no cover -- the guard rejects every call
 
-        with pytest.raises(UnexpectedModelBehavior, match="Tool 'guarded' exceeded max retries count of 0"):
+        # Core's wording, so the condition reads the same as for a sequential tool.
+        message = "Tool 'guarded' exceeded max retries count of 0. Consider raising the retry limit, or see the docs"
+        with pytest.raises(UnexpectedModelBehavior, match=re.escape(message)):
             await agent.run('go')
 
     async def test_completed_background_call_is_counted_once(self) -> None:

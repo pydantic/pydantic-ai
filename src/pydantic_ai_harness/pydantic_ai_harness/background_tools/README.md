@@ -120,8 +120,9 @@ frame early. A failed call is framed the same way with `outcome="failed"`, wrapp
 
 Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
-when a `before_tool_execute` or `after_tool_execute` hook raises them. Any other tool exception
-ends the run with the original exception, as it does for a sequential tool.
+when a `before_tool_execute` or `after_tool_execute` hook raises them. A `ValidationError` from
+such a hook is reported too, as a sequential tool retries it. Any other tool exception ends the
+run with the original exception, as it does for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. The run ends at its next step, so
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.

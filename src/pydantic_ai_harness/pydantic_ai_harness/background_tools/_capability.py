@@ -14,6 +14,7 @@ import anyio.abc
 import anyio.lowlevel
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from pydantic import ValidationError
 
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -111,7 +112,9 @@ def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
     ctx.enqueue(*outcome)
 
 
-_SignalledError = ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError | ModelRetry | ToolFailed
+_SignalledError = (
+    ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError | ModelRetry | ToolFailed | ValidationError
+)
 """Errors a background task reports to the model as a failed result instead of ending the run."""
 
 
@@ -122,6 +125,10 @@ def _format_background_failure(tool_name: str, task_id: str, error: _SignalledEr
     else:
         if isinstance(error, (ModelRetry, ToolFailed)):
             content: object = error.message
+        elif isinstance(error, ValidationError):
+            content = pydantic_core.to_json(
+                error.errors(include_url=False, include_context=False), fallback=str
+            ).decode()
         elif isinstance(error, ToolRetryError):
             content = error.tool_retry.content
         else:
@@ -338,17 +345,27 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 try:
                     try:
                         result = await handler(args)
-                    except ModelRetry as e:
-                        # Raised by an execute hook such as `before_tool_execute` (the tool body's is already a
-                        # `ToolRetryError`). Core counts it outside `wrap_tool_execute`, so this task does.
+                    except (ModelRetry, ValidationError) as e:
+                        # Raised by an execute hook such as `before_tool_execute` (the tool body's `ModelRetry` is
+                        # already a `ToolRetryError`). Core counts it outside `wrap_tool_execute`, so this task does.
                         if ctx.retry >= ctx.max_retries:
                             raise UnexpectedModelBehavior(
-                                f'Tool {tool_name!r} exceeded max retries count of {ctx.max_retries}'
+                                f'Tool {tool_name!r} exceeded max retries count of {ctx.max_retries}. Consider raising '
+                                'the retry limit, or see the docs on tool retries: '
+                                'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
                             ) from e
                         assert ctx.tool_manager is not None  # Set for every tool call.
                         ctx.tool_manager.failed_tools.add(tool_name)
                         raise
-                except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError, ModelRetry, ToolFailed) as e:
+                except (
+                    ApprovalRequired,
+                    CallDeferred,
+                    ToolRetryError,
+                    ToolFailedError,
+                    ModelRetry,
+                    ToolFailed,
+                    ValidationError,
+                ) as e:
                     outcome = (_format_background_failure(tool_name, task_id, e),)
                 except anyio.get_cancelled_exc_class() as e:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
