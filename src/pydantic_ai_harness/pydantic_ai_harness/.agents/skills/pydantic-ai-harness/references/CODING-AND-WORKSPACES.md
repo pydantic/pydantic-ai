@@ -334,9 +334,11 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
 - Without `image` it runs smolvm's Alpine (BusyBox, root, no Python/git/`rg`); pass an OCI image such as
   `image='python:3.12-alpine'`. No network unless `allow_internet_access=True`, which is unrestricted
   egress from this machine's network (LAN, metadata endpoints), not internet-only. `working_dir` is created.
-- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; any other id raises `ValueError`,
-  so a ref can't reach other tools' VMs. The name isn't proof of origin (any process of this OS user can
-  use it), so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
+- The ref is `WorkspaceRef(provider='smol', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
+  `backend(ref)` or `destroy(ref)` any other id raises `ValueError`, so a ref can't reach other tools' VMs.
+  A VM on this machine goes in as `workspace=SmolSandboxBackend(sandbox=machine)` (or `ref=` with its name),
+  which history doesn't reattach. The name isn't proof of origin (any process of this OS user can use it),
+  so only pass refs the app stored. Runs never delete the VM, and VMs have no TTL:
   `await SmolSandbox().destroy(ref)` (boots a stopped VM to delete it; quiet if gone; waits for a boot
   in progress, so a `finally` that destroys `backend.ref` also covers a run cancelled mid-boot).
 - Reattaching in the same process works as for the cloud sandboxes. Across processes, smolmachines does
