@@ -128,9 +128,12 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.__post_init__()
 
     def _derived_id_source(self) -> str | None:
-        if self.id is None or self.id != self._telemetry_url_derived_id:
+        if self.id is None or self.id != self._telemetry_url_derived_id or self.url is None:
             return None
-        return self.url
+        # The server endpoint, without the userinfo, query or fragment that can carry a credential:
+        # a run that restates the same server with a rotated token is still the same server.
+        parsed = urlparse(self.url)
+        return f'{parsed.scheme.lower()}://{parsed.hostname}:{parsed.port}{parsed.path.rstrip("/")}'
 
     def _derive_id(self, url: str | None) -> str | None:
         """Derive a stable id for this capability from `url`.
