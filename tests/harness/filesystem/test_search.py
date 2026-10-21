@@ -404,7 +404,7 @@ async def test_include_glob_without_a_slash_matches_file_names_at_any_depth_with
 
 
 async def test_include_glob_with_rg_only_syntax_still_goes_to_rg(tmp_path: Path) -> None:
-    """`fnmatch` has no `**/` for zero directories, `{a,b}`, or `!` exclusion, so `rg` keeps such a glob."""
+    """`fnmatch` has no `**/` for zero directories, `{a,b}`, `!` exclusion, or `/` anchor, so `rg` keeps such a glob."""
     (tmp_path / 'src').mkdir()
     (tmp_path / 'src' / 'a.py').write_text('needle\n')
     (tmp_path / 'src' / 'b.txt').write_text('needle\n')
@@ -418,6 +418,7 @@ async def test_include_glob_with_rg_only_syntax_still_goes_to_rg(tmp_path: Path)
     assert both == 'src/a.py:1:needle\nsrc/b.txt:1:needle'
     others = await tools.search_files('needle', include_glob='!tests/**', workspace=workspace)
     assert others == 'src/a.py:1:needle\nsrc/b.txt:1:needle'
+    assert await tools.search_files('needle', include_glob='/src/*.py', workspace=workspace) == 'src/a.py:1:needle'
 
 
 async def test_include_glob_is_also_matched_below_the_search_directory(tmp_path: Path) -> None:

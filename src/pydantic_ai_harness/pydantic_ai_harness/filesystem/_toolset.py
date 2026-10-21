@@ -93,8 +93,8 @@ _FILE_TYPE_NEEDS_RIPGREP = '`file_type` needs ripgrep, which this workspace cann
 _MAX_MATCH_COLUMNS = 4096
 """Bytes of a matching or context line `grep` shows before ripgrep cuts it with an omission marker."""
 
-_RG_ONLY_GLOB = re.compile(r'\*\*|[{}\\]|\[\^|^!')
-"""Glob syntax `rg --glob` gives a meaning `fnmatch` lacks: `**`, `{a,b}`, escapes, `[^...]`, and a leading `!`."""
+_RG_ONLY_GLOB = re.compile(r'\*\*|[{}\\]|\[\^|^[!/]')
+"""Glob syntax `rg --glob` gives a meaning `fnmatch` lacks: `**`, `{a,b}`, escapes, `[^...]`, and a leading `!` or `/`."""
 
 READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     {'read_file', 'list_directory', 'search_files', 'find_files', 'file_info', *RIPGREP_TOOL_NAMES}
