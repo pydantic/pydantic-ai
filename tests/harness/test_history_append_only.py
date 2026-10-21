@@ -358,6 +358,7 @@ ALLOWED: dict[str, Allowed] = {
 
 OPTIONAL_DEPENDENCIES: dict[str, str] = {
     'BrowserUse': 'browser_use',
+    'DaytonaSandbox': 'daytona',
     'E2BSandbox': 'e2b',
     'ExaAgent': 'exa_py',
     'ExaSearch': 'exa_py',
