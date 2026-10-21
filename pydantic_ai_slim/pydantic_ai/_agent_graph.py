@@ -2940,6 +2940,8 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         # holds. Copy it so selectors can't mutate graph state through the context.
         messages=list(ctx.state.message_history),
         usage=ctx.state.usage,
+        retry=ctx.state.output_retries_used,
+        max_retries=ctx.deps.max_output_retries,
         usage_limits=ctx.deps.usage_limits,
         deadline=ctx.deps.deadline,
         run_id=ctx.state.run_id,

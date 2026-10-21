@@ -597,6 +597,39 @@ def _insert_cache_point_before_trailing_documents(
         return False
 
 
+def _is_pdf(block: Any) -> bool:
+    return block.get('document', {}).get('format') == 'pdf'
+
+
+def _add_automatic_cache_point(
+    content: list[Any],
+    cache_point: ContentBlockUnionTypeDef,
+    variant: Literal['anthropic'] | None,
+) -> None:
+    """Add a `bedrock_cache_messages` cache point at the end of `content`, or as close to it as Bedrock accepts.
+
+    A later request doesn't send this cache point again, so it can only read the cache when the prompt renders the
+    same without it. See `bedrock_document_cache_point_variant`.
+    """
+    if variant == 'anthropic':
+        if _is_pdf(content[-1]):
+            content.append(cache_point)
+            return
+        start = len(content)
+        while start > 0 and 'document' in content[start - 1] and not _is_pdf(content[start - 1]):
+            start -= 1
+        if (
+            0 < start < len(content)
+            and not _is_pdf(content[start - 1])
+            and not any('cachePoint' in block for block in content)
+        ):
+            # Bedrock moves these documents to the front of the message either way, so moving them ahead of the
+            # block before them leaves the prompt as it was, and the cache point can go last.
+            content[start - 1 :] = [*content[start:], content[start - 1], cache_point]
+            return
+    _insert_cache_point_before_trailing_documents(content, cache_point)
+
+
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
 
@@ -1004,15 +1037,9 @@ class BedrockConverseModel(Model[BaseClient]):
         # The default `maxTokens` is the model's maximum output, which can take longer to generate than the client's read
         # timeout, and botocore retries a timed-out `Converse` request, generating the response again each time. So the
         # request is streamed behind the scenes, and the read timeout then limits the wait between chunks.
-        stream_response = await self._messages_create(messages, True, settings, model_request_parameters)
-        streamed_response = self._process_streamed_response(stream_response, model_request_parameters)
-        try:
+        async with self._open_stream(messages, settings, model_request_parameters) as streamed_response:
             async for _ in streamed_response:
                 pass
-        finally:
-            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
-            with anyio.CancelScope(shield=True):
-                await streamed_response.close_stream()
         return streamed_response.get()
 
     async def count_tokens(
@@ -1072,13 +1099,19 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
-        response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield self._process_streamed_response(response, model_request_parameters)
+        async with self._open_stream(messages, settings, model_request_parameters) as streamed_response:
+            yield streamed_response
 
-    def _process_streamed_response(
-        self, response: ConverseStreamResponseTypeDef, model_request_parameters: ModelRequestParameters
-    ) -> BedrockStreamedResponse:
-        return BedrockStreamedResponse(
+    @asynccontextmanager
+    async def _open_stream(
+        self,
+        messages: list[ModelMessage],
+        settings: BedrockModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[BedrockStreamedResponse]:
+        """Send a `ConverseStream` request, and close its event stream on exit."""
+        response = await self._messages_create(messages, True, settings, model_request_parameters)
+        streamed_response = BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),
@@ -1088,6 +1121,12 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        try:
+            yield streamed_response
+        finally:
+            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
+            with anyio.CancelScope(shield=True):
+                await streamed_response.close_stream()
 
     def _default_max_tokens(self, model_settings: BedrockModelSettings) -> int | None:
         """The `maxTokens` to send when the request doesn't set `max_tokens`.
@@ -1736,6 +1775,7 @@ class BedrockConverseModel(Model[BaseClient]):
             if profile.get('bedrock_supports_prompt_caching', False):
                 last_user_content = self._get_last_user_message_content(processed_messages)
                 if last_user_content is not None:
+                    document_cache_point_variant = profile.get('bedrock_document_cache_point_variant')
                     # Bedrock's lookback for the previous request's cache entry spans only about 20 content
                     # blocks, so after a wide turn the end of the previous request gets a breakpoint too.
                     previous_tail = previous_tail_needing_breakpoint(
@@ -1745,8 +1785,8 @@ class BedrockConverseModel(Model[BaseClient]):
                     if previous_tail is not None:
                         previous_content = cast(list[Any], processed_messages[previous_tail]['content'])
                         if 'cachePoint' not in previous_content[-1]:
-                            _insert_cache_point_before_trailing_documents(
-                                previous_content, self._get_cache_point(cache_messages)
+                            _add_automatic_cache_point(
+                                previous_content, self._get_cache_point(cache_messages), document_cache_point_variant
                             )
                     # A request-scoped prompt ends the request when it's rendered as text (see
                     # `_request_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
@@ -1756,8 +1796,8 @@ class BedrockConverseModel(Model[BaseClient]):
                     )
                     lasting_content = last_user_content[:end]
                     if lasting_content and 'cachePoint' not in lasting_content[-1]:
-                        _insert_cache_point_before_trailing_documents(
-                            lasting_content, self._get_cache_point(cache_messages)
+                        _add_automatic_cache_point(
+                            lasting_content, self._get_cache_point(cache_messages), document_cache_point_variant
                         )
                         last_user_content[:end] = lasting_content
 
@@ -1928,11 +1968,11 @@ class BedrockConverseModel(Model[BaseClient]):
                         raise UserError(
                             'CachePoint cannot be preceded by another CachePoint - there must be content between cache points when using Bedrock.'
                         )
-                    _insert_cache_point_before_trailing_documents(
-                        content,
-                        BedrockConverseModel._get_cache_point(item.ttl),
-                        raise_if_cannot_insert=True,
-                    )
+                    cache_point = BedrockConverseModel._get_cache_point(item.ttl)
+                    if self.profile.get('bedrock_document_cache_point_variant') == 'anthropic' and _is_pdf(content[-1]):
+                        content.append(cache_point)
+                    else:
+                        _insert_cache_point_before_trailing_documents(content, cache_point, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html

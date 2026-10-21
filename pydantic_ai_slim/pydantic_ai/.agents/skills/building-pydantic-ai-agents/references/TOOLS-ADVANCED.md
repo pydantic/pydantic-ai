@@ -240,6 +240,15 @@ def check_stock(args: LookupArgs) -> LookupResult:
 
 See [Typed tool parts](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts).
 
+To make a tool step aside when a more general tool is on the agent, set `ToolDefinition.unless_tool_kind` to that tool's kind (e.g. `replace(tool_def, unless_tool_kind=file_read)` in `prepare`); to name a tool in instructions or tool results, use `ctx.tool_name_for_kind(file_read)` instead of a hard-coded name:
+
+- The tool is left out of the step when another tool in it has that kind: not sent to the model, not callable, and not returned by `tool_name_for_kind`. It's the local-tool counterpart of `unless_native`.
+- A deferred (`defer_loading`) tool counts as present, so the answer doesn't change when it is revealed.
+- A tool is only left out in favor of a tool that stays; when tools would each be left out in favor of the other, the one listed first stays. The kind doesn't need to be defined: only ids are compared, so an unknown kind means there's nothing to step aside for.
+- `tool_name_for_kind` returns the prefixed name, `None` when no tool has the kind, and the first in `ctx.tools` order when several do. Instruction functions see the current step's tools; `get_tools` / `prepare_tools` see the previous step's.
+
+See [Superseding a tool by kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind).
+
 ## Tool Search and Tool-Level Deferred Loading
 
 Use tool-level deferred loading when the agent has many tools and the model should discover individual tools on demand via `search_tools`.

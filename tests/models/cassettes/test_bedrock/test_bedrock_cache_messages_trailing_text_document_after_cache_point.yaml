@@ -1,0 +1,475 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-opus-5-5/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 4956d50e-8253-4e89-802a-96c7f74f5998
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "26413"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: |
+              Session: explicit cache point.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+              You analyze documents. Keep every answer to one short sentence.
+          - cachePoint:
+              type: default
+              ttl: 5m
+          - text: "Summarize this:"
+          - cachePoint:
+              type: default
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                bytes: VGhlIHF1YXJ0ZXJseSByZXBvcnQgc2hvd3MgcmV2ZW51ZSBncmV3IGJ5IDEyIHBlcmNlbnQu
+        system: []
+        inferenceConfig:
+          maxTokens: 4000
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1284"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2176
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  signature: >-
+                    CAQSqwQKEggTEAEYAjgBQgh0aGlua2luZxIMPgHdC9j2QSHTfyaoGgwIAV9/kK9Oz6tcglIiMN79Im6BiBdP5zIZbbx7G4TGlWz3O5ZCV5UVjBv/m9N852RNxtsBJTpGUs7PJjbffirGA/JuuGtq49BrQwuOc5JmiJIAFGvWiQp30qEvW0ZbfN4/IGCVSm/dVWixPrxqRVvKI/dsxQ51p00HEdLq5IokL2WLg0c/WLNG5TDQSRzBarlfn5JeZUAcdLge6gFmVqnvOrWQ88CXo/2BR/u+Net2cA3bf/oARusJrEP727lhMLuOjRk0Sl5/X9LZ3O5+DIqs8pcZaj+b0PUxfzwJQdi5sj+PK+1WROYWpCVUSLow0fxyoeOlhKG/Bmw/a4sTz7FE3DAkW3VSuX5TyA37dHisAa8MnxvNDuYI/lDS1TDaga+mzabH0jU4b+lo5KK9eXGWfmA1+2GsoCJ+bVLyboo89Rm5OjMDFNHng5hy7JP4uzAnox5ug4EZfUgXvcBqOZ+s3voiZ9/8IeUn3VbE7/eLZFVnA2mBFfxTKvrUZV0F9TneNES09h/xRpg2DfsUscQSGSYl7I80yJFiI5RTXuxWVBeFWUPVIj0/s12v+9zc+u3+ZaNIfySN74doufM1P501vGY8+00yx9edv3SyUwJav5iN/1yrrIIzB93IMrOJPJBDTBgMVNwM6v2s7oMxyQc7oAI0RKCb/x97JC3KPcD7R7mjG3rwprsYAQ==
+                  text: ""
+            - text: The quarterly report shows a 12 percent revenue increase.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheDetails:
+          - inputTokens: 8421
+            ttl: 5m
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 8421
+          cacheWriteInputTokens: 8421
+          inputTokens: 77
+          outputTokens: 59
+          serverToolUsage: {}
+          totalTokens: 8557
+  recorded_at: 2026-10-21T16:34:17.555055+00:00
