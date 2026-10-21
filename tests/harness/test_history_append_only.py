@@ -308,12 +308,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
             for identity, count in counts.items()
         ),
     ),
-    # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
-    # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
-    'SummarizingCompaction': (
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', count=2, providers=('anthropic', 'openai-chat')),
-        Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('openai-responses',)),
-    ),
     'PlaywrightBrowser': _NO_DEFAULT_ID,
     'PydanticAIDocs': _NO_DEFAULT_ID,
 }
