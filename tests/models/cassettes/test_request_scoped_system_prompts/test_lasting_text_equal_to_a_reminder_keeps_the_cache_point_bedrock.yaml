@@ -1,0 +1,89 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 30d52c5b-6393-474d-92f8-7f1699dda1c7
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "690"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Weather in Paris?
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: call_1
+              name: get_weather
+              input:
+                city: Paris
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: call_1
+              content:
+              - text: "Paris: 18C"
+              status: success
+          - text: <system>Reminder.</system>
+          - cachePoint:
+              type: default
+          - text: <system>Reminder.</system>
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_weather
+              inputSchema:
+                json:
+                  type: object
+                  properties:
+                    city:
+                      type: string
+                  required:
+                  - city
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "506"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1060
+        output:
+          message:
+            content:
+            - text: |-
+                The weather in **Paris** is currently **18°C** (about 64°F).
+
+                Is there anything else you'd like to know about the weather in Paris or another location?
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 641
+          outputTokens: 42
+          serverToolUsage: {}
+          totalTokens: 683
+  recorded_at: 2026-10-16T18:18:51.529874+00:00

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Callable, Generator, Mapping
+from collections.abc import AsyncIterable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 
 from pydantic_core import PydanticSerializationError
@@ -12,6 +12,7 @@ from temporalio.client import Client, WorkflowHandle
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -33,7 +34,7 @@ from pydantic_ai.durable_exec._operation import (
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
@@ -179,6 +180,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        non_retryable_model_errors: Sequence[type[ModelAPIError]] = (),
     ):
         """Create a TemporalDurability capability.
 
@@ -229,6 +231,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
+            non_retryable_model_errors: Model error classes, such as
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or
+                [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], that fail a model
+                activity without Temporal retrying it, whatever its retry policy says. An error matches when
+                it's an instance of a listed class, so a category also covers its subclasses. The workflow
+                still receives the error as its own class.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -249,6 +257,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         self.run_context_type = run_context_type
         self._deps_type = deps_type
+        self._non_retryable_model_errors = tuple(non_retryable_model_errors)
 
         # An unknown key, or a value Temporal's own types don't accept, would only fail when the
         # config is splatted into `workflow.start_activity()` inside the workflow, where the
@@ -329,6 +338,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
             resolve_tool_config=self._resolve_temporal_tool_config,
+            non_retryable_model_errors=self._non_retryable_model_errors,
             runtime=self,
         )
         self._register_activities(agent)
@@ -399,7 +409,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
         # Temporal applies its durable-operation guards while deserializing the run context;
         # wrapping it again would replace activity-specific compatibility state.
-        yield ctx
+        if ctx.deadline is None:
+            yield ctx
+            return
+        # An activity doesn't share the workflow's context, so an agent a tool runs here inherits the
+        # run's deadline from the serialized context instead.
+        with provide_run_deadline(ctx.deadline):
+            yield ctx
 
     def _resolve_temporal_tool_config(
         self, operation_id: DurableOperationId, tool: object | None, name: str
@@ -513,6 +529,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
+
+    def _run_clock(self) -> Callable[[], datetime] | None:
+        # `workflow.now()` is replay-safe: a replayed run computes the same deadline and timer.
+        return workflow.now if self.in_durable_context else None
 
     async def wrap_run(
         self,

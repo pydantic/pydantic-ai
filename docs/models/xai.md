@@ -31,7 +31,7 @@ You can then use [`XaiModel`][pydantic_ai.models.xai.XaiModel] by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('xai:grok-4.3')
+agent = Agent('{{ xai:medium }}')
 ...
 ```
 
@@ -45,7 +45,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 
 # Uses XAI_API_KEY environment variable
-model = XaiModel('grok-4.3')
+model = XaiModel('{{ xai:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -59,7 +59,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 # Custom API key
 provider = XaiProvider(api_key='your-api-key')
-model = XaiModel('grok-4.3', provider=provider)
+model = XaiModel('{{ xai:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -76,7 +76,7 @@ provider = XaiProvider(
     api_host='gateway.example.com',
     timeout=30,
 )
-model = XaiModel('grok-4.3', provider=provider)
+model = XaiModel('{{ xai:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -95,7 +95,7 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     async with AsyncClient(api_key='your-api-key') as xai_client:
-        model = XaiModel('grok-4.3', provider=XaiProvider(xai_client=xai_client))
+        model = XaiModel('{{ xai:medium.name }}', provider=XaiProvider(xai_client=xai_client))
         agent = Agent(model)
         result = await agent.run('What is the capital of France?')
         print(result.output)
@@ -117,7 +117,7 @@ provider = XaiProvider(
     api_key='your-api-key',
     metadata=(('x-grok-conv-id', 'my-conversation-id'),),
 )
-model = XaiModel('grok-4.3', provider=provider)
+model = XaiModel('{{ xai:medium.name }}', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -138,14 +138,14 @@ from pydantic_ai.providers.xai import XaiProvider
 
 async def main():
     async with AsyncClient(api_key='your-api-key', channel_options=[('grpc.enable_retries', 0)]) as xai_client:
-        model = XaiModel('grok-4.3', provider=XaiProvider(xai_client=xai_client))
+        model = XaiModel('{{ xai:medium.name }}', provider=XaiProvider(xai_client=xai_client))
         agent = Agent(model)
         result = await agent.run('What is the capital of France?')
         print(result.output)
         #> The capital of France is Paris.
 ```
 
-See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
+The retry policy belongs to the channel and can't change per request, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on xAI. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Image generation
 
@@ -188,7 +188,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
-    'xai:grok-4.3',
+    '{{ xai:medium }}',
     capabilities=[
         XSearch(
             allowed_x_handles=['OpenAI', 'AnthropicAI', 'dasfacc'],
@@ -255,7 +255,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModelSettings
 
 agent = Agent(
-    'xai:grok-4.3',
+    '{{ xai:medium }}',
     model_settings=XaiModelSettings(xai_max_turns=5),
 )
 ```

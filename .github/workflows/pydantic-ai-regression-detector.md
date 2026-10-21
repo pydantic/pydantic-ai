@@ -2,7 +2,14 @@
 emoji: "⏪"
 name: "Pydantic AI Regression Detector"
 description: "Detect behavioral regressions between the two most recent releases and file a reproducible report. Runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
-on: weekly on wednesday
+on:
+  schedule: weekly on wednesday
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read

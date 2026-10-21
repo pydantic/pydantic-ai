@@ -15,7 +15,7 @@ Provider usage APIs do not close that gap. They are billing and observability pi
 
 ## The solution
 
-`SpendLimits` prices each model response it records with [`ModelResponse.cost()`](https://pydantic.dev/docs/ai/api/messages/), adds it to each window you configure, and refuses the next request once a window is spent.
+`SpendLimits` adds each response's price to every configured window and refuses the next request once a window is spent. When `price` is unset or returns `None`, complete responses are priced with [`ModelResponse.cost()`](https://pydantic.dev/docs/ai/api/messages/), while responses with omitted usage contribute any known `response.usage.cost` subtotal.
 
 ```python
 from decimal import Decimal
@@ -80,7 +80,7 @@ SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id
 
 Once a recorded response spends a window, `SpendLimits` refuses the next request.
 
-Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller abandons part-way never reaches the accounting hook, so its tokens are billed by the provider and invisible here. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
+Not: that spend stays under the ceiling. The request that crosses the line completes, and concurrent runs can each pass the check before any of them records anything. A stream the caller stops part-way is charged for the usage the provider had reported by then, which can fall short of what it bills, since many providers report output tokens only with a stream's last event. Treat this as a brake on a runaway loop, not as an accounting ledger; reconcile against the provider's own numbers if you need the second thing.
 
 ## Reading the numbers
 
@@ -232,7 +232,7 @@ Any object with `get_many` and `add_many` works, so a Postgres or DynamoDB count
 
 ## Pricing
 
-Prices come from [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`, per response: cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
+When `price` is unset or returns `None`, complete responses are priced per response with [genai-prices](https://github.com/pydantic/genai-prices) via `ModelResponse.cost()`. For a response with omitted usage, `SpendLimits` records any known `response.usage.cost` subtotal instead. Cache and tier pricing are per request, so summing usage across requests and pricing the total gives the wrong number.
 
 A model the registry does not know -- a local deployment, a negotiated rate -- is handled by `price`:
 
@@ -248,7 +248,12 @@ An amount returned by `price` must be finite and not negative. Anything else -- 
 
 Under durable execution, `price` and each budget's `scope` callable must be deterministic for the same response and run context. Pricing runs in orchestration outside the journaled accrual, so a changed result can make `on_spend` disagree with the recorded counter or turn a successful recovery into a pricing error. Moving it into a durable operation would require the durability backend to serialize the complete provider response, including arbitrary metadata, so the callable remains outside that boundary. A changed scope selects a different store key from the one in the recorded accrual; `SpendLimits` reports that mismatch as a `UserError` naming the determinism requirement.
 
-Returning `None` falls through to the registry. When nothing can price a response, `on_unpriced` decides: `'zero'` (the default) counts it as free and increments `Spent.unpriced_requests` so the gap is visible, and `'raise'` fails the run with `UnpricedModelError`. Either way the response is recorded first and the tokens are counted, so a token ceiling still holds for a model with no price and an application that catches the error does not carry on against an understated counter. Under `'zero'` a USD ceiling is the one that cannot hold: nothing priceable accrues, so no number of such requests reaches it. That combination -- `'zero'` plus a `usd` budget -- warns once per model with `UnpricedModelWarning`, rather than once per request. If callers choose the model, prefer `'raise'` or supply `price`.
+`SpendLimits` calls `price` first. A finite, non-negative amount it returns is treated as the complete response price, including when usage is incomplete. Returning `None` falls through to the registry. When usage is incomplete, the registry can still supply a known cost subtotal, which `SpendLimits` records, but the response remains unpriced because its full cost is unknown. The `on_unpriced` policy still applies: `'zero'` (the default) increments `Spent.unpriced_requests` and continues with the known subtotal, while `'raise'` records the subtotal and fails the run with `UnpricedModelError`. Known token totals for incomplete usage are lower bounds. With `'zero'` and a `usd` budget, `UnpricedModelWarning` is emitted once per model when no complete price is available. If callers choose the model, prefer `'raise'` or supply `price`.
+
+When a response omits usage and a token budget is configured, `SpendLimits` emits
+`UsageLimitUnavailableWarning` if the run can continue. Known token totals are lower
+bounds, even when a custom `price` supplies the complete cost. Check the provider usage
+reporting or promote the warning to an error to stop when the token ceiling cannot be verified.
 
 ## Composition
 
@@ -256,7 +261,7 @@ State lives across runs deliberately, so `for_run` is not overridden: a daily bu
 
 `defer_loading=True` is refused. A deferred capability's hooks do not run until the model loads it, so an exhausted budget would not stop a request and the requests made meanwhile would go uncounted -- a brake the thing being braked decides when to apply.
 
-`SpendLimits` accrues every response the provider billed, even one that a hook nested inside it rejects or replaces, so where you list it among other capabilities doesn't change what it counts. Core merges a continuation chain (Anthropic `pause_turn`, OpenAI background mode) into one response, so `on_spend` and `SpendRecordedEvent` report it once with its combined usage. The counters are updated at each segment boundary instead, by what the response merged so far adds over what is already applied, so `price` also sees each of those intermediate responses. One it cannot price adds no USD and the merged response catches up, so pricing errors and `on_unpriced` apply to the merged response alone. Tokens add up to the merged response, and USD to the highest amount any boundary was priced at, so a boundary priced above the merged response is not taken back as a credit. A later boundary that adds nothing, such as an idle background poll, is not written.
+`SpendLimits` accrues every response the provider billed, even one that a hook nested inside it rejects or replaces, so where you list it among other capabilities doesn't change what it counts. Core merges a continuation chain (Anthropic `pause_turn`, OpenAI background mode) into one response, so `on_spend` and `SpendRecordedEvent` report it once with its combined usage. The counters are updated at each segment boundary instead, by what the response merged so far adds over what is already applied, so `price` also sees each of those intermediate responses. One it cannot price adds no USD and the merged response catches up, so pricing errors and `on_unpriced` apply to the merged response alone. Tokens add up to the merged response, and USD to the highest amount any boundary was priced at, so a boundary priced above the merged response is not taken back as a credit. A later boundary that adds nothing, such as an idle background poll, is not written. A run that resumes a turn from a message history ending in its `'suspended'` response is charged only for what was billed beyond that response, which the run that left it suspended was already charged for. A `run` window therefore holds what each run billed, and `conversation`, `day`, `month` and `total` windows hold what the provider billed for the turn once.
 
 A response a `FallbackModel` rejected with a `fallback_on` response handler was billed as well. Each one recorded in `ModelResponse.failed_attempts` is accrued as a request of its own, ahead of the response that carries it. When every model fails, the attempts on the `FallbackExceptionGroup` are accrued the same way, also when an error hook recovers from it. An attempt that raised before the provider answered reported no usage and is not charged. `Spent.requests` counts these attempts, where core's `RunUsage.requests` counts only the responses the agent acted on.
 
@@ -297,10 +302,12 @@ Admission is all that call does: it reserves nothing. The durable operations the
 For a ceiling that covers one run and nothing else, Pydantic AI's own
 [`UsageLimits`](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits) does the same job
 in-process with no store and no capability: `total_tokens_limit` for tokens and `cost_limit` for
-money, both over a single `run()`. An unpriced response adds nothing to `RunUsage.cost`, so
-`cost_limit` measures a run against whichever part of it could be priced: a `CostNotFoundWarning`
-after the run when none of it was, and silence when only some of it was. `SpendLimits` counts the
-same gap and lets `on_unpriced` decide what to do about it. `UsageLimits` also carries the two
+money, both over a single `run()`. An unpriced response with no known cost adds nothing to
+`RunUsage.cost`; `cost_limit` measures against the part that could be priced and emits
+`CostNotFoundWarning` when `RunUsage.cost` remains `None`. A response that omitted usage can
+still add its known cost subtotal, but `UsageLimitUnavailableWarning` reports that configured
+token and cost limits only see lower-bound totals. `SpendLimits` retains that subtotal and still
+applies `on_unpriced` to the incomplete response. `UsageLimits` also carries the two
 input-token granularities `SpendLimits` has no equivalent for: `input_tokens_limit` is cumulative
 over the run, and `per_request_input_tokens_limit` caps one request against the provider-reported
 input tokens of the response that already paid for it. `count_tokens_before_request=True` counts

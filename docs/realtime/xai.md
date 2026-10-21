@@ -97,8 +97,13 @@ through `provider='xai'` or an `XaiProvider`.
 
 ## Session length
 
-A conversation that runs past xAI's maximum duration ends with a `max_duration` error, and the
-session raises a [`RealtimeError`][pydantic_ai.realtime.RealtimeError] instead of reconnecting.
+A conversation that runs past xAI's maximum duration ends with a `max_duration` error. With a
+[reconnect policy](lifecycle.md#reconnecting), the error is reported as a recoverable
+[`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] and the session reconnects
+right away, without waiting for xAI to close the connection: the new conversation gets the
+[replayed local history](lifecycle.md#state-restoration), so the call carries on past the limit.
+Without one, or once the policy's reconnects are used up, the session raises a
+[`RealtimeError`][pydantic_ai.realtime.RealtimeError] with xAI's message.
 
 ## Provider-specific quirks
 

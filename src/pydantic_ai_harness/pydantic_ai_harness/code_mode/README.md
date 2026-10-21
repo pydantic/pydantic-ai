@@ -241,9 +241,65 @@ explicit override. `run_code` is replayed in workflow code, so measuring elapsed
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity instead.
 
+## Concurrent tool calls
+
+Sandboxed tools render as `async def` functions, so generated code can start several calls and
+await them together with `asyncio.gather`. Whether those calls overlap follows the run's
+[parallel execution mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency):
+
+- `'parallel'` (the default) and `'parallel_ordered_events'` run gathered calls concurrently.
+  `'parallel_ordered_events'` only orders the result events of top-level tool calls, which nested
+  calls do not emit. It is the mode `DBOSDurability` uses by default.
+- `'sequential'` runs gathered calls one at a time, in the order the code started them.
+
+A tool marked `sequential=True` renders as a plain `def` and runs alone in every mode: calls the
+code started before it finish first.
+
+Durable engines that record nested calls as steps number them as they start. When a tool or a
+capability hook such as `before_tool_execute` awaits before its step starts, concurrent calls can
+start their steps in a different order on recovery. Pass `parallel_execution_mode='sequential'` to
+the durability capability to run nested calls one at a time.
+
 ## REPL state
 
 State persists between `run_code` calls within the same agent run -- variables, imports, and function definitions carry over. Pass `restart: true` in the tool call to reset state. If a worker crash or host-side execution failure invalidates the session, `run_code` returns a model retry that reports the reset and the nested calls that already started; the next snippet must recreate any required state.
+
+### Keep the REPL across runs
+
+Each agent run starts its own REPL, so a conversation made of several runs loses its sandbox state between them. Pass a `repl_store` to keep it: a run that calls `run_code` loads the state the store returns before its first snippet, and saves the REPL to the store when the run ends. The store is any object with async `load` and `save` methods (`pydantic_ai_harness.code_mode.CodeModeReplStore`), and the state is Monty's opaque dump of the REPL. Key it by `ctx.conversation_id`, which stays the same across runs when you pass `conversation_id` or the previous run's `message_history`:
+
+```python
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import CodeMode
+
+
+class InMemoryReplStore:
+    def __init__(self) -> None:
+        self.states: dict[str, bytes] = {}
+
+    async def load(self, ctx: RunContext) -> bytes | None:
+        return self.states.get(ctx.conversation_id or '')
+
+    async def save(self, ctx: RunContext, state: bytes | None) -> None:
+        key = ctx.conversation_id or ''
+        if state is None:
+            self.states.pop(key, None)
+        else:
+            self.states[key] = state
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(repl_store=InMemoryReplStore())])
+```
+
+- A run that never calls `run_code` neither loads nor saves.
+- `restart: true` skips the saved state. The run then saves its new REPL, or calls `save(ctx, None)` when the restarted snippet failed before creating one.
+- A restored REPL keeps the resource limits it was saved under, so the state records the run's resolved `resource_limits`. A state saved under other limits, or one Monty cannot load, such as a truncated dump or one from an incompatible Monty version, is dropped with a logged warning, and the run starts a fresh REPL.
+- Monty does not authenticate a dump. Return only states your application saved, from storage no one else can write to.
+- A timeout, worker crash, or cancelled snippet that resets the REPL keeps the state saved before the run, unless a later snippet in the run builds a new REPL, which is then saved. A cancelled run still saves an idle REPL.
+- A store error does not fail the run: a failed `load` starts a fresh REPL, and a failed `save` leaves the stored state as it was. A `save` still running after 10 seconds is cancelled, but work it handed to a thread may still finish, so write atomically. Each is logged as a warning.
+- Restored state skips the type check a fresh REPL's first snippet gets, since the checker does not know the restored names.
+- The dump holds every live value, so it can be large. To bound it, have `save` drop an oversized state and forget the old one. With `monty_sandbox_url`, a server that keeps sessions returns a record ID instead, which lives as long as the server keeps it, and a server that keeps nothing fails every save with a logged warning.
+- The store is not used under durable execution, where its I/O would run in replayed workflow code.
 
 ## Eager execution
 
@@ -579,11 +635,49 @@ result = agent.run_sync("What's the weather in Paris?")
 
 for msg in result.all_messages():
     for part in msg.parts:
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code':
+        if isinstance(part, ToolReturnPart) and part.tool_kind == 'code_mode.run_code':
             metadata = part.metadata or {}
             tool_calls = metadata['tool_calls']      # dict[str, ToolCallPart]
             tool_returns = metadata['tool_returns']  # dict[str, ToolReturnPart]
 ```
+
+## Recognizing `run_code` calls
+
+The `run_code` tool declares the `'code_mode.run_code'` [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts), so its call parts are promoted to `RunCodeCallPart` (from `pydantic_ai_harness.code_mode`). A hook or history processor can recognize them with `isinstance` instead of matching the tool's name, and read the submitted code from `code` (or all its arguments, validated as `RunCodeArgs`, from `typed_args`):
+
+```python
+from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapToolExecuteHandler
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import RunCodeCallPart
+
+
+@dataclass
+class RecordSnippets(AbstractCapability[Any]):
+    snippets: list[str] = field(default_factory=list)
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if isinstance(call, RunCodeCallPart) and call.code is not None:
+            self.snippets.append(call.code)
+        return await handler(args)
+
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(), RecordSnippets()])
+```
+
+`run_code` calls recorded before `CodeMode` declared this kind load as plain `ToolCallPart`s. `ToolCallPart.narrow_type(part, tool_kind='code_mode.run_code')` promotes one.
 
 ## Filesystem and OS access
 
@@ -695,6 +789,7 @@ CodeMode(
     mount=None,           # host directories to share with the sandbox
     resource_limits=None, # sandbox time and memory caps; 'unlimited' removes them
     monty_sandbox_url=None, # ws:// or wss:// URL of a remote Monty worker server
+    repl_store=None,      # keep the run_code REPL across runs (CodeModeReplStore)
     dynamic_catalog=False,
 )
 ```

@@ -15,9 +15,13 @@ on:
     workflows: ["CI"]
     types: [completed]
   workflow_dispatch:
-  # Restricts this reviewer to collaborators: `roles:` compiles to a
-  # `check_membership` step on `github.actor`, which under `workflow_run` is
-  # whoever's push started the triggering CI run.
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
+  # The installed `pydantic-docs` GitHub App has no repository permission.
+  # `bots:` admits that exact app; `roles:` continues to gate human actors.
   #
   # It gates the actor, not the code — a collaborator can still open a PR from a
   # fork, which `eligibility` rejects separately. gh-aw's own `workflow_run` guard
@@ -25,6 +29,7 @@ on:
   # true of a fork PR, whose CI run the base repo owns. Forks are reviewed on
   # demand via the `douwebot` label path in bots.yml.
   roles: [admin, maintainer, write]
+  bots: [pydantic-docs]
 permissions:
   contents: read
   # safe-outputs perform the actual writes in a separate conclusion job; the
@@ -166,6 +171,38 @@ pre-agent-steps:
           || echo "::warning::${script} failed; reviewer will run with less context"
       else
         echo "::warning::${script} not present; reviewer will run with less context"
+      fi
+  # The agent job waits its turn in gh-aw's per-workflow agent slot (the compiled
+  # `gh-aw-<engine>-<workflow>` concurrency group, `queue: max`), which serves one
+  # review at a time across all PRs, and `eligibility` ran before that wait. A PR
+  # that has since closed or moved to a new head gets a `noop` here; gh-aw's engine
+  # harness finds it before starting the model, so the slot is held only for setup.
+  # The new head's CI run queues its own review. Any failure here fails open and the
+  # review goes ahead.
+  - name: Skip a PR that closed or moved on while queued
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.eligibility.outputs.head_sha }}
+      # gh-aw sets `GH_AW_SAFE_OUTPUTS` only on its own steps, despite its docs, so
+      # this reuses the expression it injects into the `Execute` step.
+      SAFE_OUTPUTS: ${{ steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS }}
+    run: |
+      set -uo pipefail
+      if [ -z "$SAFE_OUTPUTS" ]; then
+        echo "::warning::steps.set-runtime-paths.outputs.GH_AW_SAFE_OUTPUTS is empty; cannot skip a stale review"
+        exit 0
+      fi
+      if ! live=$(gh api "$PR" --jq '"\(.state) at \(.head.sha)"'); then
+        echo "::warning::could not re-read the PR; reviewing ${HEAD_SHA} anyway"
+        exit 0
+      fi
+      [ "$live" = "open at ${HEAD_SHA}" ] && exit 0
+      msg="Not reviewing ${HEAD_SHA}: the PR is now ${live}."
+      if jq -cn --arg m "$msg" '{type: "noop", message: $m}' >> "$SAFE_OUTPUTS"; then
+        echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+      else
+        echo "::warning::could not write the noop; reviewing ${HEAD_SHA} anyway"
       fi
 
 jobs:

@@ -9,10 +9,20 @@ from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, assert_never, cast
 
-from .. import ModelHTTPError, _utils
+from .. import _model_errors, _utils
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
-from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -22,6 +32,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -49,6 +61,7 @@ from ..models import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -88,6 +101,7 @@ except ImportError as _import_error:
 _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.UNAUTHENTICATED: 401,
     grpc.StatusCode.PERMISSION_DENIED: 403,
+    grpc.StatusCode.INVALID_ARGUMENT: 400,
     grpc.StatusCode.NOT_FOUND: 404,
     grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
     grpc.StatusCode.INTERNAL: 500,
@@ -97,22 +111,51 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 
 
 @contextmanager
-def _map_api_errors(
-    model_name: str, *, status_map: dict[grpc.StatusCode, int] = _GRPC_STATUS_TO_HTTP
-) -> Generator[None]:
-    """Turn a gRPC error into the framework's HTTP-shaped errors.
+def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[None]:
+    """Turn a gRPC error into the framework's HTTP-shaped errors, mapping its status code to the HTTP equivalent.
 
-    `status_map` is a parameter because the image RPC maps one more status than chat does; it defaults
-    to the chat table so the chat call sites read unchanged.
+    `in_stream` marks an error that ended a stream after it had started sending responses.
     """
     try:
         yield
     except grpc.RpcError as e:
-        status_code = status_map.get(e.code())
+        grpc_status = e.code()
+        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
         details = e.details() or str(e)
+        category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
+        if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
+            category = ModelContextWindowExceededError
+        elif grpc_status == grpc.StatusCode.UNAVAILABLE and _model_errors.says_overloaded(details):
+            category = ModelOverloadedError
         if status_code is not None:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
-        raise ModelAPIError(model_name=model_name, message=details) from e
+            raise ModelHTTPError.for_category(
+                category,
+                status_code=status_code,
+                model_name=model_name,
+                body=details,
+                provider_error_code=grpc_status.name,
+                in_stream=in_stream,
+            ) from e
+        # Every status with a category also has an HTTP equivalent, so this one is unclassified.
+        raise ModelAPIError(
+            model_name=model_name,
+            message=details,
+            body=details,
+            provider_error_code=grpc_status.name,
+            in_stream=in_stream,
+        ) from e
+
+
+_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] = {
+    grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
+    grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
+    grpc.StatusCode.INTERNAL: ModelServerError,
+}
+"""Error categories for gRPC status codes.
+
+`DEADLINE_EXCEEDED` is left out: it can mean the client's own deadline or the server's, so it isn't classified as a
+timeout.
+"""
 
 
 XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
@@ -301,6 +344,10 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 class XaiModel(Model[AsyncClient]):
     """A model that uses the xAI SDK to interact with xAI models."""
 
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
+    )
+
     _model_name: str
     _provider: Provider[AsyncClient]
 
@@ -350,6 +397,12 @@ class XaiModel(Model[AsyncClient]):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings other than the domain filters xAI's web search applies."""
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
+        return frozenset()
 
     async def _map_messages(
         self,
@@ -411,6 +464,8 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -464,16 +519,8 @@ class XaiModel(Model[AsyncClient]):
                     if item.tool_call_id:  # pragma: no branch
                         builtin_calls[item.tool_call_id] = builtin_call
             elif isinstance(item, NativeToolReturnPart):
-                if (
-                    item.provider_name in _XAI_PROVIDER_NAMES
-                    and item.tool_call_id
-                    and (details := item.provider_details) is not None
-                    and details.get('status') == 'failed'
-                    and (call := builtin_calls.get(item.tool_call_id))
-                ):
-                    call.status = chat_types.chat_pb2.TOOL_CALL_STATUS_FAILED
-                    if error_msg := details.get('error'):
-                        call.error_message = str(error_msg)
+                if (tool_msg := self._map_builtin_tool_return_part(item, builtin_calls)) is not None:
+                    messages.append(tool_msg)
             elif isinstance(item, FilePart):
                 # Files generated by models (e.g., from CodeExecutionTool) are not sent back
                 pass
@@ -489,14 +536,44 @@ class XaiModel(Model[AsyncClient]):
         return messages
 
     @staticmethod
+    def _map_builtin_tool_return_part(
+        item: NativeToolReturnPart, builtin_calls: dict[str, chat_types.chat_pb2.ToolCall]
+    ) -> chat_types.chat_pb2.Message | None:
+        """Apply a return part to its call, and map its encrypted result to a tool message if it has one.
+
+        A failed return marks its call as failed. An encrypted result is replayed as the tool turn it came in as,
+        paired with its call by `tool_call_id`, matching `xai_sdk`'s `Chat.append`.
+        """
+        if (
+            item.provider_name not in _XAI_PROVIDER_NAMES
+            or not item.tool_call_id
+            or (call := builtin_calls.get(item.tool_call_id)) is None
+        ):
+            return None
+        details = item.provider_details or {}
+        if details.get('status') == 'failed':
+            call.status = chat_types.chat_pb2.TOOL_CALL_STATUS_FAILED
+            if error_msg := details.get('error'):
+                call.error_message = str(error_msg)
+        if not (encrypted_content := details.get('encrypted_content')):
+            return None
+        return chat_types.chat_pb2.Message(
+            role=chat_types.chat_pb2.MessageRole.ROLE_TOOL,
+            content=[chat_types.text('')],
+            encrypted_content=encrypted_content,
+            tool_calls=[call],
+            tool_call_id=item.tool_call_id,
+        )
+
+    @staticmethod
     def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
         """Attach a tool call to the most recent assistant message, or create a new one.
 
-        Every message in a single `ModelResponse` is an assistant message, so attaching to the
-        preceding one keeps an encrypted reasoning trace grouped with the tool calls it produced,
-        matching `xai_sdk`'s `Chat.append`.
+        Attaching to the preceding assistant message keeps an encrypted reasoning trace grouped with
+        the tool calls it produced, matching `xai_sdk`'s `Chat.append`. A replayed server-side tool
+        result is a tool message, which a following call must not be attached to.
         """
-        if messages:
+        if messages and messages[-1].role == chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT:
             messages[-1].tool_calls.append(tool_call)
         else:
             msg = assistant('')
@@ -905,9 +982,16 @@ class XaiModel(Model[AsyncClient]):
         for output in outputs:
             message = output.message
 
+            # A server-side tool's result comes encrypted on its `ROLE_TOOL` output. It belongs on the return part
+            # so it can be replayed as a tool turn paired with its call, not as reasoning.
+            encrypted_result = (
+                message.encrypted_content if message.role == chat_types.chat_pb2.MessageRole.ROLE_TOOL else ''
+            )
+            encrypted_reasoning = '' if encrypted_result else message.encrypted_content
+
             # Add reasoning/thinking content if present
-            if message.reasoning_content or message.encrypted_content:
-                signature = message.encrypted_content or None
+            if message.reasoning_content or encrypted_reasoning:
+                signature = encrypted_reasoning or None
                 parts.append(
                     ThinkingPart(
                         content=message.reasoning_content or '',
@@ -932,6 +1016,10 @@ class XaiModel(Model[AsyncClient]):
                     self.system,
                     message_role=message.role,
                 )
+                if encrypted_result and isinstance(part, NativeToolReturnPart):
+                    # `xai_sdk` pairs a tool output with its first call, so only that return part carries the result.
+                    _attach_encrypted_result(part, encrypted_result)
+                    encrypted_result = ''
                 parts.append(part)
 
         # xAI returns x_search results as top-level `response.citations` (URL strings) rather than
@@ -1026,7 +1114,12 @@ class XaiStreamedResponse(StreamedResponse):
             self.finish_reason = finish_reason
 
     def _collect_reasoning_events(
-        self, chunk: chat_types.Chunk, encrypted_contents: dict[int, str]
+        self,
+        chunk: chat_types.Chunk,
+        encrypted_contents: dict[int, str],
+        tool_output_indices: set[int],
+        tool_output_calls: dict[int, str],
+        tool_return_parts: dict[str, NativeToolReturnPart],
     ) -> Iterator[ModelResponseStreamEvent]:
         """Collect thinking events from this chunk's output deltas, one thinking part per output.
 
@@ -1034,13 +1127,22 @@ class XaiStreamedResponse(StreamedResponse):
         then more reasoning and the answer), each with its own reasoning and encrypted content, like
         `XaiModel._process_response` builds one `ThinkingPart` per output. `encrypted_contents` accumulates each
         output's encrypted content, which can arrive in pieces, as the signature replaces the previous one.
+
+        A `ROLE_TOOL` output's encrypted content is the tool's result, not reasoning: it goes on the return part of
+        the call it answers, kept up to date as pieces arrive so a stream cut short still records what it got.
         """
         for output in chunk.proto.outputs:
             delta = output.delta
+            if delta.role == chat_pb2.MessageRole.ROLE_TOOL:
+                tool_output_indices.add(output.index)
             if not delta.reasoning_content and not delta.encrypted_content:
                 continue
             if delta.encrypted_content:
                 encrypted_contents[output.index] = encrypted_contents.get(output.index, '') + delta.encrypted_content
+            if output.index in tool_output_indices:
+                if delta.encrypted_content and (tool_call_id := tool_output_calls.get(output.index)):
+                    _attach_encrypted_result(tool_return_parts[tool_call_id], encrypted_contents[output.index])
+                continue
             signature = encrypted_contents.get(output.index)
             yield from self._parts_manager.handle_thinking_delta(
                 vendor_part_id=f'reasoning-{output.index}',
@@ -1055,10 +1157,14 @@ class XaiStreamedResponse(StreamedResponse):
         *,
         tool_call: chat_pb2.ToolCall,
         delta: chat_pb2.Delta,
+        output_index: int,
         seen_tool_call_ids: set[str],
         seen_tool_return_ids: set[str],
         last_tool_return_content: dict[str, dict[str, Any] | str | None],
         x_search_return_parts: dict[str, NativeToolReturnPart],
+        encrypted_contents: dict[int, str],
+        tool_output_calls: dict[int, str],
+        tool_return_parts: dict[str, NativeToolReturnPart],
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single server-side tool call delta, yielding stream events."""
         builtin_tool_name = _get_builtin_tool_name(tool_call)
@@ -1103,10 +1209,15 @@ class XaiStreamedResponse(StreamedResponse):
             )
             if builtin_tool_name == XSearchTool.kind:
                 x_search_return_parts[return_vendor_id] = return_part
+            # `xai_sdk` pairs a tool output with its first call, so only that return part carries the result.
+            first_call_id = tool_output_calls.setdefault(output_index, tool_call.id)
+            tool_return_parts[tool_call.id] = return_part
+            if first_call_id == tool_call.id and (encrypted_result := encrypted_contents.get(output_index)):
+                _attach_encrypted_result(return_part, encrypted_result)
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, in_stream=True):
             # Local state to avoid re-emmiting duplicate events.
             encrypted_contents: dict[int, str] = {}
             seen_tool_call_ids: set[str] = set()
@@ -1119,12 +1230,20 @@ class XaiStreamedResponse(StreamedResponse):
             # once the stream completes.
             x_search_return_parts: dict[str, NativeToolReturnPart] = {}
             last_citations: Sequence[str] = ()
+            # A server-side tool's encrypted result arrives on its `ROLE_TOOL` output, possibly in pieces. Track
+            # those outputs, the call each one answers, and that call's latest return part, which carries the result
+            # received so far.
+            tool_output_indices: set[int] = set()
+            tool_output_calls: dict[int, str] = {}
+            tool_return_parts: dict[str, NativeToolReturnPart] = {}
 
             async for response, chunk in self._response:
                 self._update_response_state(response)
                 last_citations = response.citations
 
-                for event in self._collect_reasoning_events(chunk, encrypted_contents):
+                for event in self._collect_reasoning_events(
+                    chunk, encrypted_contents, tool_output_indices, tool_output_calls, tool_return_parts
+                ):
                     yield event
 
                 # Handle text content (property filters for ROLE_ASSISTANT)
@@ -1152,10 +1271,14 @@ class XaiStreamedResponse(StreamedResponse):
                             for event in self._handle_server_side_tool_call(
                                 tool_call=tool_call,
                                 delta=delta,
+                                output_index=output_chunk.index,
                                 seen_tool_call_ids=seen_tool_call_ids,
                                 seen_tool_return_ids=seen_tool_return_ids,
                                 last_tool_return_content=last_tool_return_content,
                                 x_search_return_parts=x_search_return_parts,
+                                encrypted_contents=encrypted_contents,
+                                tool_output_calls=tool_output_calls,
+                                tool_return_parts=tool_return_parts,
                             ):
                                 yield event
                         else:
@@ -1422,6 +1545,11 @@ def _extract_usage(
         extracted.output_tokens = usage_data['completion_tokens']
 
     return extracted
+
+
+def _attach_encrypted_result(part: NativeToolReturnPart, encrypted_result: str) -> None:
+    """Store a server-side tool's encrypted result on its return part, for `_map_response_parts` to replay."""
+    part.provider_details = {**(part.provider_details or {}), 'encrypted_content': encrypted_result}
 
 
 def _attach_x_search_citations(

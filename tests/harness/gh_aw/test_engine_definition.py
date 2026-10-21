@@ -154,7 +154,6 @@ class _Behaviors(BaseModel):
 class _Engine(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
-    version: str
     behaviors: _Behaviors
 
 
@@ -263,18 +262,17 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         'pydantic-ai-harness==${GH_AW_ENGINE_VERSION}',
         'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
     ]
-    assert definition().engine.version == '0.55.0'
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0'
 
 
-def launch(
+def run_harness(
     tmp_path: Path,
     env: dict[str, str],
     *,
     extra_python_path: Path | None = None,
     prompt_text: str = PROMPT,
-) -> _Invocation:
-    """Run the harness script against an interpreter that records instead of running."""
+) -> subprocess.CompletedProcess[str]:
+    """Run the harness script against an interpreter that records to `record.json` instead of running."""
     actions = tmp_path / 'actions'
     actions.mkdir(parents=True, exist_ok=True)
     (actions / 'harness.cjs').write_text(behaviors().harness_script, encoding='utf-8')
@@ -303,10 +301,9 @@ def launch(
     sandbox_tmp.mkdir(parents=True, exist_ok=True)
     prompt = tmp_path / 'prompt.md'
     prompt.write_text(prompt_text, encoding='utf-8')
-    record = tmp_path / 'record.json'
 
     pythonpath_env: dict[str, str] = {'PYTHONPATH': str(extra_python_path)} if extra_python_path is not None else {}
-    completed = subprocess.run(
+    return subprocess.run(
         ['node', str(actions / 'harness.cjs'), 'pai'],
         env={
             'PATH': os.environ['PATH'],
@@ -315,7 +312,7 @@ def launch(
             'RUNNER_TEMP': str(runner_temp),
             'GITHUB_WORKSPACE': str(workspace),
             'GH_AW_PROMPT': str(prompt),
-            'GH_AW_TEST_RECORD': str(record),
+            'GH_AW_TEST_RECORD': str(tmp_path / 'record.json'),
             'pythonLocation': str(python_location),
             **pythonpath_env,
             **env,
@@ -325,8 +322,19 @@ def launch(
         input='',
         check=False,
     )
+
+
+def launch(
+    tmp_path: Path,
+    env: dict[str, str],
+    *,
+    extra_python_path: Path | None = None,
+    prompt_text: str = PROMPT,
+) -> _Invocation:
+    """Run the harness script and return what it handed the interpreter."""
+    completed = run_harness(tmp_path, env, extra_python_path=extra_python_path, prompt_text=prompt_text)
     assert completed.returncode == 0, completed.stderr
-    recorded: object = json.loads(record.read_text(encoding='utf-8'))
+    recorded: object = json.loads((tmp_path / 'record.json').read_text(encoding='utf-8'))
     assert isinstance(recorded, dict)
     recorded['stdout'] = completed.stdout
     return _Invocation.model_validate(recorded)
@@ -504,6 +512,57 @@ def test_the_frame_key_is_sent_out_of_band_and_removed_from_the_child_environmen
 
     assert invocation.env.get('GH_AW_SESSION_FRAME_KEY') is None
     assert invocation.stdin == f'{invocation.frame_key}\n'
+
+
+@pytest.mark.parametrize(
+    'safe_outputs',
+    [
+        pytest.param('{"type":"noop","message":"The PR moved to a new head"}\n', id='noop'),
+        pytest.param('{"type":"add_comment"}\nnot json\n  {"type": "noop"}  \n', id='noop-after-malformed-line'),
+    ],
+)
+def test_a_noop_written_by_an_earlier_step_skips_the_engine(tmp_path: Path, safe_outputs: str) -> None:
+    """gh-aw's documented way for a step to skip the agent, which its built-in harnesses honor."""
+    path = tmp_path / 'outputs.jsonl'
+    path.write_text(safe_outputs, encoding='utf-8')
+
+    completed = run_harness(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
+
+    assert completed.returncode == 0, completed.stderr
+    assert f'skipping the engine: an earlier step wrote a noop to {path}' in completed.stderr
+    assert completed.stdout == ''
+    assert not (tmp_path / 'record.json').exists()
+
+
+@pytest.mark.parametrize(
+    'safe_outputs',
+    [
+        pytest.param('{"type":"add_comment","body":"noop"}\n', id='no-noop'),
+        pytest.param('{"type":"noop"\nnoop\n"noop"\n[{"type":"noop"}]\nnull\n', id='malformed-lines'),
+    ],
+)
+def test_safe_outputs_without_a_noop_run_the_engine(tmp_path: Path, safe_outputs: str) -> None:
+    path = tmp_path / 'outputs.jsonl'
+    path.write_text(safe_outputs, encoding='utf-8')
+
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
+
+    assert invocation.target == 'gh_aw_agent:agent'
+
+
+@pytest.mark.parametrize('state', ['missing', 'unreadable'])
+def test_missing_or_unreadable_safe_outputs_run_the_engine(
+    tmp_path: Path, state: Literal['missing', 'unreadable']
+) -> None:
+    path = tmp_path / 'outputs.jsonl'
+    if state == 'unreadable':
+        # Reading a directory fails the way reading an unreadable file does, and
+        # unlike a permission bit it also fails for root.
+        path.mkdir()
+
+    invocation = launch(tmp_path, {**proxy_env('openai', 'openai/gpt-5'), 'GH_AW_SAFE_OUTPUTS': str(path)})
+
+    assert invocation.target == 'gh_aw_agent:agent'
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')

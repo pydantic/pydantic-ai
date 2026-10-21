@@ -177,7 +177,7 @@ asyncio.run(main())
 
 ## Durable execution
 
-Under [durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/), each AWS CLI command and health check
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each AWS CLI command and health check
 against an external LocalStack instance is recorded, so a recovered run reuses
 its output instead of running the command again. Temporal and Prefect record
 each tool call in its own activity or task. DBOS runs function tools in

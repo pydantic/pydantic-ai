@@ -29,6 +29,8 @@ from ..messages import (
     CompactionPart,
     FilePart,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -60,6 +62,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -466,6 +469,12 @@ class DecisionModel(Model[InterfaceClient]):
     per-request transport limits. These caps describe the endpoint, so profiles do not override them.
     See [Decision models](../../models/decision.md#implementing-a-decision-model) for the full rules and an example.
     """
+
+    # A decision model writes no text and makes at most one tool call, so `max_tokens`, `stop_sequences` and
+    # `parallel_tool_calls` hold without being sent and are not listed.
+    unsupported_settings = frozenset(
+        {'frequency_penalty', 'logit_bias', 'presence_penalty', 'seed', 'service_tier', 'temperature', 'top_k', 'top_p'}
+    )
 
     supports_image_input: ClassVar[bool] = False
     """Whether the backend can receive image evidence in `DecisionRequest.images`.
@@ -2257,6 +2266,8 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         return {'retry': part.model_response()}
     elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
         raise _unsynthesized_tool_availability_delta_error()
+    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
+        raise _unprojected_instruction_delta_error()
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()
