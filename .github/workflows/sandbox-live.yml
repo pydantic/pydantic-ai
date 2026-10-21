@@ -109,3 +109,11 @@ jobs:
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+
+      # The runners ship Podman too, which `DockerSandbox` supports through `executable='podman'`.
+      - if: matrix.provider == 'docker'
+        run: uv run --no-sync pytest -p no:cacheprovider -m docker_live tests/harness/docker_sandbox -q
+        env:
+          PYDANTIC_AI_HARNESS_DOCKER_LIVE: "1"
+          DOCKER_REQUIRE_LIVE: "1"
+          PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE: podman

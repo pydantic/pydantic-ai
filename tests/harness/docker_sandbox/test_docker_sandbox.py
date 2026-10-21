@@ -56,8 +56,8 @@ async def test_first_use_runs_docker_run_with_the_configured_options(docker: Fak
 
     assert backend.ref is not None
     assert docker.calls[0] == (
-        f'run --detach --init --network none --memory 2g --name {backend.ref.id} '
-        f'--label ai.pydantic.workspace=true --workdir {container_dir} --entrypoint sh '
+        f'run --detach --init --network none --pids-limit 2048 --memory 2g --name {backend.ref.id} '
+        '--label ai.pydantic.workspace=true --tmpfs /run/pydantic-ai --entrypoint sh '
         '-- python:3.13-slim -c while :; do sleep 86400; done'
     )
 
@@ -137,7 +137,7 @@ async def test_an_unwritable_pid_directory_is_unavailable(docker: FakeDocker, co
     docker.add_container('readonly', container_dir)
     backend = DockerSandboxBackend(ref=WorkspaceRef(provider='docker', id='readonly'), working_dir=str(container_dir))
 
-    with pytest.raises(WorkspaceUnavailableError, match=r'cannot write .*: /tmp must be writable'):
+    with pytest.raises(WorkspaceUnavailableError, match=r'cannot write .*: /run/pydantic-ai must be writable'):
         await backend.run(['true'])
 
 
@@ -383,21 +383,23 @@ async def test_destroy_uses_the_configured_executable(docker: FakeDocker, contai
     assert docker.containers() == []
 
 
-async def test_a_working_dir_that_cannot_be_resolved_is_an_error(docker: FakeDocker, container_dir: Path) -> None:
-    docker.add_container('nopwd', container_dir)
+async def test_a_working_dir_that_cannot_be_created_is_an_error(docker: FakeDocker, container_dir: Path) -> None:
+    (container_dir / 'file').touch()
+    backend = DockerSandboxBackend(image='image', working_dir=str(container_dir / 'file' / 'workspace'))
 
-    with pytest.raises(WorkspaceError, match='could not determine the working directory'):
-        await DockerSandbox(working_dir=None).backend(WorkspaceRef(provider='docker', id='nopwd')).working_dir()
+    with pytest.raises(WorkspaceError, match=r'could not create or enter the working directory.*Not a directory'):
+        await backend.working_dir()
 
 
-async def test_attaching_with_a_working_dir_the_container_lacks_reports_dockers_error(
-    docker: FakeDocker, container_dir: Path
-) -> None:
+async def test_attaching_creates_a_working_dir_the_container_lacks(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('box', container_dir)
-    sandbox = DockerSandbox(working_dir='/nonexistent-pydantic-ai-dir')
+    missing = container_dir / 'missing'
 
-    with pytest.raises(WorkspaceUnavailableError, match='chdir to cwd'):
-        await sandbox.backend(WorkspaceRef(provider='docker', id='box')).working_dir()
+    working_dir = (
+        await DockerSandbox(working_dir=str(missing)).backend(WorkspaceRef(provider='docker', id='box')).working_dir()
+    )
+
+    assert working_dir == str(missing.resolve())
 
 
 async def test_without_a_working_dir_commands_start_in_the_images_own(docker: FakeDocker) -> None:

@@ -90,7 +90,9 @@ sandbox = DockerSandbox(
 )
 ```
 
-The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them. Set the directory with `working_dir`.
+The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, a tmpfs at `/run/pydantic-ai` and the entrypoint after `docker_args`, because it relies on them. Set the directory commands start in with `working_dir`.
+
+A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` for no limit.
 
 ## Reattach later
 
@@ -109,7 +111,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 ```
 
-The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching runs `docker start` on first use, so a stopped container comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command, and an attached container must already have `working_dir`.
+The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching runs `docker start` on first use, so a stopped container comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command.
 
 A ref is trusted input: whoever passes one runs commands in that container. `DockerSandbox` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach the other containers the Docker daemon serves. The label isn't proof of origin, though: any `DockerSandbox` on this machine, or anyone who can run `docker`, can create a container with it, so only pass refs your application stored itself.
 
@@ -177,7 +179,7 @@ A container that can't be created or started, or that stops mid-command, raises 
 
 On a timeout or cancellation, a second `docker exec` stops the command's process group in the container; a command that detached into a session of its own, like a [Shell](shell.md) background job, keeps running.
 
-A command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits, because `docker exec` waits for the output to close: redirect it, as in `server > server.log 2>&1 &`.
+With Docker, a command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits, because `docker exec` waits for the output to close: redirect it, as in `server > server.log 2>&1 &`. `podman exec` returns when the command itself exits.
 
 Podman works too: pass `executable='podman'`. The CLI is looked up on `PATH` once, when the capability or backend is created. The `docker` client gets `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `SSH_AUTH_SOCK` and the other variables that select and reach a daemon from your environment, besides the `PATH`, `HOME` and locale every local command gets, and nothing else from it.
 
@@ -186,8 +188,8 @@ Podman works too: pass `executable='podman'`. The CLI is looked up on `PATH` onc
 A container shares your machine's kernel, so it is a weaker boundary than a VM such as [Smol Sandbox](smol-sandbox.md), [E2B](e2b-sandbox.md) or [Modal](modal-sandbox.md). Inside, commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
 
 - Don't mount the Docker socket or directories holding secrets. A writable mount also lets commands change files your machine runs later, such as a virtualenv, the `docker` CLI inside one, or git hooks. Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it.
-- Docker creates a missing `working_dir` owned by `root`, so with `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own.
-- With `--read-only`, also pass `--tmpfs /tmp`, where each command records its process ID so a timeout can stop it, and mount a writable working directory.
+- The first command creates a missing `working_dir` as the container's user, so with `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own. With `--read-only`, mount a writable working directory.
+- On Linux, files the commands write to a mounted directory belong to the container's user on your machine too, which is `root` unless you pass `--user` with your own IDs, such as `--user 1000:1000` from `id -u` and `id -g`.
 - `env` values are passed to `docker exec` as arguments, so while a command runs they are visible in process listings (`ps`) on your machine.
 - Docker adds the proxy settings in your `~/.docker/config.json` to every new container as environment variables.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
@@ -197,10 +199,10 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 | Option | What it does |
 | --- | --- |
 | `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against, created in a new container if missing. Default: `/workspace`; `None` uses the image's own (`WORKDIR`, or `/`). |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own (`WORKDIR`, or `/`). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |
-| `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`. Default: `()`. |
+| `docker_args` | Extra `docker run` arguments for a new container, such as mounts, `--memory` or `--user`; a `--pids-limit` here replaces the default of 2048. Default: `()`. |
 | `executable` | The container CLI to run, such as `'podman'`, looked up on `PATH` when the capability is created. Default: `'docker'`. |
 
 ## Platforms

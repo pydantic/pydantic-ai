@@ -45,7 +45,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     """
 
     working_dir: str | None = '/workspace'
-    """Absolute directory in the container where commands start and relative paths resolve, created in a new container if missing; `None` uses the image's own."""
+    """Absolute directory in the container where commands start and relative paths resolve, created on first use if missing; `None` uses the image's own."""
 
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also in an attached container; nothing is read from the host."""
@@ -54,7 +54,10 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     """Whether a new container gets outbound network access, through Docker's default bridge: the internet, but also this machine's local network and services. `False` runs it with `--network none`."""
 
     docker_args: Sequence[str] = ()
-    """Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or a `--volume` mount."""
+    """Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or a `--volume` mount.
+
+    A new container gets `--pids-limit 2048` unless these pass their own.
+    """
 
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""

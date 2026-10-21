@@ -35,14 +35,24 @@ _READY = '__pydantic_ai_docker_ready__\n'
 _DONE = re.compile(r'\n__pydantic_ai_docker_done__([0-9a-f]+):(\d+)\n')
 """Carries the command's exit status, so a container that dies mid-command isn't read as a result."""
 
-_PID_DIR = '/tmp'
-"""Where each command records its process ID, so a second `docker exec` can stop it on a timeout."""
+_PID_DIR = '/run/pydantic-ai'
+"""Where each command records its process ID, so a second `docker exec` can stop it on a timeout.
+
+A tmpfs the backend mounts in every container it creates, rather than `/tmp`, which a command may clear and a
+`--read-only` container can't write.
+"""
+
+_PIDS_LIMIT = '2048'
+"""A new container's process limit, so a runaway fork loop can't exhaust the Docker host's.
+
+`docker_args` can override it, such as with `['--pids-limit', '-1']` for no limit.
+"""
 
 _WRAPPER = f"""tag=$1
-pidfile={_PID_DIR}/.pydantic-ai-$tag.pid
-stopped={_PID_DIR}/.pydantic-ai-$tag.stopped
+pidfile={_PID_DIR}/$tag.pid
+stopped={_PID_DIR}/$tag.stopped
 shift
-for old in {_PID_DIR}/.pydantic-ai-*.pid; do
+for old in {_PID_DIR}/*.pid; do
     read -r pid 2> /dev/null < "$old" || continue
     [ -z "$pid" ] || kill -0 "$pid" 2> /dev/null || kill -0 "-$pid" 2> /dev/null || rm -f "$old"
 done
@@ -69,20 +79,22 @@ and group are both gone. An empty file is one another wrapper is still writing.
 A subshell `exec` runs the program itself, never a builtin, and exits 127 when it's missing.
 """
 
-_STOP = f"""pidfile={_PID_DIR}/.pydantic-ai-$1.pid
-stopped={_PID_DIR}/.pydantic-ai-$1.stopped
+_STOP = f"""pidfile={_PID_DIR}/$1.pid
+stopped={_PID_DIR}/$1.stopped
 : > "$stopped"
-pid=$(cat "$pidfile" 2> /dev/null)
+read -r pid 2> /dev/null < "$pidfile" || exit 0
 [ -n "$pid" ] || exit 0
+kill -KILL "-$pid" "$pid" 2> /dev/null
 rm -f "$pidfile" "$stopped"
-kill -TERM "-$pid" "$pid" 2> /dev/null
-(sleep 1; kill -KILL "-$pid" "$pid" 2> /dev/null) < /dev/null > /dev/null 2>&1 &
 exit 0"""
 """Stop the command recorded under the tag `$1`, and its process group.
 
 A timeout can come before the wrapper has recorded its PID, even before it starts. So the stop first leaves a
 `.stopped` marker, which a wrapper that records its PID afterwards finds before it starts the command: whichever
 of the two comes second sees the other's file. A marker for a command that already finished stays behind, empty.
+
+Everything before the `rm` is a shell builtin, so the stop still works when the command has used up the
+container's process limit and nothing can fork. It kills at once: the command is already past its timeout.
 
 A `docker exec` process leads a session of its own in both runc and crun, so its group is the command's; a
 command that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.
@@ -190,14 +202,15 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         image: The image for a new container. Pass it or `ref`, not both.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
-            resolve; created in a new container if the image doesn't have it. `None` uses the image's own
+            resolve; created on first use if the container doesn't have it. `None` uses the image's own
             (`WORKDIR`, or `/`).
         env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
         allow_internet_access: Whether a new container gets outbound network access, including this machine's
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
             `['--volume', f'{project}:/workspace']`. Pass `--network` only with `allow_internet_access=True`. They
-            can't override the container's name, workspace label, working directory or entrypoint, which the backend relies on.
+            can't override the container's name, workspace label, process ID tmpfs or entrypoint, which the backend
+            relies on. A `--pids-limit` here replaces the default of 2048.
         executable: The container CLI to run, such as `'podman'`.
     """
 
@@ -250,13 +263,19 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
                     await self._create()
                 else:
                     await self._start()
-                # `docker exec --workdir` fails before the command starts if the directory is missing.
-                result = await self._exec(['pwd', '-P'], env={}, timeout=None)
+                # Created here rather than by `docker run --workdir`, which Podman refuses for a missing directory.
+                if self._working_dir is None:
+                    result = await self._exec(['sh', '-c', 'pwd -P'], env={}, timeout=None, workdir=None)
+                else:
+                    script = 'mkdir -p "$1" && cd "$1" && pwd -P'
+                    result = await self._exec(
+                        ['sh', '-c', script, 'sh', self._working_dir], env={}, timeout=None, workdir='/'
+                    )
                 printed = result.stdout.removesuffix('\n')
                 if result.exit_code != 0 or not posixpath.isabs(printed):
                     raise WorkspaceError(
-                        f'could not determine the working directory of Docker workspace {self._name}: '
-                        f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}'
+                        f'could not create or enter the working directory of Docker workspace {self._name}: '
+                        f'exit code {result.exit_code}: {result.stderr.strip() or result.stdout!r}'
                     )
                 self._resolved_working_dir = printed
             return self._resolved_working_dir
@@ -278,13 +297,17 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             '--detach',
             '--init',
             *([] if self._allow_internet_access else ['--network', 'none']),
+            # Before `docker_args`, so a `--pids-limit` there wins.
+            '--pids-limit',
+            _PIDS_LIMIT,
             *self._docker_args,
             # After `docker_args`, whose later values would otherwise win: the backend relies on these.
             '--name',
             self._name,
             '--label',
             f'{_LABEL}=true',
-            *([] if self._working_dir is None else ['--workdir', self._working_dir]),
+            '--tmpfs',
+            _PID_DIR,
             '--entrypoint',
             'sh',
             '--',
@@ -333,14 +356,15 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         merged_env = {**self._env, **_checked_env(env or {})}
         # The first command also creates the container, which isn't bounded by the command's timeout:
         # pulling an image can take minutes.
-        await self._acquire()
-        return await self._exec(argv, env=merged_env, timeout=timeout)
+        # Commands start where `working_dir()` says they do, even if a symlink on the way changes.
+        workdir = await self._acquire()
+        return await self._exec(argv, env=merged_env, timeout=timeout, workdir=workdir)
 
-    async def _exec(self, argv: Sequence[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+    async def _exec(
+        self, argv: Sequence[str], *, env: Mapping[str, str], timeout: float | None, workdir: str | None
+    ) -> CommandResult:
         tag = secrets.token_hex(8)
         env_args = [arg for name, value in env.items() for arg in ('--env', f'{name}={value}')]
-        # Once resolved, commands start where `working_dir()` says they do, even if a symlink on the way changes.
-        workdir = self._resolved_working_dir or self._working_dir
         workdir_args = [] if workdir is None else ['--workdir', workdir]
         docker = [self._executable, 'exec', *workdir_args, *env_args, self._name]
         try:

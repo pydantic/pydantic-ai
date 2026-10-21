@@ -13,7 +13,7 @@ import pytest
 
 # `flaky-image` fails only its first pull, `unstartable-image` creates a container
 # that fails to start, `--fake-hang` makes the first `run` hang before it creates anything so a create can be
-# cancelled, and `--fake-hang-late` makes it hang after creating the container. A `nopwd` container has no `pwd`.
+# cancelled, and `--fake-hang-late` makes it hang after creating the container.
 _FAKE_DOCKER = """#!/bin/sh
 bin=$(dirname "$0")
 state="$bin/containers"
@@ -29,7 +29,7 @@ run)
         --name) name=$2; shift ;;
         --workdir) workdir=$2; shift ;;
         --label) label=$2; shift ;;
-        --entrypoint | --network | --memory) shift ;;
+        --entrypoint | --network | --memory | --pids-limit | --tmpfs) shift ;;
         --fake-hang) [ -e "$bin/hung" ] || { touch "$bin/hung"; sleep 30; } ;;
         --fake-hang-late) hang_late=1 ;;
         esac
@@ -83,12 +83,12 @@ exec)
     shift
     [ -f "$state/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
     [ "$name" != silent ] || exit 1
-    # Each container gets a `/tmp` of its own for the backend's PID files; a `readonly` one's isn't writable.
+    # Each container gets a directory of its own for the backend's PID files; a `readonly` one's isn't writable.
     if [ "$1" = sh ] && [ "$2" = -c ]; then
         tmp="$state/$name.tmp"
         [ "$name" != readonly ] || tmp=/nonexistent-pydantic-ai-dir
         mkdir -p "$state/$name.tmp"
-        script=$(printf '%s' "$3" | sed "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g")
+        script=$(printf '%s' "$3" | sed "s#/run/pydantic-ai/#$tmp/#g")
         shift 3
         set -- sh -c "$script" "$@"
     fi
@@ -97,12 +97,6 @@ exec)
     [ -n "$workdir" ] || workdir=$(cat "$state/$name")
     # Like Docker, which reports a missing `--workdir` on stdout.
     cd "$workdir" 2> /dev/null || { echo "OCI runtime exec failed: chdir to cwd (\\"$workdir\\")"; exit 127; }
-    if [ "$name" = nopwd ]; then
-        mkdir -p "$bin/nopwd"
-        printf '#!/bin/sh\\nexit 1\\n' > "$bin/nopwd/pwd"
-        chmod +x "$bin/nopwd/pwd"
-        PATH="$bin/nopwd:$PATH"
-    fi
     # One file per exec, removed when it finishes, so `rm` only ever sees live commands.
     mkdir -p "$state/$name.pids"
     echo $$ > "$state/$name.pids/$$"
@@ -158,11 +152,11 @@ class FakeDocker:
             (state / f'{name}.labeled').touch()
 
     def pid_files(self, name: str) -> set[Path]:
-        """The backend's PID files in the container's `/tmp`."""
-        return set((self.bin_dir / 'containers' / f'{name}.tmp').glob('.pydantic-ai-*.pid'))
+        """The backend's PID files in the container."""
+        return set((self.bin_dir / 'containers' / f'{name}.tmp').glob('*.pid'))
 
     def tmp_files(self, name: str) -> list[Path]:
-        return list((self.bin_dir / 'containers' / f'{name}.tmp').glob('.pydantic-ai-*'))
+        return list((self.bin_dir / 'containers' / f'{name}.tmp').glob('*'))
 
     def hang_stops(self, name: str) -> None:
         (self.bin_dir / 'containers' / f'{name}.hang-stop').touch()
