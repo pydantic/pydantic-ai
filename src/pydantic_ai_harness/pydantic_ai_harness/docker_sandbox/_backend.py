@@ -207,10 +207,8 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
 class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
-    The container runs `sh` as its entrypoint under `--init`, so the image needs a POSIX `sh` and the usual
-    file utilities: file operations run as shell commands in the container (see [Writing a
-    backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)). A `podman` binary
-    works too, through `executable`.
+    The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
+    `podman` binary works too, through `executable`.
 
     Built without a ref, the first operation creates a container; built with one, it starts that container
     if it is stopped and raises [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError]
@@ -228,8 +226,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             local network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
             `['--volume', f'{project}:/workspace']`. Pass `--network` only with `allow_internet_access=True`. They
-            can't override the container's name, workspace label, process ID tmpfs or entrypoint, which the backend
-            relies on. A `--pids-limit` here replaces the default of 2048.
+            can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
+            default of 2048.
         executable: The container CLI to run, such as `'podman'`.
     """
 

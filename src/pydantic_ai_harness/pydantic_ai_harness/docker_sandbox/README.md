@@ -93,7 +93,7 @@ sandbox = DockerSandbox(
 )
 ```
 
-The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, a tmpfs at `/run/pydantic-ai` and the entrypoint after `docker_args`, because it relies on them. Set the directory commands start in with `working_dir`.
+The mount is the only part of your machine's files the commands can change; the network is a separate setting. For a network of your own, leave `allow_internet_access` on and pass `--network` in `docker_args`, since Docker refuses a second `--network` next to `--network none`. `docker_args` can't change the container's name, its `ai.pydantic.workspace=true` label or its entrypoint. Set the directory commands start in with `working_dir`.
 
 A new container gets `--pids-limit 2048`, so a runaway fork loop can't use up the process table of the machine (or VM) running Docker. A command that hits it fails with `Cannot fork` or `Resource temporarily unavailable`; pass your own `--pids-limit` in `docker_args` to change it, or `-1` for no limit.
 
@@ -114,7 +114,7 @@ ref = result.workspace.ref  # store this, e.g. in your database
 later = agent.run_sync('Now make it print the first 100.', workspace=ref)
 ```
 
-The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching runs `docker start` on first use, so a stopped container comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command.
+The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the container's name. Attaching starts a stopped container on first use, so it comes back with its files. Pass `workspace='new'` to create a fresh container even when the message history names one. `image`, `allow_internet_access` and `docker_args` only shape a new container. `working_dir` and `env` apply to every command.
 
 A ref is trusted input: whoever passes one runs commands in that container. `DockerSandbox` refuses a container without its `ai.pydantic.workspace=true` label, so a ref can't reach the other containers the Docker daemon serves. The label isn't proof of origin, though: any `DockerSandbox` on this machine, or anyone who can run `docker`, can create a container with it, so only pass refs your application stored itself.
 
@@ -172,17 +172,17 @@ Removing a container that is already gone returns quietly. `DockerSandbox()` wit
 
 Nothing removes a container for you, and there is no idle or lifetime limit. `docker ps --all --filter label=ai.pydantic.workspace=true` finds the containers `DockerSandbox` created, including any left behind without a stored ref.
 
-`backend.ref` is set when the first operation starts creating the container, and goes back to `None` if `docker run` fails without creating one. If the create is cancelled, Docker may still finish creating the container after `destroy` has found nothing to remove; the label filter above finds it. A failed run returns no result, so there is no ref to store. Remove the container in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up), or create the backend yourself as in [Prepare a container before the run](#prepare-a-container-before-the-run).
+`backend.ref` is set when the first operation starts creating the container, and goes back to `None` if creating it fails before a container exists. If the create is cancelled, Docker may still finish creating the container after `destroy` has found nothing to remove; the label filter above finds it. A failed run returns no result, so there is no ref to store. Remove the container in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up), or create the backend yourself as in [Prepare a container before the run](#prepare-a-container-before-the-run).
 
 ## How commands run
 
-The first operation runs `docker run --detach --init --entrypoint sh <image>` with a keep-alive loop. Every command is a `docker exec` into that container, and file operations run as shell commands there (see [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)). Creating or starting the container, including pulling the image, is not bounded by a command's `timeout`. Reading or writing a file takes one `docker exec` per 64 KiB, so mount a directory with `docker_args` for large data.
+The container doesn't run the image's own entrypoint or command, so a service the image would start on boot isn't running; start it with a command. Creating or starting the container, including pulling the image, is not bounded by a command's `timeout`. File operations run as commands in the container, so large files are slow to read and write: mount a directory with `docker_args` for large data.
 
 A container that can't be created or started, or that stops mid-command, raises `WorkspaceUnavailableError`. The exit code is the command's own, even when it is one `docker` also uses for its own errors.
 
-On a timeout or cancellation, a second `docker exec` stops the command's process group in the container; a command that detached into a session of its own, like a [Shell](https://pydantic.dev/docs/ai/harness/shell/) background job, keeps running.
+On a timeout or cancellation, the command and the processes it started are stopped in the container; a command that detached into a session of its own, like a [Shell](https://pydantic.dev/docs/ai/harness/shell/) background job, keeps running.
 
-With Docker, a command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits, because `docker exec` waits for the output to close: redirect it, as in `server > server.log 2>&1 &`. `podman exec` returns when the command itself exits.
+With Docker, a command that leaves a background process holding its output open, such as `server &` without redirecting the server's output, doesn't return until that process exits: redirect it, as in `server > server.log 2>&1 &`. With Podman, it returns when the command itself exits.
 
 Podman works too: pass `executable='podman'`. The CLI is looked up on `PATH` once, when the capability or backend is created. The `docker` client gets `DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `SSH_AUTH_SOCK` and the other variables that select and reach a daemon from your environment, besides the `PATH`, `HOME` and locale every local command gets, and nothing else from it.
 
@@ -191,9 +191,9 @@ Podman works too: pass `executable='podman'`. The CLI is looked up on `PATH` onc
 A container shares your machine's kernel, so it is a weaker boundary than a VM such as [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/), [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) or [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/). Inside, commands run as the image's user, usually `root`, so anything the agent runs can change anything in the container.
 
 - Don't mount the Docker socket or directories holding secrets. A writable mount also lets commands change files your machine runs later, such as a virtualenv, the `docker` CLI inside one, or git hooks. Add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it.
-- The first command creates a missing `working_dir` as the container's user, so with `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own. With `--read-only`, mount a writable working directory.
+- A missing `working_dir` is created as the container's user, so with `--user`, point `working_dir` at a directory that user can write, such as a mount, or pass `working_dir=None` to use the image's own. With `--read-only`, mount a writable working directory.
 - On Linux, files the commands write to a mounted directory belong to the container's user on your machine too, which is `root` unless you pass `--user` with your own IDs, such as `--user 1000:1000` from `id -u` and `id -g`.
-- `env` values are passed to `docker exec` as arguments, so while a command runs they are visible in process listings (`ps`) on your machine.
+- While a command runs, its `env` values are visible in process listings (`ps`) on your machine.
 - Docker adds the proxy settings in your `~/.docker/config.json` to every new container as environment variables.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
