@@ -8,6 +8,8 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
+from typing_extensions import TypeIs
+
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -377,7 +379,12 @@ def _is_kept_marker(metadata: object) -> bool:
     """Whether a `TextContent.metadata` value carries the `keep_user_messages` marker."""
     if metadata == _KEPT_USER_MESSAGE_METADATA:
         return True
-    return isinstance(metadata, dict) and cast(dict[str, Any], metadata).get(_KEPT_USER_MESSAGE_METADATA) is True
+    return _is_metadata_dict(metadata) and metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
+
+
+def _is_metadata_dict(metadata: object) -> TypeIs[dict[str, Any]]:
+    """Whether a `TextContent.metadata` value is a dict the marker can be added to as a key."""
+    return isinstance(metadata, dict)
 
 
 def _mark_kept(part: UserPromptPart) -> UserPromptPart:
@@ -396,9 +403,8 @@ def _mark_kept(part: UserPromptPart) -> UserPromptPart:
             marked.append(TextContent(item, metadata=_KEPT_USER_MESSAGE_METADATA))
         elif isinstance(item, TextContent) and item.metadata is None:
             marked.append(replace(item, metadata=_KEPT_USER_MESSAGE_METADATA))
-        elif isinstance(item, TextContent) and isinstance(item.metadata, dict):
-            metadata = cast(dict[str, Any], item.metadata)
-            marked.append(replace(item, metadata={**metadata, _KEPT_USER_MESSAGE_METADATA: True}))
+        elif isinstance(item, TextContent) and _is_metadata_dict(item.metadata):
+            marked.append(replace(item, metadata={**item.metadata, _KEPT_USER_MESSAGE_METADATA: True}))
         else:
             marked.append(item)
     return replace(part, content=marked)
