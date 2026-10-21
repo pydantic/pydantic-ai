@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ast
 import re
-import time
 from pathlib import Path
 from typing import get_args
 
@@ -17,6 +16,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai._framing import (
+    _FRAMING_TAG_OPENERS,  # pyright: ignore[reportPrivateUsage]
+    _VOICE_TAG_OPENERS,  # pyright: ignore[reportPrivateUsage]
     ASSISTANT_THINKING_TAG,
     CONTEXT_TAG,
     SYSTEM_TAG,
@@ -81,13 +82,18 @@ def test_a_framing_tag_cut_off_at_the_end_of_the_body_is_neutralized(inner: Fram
     assert wrap(TOOL_RESULT_TAG, f'data {forged}') == f'<tool_result>data &lt;{forged[1:]}</tool_result>'
 
 
-@pytest.mark.parametrize('run', [' ' * 200_000, ' ' * 100_000 + '/' + ' ' * 100_000])
-def test_a_long_whitespace_run_after_a_bracket_is_linear(run: str) -> None:
-    """A `<` followed by a long run of whitespace must not make the tag pattern backtrack quadratically."""
-    body = f'<{run}x'
-    start = time.perf_counter()
+def test_the_tag_pattern_does_not_repartition_whitespace() -> None:
+    """A `<` followed by a run of whitespace must cost linear time, not quadratic (a ReDoS in reasoning or tool output).
+
+    Quadratic backtracking needs two adjacent repetitions that can both match the same whitespace, as
+    `\\s*/?\\s*` does when there's no `/`. Checked structurally rather than by timing, per `tests/AGENTS.md`:
+    the whitespace after the `/` is only reachable through the `/` itself.
+    """
+    for pattern in (_FRAMING_TAG_OPENERS.pattern, _VOICE_TAG_OPENERS.pattern):
+        assert r'\s*/?\s*' not in pattern
+        assert r'\s*(?:/\s*)?' in pattern
+    body = '<' + ' ' * 64 + 'x'
     assert neutralize_tags(body) == body
-    assert time.perf_counter() - start < 1
 
 
 def test_attributes_are_escaped_and_none_is_left_off() -> None:
