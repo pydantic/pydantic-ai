@@ -826,7 +826,8 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
 @pytest.mark.parametrize(
     ('client', 'model_name', 'supports_json_schema_output'),
     [
-        pytest.param('bedrock', 'us.anthropic.claude-opus-4-7', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock', 'us.anthropic.claude-fable-5', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock', 'us.anthropic.claude-haiku-5-5', True, id='bedrock-served-geo'),
         pytest.param('bedrock-mantle', 'anthropic.claude-sonnet-5', True, id='bedrock-mantle'),
         pytest.param('claude-api', 'claude-sonnet-5', True, id='direct'),
     ],
@@ -854,7 +855,7 @@ def test_anthropic_structured_output_follows_legacy_bedrock_support(
     'model_name,expected',
     [
         pytest.param(
-            'global.anthropic.claude-sonnet-5',
+            'global.anthropic.claude-fable-5',
             snapshot(
                 {
                     'output_config': None,
@@ -865,7 +866,7 @@ def test_anthropic_structured_output_follows_legacy_bedrock_support(
             id='withheld',
         ),
         pytest.param(
-            'global.anthropic.claude-sonnet-4-6',
+            'global.anthropic.claude-haiku-5-5',
             snapshot(
                 {
                     'output_config': {
@@ -892,10 +893,10 @@ async def test_anthropic_legacy_bedrock_structured_output_request(
 ):
     """On `AsyncAnthropicBedrock`, a model Bedrock withholds structured output from gets Tool Output and no `strict`.
 
-    Bedrock answers `output_config.format` on Claude Sonnet 5 with a 400:
-    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Sonnet 4.6, which Bedrock serves structured output
-    for, keeps Native Output and `strict`. A mock transport stands in for a cassette because the recording
-    account has no access to the models Bedrock withholds structured output from.
+    Bedrock answers `output_config.format` on the models it withholds structured output from with a 400:
+    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Haiku 5.5, which Bedrock serves structured output
+    for, keeps Native Output and `strict`: https://github.com/pydantic/pydantic-ai/issues/10697. A mock transport
+    stands in for a cassette because the recording account has no access to Claude Fable 5.
     """
     bodies: list[dict[str, JsonValue]] = []
 
@@ -919,7 +920,7 @@ async def test_anthropic_legacy_bedrock_structured_output_request(
         def add(a: int, b: int) -> int:
             raise NotImplementedError
 
-        # Claude Sonnet 5 thinks by default; Sonnet 4.6 needs the setting to reach the same output mode choice.
+        # Both models think by default; the setting keeps the output mode choice independent of that.
         with pytest.raises(ModelHTTPError):
             await agent.run('1+1', model_settings={'thinking': True})
 

@@ -2640,11 +2640,11 @@ async def test_bedrock_adaptive_thinking_keeps_tool_output_unforced(
 
 
 @pytest.mark.parametrize('model_settings', [{'thinking': True}, {}], ids=['explicit', 'implicit'])
-async def test_bedrock_opus_5_thinking_offers_output_tool_unforced(
+async def test_bedrock_opus_5_thinking_uses_native_output(
     allow_model_requests: None, bedrock_provider: BedrockProvider, model_settings: ModelSettings
 ) -> None:
     """Claude Opus 5 thinks whether adaptive thinking is explicit or the model's default, so the output tool isn't
-    forced. Bedrock doesn't offer native structured output for it, so a bare `output_type` keeps Tool Output."""
+    forced. Bedrock offers native structured output for it, so a bare `output_type` uses Native Output."""
     model = BedrockConverseModel('us.anthropic.claude-opus-5', provider=bedrock_provider)
     agent = Agent(model, output_type=int)
 
@@ -2656,8 +2656,40 @@ async def test_bedrock_opus_5_thinking_offers_output_tool_unforced(
     assert sent.get('additionalModelRequestFields', {}) == (
         {'thinking': {'type': 'adaptive'}} if model_settings else {}
     )
-    assert sent['toolConfig']['toolChoice'] == {'auto': {}}
+    assert 'toolConfig' not in sent
+    assert sent['outputConfig']['textFormat']['type'] == 'json_schema'
     assert result.output == 42
+
+
+async def test_bedrock_fable_5_thinking_offers_output_tool_unforced(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Claude Fable 5 thinks by default, so the output tool isn't forced. Bedrock doesn't offer native structured
+    output for it, so a bare `output_type` keeps Tool Output. Mocked because the recording account can't call it."""
+    model = BedrockConverseModel('us.anthropic.claude-fable-5', provider=bedrock_provider)
+    stream_bedrock_converse_mock(mocker, model.client)
+    converse = mocker.patch.object(
+        model.client,
+        'converse',
+        return_value={
+            'output': {
+                'message': {
+                    'role': 'assistant',
+                    'content': [
+                        {'toolUse': {'toolUseId': 'tool_1', 'name': 'final_result', 'input': {'response': 42}}}
+                    ],
+                }
+            },
+            'stopReason': 'tool_use',
+            'usage': {'inputTokens': 12, 'outputTokens': 8, 'totalTokens': 20},
+        },
+    )
+
+    result = await Agent(model, output_type=int).run('Return the number 42.')
+
+    assert result.output == 42
+    assert 'outputConfig' not in converse.call_args.kwargs
+    assert converse.call_args.kwargs['toolConfig']['toolChoice'] == {'auto': {}}
 
 
 async def test_bedrock_model_thinking_part_anthropic_adaptive_effort(
