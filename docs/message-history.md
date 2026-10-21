@@ -306,7 +306,7 @@ With server-side conversation state, each request sends only the messages after 
 
 With either rendering, the cache breakpoints Pydantic AI places for you, through settings like `anthropic_cache_messages`, land before it, so the next request can still read what was cached. A request and any continuation of it (such as an Anthropic `pause_turn`) count as the same request, and so does a retry or [fallback](models/overview.md#fallback-model) attempt at it. A request-scoped prompt in a request that never gets a response, because the run failed or was cancelled, is removed from the history when the run gives up on that request, so it doesn't carry into the next one.
 
-Use a request-scoped prompt for something about the current moment. Something that stays true belongs in the agent's [instructions](agent.md#instructions) or a regular mid-conversation system prompt, and the same rule about untrusted content applies to both.
+Use a request-scoped prompt for something about the current moment. Something that stays true belongs in the agent's [instructions](agent.md#instructions) or a regular mid-conversation system prompt, and the same rule about untrusted content applies to both. For instructions whose text changes over the conversation, [`on_change='append'`](agent.md#appending-instruction-changes) delivers each change this way for you, keeping the instruction prefix cached; [keep untrusted text out of instructions](agent.md#untrusted-instruction-text).
 
 !!! note "Histories sent back from a frontend"
     The [UI adapters](ui/overview.md#trust-model-for-client-submitted-messages) leave request-scoped prompts out of the messages they dump for the frontend, since they're only for the model's current request: sent back, one would come back as a lasting system prompt. So a history that round-trips through a frontend loses its request-scoped prompts, whatever `manage_system_prompt` is set to. On a model whose reasoning is tied to the exact conversation, that's an edit to the conversation like any other lost part. Keep the history on the server, for example with [conversation storage](persistence.md), when you need it unchanged.
@@ -887,7 +887,7 @@ A `priority` controls when the enqueued content is delivered:
 
 Adjacent part-style items (user content and [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s) are coalesced into one [`ModelRequest`][pydantic_ai.messages.ModelRequest]; complete messages stay separate. This lets a single call inject an interleaved exchange — for example a synthetic tool call (a [`ModelResponse`][pydantic_ai.messages.ModelResponse]) followed by its result (a [`ModelRequest`][pydantic_ai.messages.ModelRequest]). The content must end in a request, so the agent has something to respond to.
 
-The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered messages (exactly as they landed in history), so a client can observe when its steering message took effect. The event carries the delivered message objects themselves — the same objects held in the run's message history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of a delivered message will be visible through it. `RealtimeSession.enqueue` also returns an `enqueue_id` or `None`; realtime delivery is documented under [enqueuing prompts](realtime/tools.md#enqueuing-prompts).
+The standard-run `enqueue` methods return an `enqueue_id` (`str`) for a non-empty call, or `None` when called with no content. When the queued content is actually delivered into run history, the [event stream](agent.md#streaming-all-events) yields an [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] carrying that `enqueue_id` and the delivered content, so a client can observe when its steering message took effect. The event carries the delivered message objects themselves, the same objects held in the run's message history. Content that went into a tool call's request (see [below](#from-inside-a-tool-or-hook)) has no message of its own in history, so `messages` holds a request of its own with the delivered parts, and `parts` holds the [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart]s as they sit in history. A history processor that replaces history with new message objects does not affect the event, but [in-place mutation](#editing-existing-messages) of delivered content will be visible through it. `RealtimeSession.enqueue` also returns an `enqueue_id` or `None`; realtime delivery is documented under [enqueuing prompts](realtime/tools.md#enqueuing-prompts).
 
 ### From inside a tool or hook
 
@@ -915,8 +915,18 @@ def enter_incident_mode(ctx: RunContext) -> str:
     return 'incident mode enabled'
 ```
 
-The `'asap'` message is appended to the agent's message history and is visible to the
-model on the next request, alongside any tool returns from the same step. A
+The `'asap'` message is added to the agent's message history and is visible to the model on the
+next request. Content enqueued during a tool call, from the tool or from a capability hook wrapping
+the call, is a side effect of that call, so it goes into the
+[`ModelRequest`][pydantic_ai.messages.ModelRequest] that carries the call's
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it. When parallel tool calls
+each enqueue something, each call's content follows its own return, in the order that call enqueued
+it. The model still gets all of a request's tool results ahead of the enqueued content, as providers
+require. A complete `ModelRequest` or `ModelResponse` passed to `enqueue` keeps its message-level
+fields, so it's added as its own message instead, as is anything enqueued outside a tool call. So is
+content whose call has no `ToolReturnPart` in the next request (because the tool raised
+[`ModelRetry`][pydantic_ai.exceptions.ModelRetry], say), content that's delivered in a later step, and
+content enqueued after something that was added as its own message. A
 [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is delivered the same way, and lands as
 a [mid-conversation system prompt](#mid-conversation-system-prompts) — it keeps its position in the
 history instead of being lifted into the top-level system prompt, so it doesn't invalidate the

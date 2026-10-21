@@ -109,7 +109,7 @@ Each file is wrapped in `<context-file path="...">` tags. A closing `</context-f
 
 Injecting file contents into the system prompt costs prompt-cache stability: a changed prefix re-bills the whole cached region. `RepoContext` keeps the two cache-relevant paths separate:
 
-- Strategy 1 reads its files once at run start and injects them as static system instructions, so the cached prefix stays byte-identical across turns.
+- Strategy 1 reads its files once at run start and injects them as system instructions, so the cached prefix stays byte-identical across the turns of a run. If a file changes between runs of the same conversation, the change is [appended](../agent.md#appending-instruction-changes), as a diff when that's shorter, instead of rewriting the prefix.
 - Strategy 3 is volatile (it depends on which directory was just touched), so its note is enqueued in the message tail, never in the system prompt, and cannot invalidate the cached prefix.
 
 ## Configuration

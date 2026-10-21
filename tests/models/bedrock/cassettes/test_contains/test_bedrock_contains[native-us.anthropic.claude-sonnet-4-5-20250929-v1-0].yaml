@@ -1,0 +1,61 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 0207364c-aaee-412c-b83b-b7946c47baa4
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "455"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Return values equal to ["ok"].
+        system: []
+        inferenceConfig: {}
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: Result
+                schema: "{\"properties\":{\"values\":{\"items\":{\"type\":\"string\"},\"type\":\"array\",\"description\":\"contains={'type': 'string'}\"}},\"required\":[\"values\"],\"type\":\"object\",\"additionalProperties\":false}"
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "364"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2081
+        output:
+          message:
+            content:
+            - text: "{\"values\":[\"ok\"]}"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 186
+          outputTokens: 10
+          serverToolUsage: {}
+          totalTokens: 196
+  recorded_at: 2026-10-20T14:41:06.573877+00:00
