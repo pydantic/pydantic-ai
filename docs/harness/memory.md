@@ -13,7 +13,7 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 Memory gives each agent a notebook made of Markdown files:
 
-- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are added to the current request as delimited user-role context.
+- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are added beside the latest user prompt as delimited user-role context.
 - Other files hold longer or focused notes. The model reads them on demand or finds them with bounded text search.
 
 The model gets four tools:
@@ -27,21 +27,26 @@ The model gets four tools:
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import Memory
 from pydantic_ai_harness.memory import FileStore
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[Memory(FileStore('.agent-memory'))],
+    '{{ anthropic:large }}',
+    capabilities=[LocalWorkspace('.'), Memory(FileStore('.agent-memory'))],
     defer_model_check=True,
 )
 ```
+
+`FileStore.list_paths` skips symlinked directory prefixes, including links outside the store.
+
+`FileStore` keeps the notes as Markdown files in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so the model can also open them with its file tools. A run without a workspace fails at its start. With a read-only run workspace, the write and delete tools are hidden; a store with its own workspace follows that workspace's permissions instead. Workspace refusals during mutations become tool failures. To keep them on your machine while the agent works in a sandbox, pass a backend: `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))`.
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 
 ## Injection modes and limits
 
-Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part on the current request. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
+Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
@@ -56,7 +61,11 @@ memory = Memory(
 )
 ```
 
-Only the current request retains the injected user-role part, so copies do not accumulate in message history. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+Only the current request retains the injected user-role part, so copies do not accumulate in message history. A part saved to history by an earlier release is removed on the next request. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+
+The block goes on the request that holds the latest user prompt, so after a tool call, or when a run resumes after a deferred tool approval, it stays with the user's prompt rather than following the tool results, where a model could read it as a new message from the user. With no user prompt in the history, it goes on the last request. While the snapshot is unchanged, each request in a tool loop starts with the previous one, so prefix caching keeps working. When the snapshot changes, or a new user prompt moves the block, the content from the block's earlier position onward changes once.
+
+When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
 
 Set `inject_memory=False` for cache-stable prompts. The tools remain available, and the model can fetch memory only when it needs it:
 
@@ -78,7 +87,7 @@ Every `MemoryStore.read` call includes a finite `max_chars`, and every `list_pat
 | Store | Persistence and concurrency boundary |
 | --- | --- |
 | `InMemoryStore()` | Process lifetime; atomic across tasks using that store instance. |
-| `FileStore(directory)` | Local filesystem; atomic Markdown replacement plus a hidden SQLite journal provide recovery, cross-process compare-and-swap, and durable idempotency receipts. |
+| `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
 | `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. |
 | `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. The caller owns the pool lifecycle. |
 
@@ -92,7 +101,9 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 
 `SqliteMemoryStore` can instead use a caller-owned `sqlite3.Connection`. Because operations run off the event loop, create that connection with `check_same_thread=False` and manage its lifecycle in the application. The connection must be dedicated to the store and idle at the start of every operation; a call fails rather than commit or roll back an active caller transaction.
 
-`FileStore` keeps the journal at `.memory-store.sqlite3` inside its root. Keep it with the Markdown files when copying or backing up the store. Editing a Markdown file outside the capability changes its content version and can produce a conflict with a prepared operation; the journal recovers operations interrupted between transaction preparation and filesystem replacement.
+If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
+
+`FileStore` keeps receipts for its most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict.
 
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
@@ -123,6 +134,7 @@ Use a namespace resolver when one `Agent` serves multiple users. It runs once pe
 from dataclasses import dataclass
 
 from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory
 from pydantic_ai_harness.memory import FileStore
 
@@ -133,11 +145,11 @@ class AppDeps:
 
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:large }}',
     deps_type=AppDeps,
     capabilities=[
         Memory(
-            FileStore('/var/lib/myapp/memory'),
+            FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory')),
             namespace=lambda ctx: ctx.deps.user_id,
         )
     ],
@@ -157,14 +169,16 @@ An agent can carry several `Memory` capabilities at once, for example a personal
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import Memory
 from pydantic_ai_harness.memory import FileStore
 
+store = FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:large }}',
     capabilities=[
-        Memory(FileStore('/var/lib/myapp/memory'), heading='Your notes'),
-        Memory(FileStore('/var/lib/myapp/memory'), agent_name='org', heading='Org notes').prefix_tools('org'),
+        Memory(store, heading='Your notes'),
+        Memory(store, agent_name='org', heading='Org notes').prefix_tools('org'),
     ],
     defer_model_check=True,
 )
@@ -216,7 +230,7 @@ from pydantic_ai_harness import Memory
 
 agent = Agent.from_spec(
     {
-        'model': 'anthropic:claude-sonnet-4-6',
+        'model': '{{ anthropic:large }}',
         'capabilities': [
             {'Memory': {'backend': 'file', 'directory': '.agent-memory'}},
         ],
@@ -234,7 +248,7 @@ The serializable backends are `memory`, `file`, and `sqlite`. A namespace callab
 | --- | --- |
 | Normal `Agent.run` calls | Supported with automatic injection or on-demand tools. |
 | Temporal and Prefect | Automatic snapshot loading is a journaled capability operation. On replay, the recorded snapshot is reused. `store_resolver` and a callable `namespace` run before that operation, so they must be deterministic and free of backend I/O; a per-tenant resolver that queries a backend is not workflow-safe. |
-| DBOS | Automatic snapshot loading is a DBOS step. Ordinary `FunctionToolset` calls are not DBOS-durable; wrap memory tool operations in application-provided DBOS steps when required. |
+| DBOS | Automatic snapshot loading and each memory tool call are DBOS steps. A recovered or forked workflow reuses their recorded results instead of reading or writing the store again. |
 
 `Memory` carries the stable default `id='memory'`, so durable recovery works without configuration. The memory backend and workflow state backend remain independent: durable execution does not make an in-memory notebook persistent.
 
@@ -248,9 +262,9 @@ Memory records do not carry source citations or verified provenance. If an appli
 
 ## API reference
 
-- [`pydantic_ai_harness.memory` source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/memory/)
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
-- [Pydantic AI hooks](/ai/core-concepts/hooks/)
+- [`pydantic_ai_harness.memory` source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/memory/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
+- [Pydantic AI hooks](../hooks.md)
 
 The public module exports `Memory`, `MemoryToolset`, the bundled stores, the store protocols, mutation and search result models, and conflict exceptions. Import them from `pydantic_ai_harness.memory`.
 

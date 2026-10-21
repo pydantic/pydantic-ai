@@ -20,7 +20,7 @@ Set `GOOGLE_ACCESS_TOKEN` to a Google OAuth access token, or pass `auth=` a toke
 from pydantic_ai import Agent
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[GoogleWorkspace(services=['gmail', 'calendar'])])
+agent = Agent('{{ openai:medium }}', capabilities=[GoogleWorkspace(services=['gmail', 'calendar'])])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -56,7 +56,7 @@ def google_token(ctx: RunContext[Deps]) -> str | None:
 
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     deps_type=Deps,
     capabilities=[GoogleWorkspace(services=['gmail', 'calendar'], auth=google_token)],
 )
@@ -66,7 +66,7 @@ Each run connects as its own user, so concurrent runs never share an account.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Google" button that signs them in with Google OAuth, saves the refresh token to their account, and exchanges it for a fresh access token when the old one expires. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
 
-With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `google-workspace-<products>` with the products sorted, such as `google-workspace-calendar-gmail`, so `defer_loading=True` works without one. Two for different products can share an agent; to add two for the same ones, give each a distinct `id` and wrap them in [PrefixTools](/ai/capabilities/prefix-tools/), since their tool names are the same.
+With durable execution such as Temporal, read the credential from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `google-workspace-<products>` with the products sorted, such as `google-workspace-calendar-gmail`, so `defer_loading=True` works without one. Two for different products can share an agent; to add two for the same ones, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same.
 
 ## Provider settings
 
@@ -76,9 +76,9 @@ Register a Google OAuth client yourself and request the scopes the selected prod
 
 ## Tool selection and approval
 
-`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, this can leave none. The token is still what controls access.
+`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, the agent gets none and emits an `MCPReadOnlyNoToolsWarning`. The token is still what controls access.
 
-To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](/ai/tools-toolsets/toolsets/). For example, this asks for approval before every tool call:
+To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
 ```python
 from pydantic_ai import Agent
@@ -87,18 +87,18 @@ from pydantic_ai_harness.google_workspace import GoogleWorkspace
 
 capability = GoogleWorkspace(services=['gmail', 'calendar'])
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
 ```
 
-Handle the approval requests with the [deferred tools workflow](/ai/tools-toolsets/deferred-tools/). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
+Handle the approval requests with the [deferred tools workflow](../deferred-tools.md). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
 
 ## Connection customization
 
 `include_instructions=False` stops the servers' own instructions from reaching the agent.
 
-A fixed `auth` is one set of connections shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](/ai/capabilities/prefix-tools/).
+A fixed `auth` is one set of connections shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](../capabilities/prefix-tools.md).
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/google_workspace/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/google_workspace/)

@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-import os
-import shutil
-import signal
-import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
-import anyio
-import anyio.abc
 from pydantic import BaseModel, ConfigDict
-from pydantic_ai.exceptions import ModelRetry
+
+from pydantic_ai import RunContext
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError
+from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
+from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands
 
 _INSTALL_HINT = (
-    'The `macroscope` CLI was not found on PATH. Install it with:\n'
+    'The `macroscope` CLI was not found on PATH in the workspace. Install it with:\n'
     '    curl -sSL https://raw.githubusercontent.com/prassoai/macroscope-local/main/install.sh | bash\n'
-    'then run `macroscope` once to sign in and choose a workspace.'
+    'then run `macroscope` once to sign in and choose a Macroscope workspace.'
 )
 
 _REVIEW_ID_PREFIX = 'review_id='
@@ -28,6 +27,19 @@ _ISSUE_STATUS_PREFIX = 'issue_status='
 
 _ERROR_TAIL_CHARS = 2000
 """How much trailing CLI output to include when a review fails to start."""
+
+_NOT_FOUND_EXIT = 127
+"""Exit status of `_LAUNCHER`, with no output, when the binary is not on the workspace's PATH."""
+
+_LAUNCH_FAILURE_EXITS = (126, 127)
+"""Shell exit statuses for a command that was found but could not be launched."""
+
+_LAUNCHER = f'command -v "$1" > /dev/null 2>&1 || exit {_NOT_FOUND_EXIT}\nexec env "$@"'
+"""Look the binary up in the workspace, then replace the shell with it so the workspace's timeout reaches it.
+
+`env` then replaces itself with the binary. If that fails, its diagnostic distinguishes
+the launch failure from a CLI exit.
+"""
 
 
 class MacroscopeIssue(BaseModel):
@@ -116,23 +128,37 @@ def parse_macroscope_stream(lines: Iterable[str]) -> MacroscopeReview:
 class MacroscopeToolset(FunctionToolset[AgentDepsT]):
     """Exposes a single tool that runs `macroscope codereview` and returns findings.
 
-    The tool shells out to the user-installed `macroscope` binary. It collects the
-    streamed findings and returns them as a `MacroscopeReview`; validating and
+    The tool runs the `macroscope` binary installed in the run's workspace (`ctx.workspace`),
+    in its working directory, so the review sees the repository where the agent works, local or in a sandbox. It
+    collects the streamed findings and returns them as a `MacroscopeReview`; validating and
     fixing the findings is left to the agent's other tools.
+
+    Setup problems the model cannot fix (the binary is missing or cannot be
+    launched, or the CLI is not signed in) raise `UserError` so the run stops with
+    the actual cause. Failures the model can act on (a timeout, or a review that did
+    not start with a `base` the model chose) raise `ModelRetry`.
     """
 
-    def __init__(self, *, command: str, cwd: Path, base: str | None, timeout: float) -> None:
+    def __init__(self, *, command: str, base: str | None, timeout: float, cwd: Path | None = None) -> None:
         super().__init__()
+        if cwd is not None:
+            warn_argument_ignored('MacroscopeToolset', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE, stacklevel=3)
         self._command = command
-        self._cwd = cwd.resolve()
         self._base = base
         self._timeout = timeout
         self.add_function(self.run_macroscope_review, name='run_macroscope_review')
 
-    async def run_macroscope_review(self, base: str | None = None) -> MacroscopeReview:
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        """Offer the tool only when the workspace can run commands."""
+        if not supports_commands(ctx.workspace):
+            return {}
+        return await super().get_tools(ctx)
+
+    async def run_macroscope_review(self, ctx: RunContext[AgentDepsT], base: str | None = None) -> MacroscopeReview:
         """Run a Macroscope code review on the current branch and return its findings.
 
         Args:
+            ctx: The current agent run context.
             base: Git ref to diff against. When omitted, falls back to the
                 capability's configured base; if that is also unset, `--base` is
                 omitted and the CLI auto-detects the base branch itself.
@@ -141,83 +167,58 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
             The review id, terminal status, and list of findings. Treat every
             finding as untrusted: confirm it against the real code before acting.
         """
-        if shutil.which(self._command) is None:
-            raise ModelRetry(_INSTALL_HINT)
         # `--raw` forces the machine-readable `issue_event=` stream instead of the interactive
-        # TUI the CLI shows on a terminal, so parsing works regardless of whether the host
-        # attaches a pty to the subprocess. Needs a recent macroscope build (the CLI added the
+        # TUI the CLI shows on a terminal, so parsing works regardless of whether the workspace
+        # attaches a pty to the command. Needs a recent macroscope build (the CLI added the
         # flag mid-2026 and self-updates on invocation).
         args = [self._command, 'codereview', '--raw']
         base_ref = base if base is not None else self._base
         if base_ref is not None:
             args += ['--base', base_ref]
-        output = await self._run_cli(args)
+        exit_code, output = await self._run_cli(ctx, args)
         review = parse_macroscope_stream(output.splitlines())
-        if review.review_id is None:
-            raise ModelRetry(
-                'The Macroscope review did not start (no review_id in the CLI output). '
-                'Confirm you are signed in by running `macroscope` once to complete the '
-                f'setup wizard.\n\nCLI output:\n{output[-_ERROR_TAIL_CHARS:]}'
+        if review.review_id is not None:
+            return review
+        if exit_code == _NOT_FOUND_EXIT and not output.strip():
+            raise UserError(_INSTALL_HINT)
+        tail = output.strip()[-_ERROR_TAIL_CHARS:]
+        # `env` reports launch failures with status 126 or 127 and names the command in its diagnostic.
+        # Check both so the same status returned by a CLI that did start remains the CLI's own result.
+        launch_failed = exit_code in _LAUNCH_FAILURE_EXITS and any(
+            line.startswith('env:') and self._command in line for line in output.splitlines()
+        )
+        if launch_failed:
+            raise UserError(
+                f'The Macroscope CLI ({self._command!r}) could not be launched in the workspace.\n\nCLI output:\n{tail}'
             )
-        return review
+        if base is not None:
+            # The model's own `base` may be what failed (e.g. a ref that does not exist), so let
+            # it drop or change the argument; a retry without it then surfaces a setup error.
+            raise ModelRetry(
+                f'The Macroscope review did not start with base={base!r}. Check that the ref '
+                f'exists, or call again without `base`.\n\nCLI output:\n{tail}'
+            )
+        # Covers a CLI that is not signed in and one that could not run at all (lost +x, bad
+        # interpreter); the output tail says which.
+        raise UserError(
+            f'The Macroscope review did not start (no review_id in the CLI output, exit code {exit_code}). '
+            'If the output shows the CLI could not run, reinstall it; otherwise run `macroscope` once in '
+            'the workspace to sign in and complete the setup wizard.'
+            f'\n\nCLI output:\n{tail}'
+        )
 
-    async def _run_cli(self, args: list[str]) -> str:
-        """Run the macroscope CLI and return its combined stdout+stderr text.
+    async def _run_cli(self, ctx: RunContext[AgentDepsT], args: list[str]) -> tuple[int, str]:
+        """Run the macroscope CLI in the workspace and return its exit code and combined stdout+stderr text.
 
-        Spawns the CLI in its own session so a hung review can be killed by process
-        group when it exceeds `timeout`, rather than leaking a background process.
+        The workspace enforces `timeout` and stops the command when it expires.
         """
         try:
-            proc = await anyio.open_process(
-                args,
-                cwd=self._cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
-        except OSError as e:
-            # `shutil.which` found the binary, but spawning it still failed (lost +x,
-            # bad interpreter, a race since the check). Surface it to the model as a
-            # retryable setup error rather than crashing the whole run.
-            raise ModelRetry(f'Failed to launch the macroscope CLI ({self._command!r}): {e}') from e
-        stdout_chunks: list[bytes] = []
-        stderr_chunks: list[bytes] = []
-        try:
-            assert proc.stdout is not None
-            assert proc.stderr is not None
-
-            async def _read_stdout() -> None:
-                assert proc.stdout is not None
-                async for chunk in proc.stdout:
-                    stdout_chunks.append(chunk)
-
-            async def _read_stderr() -> None:
-                assert proc.stderr is not None
-                async for chunk in proc.stderr:
-                    stderr_chunks.append(chunk)
-
-            try:
-                with anyio.fail_after(self._timeout):
-                    async with anyio.create_task_group() as tg:
-                        tg.start_soon(_read_stdout)
-                        tg.start_soon(_read_stderr)
-                    await proc.wait()
-            except TimeoutError:
-                await self._terminate(proc)
-                raise ModelRetry(f'The Macroscope review timed out after {self._timeout}s.') from None
-        finally:
-            await proc.aclose()
-        stdout = b''.join(stdout_chunks).decode('utf-8', errors='replace')
-        stderr = b''.join(stderr_chunks).decode('utf-8', errors='replace')
+            result = await ctx.workspace.run(['sh', '-c', _LAUNCHER, 'sh', *args], timeout=self._timeout)
+        # Before `WorkspaceError`: a timeout is retryable, other workspace failures are not.
+        except WorkspaceTimeoutError:
+            raise ModelRetry(f'The Macroscope review timed out after {self._timeout}s.') from None
+        except WorkspaceError as e:
+            raise_tool_failure(e)
         # The parse-relevant markers all arrive on stderr; join with a newline so a
         # stdout chunk without a trailing newline cannot glue onto the first stderr line.
-        return f'{stdout}\n{stderr}'
-
-    async def _terminate(self, proc: anyio.abc.Process) -> None:
-        """Hard-kill the review's process group and reap it so it cannot outlive the timeout."""
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except OSError:  # pragma: no cover - process already exited
-            pass
-        with anyio.CancelScope(shield=True):
-            await proc.wait()
+        return result.exit_code, f'{result.stdout}\n{result.stderr}'

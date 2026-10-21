@@ -5,9 +5,9 @@ truncating, spilling to a queryable file, or summarizing -- so an oversized payl
 not persist in history and get re-sent on every later model request. Combine the three
 modes through an ordered list of size `bands`.
 
-Spilled payloads are read back on demand through the registered `read_tool_result` tool;
-the `OverflowStore` protocol is the seam for a durable backend (the local-file default
-ships for single-process runs).
+Spilled payloads are written to the run's workspace by default (`WorkspaceStore`) and read
+back on demand through the registered `read_tool_result` tool; the `OverflowStore` protocol
+is the seam for any other backend.
 """
 
 from pydantic_ai_harness.tool_output_limits._bands import (
@@ -26,7 +26,7 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     indented_json,
     json_lines,
 )
-from pydantic_ai_harness.tool_output_limits._store import LocalFileStore, OverflowStore
+from pydantic_ai_harness.tool_output_limits._store import LocalFileStore, OverflowStore, WorkspaceStore
 
 __all__ = [
     'READ_TOOL_NAME',
@@ -42,6 +42,7 @@ __all__ = [
     'SummarizeFunc',
     'Truncate',
     'TruncationStrategy',
+    'WorkspaceStore',
     'indented_json',
     'json_lines',
 ]

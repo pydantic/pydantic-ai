@@ -31,6 +31,8 @@ External assumptions, verified 2026-07-28 against mongod 8.2.12 (`mongo:8`):
   round trip; the server rejects anything over 16777216 with a `WriteError`
   (code 10334). A document inside that ~16KiB window therefore fails on the
   server, not in the driver -- both loudly, but as different exception types.
+  Inside `insert_many` the server refuses both sizes, as a `BulkWriteError` and
+  an `OperationFailure`, since the driver only checks the whole batch.
   Source:
   <https://www.mongodb.com/docs/manual/reference/limits/#mongodb-limit-BSON-Document-Size>.
 """
@@ -48,11 +50,11 @@ import anyio
 import pytest
 from bson.errors import InvalidDocument
 from pydantic import TypeAdapter
-from pydantic_ai.messages import ModelResponse, TextPart
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DocumentTooLarge, DuplicateKeyError, PyMongoError, WriteError
+from pymongo.errors import DuplicateKeyError, OperationFailure, PyMongoError
 
+from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai_harness.media import MongoMediaStore, parse_media_uri
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -181,28 +183,25 @@ def test_live_tests_run_on_asyncio_backend(anyio_backend: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ('payload_bytes', 'expected'),
+    'payload_bytes',
     [
-        pytest.param(_SERVER_REFUSED_BYTES, WriteError, id='server-refused'),
-        pytest.param(_DRIVER_REFUSED_BYTES, DocumentTooLarge, id='driver-refused'),
+        pytest.param(_SERVER_REFUSED_BYTES, id='server-refused'),
+        pytest.param(_DRIVER_REFUSED_BYTES, id='driver-refused'),
     ],
 )
-@pytest.mark.anyio(backends=['asyncio'])
-async def test_oversized_snapshot_fails_loudly_without_media_externalization(
-    payload_bytes: int, expected: type[PyMongoError]
-) -> None:
-    """A snapshot past the 16MB BSON cap raises instead of silently truncating."""
+async def test_oversized_message_fails_loudly_without_media_externalization(payload_bytes: int) -> None:
+    """A message past the 16MB BSON cap raises instead of silently truncating, and saves no snapshot."""
     async with _live_database() as db:
         store = MongoStepStore(client=db.client, database=db.name, media_store=None)
         snapshot = _text_snapshot('run-too-large', 'x' * payload_bytes)
 
-        with pytest.raises(expected):
+        # Each message is its own document, stored with `insert_many`.
+        with pytest.raises(OperationFailure):
             await store.save_snapshot(snapshot)
 
         assert await store.latest_snapshot(run_id='run-too-large') is None
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_media_externalization_saves_a_snapshot_past_the_bson_cap() -> None:
     """The same payload round-trips once large text is offloaded to the media store."""
     text = 'x' * _SERVER_REFUSED_BYTES
@@ -226,7 +225,6 @@ async def test_media_externalization_saves_a_snapshot_past_the_bson_cap() -> Non
         assert part.content == text
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_multi_chunk_blob_round_trips_at_the_default_chunk_size() -> None:
     """A blob larger than one BSON document survives the default 8MB chunking."""
     data = os.urandom(_MULTI_CHUNK_BLOB_BYTES)
@@ -244,7 +242,6 @@ async def test_multi_chunk_blob_round_trips_at_the_default_chunk_size() -> None:
         assert await store.get(uri) == data
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_chunk_reassembly_ignores_collection_scan_order() -> None:
     """Reassembly follows the sort on `n`, not the order mongod stores chunks in."""
     data = os.urandom(5 * 1024)
@@ -269,7 +266,6 @@ async def test_chunk_reassembly_ignores_collection_scan_order() -> None:
         assert await store.get(uri) == data
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_awkward_metadata_keys_round_trip_through_real_bson() -> None:
     """Dotted, `$`-prefixed, and non-ASCII metadata keys are stored verbatim."""
     async with _live_database() as db:
@@ -292,7 +288,6 @@ async def test_awkward_metadata_keys_round_trip_through_real_bson() -> None:
         assert raw['metadata'] == _AWKWARD_METADATA
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_null_byte_metadata_key_is_rejected_by_the_bson_encoder() -> None:
     """The one metadata key shape BSON cannot carry fails at encode time, before the wire."""
     async with _live_database() as db:
@@ -302,7 +297,6 @@ async def test_null_byte_metadata_key_is_rejected_by_the_bson_encoder() -> None:
             await store.register_run(RunRecord(run_id='run-null-key', metadata={'a\x00b': 'v'}))
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_tool_effect_unique_index_is_created_and_enforced() -> None:
     """`(run_id, tool_call_id)` is a real server-side constraint, not a convention."""
     async with _live_database() as db:

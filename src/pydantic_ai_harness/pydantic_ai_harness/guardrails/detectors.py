@@ -50,7 +50,6 @@ from typing import Literal, TypeGuard
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent
-
 from pydantic_ai_harness.guardrails._shared import GuardrailResult
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
 

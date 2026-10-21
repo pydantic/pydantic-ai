@@ -6,10 +6,14 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
+from pydantic_ai.workspaces import WorkspaceBackend
 
 
 async def call_tools(
-    capabilities: Sequence[AbstractCapability[None]], calls: Sequence[tuple[str, dict[str, object]]]
+    capabilities: Sequence[AbstractCapability[None]],
+    calls: Sequence[tuple[str, dict[str, object]]],
+    *,
+    workspace: WorkspaceBackend | None = None,
 ) -> list[str]:
     """Make each call in turn within one run, then finish; return each tool result or retry prompt text."""
     turn = 0
@@ -31,7 +35,7 @@ async def call_tools(
                 yield part.content
 
     agent = Agent(FunctionModel(respond, stream_function=stream), deps_type=type(None), capabilities=capabilities)
-    result = await agent.run('Use the tools')
+    result = await agent.run('Use the tools', workspace=workspace)
     return [
         str(part.content)
         for message in result.all_messages()
@@ -40,6 +44,12 @@ async def call_tools(
     ]
 
 
-async def call_tool(capabilities: Sequence[AbstractCapability[None]], name: str, arguments: dict[str, object]) -> str:
+async def call_tool(
+    capabilities: Sequence[AbstractCapability[None]],
+    name: str,
+    arguments: dict[str, object],
+    *,
+    workspace: WorkspaceBackend | None = None,
+) -> str:
     """Call `name` with `arguments` once, then finish; return the tool result or retry prompt text."""
-    return '\n'.join(await call_tools(capabilities, [(name, arguments)]))
+    return '\n'.join(await call_tools(capabilities, [(name, arguments)], workspace=workspace))

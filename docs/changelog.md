@@ -133,7 +133,7 @@ These removals and behavior changes could not be announced via a V1 deprecation 
 
 ##### [`ModelProfile`][pydantic_ai.profiles.ModelProfile] is now a `TypedDict` {#modelprofile-is-now-a-typeddict}
 
-See the [Model Profile guide](models/openai.md#model-profile) for an overview of what a model profile is and how to configure one.
+See the [Model Profile guide](models/compatible-apis.md#model-profile) for an overview of what a model profile is and how to configure one.
 
 [`ModelProfile`][pydantic_ai.profiles.ModelProfile] and all its subclasses ([`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile], [`AnthropicModelProfile`][pydantic_ai.profiles.anthropic.AnthropicModelProfile], [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile], `BedrockModelProfile`, etc.) are now `TypedDict(total=False)` instead of `@dataclass`. This unifies the mental model with [`ModelSettings`][pydantic_ai.settings.ModelSettings] (also a `TypedDict`) and enables direct dict-spread for cross-class merging.
 
@@ -165,7 +165,7 @@ In v1, `ModelProfile.update()` silently filtered out fields not declared on the 
 
 This means e.g. a Bedrock-hosted Anthropic model's resolved profile now carries the upstream `anthropic_*` fields alongside the `bedrock_*` fields, where v1 dropped them. No in-tree model class reads cross-class fields, so behavior is unchanged in the standard providers; but custom model classes that do `profile.get('anthropic_supports_adaptive_thinking', False)` on a non-Anthropic route will now see the value the upstream Anthropic profile set, where v1 always returned the default.
 
-See the [Model Profile guide](models/openai.md#model-profile) for how to configure a profile, and [PR #5481](https://github.com/pydantic/pydantic-ai/pull/5481) for the full `ModelProfile` redesign.
+See the [Model Profile guide](models/compatible-apis.md#model-profile) for how to configure a profile, and [PR #5481](https://github.com/pydantic/pydantic-ai/pull/5481) for the full `ModelProfile` redesign.
 
 ##### Parallel tool-call execution runs in emission order
 

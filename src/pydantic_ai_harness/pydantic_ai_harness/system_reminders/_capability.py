@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from copy import copy
@@ -14,17 +15,14 @@ from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
     ModelRequest,
-    ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
     TextContent,
     TextPart,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
-
+from pydantic_ai_harness._cache_points import has_cache_point_target
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
@@ -32,6 +30,11 @@ from pydantic_ai_harness.system_reminders._events import ReminderFiredEvent
 if TYPE_CHECKING:
     from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
     from pydantic_ai.models import ModelRequestContext
+
+logger = logging.getLogger(__name__)
+
+_WARNED_RUNS_KEPT = 256
+"""How many recent run ids an `LLMReminder` remembers for its once-per-run failure warning."""
 
 
 @dataclass
@@ -195,7 +198,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 content: list[CachePoint | str] = []
                 # A leading `CachePoint` is only valid when the request already carries a
                 # user-content block for it to attach to; Anthropic and Bedrock raise otherwise.
-                if _has_user_content(last.parts):
+                if has_cache_point_target(last.parts):
                     content.append(CachePoint(ttl=self.cache_ttl))
                 content.append('\n\n'.join(texts))
                 messages[-1] = replace(last, parts=[*last.parts, UserPromptPart(content=content)])
@@ -248,7 +251,10 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                 try:
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
-                except Exception:
+                except Exception as exc:
+                    dynamic._log_failure(  # pyright: ignore[reportPrivateUsage]
+                        exc, ctx.run_id, 'LLMReminder generation operation failed; using GoalReanchor text instead'
+                    )
                     result, error_type = None, 'DurabilityError'
                 if error_type is not None:
                     result = GoalReanchor[AgentDepsT]()(ctx)
@@ -267,11 +273,14 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         reminder = self._dynamic_snapshot[index]
         if not _is_llm_reminder(reminder):  # pragma: no cover - operation inputs originate above
             raise RuntimeError(f'Dynamic reminder {index} is no longer an LLMReminder.')
+        if _request_reserved_for_parent(ctx):
+            return None, 'RequestLimitReserved'
         try:
             return await reminder._generate_from_transcript(ctx, transcript), None  # pyright: ignore[reportPrivateUsage]
         except Exception as exc:
             # Reminders are best-effort. Journal the fallback decision rather than inheriting an
             # engine's potentially unbounded retry policy and stalling the agent run.
+            reminder._log_failure(exc, ctx.run_id)  # pyright: ignore[reportPrivateUsage]
             return None, type(exc).__name__
 
     @classmethod
@@ -331,16 +340,41 @@ class LLMReminder(Generic[AgentDepsT]):
     max_context_messages: int = 10
     instructions: str = _LLM_INSTRUCTIONS
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
+    _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
+    """Runs whose generation failure was already logged, oldest first (an ordered set, bounded)."""
 
     def __post_init__(self) -> None:
         if self.max_context_messages < 1:
             raise ValueError(f'max_context_messages must be >= 1, got {self.max_context_messages}')
 
     async def __call__(self, ctx: RunContext[AgentDepsT]) -> str | None:
+        if _request_reserved_for_parent(ctx):
+            return GoalReanchor[AgentDepsT]()(ctx)
         try:
             return await self._generate(ctx)
-        except Exception:
+        except Exception as exc:
+            self._log_failure(exc, ctx.run_id)
             return GoalReanchor[AgentDepsT]()(ctx)
+
+    def _log_failure(
+        self,
+        exc: Exception,
+        run_id: str | None,
+        message: str = 'LLMReminder generation failed; using GoalReanchor text instead',
+    ) -> None:
+        """Warn once per run that generation failed and `GoalReanchor` text is used instead.
+
+        A misconfigured model (wrong name, missing API key) fails on every turn. One warning with
+        the traceback per run shows why, without repeating it for every model request. Without a
+        run id there is nothing to deduplicate on, so every failure is logged.
+        """
+        if run_id is not None:
+            if run_id in self._warned_runs:
+                return
+            self._warned_runs[run_id] = None
+            if len(self._warned_runs) > _WARNED_RUNS_KEPT:
+                del self._warned_runs[next(iter(self._warned_runs))]
+        logger.warning(message, exc_info=exc)
 
     async def _generate(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """Generate without fallback so a durability engine can retry transient failures."""
@@ -362,6 +396,12 @@ class LLMReminder(Generic[AgentDepsT]):
         return text or None
 
 
+def _request_reserved_for_parent(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether a nested request would spend the request already approved for the parent."""
+    limits = reserved_usage_limits(ctx.usage_limits)
+    return limits is not None and limits.request_limit is not None and ctx.usage.requests >= limits.request_limit
+
+
 def _is_llm_reminder(value: object) -> TypeGuard[LLMReminder[AgentDepsT]]:
     return isinstance(value, LLMReminder)
 
@@ -377,37 +417,6 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     if reminder.tag is not None:
         return f'<{reminder.tag}>\n{reminder.content}\n</{reminder.tag}>'
     return reminder.content
-
-
-def _has_user_content(parts: Sequence[ModelRequestPart]) -> bool:
-    """Whether these request parts already carry a block a `CachePoint` can attach to.
-
-    Anthropic and Bedrock reject a `CachePoint` that is the first content of a user message,
-    so the tail reminder leads with one only when the request already contributes user-mappable
-    content: a non-empty user prompt, a tool return, or a retry prompt. `SystemPromptPart` maps
-    to the system field, not user content, so it does not count.
-    """
-    for part in parts:
-        if isinstance(part, (ToolReturnPart, RetryPromptPart)):
-            return True
-        if isinstance(part, UserPromptPart):
-            content = part.content
-            if isinstance(content, str):
-                if content:
-                    return True
-            elif any(_is_user_content_item(item) for item in content):
-                return True
-    return False
-
-
-def _is_user_content_item(item: object) -> bool:
-    if isinstance(item, CachePoint):
-        return False
-    if isinstance(item, str):
-        return bool(item)
-    if isinstance(item, TextContent):
-        return bool(item.content)
-    return True
 
 
 def _first_user_text(messages: Sequence[ModelMessage]) -> str | None:

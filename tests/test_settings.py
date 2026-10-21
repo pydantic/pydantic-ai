@@ -7,7 +7,7 @@ from pydantic_ai import Agent, models
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 _MODEL_MODULE_NAMES = [module_info.name for module_info in pkgutil.iter_modules(models.__path__, f'{models.__name__}.')]

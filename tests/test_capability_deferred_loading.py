@@ -12,6 +12,14 @@ from typing import Any, cast
 
 import pytest
 
+from pydantic_ai import (
+    CapabilityInstructionSource,
+    InstructionBaselinePart,
+    InstructionDigest,
+    InstructionId,
+    InstructionPart,
+)
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -57,10 +65,12 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.tool_manager import ParallelExecutionMode
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE,
+    LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -74,9 +84,7 @@ from .conftest import IsDatetime, IsStr, iter_message_parts
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 async def test_deferred_capability_catalog_mentions_search_only_when_search_surface_exists() -> None:
@@ -815,7 +823,22 @@ async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='hi', timestamp=IsDatetime()),
+                    InstructionBaselinePart(
+                        instructions=[
+                            InstructionPart(
+                                content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                                dynamic=True,
+                                on_change='append',
+                                id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                            )
+                        ]
+                    ),
+                ],
                 timestamp=IsDatetime(),
                 instructions="""\
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
@@ -1074,7 +1097,26 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime())],
+                parts=[
+                    UserPromptPart(content='Can I get a refund?', timestamp=IsDatetime()),
+                    InstructionBaselinePart(
+                        instructions=[
+                            InstructionDigest(
+                                id=InstructionId(source=CapabilityInstructionSource(id='always-on')),
+                                content_hash='97321e5185a6577bd855abec078319a0b556019f94499fd828a05d24bd9d9a5e',
+                            ),
+                            InstructionPart(
+                                content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
+                                dynamic=True,
+                                on_change='append',
+                                id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                            ),
+                        ]
+                    ),
+                ],
                 timestamp=IsDatetime(),
                 instructions="""\
 Visible billing instructions.
@@ -2521,3 +2563,56 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
     ]
     assert len(load_returns) == 1
     assert load_returns[0].instructions == 'Deferred instructions.'
+
+
+@pytest.mark.parametrize('mode', ['parallel', 'sequential'])
+async def test_load_capability_called_twice_in_one_response_loads_once(mode: ParallelExecutionMode) -> None:
+    """Only the first `load_capability` call for an id in a response delivers its instructions (#7298).
+
+    Sibling calls can't see each other's load through `active_capability_ids` (a load only counts once
+    its return reaches history), so the duplicate is refused by response position instead, and a load
+    of a different capability in the same response is unaffected.
+    """
+
+    def dyn_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    dyn = Capability[object](
+        id='dyn', description='Dynamic.', instructions='Dyn runbook.', tools=[dyn_tool], defer_loading=True
+    )
+    other = Capability[object](id='other', description='Other.', instructions='Other runbook.', defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'dyn'}, tool_call_id='first'),
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'other'}, tool_call_id='other'),
+                    ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'dyn'}, tool_call_id='duplicate'),
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[dyn, other])
+    with Agent.parallel_tool_call_execution_mode(mode):
+        result = await agent.run('load dyn twice')
+
+    assert result.output == 'done'
+    messages = result.all_messages()
+    tool_results = [
+        part
+        for part in messages[2].parts
+        if isinstance(part, LoadCapabilityReturnPart | RetryPromptPart | ToolAvailabilityDeltaPart)
+    ]
+    assert [(type(part).__name__, part.tool_call_id) for part in tool_results] == [
+        ('LoadCapabilityReturnPart', 'first'),
+        ('ToolAvailabilityDeltaPart', 'first'),
+        ('LoadCapabilityReturnPart', 'other'),
+        ('RetryPromptPart', 'duplicate'),
+    ]
+    first, _, other_return, duplicate = tool_results
+    assert isinstance(first, LoadCapabilityReturnPart) and first.instructions == 'Dyn runbook.'
+    assert isinstance(other_return, LoadCapabilityReturnPart) and other_return.instructions == 'Other runbook.'
+    assert isinstance(duplicate, RetryPromptPart)
+    assert duplicate.content == LOAD_CAPABILITY_DUPLICATE_CALL_MESSAGE_TEMPLATE.format(capability_id='dyn')
+    assert parse_loaded_capabilities(messages) == {'dyn', 'other'}

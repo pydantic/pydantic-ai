@@ -9,6 +9,7 @@ store only uses the async collection surface both share.
 
 from __future__ import annotations
 
+import anyio.to_thread
 import pytest
 from bson.binary import Binary
 from mongomock_motor import AsyncMongoMockClient
@@ -23,8 +24,6 @@ from pydantic_ai_harness.media import (
     media_uri_for,
     parse_media_uri,
 )
-
-pytestmark = pytest.mark.anyio
 
 _MISSING_URI = 'media+sha256://' + ('0' * 64)
 
@@ -79,7 +78,10 @@ class TestMongoMediaStoreConstruction:
         monkeypatch: pytest.MonkeyPatch,
         close_calls: list[AsyncMongoClient[dict[str, object]]],
     ) -> None:
-        store = MongoMediaStore(db_url='mongodb://localhost:59017', database='t')
+        # Building a client touches the filesystem; users build stores outside the event loop.
+        store = await anyio.to_thread.run_sync(
+            lambda: MongoMediaStore(db_url='mongodb://localhost:59017', database='t')
+        )
         await store.aclose()
         assert len(close_calls) == 1
 
@@ -119,7 +121,7 @@ class TestMongoMediaStoreRoundTrip:
         """
         client = _mock_client()
         store = MongoMediaStore(client=client, database='t', chunk_size_bytes=4)
-        data = bytes(range(256)) * 40  # 10_240 bytes -> 2560 chunks of 4
+        data = bytes(range(42))  # 42 bytes -> 10 full chunks of 4 plus a 2-byte tail
         uri = await store.put(data)
         digest = parse_media_uri(uri)
         expected_chunks = (len(data) + 3) // 4
@@ -173,8 +175,10 @@ class TestMongoMediaStoreRoundTrip:
     async def test_multi_byte_text_survives_chunk_boundaries(self) -> None:
         """Chunking splits raw bytes, so a multi-byte character straddles two chunks."""
         store = MongoMediaStore(client=_mock_client(), database='t', chunk_size_bytes=7)
-        text = 'héllo wörld 日本語 🎉 ' * 500
+        text = 'héllo wörld 日本語 🎉 ' * 2
         data = text.encode('utf-8')
+        # At least one chunk boundary lands on a UTF-8 continuation byte, mid-character.
+        assert any(data[i] & 0xC0 == 0x80 for i in range(7, len(data), 7))
         uri = await store.put(data, context=MediaContext(media_type='text/plain'))
         fetched = await store.get(uri)
         assert fetched == data
@@ -290,4 +294,4 @@ class TestMediaLazyExport:
     def test_unknown_attribute_raises(self) -> None:
 
         with pytest.raises(AttributeError, match='has no attribute'):
-            _ = media.NoSuchStore  # type: ignore[attr-defined]
+            _ = media.NoSuchStore

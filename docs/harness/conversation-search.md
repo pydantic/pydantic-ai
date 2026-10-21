@@ -7,7 +7,7 @@ description: "Let a Pydantic AI agent search its past conversation history, incl
 
 `ConversationSearch` gives the model a `search_conversation_history` tool that BM25-ranks the history a `StepPersistence` capability already persists -- earlier turns that compaction dropped from the live context, and past runs in the same conversation by default.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/conversation_search/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/conversation_search/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -29,7 +29,7 @@ from pydantic_ai_harness.step_persistence import SqliteStepStore
 
 store = SqliteStepStore(database='sessions.db')
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StepPersistence(store=store),
         ConversationSearch(SnapshotHistorySource(store), scope='conversation'),
@@ -62,7 +62,7 @@ Overlap matching keys off a content hash of each serialized message, not object 
 
 ```python
 agent = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[
         StepPersistence(store=store),
         ConversationSearch(SnapshotHistorySource(store), scope='conversation'),
@@ -87,7 +87,7 @@ Scoping is applied to the `RunRecord`s a `HistorySource` returns, so a custom so
 
 ### Migrating from the `scope='all'` default
 
-This default changed. Earlier releases defaulted to `scope='all'`, so one search ranked every run in the store; it now defaults to `conversation`. Nothing raises on upgrade -- a caller who relied on the old default keeps working and simply stops seeing other conversations -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per capability instance naming the change.
+This default changed. Earlier releases defaulted to `scope='all'`, so one search ranked every run in the store; it now defaults to `conversation`. Nothing raises on upgrade -- a caller who relied on the old default keeps working and simply stops seeing other conversations -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per capability instance naming the change. This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.
 
 Set the option explicitly to resolve it. Both values are supported and neither is deprecated:
 
@@ -128,7 +128,7 @@ Persisted instruction replacements and withdrawals are searchable as system text
 
 ## Further reading
 
-- [Pydantic AI capabilities](/ai/capabilities/overview/)
+- [Pydantic AI capabilities](../capabilities/overview.md)
 - [Step Persistence](step-persistence.md) -- the substrate this capability reads
 - [Compaction](compaction.md) -- the capabilities whose drops this one recovers from
 

@@ -7,12 +7,12 @@ from pathlib import Path
 
 import anyio
 import pytest
+
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     InMemoryStepStore,
@@ -23,11 +23,6 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -87,6 +82,7 @@ async def test_same_length_after_run_rewrite_gets_final_checkpoint(tmp_path: Pat
     assert snapshot.messages == result.all_messages()
 
 
+@pytest.mark.subprocess(reason='hard-kills a process mid-run to check what it leaves persisted')
 async def test_hard_kill_leaves_model_frontier_and_unknown_effects(tmp_path: Path) -> None:
     database = tmp_path / 'steps.db'
     script = """

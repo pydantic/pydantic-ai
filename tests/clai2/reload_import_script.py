@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 import pydantic_clai2
-from pydantic_clai2.reloading import reload_clai
+from pydantic_clai2.runtime.reloading import reload_clai
 
 
 def conditional_source(mode: str) -> str:

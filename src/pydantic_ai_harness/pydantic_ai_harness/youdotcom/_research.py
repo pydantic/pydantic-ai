@@ -5,15 +5,18 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING, Literal, get_args
 
-from pydantic_ai.capabilities import AbstractCapability
+from youdotcom import models
+
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from youdotcom import models
-
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._durable import RetryRequest, ToolOperation, raise_retry, retry_as_result
 from pydantic_ai_harness.youdotcom._toolset import (
     YouClient,
     default_client,
@@ -74,6 +77,15 @@ def _prefix_warnings(body: str, warnings: Sequence[str] | None) -> str:
     return f'Warnings:\n{listed}\n\n{body}'
 
 
+@dataclass(frozen=True)
+class YouResearchOperations:
+    """The durable operations a `YouResearch` capability runs its toolset's You.com requests through."""
+
+    answer: ToolOperation
+    research: ToolOperation
+    finance_research: ToolOperation
+
+
 class YouResearchToolset(FunctionToolset[AgentDepsT]):
     """Provides `answer`, `research`, and `finance_research` backed by the You.com APIs.
 
@@ -84,6 +96,10 @@ class YouResearchToolset(FunctionToolset[AgentDepsT]):
     `research` runs as a blocking call bounded by `timeout_ms`. It supports the
     `lite`, `standard`, `deep`, and `exhaustive` effort levels; `frontier`,
     which the API only runs in background mode, is not supported here.
+
+    `YouResearch` passes `operations` so that each tool's You.com request runs
+    as one of its durable operations, whose result durable execution records
+    instead of making the request again on recovery.
     """
 
     def __init__(
@@ -99,9 +115,12 @@ class YouResearchToolset(FunctionToolset[AgentDepsT]):
         country: str | None = None,
         output_schema: Mapping[str, object] | None = None,
         timeout_ms: int = DEFAULT_RESEARCH_TIMEOUT_MS,
+        id: str | None = None,
+        operations: YouResearchOperations | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._client = client if client is not None else default_client(timeout_ms)
+        self._operations = operations
         self._effort = models.ResearchEffort(research_effort)
         self._finance_effort = models.FinanceResearchEffort(finance_effort)
         self._include_domains = list(include_domains) if include_domains else None
@@ -136,6 +155,8 @@ class YouResearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             A cited answer, followed by the sources it drew on.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.answer(query))
         response = await self._client.answer_async(
             query=query,
             freshness=self._freshness,
@@ -162,6 +183,8 @@ class YouResearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The synthesized answer, followed by the sources it drew on.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.research(input))
         result = await self._client.research_async(
             input=input,
             research_effort=self._effort,
@@ -188,6 +211,8 @@ class YouResearchToolset(FunctionToolset[AgentDepsT]):
         Returns:
             The synthesized analysis, followed by the sources it drew on.
         """
+        if self._operations is not None:
+            return raise_retry(await self._operations.finance_research(input))
         response = await self._client.finance_research_async(input=input, research_effort=self._finance_effort)
         body = response.output.content
         if not body:
@@ -222,6 +247,10 @@ class YouResearch(AbstractCapability[AgentDepsT]):
 
     Authentication comes from the `YDC_API_KEY` environment variable by
     default; pass `client` to configure it explicitly.
+
+    Each tool's You.com request runs as a durable operation, so under durable
+    execution a recovered run reuses the recorded result instead of making the
+    request again.
     """
 
     _: KW_ONLY
@@ -270,6 +299,9 @@ class YouResearch(AbstractCapability[AgentDepsT]):
     client: YouClient | None = None
     """You.com client to use; when `None`, a `youdotcom.You` is built from `YDC_API_KEY`."""
 
+    id: str | None = 'you_research'
+    """Stable identity for durable execution, which records each You.com request under it."""
+
     def __post_init__(self) -> None:
         """Validate configuration against the You.com API's documented constraints."""
         if self.research_effort not in _RESEARCH_EFFORTS:
@@ -288,10 +320,46 @@ class YouResearch(AbstractCapability[AgentDepsT]):
             return self.guidance or None
         return _INSTRUCTIONS
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
+
     def get_toolset(self) -> YouResearchToolset[AgentDepsT]:
         """Build the toolset providing `answer`, `research`, and `finance_research`."""
+        return self._build_toolset(
+            id=self.id,
+            operations=YouResearchOperations(
+                answer=self._answer, research=self._research, finance_research=self._finance_research
+            ),
+        )
+
+    @durable_operation('answer')
+    async def _answer(self, query: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.answer(query))
+
+    @durable_operation('research')
+    async def _research(self, input: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.research(input))
+
+    @durable_operation('finance_research')
+    async def _finance_research(self, input: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.finance_research(input))
+
+    @cached_property
+    def _client(self) -> YouClient:
+        return self.client if self.client is not None else default_client(self.timeout_ms)
+
+    @cached_property
+    def _requests(self) -> YouResearchToolset[AgentDepsT]:
+        """The toolset whose tools make the You.com requests that the durable operations run."""
+        return self._build_toolset()
+
+    def _build_toolset(
+        self, *, id: str | None = None, operations: YouResearchOperations | None = None
+    ) -> YouResearchToolset[AgentDepsT]:
         return YouResearchToolset[AgentDepsT](
-            client=self.client,
+            client=self._client,
             research_effort=self.research_effort,
             finance_effort=self.finance_effort,
             include_domains=self.include_domains,
@@ -301,6 +369,8 @@ class YouResearch(AbstractCapability[AgentDepsT]):
             country=self.country,
             output_schema=self.output_schema,
             timeout_ms=self.timeout_ms,
+            id=id,
+            operations=operations,
         )
 
     @classmethod
@@ -317,6 +387,7 @@ class YouResearch(AbstractCapability[AgentDepsT]):
         output_schema: Mapping[str, object] | None = None,
         guidance: str | None = None,
         timeout_ms: int = DEFAULT_RESEARCH_TIMEOUT_MS,
+        id: str | None = 'you_research',
     ) -> YouResearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -334,4 +405,5 @@ class YouResearch(AbstractCapability[AgentDepsT]):
             output_schema=output_schema,
             guidance=guidance,
             timeout_ms=timeout_ms,
+            id=id,
         )

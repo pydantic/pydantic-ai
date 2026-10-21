@@ -17,10 +17,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..credential_store import write_private
-from ..project_settings import find_project_file
-from ..settings_store import config_dir
-from ._settings import HTTPServer, Server, Servers, SSEServer, StdioServer
+from pydantic_clai2.config.credential_store import write_private
+from pydantic_clai2.config.project_settings import find_project_file
+from pydantic_clai2.config.settings_store import config_dir
+from pydantic_clai2.mcp._settings import HTTPServer, Server, Servers, SSEServer, StdioServer
 
 PROJECT_MCP_FILE = Path('.clai') / 'mcp_servers.json'
 CLAUDE_MCP_FILE = Path('.mcp.json')
@@ -45,13 +45,23 @@ class ProjectFile(BaseModel):
     servers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer])
 
 
-class ClaudeProjectFile(ProjectFile):
+class ClaudeProjectFile(BaseModel):
     """Claude Code's project `.mcp.json`: the same servers under `mcpServers`, `type` optional for stdio."""
 
-    servers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer], alias='mcpServers')
+    model_config = ConfigDict(extra='forbid', frozen=True, hide_input_in_errors=True)
+    # Named after the file's key rather than aliased to `servers`: pydantic 2.13 accepts an aliased
+    # field by its name too, so a `servers` key would no longer be rejected as extra.
+    mcpServers: Servers = Field(default_factory=dict[str, StdioServer | HTTPServer | SSEServer])
+
+    @property
+    def servers(self) -> Servers:
+        return self.mcpServers
 
 
-_FORMATS: dict[Path, type[ProjectFile]] = {PROJECT_MCP_FILE: ProjectFile, CLAUDE_MCP_FILE: ClaudeProjectFile}
+_FORMATS: dict[Path, type[ProjectFile | ClaudeProjectFile]] = {
+    PROJECT_MCP_FILE: ProjectFile,
+    CLAUDE_MCP_FILE: ClaudeProjectFile,
+}
 
 
 class MCPStore:
@@ -63,6 +73,11 @@ class MCPStore:
         self.path = directory / 'mcp.json'
         self.logs = directory / 'mcp_logs'
         self._workspace = workspace
+
+    @property
+    def workspace(self) -> Path:
+        """The session's directory: project files are found from it, and stdio servers start in it."""
+        return self._workspace or Path.cwd()
 
     def load(self) -> UserFile:
         """The saved file, or an empty one. A malformed file fails loudly with its path."""
@@ -94,9 +109,8 @@ class MCPStore:
         """The nearest copy of each `PROJECT_MCP_FILES` name between the workspace and the git root."""
         return list(self._project_files())
 
-    def _project_files(self) -> dict[Path, type[ProjectFile]]:
-        workspace = self._workspace or Path.cwd()
-        found = ((find_project_file(workspace, name), model) for name, model in _FORMATS.items())
+    def _project_files(self) -> dict[Path, type[ProjectFile | ClaudeProjectFile]]:
+        found = ((find_project_file(self.workspace, name), model) for name, model in _FORMATS.items())
         return {path: model for path, model in found if path is not None}
 
     def trust_state(self, path: Path) -> TrustState:
@@ -132,6 +146,15 @@ class MCPStore:
             self.save(data.model_copy(update={'trusted_projects': trusted}))
         return revoked
 
+    def review(self, path: Path) -> str:
+        """A project file's text, to read before trusting it, or why it cannot be read."""
+        if not _regular(path):
+            return 'A symlink, which is never trusted.'
+        try:
+            return _read_regular(path).decode(errors='replace')
+        except OSError as exc:
+            return f'Cannot read it: {exc}'
+
     def project_servers(self) -> dict[Path, Servers]:
         """Each trusted project file's servers, in precedence order; absent and untrusted files are left out."""
         accepted = self.load().trusted_projects
@@ -139,7 +162,7 @@ class MCPStore:
         return {path: servers for path, servers in loaded if servers is not None}
 
 
-def _read_trusted(path: Path, model: type[ProjectFile], accepted: dict[str, str]) -> Servers | None:
+def _read_trusted(path: Path, model: type[ProjectFile | ClaudeProjectFile], accepted: dict[str, str]) -> Servers | None:
     """The file's servers when its bytes are the accepted ones.
 
     The bytes are read once, so the file cannot be swapped between the hash check and parsing.

@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import TypeAdapter, ValidationError
-from pydantic_ai import AbstractToolset
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
-from pydantic_ai.capabilities._tool_search import ToolSearch as _ToolSearch
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, NativeToolSearchReturnPart, SystemPromptPart
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from typing_extensions import TypedDict
 
+from pydantic_ai import AbstractToolset
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, ToolSearch as _ToolSearch
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    ModelMessage,
+    ModelResponse,
+    NativeToolSearchReturnPart,
+    SystemPromptPart,
+    ToolSearchReturnPart,
+    post_compaction_window,
+)
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
+from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore
 from pydantic_ai_harness.code_mode._speculation import (
     MAX_SPECULATIONS_PER_PART,
     SpeculationCoordinator,
@@ -40,6 +49,11 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'New functions are now available inside `run_code`. Their signatures have been '
     'added to the available-functions catalog in the system prompt'
 )
+_DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
+"""`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
+# TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
+# (https://github.com/pydantic/pydantic-ai/pull/10547); this matches its escaping.
+_CLOSING_SYSTEM_TAG_OPENER = re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE)
 
 
 @dataclass
@@ -163,6 +177,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     your agent executes, so anyone who can intercept it can choose what your tools run.
     """
 
+    repl_store: CodeModeReplStore[AgentDepsT] | None = None
+    """Keep the `run_code` REPL across agent runs in this store.
+
+    Unset, each agent run starts a fresh REPL. With a store, a run that calls `run_code` restores
+    the state the store returns and saves the REPL when it ends, so a conversation of several runs
+    keeps its variables, imports, and function definitions. After `restart: true` the run saves its
+    new REPL, or `None` when the restarted snippet failed before creating one. A state Monty cannot
+    load is dropped and the run starts fresh. Not used under durable execution. See the Code Mode
+    guide for an example.
+    """
+
     dynamic_catalog: bool = False
     """Keep the `run_code` tool definition cache-stable as the sandboxed toolset grows.
 
@@ -198,7 +223,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
     _speculation: SpeculationCoordinator[AgentDepsT] | None = field(default=None, init=False, repr=False)
 
-    _announced_tools: set[str] = field(default_factory=set[str], init=False, repr=False)
+    _in_flight_announcements: set[str] = field(default_factory=set[str], init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Converted once here, so the per-run copies and the toolsets built from this do not warn again.
@@ -214,11 +239,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         return CapabilityOrdering(position='outermost', wraps=[_ToolSearch])
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> CodeMode[AgentDepsT]:
-        """Return a fresh instance so concurrent runs don't share `_announced_tools` or speculation state."""
+        """Return a fresh instance so concurrent runs don't share announcement or speculation state."""
         if not self.dynamic_catalog and self.speculate is None:
             return self
         clone = replace(self)
-        # `replace` re-runs `__init__`, resetting `init=False` fields: `_announced_tools` starts
+        # `replace` re-runs `__init__`, resetting `init=False` fields: in-flight announcements start
         # fresh (intended), and the stats object is rebound so callers holding this instance
         # observe counters accumulated by its per-run clones.
         clone.speculation_stats = self.speculation_stats
@@ -230,6 +255,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 launch_cap=min(MAX_SPECULATIONS_PER_PART, self.max_tool_calls),
             )
         return clone
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Clear announcements that the next model step has incorporated or discarded."""
+        self._in_flight_announcements.clear()
+        return request_context
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, splitting it into native + sandboxed subsets if needed."""
@@ -244,6 +278,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_access=self.os_access,
                 mount=self.mount,
                 monty_sandbox_url=self.monty_sandbox_url,
+                repl_store=self.repl_store,
                 capability=self,
                 speculation=self._speculation,
             )
@@ -257,6 +292,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_access=self.os_access,
             mount=self.mount,
             monty_sandbox_url=self.monty_sandbox_url,
+            repl_store=self.repl_store,
             capability=self,
             speculation=self._speculation,
         )
@@ -327,16 +363,74 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         return response
 
     def _announce_newly_discovered(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> None:
-        """Enqueue a system-prompt announcement for any names we haven't already announced."""
-        fresh = [n for n in names if n not in self._announced_tools]
+        """Enqueue names absent from visible history and the current step's pending queue."""
+        announced = _visible_announced_tools(ctx.messages)
+        fresh = list(dict.fromkeys(n for n in names if n not in announced and n not in self._in_flight_announcements))
         if not fresh:
             return
-        self._announced_tools.update(fresh)
-        listing = ', '.join(f'`{name}`' for name in fresh)
+        self._in_flight_announcements.update(fresh)
+        # A name can come from a remote MCP server, so one carrying `</system>` must not be able to end
+        # the `<system>` element that models without inline system prompts receive this in.
+        listing = ', '.join(f'`{_neutralize_closing_system_tag(name)}`' for name in fresh)
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
-        ctx.enqueue(SystemPromptPart(content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'))
+        ctx.enqueue(
+            SystemPromptPart(
+                content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.',
+                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': fresh},
+            )
+        )
+
+
+def _neutralize_closing_system_tag(text: str) -> str:
+    """Escape the `<` of every closing `system` tag in `text` as `&lt;`, and leave everything else as written."""
+    return _CLOSING_SYSTEM_TAG_OPENER.sub('&lt;', text)
+
+
+def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
+    """Read the names announced after the latest compaction boundary.
+
+    An announcement is identified by its `SystemPromptPart.metadata`, never by its text: the text carries
+    names a remote server chose, so a system prompt that merely reads like one, or a name shaped like a
+    list of names, must not count. Part metadata survives serialization and the merging of adjacent
+    requests, and an announcement a history processor or a UI round trip dropped no longer counts, so the
+    tool is announced again when it's next discovered.
+
+    Histories recorded before announcements were marked hold unmarked ones, recognizable only by their
+    text. For those, the names discovered by the window's search returns count instead, as every search
+    return was announced as soon as it arrived. That reads `ToolSearchReturnPart` and
+    `NativeToolSearchReturnPart` by type, so an announcement-shaped system prompt can at most bring back
+    that reading, never add a name of its own.
+    """
+    window = post_compaction_window(messages)
+    announced: set[str] = set()
+    legacy = False
+    for message in window:
+        for part in message.parts:
+            if not isinstance(part, SystemPromptPart):
+                continue
+            if part.metadata is None:
+                legacy = legacy or part.content.startswith(_DISCOVERY_ANNOUNCEMENT_PREFIX)
+            elif part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN:
+                announced.update(_announced_names(part.metadata.get('tools')))
+    if legacy:
+        for message in window:
+            for part in message.parts:
+                if isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart):
+                    announced.update(_extract_discovered_names(part.content))
+    return announced
+
+
+_NAMES_ADAPTER = TypeAdapter(list[str])
+
+
+def _announced_names(tools: object) -> list[str]:
+    """Read an announcement's `metadata['tools']`, or `[]` if it isn't a list of names."""
+    try:
+        return _NAMES_ADAPTER.validate_python(tools)
+    except ValidationError:
+        return []
 
 
 class _DiscoveredCatalog(TypedDict):

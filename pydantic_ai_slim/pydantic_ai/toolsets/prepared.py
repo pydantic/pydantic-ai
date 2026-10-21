@@ -4,7 +4,7 @@ import inspect
 from dataclasses import dataclass, replace
 
 from .. import _utils
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..exceptions import UserError
 from ..tools import ToolsPrepareFunc
 from .abstract import ToolsetTool
@@ -23,7 +23,7 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         original_tools = await super().get_tools(ctx)
         original_tool_defs = [tool.tool_def for tool in original_tools.values()]
-        result = self.prepare_func(ctx, original_tool_defs)
+        result = self.prepare_func(without_tool_name_path(ctx), original_tool_defs)
         if inspect.isawaitable(result):
             result = await result
         prepared_tool_defs_by_name = {

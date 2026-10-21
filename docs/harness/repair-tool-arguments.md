@@ -51,7 +51,7 @@ Each repair attempt emits a `repair_tool_arguments` span through `ctx.tracer`. V
 arguments do not emit this span. The span contains no arguments or tool contents, including when
 `trace_include_content` is enabled. Core still emits its normal tool spans.
 
-See the [source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/repair_tool_arguments/).
+See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/repair_tool_arguments/).
 
 ## API reference
 

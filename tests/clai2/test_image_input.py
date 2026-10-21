@@ -1,5 +1,6 @@
 """Image bytes survive editing, queued turns, hooks, and persisted history."""
 
+import base64
 import io
 from array import array
 from collections.abc import Sequence
@@ -13,30 +14,25 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from rich.console import Console
+
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from rich.console import Console
-
-from pydantic_clai2 import Session, chat, image_input
-from pydantic_clai2.image_input import (
-    ImageBuffer,
+from pydantic_clai2 import Session, chat
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime import image_codec
+from pydantic_clai2.runtime.image_codec import ImageBuffer, decode_images, encode_image
+from pydantic_clai2.ui.prompt import image_input
+from pydantic_clai2.ui.prompt.image_input import (
     ImageInput,
     clipboard_images,
-    encode_image,
     pasted_paths,
     read_image,
     read_images,
 )
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.fixture
@@ -56,11 +52,11 @@ def test_normalize(mode: str) -> None:
 
 
 def test_size_limits(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_input, 'MAX_PIXELS', 5)
+    monkeypatch.setattr(image_codec, 'MAX_PIXELS', 5)
     with pytest.raises(ValueError, match='megapixel'):
         read_image(image_path)
-    monkeypatch.setattr(image_input, 'MAX_PIXELS', 6)
-    monkeypatch.setattr(image_input, 'MAX_IMAGE_BYTES', 1)
+    monkeypatch.setattr(image_codec, 'MAX_PIXELS', 6)
+    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', 1)
     with pytest.raises(ValueError, match='file exceeds'):
         read_image(image_path)
     with pytest.raises(ValueError, match='attachment limit'):
@@ -95,7 +91,7 @@ def test_mixed_and_non_image_paths(image_path: Path) -> None:
     text.write_text('not an image')
     assert pasted_paths(str(text)) == []
     assert pasted_paths(f'"{image_path}" "{text}"') == []
-    image_path.write_text('not really a PNG')
+    image_path.write_text('not really a PNG', encoding='utf-8')
     with pytest.raises(OSError):
         read_image(image_path)
 
@@ -124,6 +120,23 @@ def test_clipboard_backend(image_path: Path, monkeypatch: pytest.MonkeyPatch, ki
             clipboard_images()
 
 
+def test_decode_images(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bytes from elsewhere, such as the browser's clipboard, are checked and normalized as a file is."""
+    data = base64.b64encode(image_path.read_bytes()).decode()
+    assert decode_images([data, data]) == [read_image(image_path)] * 2
+    with pytest.raises(ValueError, match='Not an image CLAI can read'):
+        decode_images([base64.b64encode(b'not an image').decode()])
+    with pytest.raises(ValueError, match='base64'):
+        decode_images(['not base64!'])
+    size = len(image_path.read_bytes())
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', 2 * size - 1)
+    with pytest.raises(ValueError, match='32 MiB'):
+        decode_images([data, data])
+    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', size - 1)
+    with pytest.raises(ValueError, match='10 MiB'):
+        decode_images([data])
+
+
 def test_attachment_lifetime_and_limits(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     images = ImageInput()
     image = read_image(image_path)
@@ -134,7 +147,7 @@ def test_attachment_lifetime_and_limits(image_path: Path, monkeypatch: pytest.Mo
     assert images.resolve(first) == ('', [image])
     with pytest.raises(ValueError, match='expired'):
         images.resolve(second)
-    monkeypatch.setattr(image_input, 'MAX_PENDING_BYTES', len(image.data))
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', len(image.data))
     with pytest.raises(ValueError, match='32 MiB'):
         images.attach([image])
     assert len(images.pending) == 1
@@ -159,7 +172,7 @@ async def test_editor_bindings(image_path: Path, monkeypatch: pytest.MonkeyPatch
     elif key == 'text':
         typed = '\x1b[200~ordinary\r\ntext\x1b[201~'
     elif key == 'invalid':
-        image_path.write_text('invalid PNG')
+        image_path.write_text('invalid PNG', encoding='utf-8')
         typed = f'\x1b[200~{image_path}\x1b[201~'
     else:
         typed = '\x16' if key == 'error' else key
@@ -198,7 +211,7 @@ async def test_shell_image_and_text_turns(image_path: Path, tmp_path: Path, term
             return request_context
 
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
-        pipe.send_text(f'\x1b[200~"{image_path}"\x1b[201~describe\ntext only\n/exit\n')
+        pipe.send_text(f'\x1b[200~"{image_path}"\x1b[201~describe\rtext only\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None), capabilities=[Capture()]),
             deps=None,
@@ -219,8 +232,8 @@ async def test_images_persist_and_resume(image_path: Path, tmp_path: Path) -> No
     assert ModelMessagesTypeAdapter.dump_json(restored.messages) == ModelMessagesTypeAdapter.dump_json(session.messages)
     first = restored.messages[0].parts[0]
     assert isinstance(first, UserPromptPart) and not isinstance(first.content, str)
-    assert first.content[0] == ''
-    assert isinstance(first.content[1], BinaryContent) and first.content[1].data == image.data
+    [only] = first.content
+    assert isinstance(only, BinaryContent) and only.data == image.data, 'no empty text block beside the image'
     await restored.prompt('follow up')
     assert ModelMessagesTypeAdapter.dump_json(restored.messages[:1]) == ModelMessagesTypeAdapter.dump_json(
         session.messages[:1]
@@ -256,9 +269,9 @@ async def test_image_hooks_and_expired_history(image_path: Path, tmp_path: Path,
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'caption.py').write_text(
-        'def activate(host):\n'
-        "    @host.on('turn_start')\n"
-        '    async def start(event):\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Caption(Plugin):\n'
+        '    async def on_turn_start(self, event):\n'
         "        assert event.text == 'caption'\n"
         + {
             'rewrite': "        event.text = 'rewritten'\n",
@@ -281,7 +294,7 @@ async def test_image_hooks_and_expired_history(image_path: Path, tmp_path: Path,
     output = io.StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
         text = '[image:1234abcd]' if action == 'expired' else f'\x1b[200~{image_path}\x1b[201~'
-        pipe.send_text(text + 'caption\n/exit\n')
+        pipe.send_text(text + 'caption\r/exit\r')
         await chat(
             Agent(TestModel(), deps_type=type(None), capabilities=[Capture()]),
             deps=None,
@@ -330,7 +343,7 @@ async def test_cancelled_image_turn_is_durable(image_path: Path, tmp_path: Path)
 
 
 def test_batch_limit_stops_before_reading_remaining_files(image_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_input, 'MAX_PENDING_BYTES', 1)
+    monkeypatch.setattr(image_codec, 'MAX_PENDING_BYTES', 1)
     with pytest.raises(ValueError, match='Pasted images exceed'):
         read_images([image_path, image_path.with_name('does-not-exist.png')])
 
@@ -373,7 +386,7 @@ def test_exif_orientation_is_applied_and_metadata_removed(orientation: int) -> N
 
 
 def test_encoder_buffer_rejects_writes_before_allocating(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_input, 'MAX_IMAGE_BYTES', 4)
+    monkeypatch.setattr(image_codec, 'MAX_IMAGE_BYTES', 4)
     with ImageBuffer() as output:
         assert output.write(b'ab') == 2
         assert output.write(bytearray(b'cd')) == 2
@@ -398,7 +411,7 @@ def test_encoder_buffer_rejects_writes_before_allocating(monkeypatch: pytest.Mon
 )
 def test_network_paths_are_rejected_without_io(text: str, monkeypatch: pytest.MonkeyPatch) -> None:
     def no_stat(path: Path, *, follow_symlinks: bool = True) -> None:
-        raise AssertionError('Network paths must be rejected before filesystem access')
+        raise AssertionError('Network paths must be rejected before filesystem access')  # pragma: no cover
 
     monkeypatch.setattr(Path, 'stat', no_stat)
     assert pasted_paths(text) == []
@@ -438,16 +451,8 @@ async def test_image_can_be_retried_after_selecting_a_model(
     monkeypatch.setattr(image_input, 'uuid4', lambda: UUID('12345678-0000-0000-0000-000000000000'))
     agent = Agent()
     output = io.StringIO()
-    transcript: list[str] = []
-
-    class Surface(PromptSurface):
-        def write(self, text: str) -> int:
-            transcript.append(text)
-            return super().write(text)
-
-    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
-        pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\n/set model test\n[image:12345678]caption\n/exit\n')
+        pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\r/set model test\r[image:12345678]caption\r/exit\r')
         await chat(
             agent,
             deps=None,
@@ -456,4 +461,5 @@ async def test_image_can_be_retried_after_selecting_a_model(
         )
     assert 'Choose a model first' in output.getvalue()
     assert 'expired' not in output.getvalue()
-    assert 'success' in (''.join(transcript) if terminal else output.getvalue())
+    # The live editor prints the session into the terminal's scrollback when it closes.
+    assert 'success' in output.getvalue()

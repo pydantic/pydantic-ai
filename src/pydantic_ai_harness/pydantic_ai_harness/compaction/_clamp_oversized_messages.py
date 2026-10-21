@@ -6,7 +6,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelMessage,
@@ -15,15 +14,14 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
 )
-from pydantic_ai.tools import RunContext
-
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._shared import compact_with_span, context_for_request, estimate_text_tokens
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 _CLAMP_MARKER = '\n[clamped: removed {removed} of {original} characters]\n'
-"""Inserted between the head and tail slices of a clamped part. ``{removed}`` and ``{original}``
+"""Inserted between the head and tail slices of a clamped part. `{removed}` and `{original}`
 are filled with character counts."""
 
 _CLAMP_ARGS_KEY = '_clamped'
@@ -58,7 +56,9 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
 
     Request-side parts (user prompts, tool returns, system prompts) are out of scope: user
     input should not be silently rewritten, and oversized tool *returns* are the job of
-    `ClearToolResults`.
+    `ToolOutputLimits`, which reduces a return when the tool produces it. `ClearToolResults` keeps
+    the newest `keep_pairs` results intact, and with `keep_pairs=0` it blanks a fresh return
+    outright rather than shrinking it.
 
     Clamping rewrites message content, so it invalidates the provider's prompt cache from the
     clamped message onward. That is unavoidable here -- the alternative is a failed request.
@@ -82,10 +82,10 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     """
 
     max_part_tokens: int | None = None
-    """Clamp a part whose estimated token count exceeds this value. ``None`` disables this trigger."""
+    """Clamp a part whose estimated token count exceeds this value. `None` disables this trigger."""
 
     max_part_chars: int | None = None
-    """Clamp a part whose character count exceeds this value. ``None`` disables this trigger."""
+    """Clamp a part whose character count exceeds this value. `None` disables this trigger."""
 
     keep_head_chars: int = 2_000
     """Characters of the part's head to retain."""
@@ -94,13 +94,13 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
     """Characters of the part's tail to retain."""
 
     clamp_tool_call_args: bool = True
-    """When ``True``, also clamp oversized `ToolCallPart` args, not just response text."""
+    """When `True`, also clamp oversized `ToolCallPart` args, not just response text."""
 
     tokenizer: Callable[[str], int] | None = None
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When ``None``, uses a ~4 characters-per-token heuristic.
+    When `None`, uses a ~4 characters-per-token heuristic.
     """
 
     def __post_init__(self) -> None:
@@ -123,7 +123,7 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
         return False
 
     def _clamp(self, text: str) -> str | None:
-        """Return the head/tail-clamped form of *text*, or ``None`` if it would not shrink."""
+        """Return the head/tail-clamped form of *text*, or `None` if it would not shrink."""
         if not self._is_oversized(text):
             return None
         head = text[: self.keep_head_chars]
@@ -177,13 +177,15 @@ class ClampOversizedMessages(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Clamp any oversized response part before the request is sent."""
-        messages: list[ModelMessage] = list(request_context.messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         request_ctx = context_for_request(ctx, request_context)
-        request_context.messages = await compact_with_span(
+        compacted = await compact_with_span(
             request_ctx,
             strategy='ClampOversizedMessages',
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,
         )
-        return request_context
+        ctx.messages[:] = compacted
+        # Not recorded: clamping's own reclaim has never fed the usage-reporter correction.
+        return replace(request_context, messages=compacted)

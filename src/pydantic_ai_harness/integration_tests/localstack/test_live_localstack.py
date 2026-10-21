@@ -211,7 +211,6 @@ async def _s3_round_trip(endpoint_url: str, aws_cli: str, tmp_path: Path) -> Non
     assert '[error:' not in health
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_existing_localstack_s3_round_trip(tmp_path: Path) -> None:
     """Drive S3 through a LocalStack service started by the test environment."""
     endpoint_url = _external_endpoint_url()
@@ -221,7 +220,6 @@ async def test_existing_localstack_s3_round_trip(tmp_path: Path) -> None:
     await _s3_round_trip(endpoint_url, _aws_cli_path(), tmp_path)
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_external_container_s3_round_trip(tmp_path: Path) -> None:
     """Drive S3 through an unmanaged capability against a harness-started container."""
     if _skip_managed_container_tests():
@@ -240,7 +238,6 @@ async def test_external_container_s3_round_trip(tmp_path: Path) -> None:
         await _s3_round_trip(localstack.endpoint_url, aws_cli, tmp_path)
 
 
-@pytest.mark.anyio(backends=['asyncio'])
 async def test_managed_container_sqs_round_trip_and_cleanup() -> None:
     """Drive SQS through `manage_container=True` and verify cleanup."""
     if _skip_managed_container_tests():

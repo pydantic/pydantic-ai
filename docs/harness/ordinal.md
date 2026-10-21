@@ -7,7 +7,7 @@ description: Connect a Pydantic AI agent to Ordinal's hosted MCP server to draft
 
 `Ordinal` connects an agent to [Ordinal](https://www.tryordinal.com)'s hosted MCP server so it can draft, schedule, and analyze social posts in the signed-in user's workspaces.
 
-[Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/ordinal/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/ordinal/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -33,7 +33,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 from pydantic_ai import Agent
 from pydantic_ai_harness import Ordinal
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Ordinal()])
+agent = Agent('{{ openai:medium }}', capabilities=[Ordinal()])
 result = agent.run_sync('List my Ordinal workspaces')
 print(result.output)
 ```
@@ -71,18 +71,18 @@ def ordinal_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.ordinal_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Ordinal(auth=ordinal_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Ordinal(auth=ordinal_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
 
 Your app gets each user's token, stores it, and refreshes it. For example, a "Connect Ordinal" button that runs the OAuth flow from [Before you start](#before-you-start) and saves the token to their account. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
 
-With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `ordinal`, so `defer_loading=True` works without one. To add more than one `Ordinal` to an agent, give each a distinct `id` and wrap them in [PrefixTools](/ai/capabilities/prefix-tools/), since their tool names are the same; two that share an `id` but differ raise an error.
+With durable execution such as Temporal, read the token from the run's deps rather than from a global, since the function may run in another process. The capability's `id` defaults to `ordinal`, so `defer_loading=True` works without one. To add more than one `Ordinal` to an agent, give each a distinct `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since their tool names are the same; two that share an `id` but differ raise an error.
 
 ## Tool selection and approval
 
-To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](/ai/tools-toolsets/toolsets/). For example, this asks for approval before every tool call, which suits tools that publish or schedule posts:
+To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call, which suits tools that publish or schedule posts:
 
 ```python
 from pydantic_ai import Agent
@@ -91,13 +91,13 @@ from pydantic_ai_harness import Ordinal
 
 capability = Ordinal()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
 ```
 
-Handle the approval requests with the [deferred tools workflow](/ai/tools-toolsets/deferred-tools/). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
+Handle the approval requests with the [deferred tools workflow](../deferred-tools.md). To cap the size of tool output, add [Tool Output Limits](tool-output-limits.md).
 
 ## Connection customization
 
@@ -115,7 +115,7 @@ pip/uv-add "pydantic-ai-slim[spec]"
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - Ordinal: {}
 ```

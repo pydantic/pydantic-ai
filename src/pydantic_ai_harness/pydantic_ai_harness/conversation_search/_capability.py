@@ -8,7 +8,6 @@ from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import HistorySource
 from pydantic_ai_harness.conversation_search._toolset import (
@@ -74,7 +73,8 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     Upgrading raises nothing -- a store-wide caller keeps working with a narrower corpus
     -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per instance.
     Pass `scope='all'` to restore the old behavior or `scope='conversation'` to keep the
-    new one; both are supported and neither is deprecated.
+    new one; both are supported and neither is deprecated. The transitional warning will
+    be removed in the next breaking release; the conversation-scoped default will remain.
 
     Some compaction strategies persist their edits into the run's durable message
     history (`SummarizingCompaction` replaces summarized prefixes for good; a
@@ -103,7 +103,9 @@ class ConversationSearch(AbstractCapability[AgentDepsT]):
     `HarnessDeprecationWarning` once per instance: this default was `all` in earlier
     releases, and the change is otherwise silent because a store-wide caller keeps working
     and simply stops seeing other conversations. Set the option explicitly to opt out of
-    the warning; both values are supported and neither is deprecated.
+    the warning; both values are supported and neither is deprecated. The transitional
+    warning will be removed in the next breaking release; the conversation-scoped default
+    will remain.
     """
 
     tool_id: str = 'conversation-search'

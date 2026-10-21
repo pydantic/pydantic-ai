@@ -11,16 +11,20 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 from __future__ import annotations as _annotations
 
 import asyncio
+import io
 import json
+import os
+import wave
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel, StringConstraints
 
-from pydantic_ai import Agent, RequestUsage, RunContext
+from pydantic_ai import Agent, RequestUsage, RunContext, ToolReturn
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -28,6 +32,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -40,7 +45,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeError, RealtimeResponseInterruptedEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import (
+    RealtimeError,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSession,
+    RealtimeTurnCompleteEvent,
+)
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import CassetteMessage, RealtimeCassette
@@ -51,7 +61,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelProfile, GoogleRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
 
@@ -93,7 +102,6 @@ async def test_audio_in_server_vad_turn(
         [
             'PartStartEvent',
             'PartDeltaEvent',
-            'PartEndEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
@@ -481,6 +489,111 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert session.usage.total_tokens == final.usage.total_tokens
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'async_tool_calls'),
+    [('gemini-3.1-flash-live-preview', False), ('gemini-3.8-live', False), ('gemini-3.8-live', True)],
+)
+async def test_tool_result_image(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    model_name: str,
+    async_tool_calls: bool,
+) -> None:
+    """An image a tool returns goes in the function response, and the model sees it.
+
+    The tool's text says nothing about the picture, so naming the fruit means the model read the image.
+    Covers a blocking call and an async one, whose result is scheduled to cut into the speech.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(instructions='Use take_photo when asked what is on the table, then answer in one short sentence.')
+    image = BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+
+    @agent.tool_plain
+    async def take_photo() -> ToolReturn:
+        """Take a photo of the table."""
+        return ToolReturn(return_value='Photo taken.', content=[image])
+
+    # The exchange is over once the model answered the call's result, whether it blocked on it or not.
+    async with agent.realtime(model, model_settings={'async_tool_calls': async_tool_calls}).session() as session:
+        await session.send('What fruit is on the table?')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [response] = sent_frames_containing(cassette, 'Photo taken.')
+    [function_response] = response['toolResponse']['functionResponses']
+    assert [part['inlineData']['mimeType'] for part in function_response['parts']] == ['image/jpeg']
+    answer = ' '.join(
+        part.transcript or ''
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'kiwi' in answer.lower()
+
+
+class _TreeNode(BaseModel):
+    name: str
+    children: dict[str, _TreeNode] = {}
+    children_by_slug: dict[Annotated[str, StringConstraints(pattern='^[a-z-]+$')], _TreeNode] = {}
+
+
+async def test_tool_with_recursive_map_values(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A tool taking recursive `dict[str, Node]` fields is declared, and the model calls it.
+
+    A `dict`'s values sit under `additionalProperties`, or `patternProperties` when its keys carry a pattern.
+    Live declarations drop both, so the recursion lives only in subschemas that are dropped, and each field
+    goes out as a plain object like any other `dict` field.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+    agent = Agent(instructions='Use save_tree when asked to save a tree, then confirm it in one short sentence.')
+
+    @agent.tool_plain
+    def save_tree(tree: _TreeNode) -> str:
+        """Save a tree of named nodes."""
+        return f'Saved {tree.name}.'
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Save a tree whose root is named "oak" and has no children.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, 'Save a tree of named nodes.')
+    assert setup['setup']['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Save a tree of named nodes.',
+                        'name': 'save_tree',
+                        'parameters': {
+                            'properties': {
+                                'name': {'type': 'STRING'},
+                                'children': {'default': {}, 'type': 'OBJECT'},
+                                'children_by_slug': {'default': {}, 'type': 'OBJECT'},
+                            },
+                            'required': ['name'],
+                            'type': 'OBJECT',
+                        },
+                    }
+                ]
+            }
+        ]
+    )
+    assert [e.part.args_as_dict() for e in events if isinstance(e, FunctionToolCallEvent)] == snapshot(
+        [{'name': 'oak'}]
+    )
+    assert [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)] == snapshot(['Saved oak.'])
+
+
 async def test_asap_enqueue_waits_for_response_boundary(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -631,6 +744,110 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
     assert 'alice' in transcript and 'teal' in transcript
 
 
+async def test_message_history_function_part_seeding(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Seeded tool calls and results go in as native function parts on 3.8, and the model reads them.
+
+    The tool result carries a detail the model can't guess, so a correct answer shows it read the
+    `function_response` rather than the text around it.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='get_weather', content='Hailing, wind code ZEBRA-7', tool_call_id='call_1')]
+        ),
+        ModelResponse(parts=[TextPart(content='It is hailing in Paris.')]),
+    ]
+
+    async with agent.realtime(model, message_history=history).session() as session:
+        await session.send('What wind code did the weather tool return?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, '"setup"')
+    # `google-genai` sends the field in snake case, which the API accepts.
+    assert setup['setup']['historyConfig'] == {'initial_history_in_client_content': True}
+    [seeded] = sent_frames_containing(cassette, 'wind code ZEBRA-7')
+    assert seeded == snapshot(
+        {
+            'client_content': {
+                'turns': [
+                    {'parts': [{'text': 'What is the weather in Paris?'}], 'role': 'user'},
+                    {
+                        'parts': [{'functionCall': {'id': 'call_1', 'args': {'city': 'Paris'}, 'name': 'get_weather'}}],
+                        'role': 'model',
+                    },
+                    {
+                        'parts': [
+                            {
+                                'functionResponse': {
+                                    'id': 'call_1',
+                                    'name': 'get_weather',
+                                    'response': {'output': 'Hailing, wind code ZEBRA-7'},
+                                }
+                            }
+                        ],
+                        'role': 'user',
+                    },
+                    {'parts': [{'text': 'It is hailing in Paris.'}], 'role': 'model'},
+                ],
+                'turnComplete': True,
+            }
+        }
+    )
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse) and isinstance(reply.parts[0], SpeechPart)
+    assert 'zebra' in (reply.parts[0].transcript or '').lower()
+
+
+async def test_message_history_audio_seeding(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """A seeded user turn with retained audio and no transcript is heard by a 3.x model.
+
+    `gemini-3.8-live` takes audio in seeded turns, so the user's words reach it as audio rather than
+    being refused for lack of a transcript, as they are on 2.5.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=provider)
+    agent = Agent(instructions='Answer in one short sentence.')
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(assets_path.joinpath('my_name_is_alice_16khz.pcm').read_bytes())
+    history = [
+        ModelRequest(
+            parts=[SpeechPart(speaker='user', audio=BinaryContent(buffer.getvalue(), media_type='audio/wav'))]
+        ),
+        ModelResponse(parts=[TextPart(content='Nice to meet you!')]),
+    ]
+
+    async with agent.realtime(model, message_history=history).session() as session:
+        await session.send('What is my name?')
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [seeded] = sent_frames_containing(cassette, 'Nice to meet you!')
+    assert [(turn['role'], [list(part) for part in turn['parts']]) for turn in seeded['client_content']['turns']] == [
+        ('user', [['inlineData']]),
+        ('model', [['text']]),
+    ]
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse) and isinstance(reply.parts[0], SpeechPart)
+    assert 'alice' in (reply.parts[0].transcript or '').lower()
+
+
 @pytest.mark.usefixtures('no_genai_prices_context_window')
 def test_profile_allow_seeding() -> None:
     """Unit guard: the model advertises session seeding, which the seeding cassette test relies on.
@@ -646,14 +863,15 @@ def test_profile_allow_seeding() -> None:
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_output_truncation=False,
-        supports_text_output=False,  # every Live model rejects a TEXT response modality
+        supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         supports_session_seeding=True,
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,
         supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
-        # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
-        supports_async_tool_calls=True,
+        # The session's choice, via the `async_tool_calls` setting, which is off by default.
+        async_tool_call_mode='optional',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
         supports_tool_return_schema=True,
         # Search grounding only: Live models reject or silently ignore code execution and URL context.
@@ -669,11 +887,17 @@ def test_profile_allow_seeding() -> None:
         # Thinking is optional, tool calls block unless opted in, and an async result can be scheduled.
         google_thinking_always_enabled=False,
         google_async_tool_calls_by_default=False,
-        google_requires_async_tool_calls=False,
         google_supports_async_tool_call_scheduling=True,
         google_supports_affective_dialog=True,
         # A typed turn doesn't see an image sent just before it as a video frame (verified live).
         google_text_turns_see_video_frames=False,
+        # 2.5 guesses at media in a function response, so tool results carry text only.
+        google_supported_mime_types_in_tool_returns=(),
+        # 2.5 rejects function parts in seeded turns, so seeded tool calls go in as text.
+        google_supports_seeding_function_parts=False,
+        google_closes_tool_call_turn_separately=False,
+        # The native-audio models finish a reply an input reaches mid-generation, rather than cutting it off.
+        google_input_cuts_off_reply=False,
     )
 
 
@@ -719,7 +943,7 @@ async def test_handle_barge_in_over_live_speech(
 
 
 async def test_extended_thinking_async_tool_round(
-    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], realtime_recording: bool
 ) -> None:
     """`gemini-3.8-live-extended-thinking` speaks a filler, runs the tool in the background, then answers.
 
@@ -734,7 +958,8 @@ async def test_extended_thinking_async_tool_round(
     @agent.tool_plain
     async def search_flights(origin: str, destination: str) -> str:
         """Search flights between two cities. Takes several seconds."""
-        await anyio.sleep(5)
+        # Only the live model needs a slow tool to speak its filler; replay follows the recorded frame order.
+        await anyio.sleep(5 if realtime_recording else 0)
         return 'KLM at 120 dollars'
 
     events: list[Any] = []
@@ -827,3 +1052,109 @@ async def test_extended_thinking_async_tool_round(
     assert final_part.transcript is not None and 'KLM' in final_part.transcript
     # Priced since `genai-prices` 0.1.9, the first release with the Gemini 3.8 Live rates.
     assert final.usage.cost == snapshot(Decimal('0.01005375'))
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_that_cuts_off_the_answer_to_a_tool_result_is_answered_by_the_next_turn(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Text sent right after a tool result cuts off the turn answering the result before it said anything.
+
+    Gemini reports that turn `interrupted` and complete, then answers the text in a turn of its own: the cut-off
+    turn answers nothing, so the wait for the text's reply goes on to that one.
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+    agent = Agent(instructions='Keep replies to one short sentence. Use the lookup tool for any order.')
+
+    @agent.tool_plain
+    def lookup(order: str) -> str:
+        """Look up an order's status."""
+        return f'Order {order} has shipped and arrives on Friday.'
+
+    messages: list[ModelMessage] = []
+    result_sent = anyio.Event()
+    turn_complete = anyio.Event()
+    turns: list[str] = []
+    """What the session says, in order: the model's words, and each turn it reports complete."""
+
+    async def watch(session: RealtimeSession) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, FunctionToolResultEvent):
+                result_sent.set()
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                turns.append(event.delta.transcript_delta or '')
+            elif isinstance(event, RealtimeTurnCompleteEvent):
+                turns.append('<turn complete>')
+                turn_complete.set()
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('What is the status of my order 4411?')
+        with anyio.fail_after(45):
+            await result_sent.wait()
+            await session.send('Also, what is 2 plus 2? Answer with the number.')
+            await session.wait_for_reply()
+            await turn_complete.wait()
+        messages = session.all_messages()
+        tasks.cancel_scope.cancel()
+
+    # The cut-off turn completes no exchange: the turn answering the text does.
+    assert turns == snapshot(['4', '<turn complete>'])
+    assert isinstance(messages[-1], ModelResponse)
+    assert [part.transcript for part in messages[-1].parts if isinstance(part, SpeechPart)] == snapshot(['4'])
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_that_cuts_off_a_tool_call_turn_is_answered_by_the_next_turn(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Text that reaches Gemini while it generates a tool call, before the session has read the call.
+
+    Gemini cancels the call, reports the turn `interrupted` and complete, and answers both requests in the turns
+    that follow. The session took the tool-call turn for the text's reply too, as it couldn't tell the text
+    arrived after the turn began: the cancellation says it did, so the text's reply is the one that follows.
+    """
+    provider, _ = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+    agent = Agent(instructions='Keep replies to one short sentence. Use the lookup tool for any order.')
+
+    calls = 0
+
+    @agent.tool_plain
+    async def lookup(order: str) -> str:
+        """Look up an order's status."""
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            # Still running when Gemini cancels the call: the session stops it, and no result goes out.
+            await anyio.sleep_forever()
+        return f'Order {order} has shipped and arrives on Friday.'
+
+    said: list[str] = []
+    turn_complete = anyio.Event()
+
+    async def watch(session: RealtimeSession) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
+                said.append(event.delta.transcript_delta or '')
+            elif isinstance(event, RealtimeTurnCompleteEvent):
+                said.append('<turn complete>')
+                turn_complete.set()
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('What is the status of my order 4411?')
+        # Recording only: GEMINI_CUT_DELAY spaces the two sends so the text reaches Gemini mid-generation, before the
+        # session reads the tool call; replay keeps the recorded order.
+        if delay := os.environ.get('GEMINI_CUT_DELAY'):  # pragma: no cover
+            await anyio.sleep(float(delay))
+        await session.send('Also, what is 2 plus 2? Answer with the number.')
+        with anyio.fail_after(45):
+            await session.wait_for_reply()
+            said.append('<wait over>')
+            await turn_complete.wait()
+        tasks.cancel_scope.cancel()
+
+    # The wait is over only once the reply to both requests is.
+    assert ''.join(said) == snapshot('Order 4411 4.<turn complete><wait over>')

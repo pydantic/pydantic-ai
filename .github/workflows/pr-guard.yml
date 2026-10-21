@@ -61,15 +61,36 @@ jobs:
             exit 0
           fi
 
+          # Prints a login's role on this repo, and fails when the API can't say (rate limit,
+          # outage). `gh api` writes an HTTP error's JSON body to stdout, so the previous
+          # `$(gh api ... || echo "unknown")` captured that body as the "role": on #9370 a
+          # rate-limited lookup returned the error text, every bypass below missed, and a
+          # maintainer's PR was closed for not linking an issue.
+          repo_role() {
+            local role
+            role=$(gh api "repos/${REPO}/collaborators/$1/permission" --jq '.role_name' 2>/dev/null) || return 1
+            echo "$role"
+          }
+
+          # Closing a PR is a judgement about who opened or reopened it, so it needs an
+          # answer the API actually gave. Without one, stop without acting: the PR stays
+          # open, this job fails visibly, and re-running it (or the next event) checks again.
+          cannot_verify() {
+            echo "::error::$1 (GitHub API error or rate limit); leaving PR #${PR_NUMBER} untouched. Re-run this job to check it."
+            exit 1
+          }
+
           # Author repo-role bypass. The webhook's `author_association` is unreliable — it
           # can report CONTRIBUTOR for a genuine org member/collaborator (observed on #6359:
           # `dsfaccini`, a public org member with `maintain` role, came through as
           # CONTRIBUTOR, so the bypass above missed and the PR was wrongly closed). Confirm
           # the author's actual role on THIS repo via the API — the same `role_name` signal
           # the trusted-actor bypass below uses for the sender — and skip for triage-or-higher.
-          # Fails open toward *checking* (an unreadable/unknown role continues the checks), so
-          # an external contributor can never gain a bypass this way.
-          AUTHOR_ROLE=$(gh api "repos/${REPO}/collaborators/${PR_AUTHOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+          # A role below triage continues the checks and an unreadable one stops the run
+          # without acting, so an external contributor can never gain a bypass this way.
+          if ! AUTHOR_ROLE=$(repo_role "$PR_AUTHOR"); then
+            cannot_verify "Could not read ${PR_AUTHOR}'s role on this repo"
+          fi
           case "$AUTHOR_ROLE" in
             triage | write | maintain | admin)
               echo "Author ${PR_AUTHOR} has ${AUTHOR_ROLE} access to this repo; skipping checks."
@@ -102,7 +123,7 @@ jobs:
           # sender is always the author) still gets checked, so the issue-link
           # policy can't be bypassed this way.
           if [ "${GITHUB_EVENT_SENDER_LOGIN}" != "$PR_AUTHOR" ]; then
-            SENDER_ROLE=$(gh api "repos/${REPO}/collaborators/${GITHUB_EVENT_SENDER_LOGIN}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            SENDER_ROLE=$(repo_role "$GITHUB_EVENT_SENDER_LOGIN") || SENDER_ROLE="unknown"
             case "$SENDER_ROLE" in
               read | none)
                 echo "Event triggered by ${GITHUB_EVENT_SENDER_LOGIN} (role: ${SENDER_ROLE}, no write access); continuing checks."
@@ -126,12 +147,17 @@ jobs:
           # durable record — look for a `reopened` event whose actor has
           # triage-or-higher access on *this* repo (the same `role_name` signal the
           # bypasses above use; a collaborator on the contributor's fork can reopen
-          # too, and must not count). Fails open toward *checking*: an unreadable
-          # timeline or role continues the checks, so no unlinked PR is kept open by
-          # a transient API error.
-          REOPEN_ACTORS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/timeline" --paginate --jq '.[] | select(.event == "reopened") | .actor.login' 2>/dev/null | sort -u || true)
+          # too, and must not count). An unreadable timeline or role stops the run
+          # without acting (see `cannot_verify`): closing on a guess would undo a
+          # reopen the API failed to report.
+          if ! REOPEN_TIMELINE=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/timeline" --paginate --jq '.[] | select(.event == "reopened") | .actor.login' 2>/dev/null); then
+            cannot_verify "Could not read the timeline of PR #${PR_NUMBER}"
+          fi
+          REOPEN_ACTORS=$(sort -u <<< "$REOPEN_TIMELINE")
           for REOPEN_ACTOR in $REOPEN_ACTORS; do
-            REOPEN_ROLE=$(gh api "repos/${REPO}/collaborators/${REOPEN_ACTOR}/permission" --jq '.role_name' 2>/dev/null || echo "unknown")
+            if ! REOPEN_ROLE=$(repo_role "$REOPEN_ACTOR"); then
+              cannot_verify "Could not read ${REOPEN_ACTOR}'s role on this repo"
+            fi
             case "$REOPEN_ROLE" in
               triage | write | maintain | admin)
                 echo "PR was previously reopened by ${REOPEN_ACTOR} (role: ${REOPEN_ROLE}); a trusted collaborator deliberately kept this PR open, skipping checks."

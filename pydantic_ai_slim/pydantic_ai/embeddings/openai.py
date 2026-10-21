@@ -5,6 +5,7 @@ from typing import Literal, cast
 from pydantic_ai import _utils
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models import check_allow_model_requests
+from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -127,20 +128,21 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         settings = cast(OpenAIEmbeddingSettings, settings)
 
         try:
-            response = await self._client.embeddings.create(
-                input=inputs,
-                model=self.model_name,
-                dimensions=settings.get('dimensions') or OMIT,
-                extra_headers=settings.get('extra_headers'),
-                extra_body=settings.get('extra_body'),
-            )
+            with map_decode_errors(self.model_name):
+                response = await self._client.embeddings.create(
+                    input=inputs,
+                    model=self.model_name,
+                    dimensions=settings.get('dimensions') or OMIT,
+                    extra_headers=settings.get('extra_headers'),
+                    extra_body=settings.get('extra_body'),
+                )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=dict(e.response.headers)
                 ) from e
             raise  # pragma: lax no cover
-        except APIConnectionError as e:  # pragma: no cover
+        except APIConnectionError as e:  # pragma: lax no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
         embeddings = [item.embedding for item in response.data]

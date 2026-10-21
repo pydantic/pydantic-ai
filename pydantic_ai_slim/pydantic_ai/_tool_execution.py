@@ -7,9 +7,9 @@ from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import EventStreamBuffer
 from pydantic_ai._utils import cancel_and_drain
@@ -20,7 +20,7 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import _output, exceptions, messages as _messages, result
 from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
-from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
+from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDefinitionKind, ToolDenied
 
 if TYPE_CHECKING:
     from ._agent_graph import GraphAgentDeps, GraphAgentState
@@ -111,6 +111,7 @@ def cancelled_sub_agent_return(
         tool_name=call.tool_name,
         content=f'The sub-agent run was cancelled: {error}',
         tool_call_id=call.tool_call_id,
+        tool_kind=call.tool_kind,
         outcome='failed',
     )
 
@@ -132,6 +133,7 @@ def build_tool_return_part(
                 tool_name=call.tool_name,
                 content=tool_result.message,
                 tool_call_id=call.tool_call_id,
+                tool_kind=tool_kind,
                 outcome='denied',
             ),
             None,
@@ -396,12 +398,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     final_result: result.FinalResult[NodeRunEndT] | None
 
     # Derived from the inputs in `__post_init__`.
-    call_kinds: list[ToolKind | Literal['unknown']] = dataclasses.field(init=False)
-    tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = dataclasses.field(
+    call_kinds: list[ToolDefinitionKind | Literal['unknown']] = dataclasses.field(init=False)
+    tool_calls_by_kind: dict[ToolDefinitionKind | Literal['unknown'], list[_messages.ToolCallPart]] = dataclasses.field(
         init=False
     )
     calls_to_run_results: dict[str, DeferredToolResult] = dataclasses.field(init=False)
-    executable_function_kinds: tuple[ToolKind | Literal['unknown'], ...] = dataclasses.field(init=False)
+    executable_function_kinds: tuple[ToolDefinitionKind | Literal['unknown'], ...] = dataclasses.field(init=False)
     function_indices: list[int] = dataclasses.field(init=False)
     output_indices: list[int] = dataclasses.field(init=False)
     schema: _output.OutputSchema[NodeRunEndT] = dataclasses.field(init=False)
@@ -430,8 +432,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.deferred_metadata = {}
 
         # Classify each call once, preserving emission order for the per-index views below.
-        tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
-        call_kinds: list[ToolKind | Literal['unknown']] = []
+        tool_calls_by_kind: dict[ToolDefinitionKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(
+            list
+        )
+        call_kinds: list[ToolDefinitionKind | Literal['unknown']] = []
         for call in self.tool_calls:
             tool_def = self.tool_manager.get_tool_def(call.tool_name)
             kind = tool_def.kind if tool_def else 'unknown'
@@ -633,6 +637,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Function tool helpers ----------------------------------------------
 
+    def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
+        """Record a 'not executed' stub for a call skipped because a final result was already processed.
+
+        Emits an unvalidated `FunctionToolCallEvent` and the stub's `FunctionToolResultEvent`, like
+        `_record_output_part` does for a skipped output tool, so event-stream consumers (e.g. UI adapters)
+        see the same result the message history records.
+        """
+        part = _messages.ToolReturnPart(
+            tool_name=call.tool_name,
+            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+            tool_call_id=call.tool_call_id,
+        )
+        self.output_parts.append(part)
+        yield _messages.FunctionToolCallEvent(call)
+        yield _messages.FunctionToolResultEvent(part)
+
     async def _validate_function_calls(
         self, calls: list[_messages.ToolCallPart], *, validated_calls: dict[str, ValidatedToolCall[DepsT]]
     ) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -642,6 +662,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         (e.g. `ToolDenied`, `ModelRetry`) short-circuits inside `_call_tool`, so no validation is
         needed — the event is emitted without args-validity.
         """
+        # Function calls and their results/executions are matched back by `tool_call_id`, so duplicate
+        # ids would make the binding ambiguous (last write wins). Fail closed before any call in this batch executes.
+        # Batches bind independently (each has its own `validated_calls`), so an id repeated across the batches
+        # `'graceful'` splits at an output call still binds each call to its own tool.
+        if duplicate_ids := _duplicate_tool_call_ids(calls):
+            raise exceptions.UnexpectedModelBehavior(
+                f'Function tool calls must have unique `tool_call_id` values; duplicate `tool_call_id`s: {duplicate_ids}'
+            )
         for call in calls:
             deferred_result = self.calls_to_run_results.get(call.tool_call_id)
             if deferred_result is not None and not isinstance(deferred_result, ToolApproved):
@@ -732,6 +760,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     tool_name=call.tool_name,
                     content=tool_call_result.message,
                     tool_call_id=call.tool_call_id,
+                    tool_kind=call.tool_kind,
                     outcome='failed',
                 )
                 raise ToolFailedError(m)
@@ -801,6 +830,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
+        def record_result(
+            result: tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None], index: int
+        ) -> _messages.FunctionToolResultEvent:
+            tool_parts, tool_user_content = result
+            tool_parts_by_index[index] = tool_parts
+            if tool_user_content:
+                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+
+            tool_part = tool_parts[0]
+            assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
+            return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+
         async def handle_call_or_result(
             coro_or_task: Awaitable[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
             | asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]],
@@ -817,13 +858,25 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
             else:
-                tool_parts_by_index[index] = tool_parts
-                if tool_user_content:
-                    user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+                return record_result((tool_parts, tool_user_content), index)
 
-                tool_part = tool_parts[0]
-                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
-                return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
+        def record_completed_results(
+            tasks_by_index: dict[
+                int, asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
+            ],
+        ) -> None:
+            for index, task in tasks_by_index.items():
+                if (
+                    task.done()
+                    and not task.cancelled()
+                    and task.exception() is None
+                    and index not in tool_parts_by_index
+                ):
+                    # A tool that finished before a sibling raised or the run was cancelled keeps
+                    # its return in the interrupted request, so resuming from that history doesn't
+                    # re-run it. Under `parallel_ordered_events` such results haven't been settled
+                    # yet; no result event is emitted for them, so event order is unchanged.
+                    record_result(task.result(), index)
 
         def call_tool(
             index: int,
@@ -880,6 +933,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                                 yield event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks_by_index.values(), msg=e.args[0] if len(e.args) != 0 else None)
+                    record_completed_results(tasks_by_index)
                     raise
                 except BaseException:
                     # Cancel any still-running sibling tasks so they don't become
@@ -887,6 +941,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     # (e.g. RuntimeError, ConnectionError) propagates out of
                     # handle_call_or_result().
                     await cancel_and_drain(*tasks_by_index.values())
+                    record_completed_results(tasks_by_index)
                     raise
         finally:
             # Populate output_parts even on exception so partial tool returns surface
@@ -931,7 +986,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
     # --- Retry-wins and deferred resolution ---------------------------------
 
-    def _is_retry_wins_trigger(self, part: _messages.ModelRequestPart, *, kind: ToolKind | Literal['unknown']) -> bool:
+    def _is_retry_wins_trigger(
+        self, part: _messages.ModelRequestPart, *, kind: ToolDefinitionKind | Literal['unknown']
+    ) -> bool:
         """Whether a settled tool part triggers retry-wins.
 
         A `RetryPromptPart` (a `ModelRetry` or arg-validation failure) from an actual function
@@ -982,13 +1039,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # we shouldn't insert return parts as the deferred tools will still get a real result.
             if not isinstance(self.final_result.output, DeferredToolRequests):
                 for call in calls:
-                    self.output_parts.append(
-                        _messages.ToolReturnPart(
-                            tool_name=call.tool_name,
-                            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                            tool_call_id=call.tool_call_id,
-                        )
-                    )
+                    for event in self._skip_function_call(call):
+                        yield event
         elif calls:
             for call in calls:
                 try:
@@ -1118,13 +1170,8 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         if self.final_result is not None:
             # An output succeeded: function tools are not executed.
             for call in function_calls:
-                self.output_parts.append(
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
-                        tool_call_id=call.tool_call_id,
-                    )
-                )
+                for event in self._skip_function_call(call):
+                    yield event
         else:
             # Every output failed; run function tools so the model can correct next round.
             async for event in self._run_function_calls(function_calls):  # pragma: no branch

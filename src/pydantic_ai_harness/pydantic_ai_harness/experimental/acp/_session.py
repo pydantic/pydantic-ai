@@ -7,11 +7,14 @@ from collections.abc import Awaitable, Hashable, Sequence
 from dataclasses import dataclass, field
 from typing import Generic, Protocol, TypeAlias
 
+import anyio
 from acp import Client, schema
+
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 # A single MCP server configuration, in any of the transports ACP carries.
 McpServer: TypeAlias = schema.HttpMcpServer | schema.SseMcpServer | schema.AcpMcpServer | schema.McpServerStdio
@@ -62,10 +65,10 @@ class AcpSession:
 class AcpSessionConfig(Generic[AgentDepsT]):
     """Per-session run configuration returned by a `session_config` factory.
 
-    `deps`, `capabilities`, and `toolsets` are applied to every agent run in that session, mirroring
-    `Agent.run(..., deps=..., capabilities=..., toolsets=...)`. Capabilities and toolsets are added to the agent's own
-    rather than replacing them. `deps` is required; pass `deps=None` for an agent with no
-    dependencies.
+    `deps`, `capabilities`, `toolsets`, and `workspace` are applied to every agent run in that session,
+    mirroring `Agent.run(..., deps=..., capabilities=..., toolsets=..., workspace=...)`. Capabilities
+    and toolsets are added to the agent's own rather than replacing them. `deps` is required; pass
+    `deps=None` for an agent with no dependencies.
 
     Configure session behavior through `capabilities`; reserve `toolsets` for bare toolsets such
     as MCP servers or directly constructed `AcpFileSystemToolset` instances. A capability contributes its tools
@@ -73,11 +76,14 @@ class AcpSessionConfig(Generic[AgentDepsT]):
     toolset alone drops the rest -- and a
     [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] its tools emit then has no owning
     capability to be attributed to, which is an error.
+
+    The session owns the workspace backend's lifecycle; the adapter does not tear it down.
     """
 
     deps: AgentDepsT
     capabilities: Sequence[AbstractCapability[AgentDepsT]] | None = None
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
+    workspace: WorkspaceBackend | WorkspaceRef | None = None
 
 
 # A `Protocol` rather than a `Callable` alias so it stays subscriptable (`SessionConfigFunc[MyDeps]`)
@@ -110,7 +116,7 @@ class SessionState(Generic[AgentDepsT]):
     # The model the client selected for this session via the `model` config option, or `None` to
     # use the agent's own model. Applied as a per-run override so the shared agent is never mutated.
     model: str | None = None
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    lock: anyio.Lock = field(default_factory=lambda: anyio.Lock(fast_acquire=True))
     active_turn: asyncio.Task[schema.PromptResponse] | None = None
     cancel_requested: bool = False
     always_allow: set[Hashable] = field(default_factory=set[Hashable])

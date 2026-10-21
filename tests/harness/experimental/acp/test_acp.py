@@ -2,8 +2,8 @@
 
 Organized by behavior: lifecycle, streaming/event ordering, tool calls, permission/HITL,
 cancellation, multi-turn history & isolation, errors, unsupported methods, and entry points.
-Most tests drive the adapter directly with an in-memory `FakeClient`; the entry-point tests
-spawn a real subprocess over stdio, as a TUI client (Zed/Toad) would.
+Most tests drive the adapter directly with an in-memory `FakeClient`; the entry-point tests drive it
+over the in-memory wire, and one spawns a real subprocess over stdio, as a TUI client (Zed/Toad) would.
 """
 
 from __future__ import annotations
@@ -14,15 +14,18 @@ import importlib
 import json
 import sys
 from collections.abc import AsyncIterator, Callable
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError, dataclass, fields
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import acp
+import anyio
 import pytest
 from acp import RequestError, schema
 from pydantic import BaseModel
+
 from pydantic_ai import Agent, DeferredToolRequests, RunContext, Tool, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks
 from pydantic_ai.exceptions import ApprovalRequired
@@ -33,6 +36,7 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -48,8 +52,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
-from pydantic_ai.usage import UsageLimits
-
+from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
 from pydantic_ai_harness.experimental.acp import (
@@ -59,32 +63,37 @@ from pydantic_ai_harness.experimental.acp import (
     InMemorySessionStore,
     PydanticAIACPAgent,
     ToolCallPresentation,
+    acp_filesystem,
+    acp_terminal,
     chain_presenters,
     default_coding_presenter,
     run_acp_stdio,
     run_acp_stdio_sync,
 )
 from pydantic_ai_harness.experimental.acp._adapter import (
-    _finish_reason_to_stop_reason,
-    _TurnState,
-    _usage_limit_stop_reason,
+    _USAGE_LIMIT_STOP_REASONS,  # pyright: ignore[reportPrivateUsage]
+    _finish_reason_to_stop_reason,  # pyright: ignore[reportPrivateUsage]
+    _TurnState,  # pyright: ignore[reportPrivateUsage]
+    _usage_limit_stop_reason,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.experimental.acp._content import PromptContentBlock
-from pydantic_ai_harness.experimental.acp._presentation import _HANDLERS, absolutize
+from pydantic_ai_harness.experimental.acp._presentation import (
+    _HANDLERS,  # pyright: ignore[reportPrivateUsage]
+    absolutize,
+)
 from pydantic_ai_harness.experimental.acp._serialize import (
     MAX_RAW_FIELD_CHARS,
     MAX_TEXT_UPDATE_BYTES,
-    _escaped_len,
+    _escaped_len,  # pyright: ignore[reportPrivateUsage]
     chunk_text,
 )
 from pydantic_ai_harness.experimental.acp._session import SessionState
 from pydantic_ai_harness.filesystem import FileSystemToolset, FileWrittenEvent
-from tests.experimental.acp._acp_clients import (  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness.experimental.acp._acp_clients import (
     RecordingClient,
     RecordingClientBase,
 )
-
-pytestmark = pytest.mark.anyio
+from tests.harness.experimental.acp._wire import wire_agent
 
 # A decider maps a permission request (the tool call) to the option_id the client "clicks",
 # or to None to signal a cancelled permission outcome (the user dismissed the dialog).
@@ -181,8 +190,9 @@ def _user_texts(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts:
             if not isinstance(part, UserPromptPart):
                 continue
-            if isinstance(part.content, str):  # pragma: no cover - adapter always sends list content
-                texts.append(part.content)
+            if isinstance(part.content, str):
+                # ACP prompts always use list content.
+                texts.append(part.content)  # pragma: no cover
             else:
                 texts.extend(item for item in part.content if isinstance(item, str))
     return texts
@@ -270,6 +280,16 @@ def _body_raises_approval_agent(executed: list[str]) -> Agent[None, str]:
         raise ApprovalRequired()
 
     return agent
+
+
+def _last_prompt(messages: list[ModelMessage]) -> str | None:
+    """The text of the most recent user prompt in `messages`."""
+    for message in reversed(messages):
+        for part in reversed(message.parts):
+            if isinstance(part, UserPromptPart):
+                content = [part.content] if isinstance(part.content, str) else part.content
+                return ''.join(item for item in content if isinstance(item, str))
+    return None  # pragma: no cover
 
 
 class TestLifecycle:
@@ -496,6 +516,26 @@ class TestSessionConfig:
 
         assert 'extra_tool' in {title for _id, title, _status in client.tool_starts()}
 
+    async def test_session_sandbox_is_attached_to_the_run(self, tmp_path: Path) -> None:
+        agent: Agent[object, str] = Agent(TestModel(call_tools=['sandbox_working_dir']))
+
+        @agent.tool
+        async def sandbox_working_dir(ctx: RunContext[object]) -> str:
+            return await ctx.workspace.working_dir()
+
+        client = FakeClient()
+        backend = LocalWorkspaceBackend(working_dir=tmp_path)
+        adapter = PydanticAIACPAgent(
+            agent, session_config=lambda _session: AcpSessionConfig(deps=None, workspace=backend)
+        )
+        adapter.on_connect(client)
+        await adapter.initialize(protocol_version=1)
+        session = await adapter.new_session(cwd='.')
+        await adapter.prompt(prompt=[acp.text_block('where')], session_id=session.session_id)
+
+        [(_id, _status, raw_output)] = client.tool_completions()
+        assert raw_output == str(tmp_path)
+
     async def test_without_factory_falls_back_to_constructor_deps(self) -> None:
         adapter = PydanticAIACPAgent(_workspace_agent(), deps=_Workspace(cwd='/fixed'))
         client = FakeClient()
@@ -674,24 +714,86 @@ class TestStopReason:
         assert _finish_reason_to_stop_reason(finish_reason) == expected
 
     @pytest.mark.parametrize(
-        ('message', 'expected'),
+        ('check', 'expected'),
         [
-            # The real wordings from pydantic-ai's UsageLimits checks.
-            ('The next request would exceed the request_limit of 50', 'max_turn_requests'),
-            ('The next tool call(s) would exceed the tool_calls_limit of 3 (tool_calls=4).', 'max_turn_requests'),
-            ('Exceeded the output_tokens_limit of 5 (output_tokens=10)', 'max_tokens'),
-            ('The next request would exceed the total_tokens_limit of 9 (total_tokens=10)', 'max_tokens'),
+            # Raised by pydantic-ai's own checks, so a change to their wording fails here, not silently.
+            pytest.param(
+                lambda: UsageLimits(request_limit=1).check_before_request(RunUsage(requests=1)),
+                'max_turn_requests',
+                id='request_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(tool_calls_limit=1).check_before_tool_call(RunUsage(tool_calls=2)),
+                'max_turn_requests',
+                id='tool_calls_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(cost_limit=Decimal(1)).check_cost(RunUsage(cost=Decimal(2))),
+                'max_turn_requests',
+                id='cost_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(cost_limit=Decimal(1)).check_before_request(RunUsage(cost=Decimal(2))),
+                'max_turn_requests',
+                id='cost_limit-before-request',
+            ),
+            pytest.param(
+                lambda: UsageLimits(input_tokens_limit=1).check_tokens(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='input_tokens_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(input_tokens_limit=1).check_before_request(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='input_tokens_limit-before-request',
+            ),
+            pytest.param(
+                lambda: UsageLimits(output_tokens_limit=1).check_tokens(RunUsage(output_tokens=2)),
+                'max_tokens',
+                id='output_tokens_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(total_tokens_limit=1).check_tokens(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='total_tokens_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(total_tokens_limit=1).check_before_request(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='total_tokens_limit-before-request',
+            ),
+            pytest.param(
+                lambda: UsageLimits(per_request_input_tokens_limit=1).check_per_request_input_tokens(2),
+                'max_tokens',
+                id='per_request_input_tokens_limit',
+            ),
         ],
     )
-    def test_usage_limit_maps_to_stop_reason(self, message: str, expected: schema.StopReason) -> None:
-        assert _usage_limit_stop_reason(UsageLimitExceeded(message)) == expected
+    def test_usage_limit_maps_to_stop_reason(self, check: Callable[[], None], expected: schema.StopReason) -> None:
+        with pytest.raises(UsageLimitExceeded) as exc_info:
+            check()
+        assert _usage_limit_stop_reason(exc_info.value) == expected
 
-    async def test_request_limit_ends_the_turn_with_max_turn_requests(self) -> None:
-        # A model that calls a tool on every request never finishes the turn, so pydantic-ai's
-        # default request_limit (50) trips. ACP defines `max_turn_requests` for exactly this; it
-        # must end the turn with that stop reason, not surface as a JSON-RPC error.
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
-            yield {0: DeltaToolCall(name='spin', json_args='{}')}
+    def test_every_usage_limit_has_a_stop_reason(self) -> None:
+        """A new `UsageLimits` field must get a deliberate mapping instead of the silent fallback."""
+        limit_fields = {f.name for f in fields(UsageLimits) if f.name.endswith('_limit')}
+        assert limit_fields == set(_USAGE_LIMIT_STOP_REASONS)
+
+    def test_unrecognized_usage_limit_falls_back_to_max_turn_requests(self) -> None:
+        assert _usage_limit_stop_reason(UsageLimitExceeded('Budget exhausted')) == 'max_turn_requests'
+
+    async def test_default_usage_limits_do_not_limit_requests(self) -> None:
+        request_count = 0
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            nonlocal request_count
+            request_count += 1
+            if request_count > 50:
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='spin', json_args='{}')}
 
         agent = Agent(FunctionModel(stream_function=stream))
 
@@ -705,24 +807,31 @@ class TestStopReason:
 
         response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
 
-        assert response.stop_reason == 'max_turn_requests'
-        # The raising run's messages are not retrievable, so the turn rolls back like a
-        # cancellation: no committed history or usage.
-        assert response.usage is None
-        assert adapter._sessions[session_id].history == []  # pyright: ignore[reportPrivateUsage]
+        assert response.stop_reason == 'end_turn'
+        assert response.usage is not None
+        assert request_count == 51
+        assert len(adapter._sessions[session_id].history) >= 2  # pyright: ignore[reportPrivateUsage]
 
     async def test_configured_usage_limits_end_the_turn_with_max_turn_requests(self) -> None:
         request_count = 0
+        spins = 0
 
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
             nonlocal request_count
             request_count += 1
-            yield {0: DeltaToolCall(name='spin', json_args='{}')}
+            if _last_prompt(messages) == 'next':
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='spin', json_args='{}')}
 
         agent = Agent(FunctionModel(stream_function=stream))
 
         @agent.tool_plain
         def spin() -> str:
+            nonlocal spins
+            spins += 1
             return 'again'
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(request_limit=2))
@@ -732,9 +841,141 @@ class TestStopReason:
         response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
 
         assert response.stop_reason == 'max_turn_requests'
-        assert response.usage is None
+        # Both requests the turn made, and committed, are counted.
+        assert response.usage is not None
+        assert response.usage.input_tokens > 0
         assert request_count == 2
+        # The tools that ran before the limit stay in the history, so the next turn knows about them.
+        history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
+        assert _last_prompt(history) == 'go'
+        assert sum(isinstance(part, ToolReturnPart) for message in history for part in message.parts) == spins == 2
+
+        follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+        assert follow_up.stop_reason == 'end_turn'
+
+    async def test_tool_calls_limit_commits_the_turn_without_the_unrun_calls(self) -> None:
+        """A limit hit before a response's tool calls run leaves those calls out of the committed history."""
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if _last_prompt(messages) == 'next':
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='spin', json_args='{}')}
+
+        agent = Agent(FunctionModel(stream_function=stream))
+
+        @agent.tool_plain
+        def spin() -> str:
+            return 'again'
+
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(tool_calls_limit=1))
+        session_id = await _start(adapter, FakeClient())
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+        assert response.stop_reason == 'max_turn_requests'
+
+        history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
+        # The call that ran and its result are kept; the second call, stopped before it ran, is not.
+        assert isinstance(history[-1], ModelRequest) and history[-1].state != 'interrupted'
+        assert sum(isinstance(part, ToolReturnPart) for part in history[-1].parts) == 1
+        # The dropped response was still generated, so its tokens are reported with the kept one's.
+        committed_input = sum(m.usage.input_tokens for m in history if isinstance(m, ModelResponse))
+        assert response.usage is not None
+        assert response.usage.input_tokens > committed_input > 0
+        # A dangling call would make this prompt fail with "unprocessed tool calls".
+        follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+        assert follow_up.stop_reason == 'end_turn'
+
+    async def test_limit_before_the_first_request_keeps_the_prior_history(self) -> None:
+        """A prompt refused before it reached the model is not committed, so the next turn does not resend it."""
+        agent = Agent(TestModel())  # never called: the limit refuses the first request
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(request_limit=0))
+        session_id = await _start(adapter, FakeClient())
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+
+        assert response.stop_reason == 'max_turn_requests'
         assert adapter._sessions[session_id].history == []  # pyright: ignore[reportPrivateUsage]
+
+    async def test_limit_inside_a_running_tool_keeps_the_interrupted_call(self) -> None:
+        """A limit raised while a tool runs (e.g. a delegate sharing the usage) keeps and fails that call."""
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if _last_prompt(messages) == 'next':
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='delegate', json_args='{}')}
+
+        agent = Agent(FunctionModel(stream_function=stream))
+
+        @agent.tool_plain
+        def delegate() -> str:
+            raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, session_store=InMemorySessionStore())
+        session_id = await _start(adapter, FakeClient())
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+        assert response.stop_reason == 'max_turn_requests'
+
+        state = adapter._sessions[session_id]  # pyright: ignore[reportPrivateUsage]
+        # The call started, so it stays in the history; the next run closes it out as interrupted.
+        assert any(isinstance(message, ModelResponse) and message.tool_calls for message in state.history)
+        # The committed transcript ends the call as failed, so `session/load` does not replay it as running.
+        assert any(getattr(update, 'status', None) == 'failed' for update in state.transcript)
+        follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+        assert follow_up.stop_reason == 'end_turn'
+
+    async def test_limit_on_the_retry_keeps_the_rejected_answer(self) -> None:
+        """A limit refusing the retry of a text answer commits that answer, not the unsent retry."""
+
+        class Answer(BaseModel):
+            answer: int
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if _last_prompt(messages) == 'next':
+                yield {0: DeltaToolCall(name='final_result', json_args='{"answer": 1}')}
+            else:
+                yield 'plain text where an `Answer` is required'
+
+        agent = Agent(FunctionModel(stream_function=stream), output_type=Answer)
+        adapter: PydanticAIACPAgent[None, Answer] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(request_limit=1))
+        session_id = await _start(adapter, FakeClient())
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+        assert response.stop_reason == 'max_turn_requests'
+
+        history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(history[-1], ModelResponse) and not history[-1].tool_calls
+        follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+        assert follow_up.stop_reason == 'end_turn'
+
+    async def test_limit_before_the_run_records_anything_keeps_the_prior_history(self) -> None:
+        """A limit raised before the run records a message, e.g. by a `before_run` hook, commits nothing."""
+        refuse = False
+
+        async def check_budget(ctx: RunContext[Any]) -> None:
+            if refuse:
+                raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
+        agent = Agent(TestModel(), capabilities=[Hooks(before_run=check_budget)])
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent)
+        session_id = await _start(adapter, FakeClient())
+        first = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+        assert first.stop_reason == 'end_turn'
+        history = list(adapter._sessions[session_id].history)  # pyright: ignore[reportPrivateUsage]
+
+        refuse = True
+        response = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+
+        assert response.stop_reason == 'max_turn_requests'
+        assert adapter._sessions[session_id].history == history  # pyright: ignore[reportPrivateUsage]
 
     async def test_default_usage_limits_allow_normal_tool_resume(self) -> None:
         request_count = 0
@@ -1489,11 +1730,12 @@ class TestCancellation:
         session_id = await _start(adapter, client)
 
         prompt_task = asyncio.ensure_future(adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id))
-        # One tick suffices: prompt() sets active_turn before its first suspension point (an
-        # uncontended lock acquire does not yield).
-        await asyncio.sleep(0)
-        turn = adapter._sessions[session_id].active_turn  # pyright: ignore[reportPrivateUsage]
-        assert turn is not None, 'the prompt never started its turn'
+        # prompt() sets active_turn once it holds the session lock; acquiring it is a checkpoint.
+        session = adapter._sessions[session_id]  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(5):
+            while session.active_turn is None:
+                await asyncio.sleep(0)
+        turn = session.active_turn
         # Tear the prompt handler down in the same tick the dismissed dialog ends the turn: the
         # turn's internal rollback signal must not escape (or replace) the handler's cancellation.
         turn.add_done_callback(lambda _turn: prompt_task.cancel())
@@ -1978,6 +2220,7 @@ class TestEntryPoints:
         assert seen == ['host:custom']
         assert response.stop_reason == 'max_turn_requests'
 
+    @pytest.mark.subprocess(reason='the one test that drives the ACP entry point over real stdio')
     async def test_end_to_end_over_stdio(self) -> None:
         """Drive the adapter as a real subprocess over ACP stdio, as a TUI client would."""
         client = FakeClient()
@@ -1997,11 +2240,20 @@ class TestEntryPoints:
         # The streamed text is the model's JSON-encoded tool result, delivered intact.
         assert 'Sunny in a' in client.text()
 
-    async def test_end_to_end_permission_over_stdio(self) -> None:
-        """A tool requiring approval round-trips a real permission request over stdio."""
+    # The tests below drive the adapter over the in-memory wire (`_wire.py`): the real SDK router
+    # and JSON codec, without an interpreter start-up per test. `test_end_to_end_over_stdio` above
+    # is the one test that crosses a real process boundary.
+
+    async def test_end_to_end_permission_over_the_wire(self) -> None:
+        """A tool requiring approval round-trips a real permission request over the wire."""
+        agent = Agent(TestModel())
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file(path: str) -> str:
+            return f'deleted {path}'
+
         client = FakeClient(decider=lambda _call: 'allow_once')
-        script = Path(__file__).parent / '_demo_approval_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+        async with wire_agent(PydanticAIACPAgent(agent), client) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             response = await conn.prompt(
@@ -2012,40 +2264,46 @@ class TestEntryPoints:
         assert len(client.permission_requests) == 1
         assert client.permission_requests[0].title == 'delete_file'
 
-    async def test_cancel_notification_over_stdio(self) -> None:
-        """A real `session/cancel` notification mid-prompt yields a cancelled stop reason over stdio."""
-        client = FakeClient()
-        script = Path(__file__).parent / '_demo_slow_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+    async def test_cancel_notification_over_the_wire(self) -> None:
+        """A real `session/cancel` notification mid-prompt yields a cancelled stop reason over the wire."""
+        started = asyncio.Event()
+        agent = Agent(TestModel())
+
+        @agent.tool_plain
+        async def slow() -> str:
+            started.set()
+            await asyncio.sleep(30)
+            # Cancelled before it returns.
+            return 'done'  # pragma: no cover
+
+        async with wire_agent(PydanticAIACPAgent(agent)) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             prompt = asyncio.ensure_future(
                 conn.prompt(session_id=session.session_id, prompt=[acp.text_block('go')], message_id=uuid4().hex)
             )
-            await asyncio.sleep(0.5)  # let the slow tool start
+            await asyncio.wait_for(started.wait(), timeout=10)
             await conn.cancel(session_id=session.session_id)
             response = await asyncio.wait_for(prompt, timeout=10)
 
         assert response.stop_reason == 'cancelled'
 
-    async def test_large_output_over_stdio(self) -> None:
-        """A large streamed message survives the default stdio buffer intact (chunked, not truncated)."""
-        client = FakeClient()
-        script = Path(__file__).parent / '_demo_large_agent.py'
-        # No custom transport buffer: the adapter must chunk so the default client reader (64 KiB)
-        # is never overrun. Raising the buffer here would mask the real-client failure mode.
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+    async def test_large_output_over_the_wire(self) -> None:
+        """A large streamed message survives the default client read buffer intact (chunked, not truncated)."""
+        # `wire_agent` keeps the client reader's default 64 KiB line limit: the adapter must chunk so
+        # it is never overrun. Raising the buffer here would mask the real-client failure mode.
+        adapter = PydanticAIACPAgent(Agent(TestModel(custom_output_text='x' * 200_000)))
+        async with wire_agent(adapter) as (conn, client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             await conn.prompt(session_id=session.session_id, prompt=[acp.text_block('go')], message_id=uuid4().hex)
 
-        assert client.text() == 'x' * 200_000
+        assert client.texts() == 'x' * 200_000
 
-    async def test_model_config_and_unstable_close_route_over_stdio(self) -> None:
+    async def test_model_config_and_unstable_close_route_over_the_wire(self) -> None:
         """Model config updates and unstable `session/close` reach the handler over a real wire."""
-        client = FakeClient()
-        script = Path(__file__).parent / '_demo_models_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+        adapter = PydanticAIACPAgent(Agent(TestModel(custom_output_text='hi')), models=['test', 'openai:gpt-4o'])
+        async with wire_agent(adapter) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             model_result = await conn.set_config_option(
@@ -2057,14 +2315,32 @@ class TestEntryPoints:
         assert isinstance(option, schema.SessionConfigOptionSelect)
         assert option.current_value == 'openai:gpt-4o'
 
-    async def test_native_toolsets_route_over_stdio(self) -> None:
-        """Client-backed fs/terminal tools reach the real client over stdio when mounted per session."""
+    async def test_native_toolsets_route_over_the_wire(self) -> None:
+        """Client-backed fs/terminal tools reach the real client over the wire when mounted per session."""
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if _has_tool_return(messages):
+                yield 'done'
+                return
+            yield {
+                0: DeltaToolCall(name='read_file', json_args=json.dumps({'path': 'notes.txt'})),
+                1: DeltaToolCall(name='run_command', json_args=json.dumps({'command': 'echo hi'})),
+            }
+
+        def session_config(session: AcpSession) -> AcpSessionConfig[None]:
+            capabilities = [
+                capability for capability in (acp_filesystem(session), acp_terminal(session)) if capability is not None
+            ]
+            return AcpSessionConfig(deps=None, capabilities=capabilities)
+
+        adapter = PydanticAIACPAgent(Agent(FunctionModel(stream_function=stream)), session_config=session_config)
         client = RecordingClient(files={'notes.txt': 'hello'}, output='hi')
         capabilities = schema.ClientCapabilities(
             fs=schema.FileSystemCapabilities(read_text_file=True, write_text_file=True), terminal=True
         )
-        script = Path(__file__).parent / '_demo_native_agent.py'
-        async with acp.spawn_agent_process(client, sys.executable, str(script)) as (conn, _proc):
+        async with wire_agent(adapter, client) as (conn, _client):
             await conn.initialize(protocol_version=acp.PROTOCOL_VERSION, client_capabilities=capabilities)
             session = await conn.new_session(cwd='.', mcp_servers=[])
             await conn.prompt(session_id=session.session_id, prompt=[acp.text_block('go')], message_id=uuid4().hex)
@@ -2092,10 +2368,10 @@ class TestDefaultCodingPresenter:
     def test_handler_names_match_the_filesystem_and_shell_tools(self) -> None:
         # Recognition couples to tool names, so a rename in those capabilities would silently
         # degrade rich rendering to generic JSON. This fails loudly instead.
-        filesystem = FileSystem[None](root_dir='.').get_toolset()
+        filesystem = FileSystem[None]().get_toolset()
         assert isinstance(filesystem, FileSystemToolset)
         fs_tools = set(filesystem.tools)
-        shell_tools = set(Shell[None](cwd='.').get_toolset().tools)
+        shell_tools = set(Shell[None]().get_toolset().tools)
         assert set(_HANDLERS) <= fs_tools | shell_tools
 
     def test_edit_file_yields_edit_kind_location_and_diff(self) -> None:
@@ -2381,12 +2657,15 @@ class TestWorkspaceRooting:
     """A `session_config` factory roots `FileSystem` at the client's `cwd`, with absolute locations."""
 
     async def test_session_config_roots_filesystem_at_client_cwd(self, tmp_path: Path) -> None:
-
         write = DeltaToolCall(name='write_file', json_args=json.dumps({'path': 'note.txt', 'content': 'hi'}))
         agent = Agent(_calls_tool_each_turn(write))  # the agent itself has no filesystem tools
 
         def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-            return AcpSessionConfig(deps=None, capabilities=[FileSystem[None](root_dir=session.cwd)])
+            return AcpSessionConfig(
+                deps=None,
+                capabilities=[FileSystem[None](root_dir=session.cwd)],
+                workspace=LocalWorkspaceBackend(session.cwd),
+            )
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, session_config=session_config)
         client = FakeClient()
@@ -2419,7 +2698,11 @@ class TestWorkspaceRooting:
             seen.append(event)
 
         def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-            return AcpSessionConfig(deps=None, capabilities=[FileSystem[None](root_dir=session.cwd), hooks])
+            return AcpSessionConfig(
+                deps=None,
+                capabilities=[FileSystem[None](root_dir=session.cwd), hooks],
+                workspace=LocalWorkspaceBackend(session.cwd),
+            )
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, session_config=session_config)
         client = FakeClient()

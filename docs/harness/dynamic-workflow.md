@@ -22,7 +22,7 @@ If you have met [Code Mode](code-mode.md), this will feel familiar -- the same [
 The harness has two delegation capabilities. They trade in the same currency -- named, isolated sub-agent runs -- but at different altitudes:
 
 - [`SubAgents`](subagents.md) exposes one `delegate_task(agent_name, task)` tool. Each delegation is its own tool call and its own model turn. It is the right fit when delegations are occasional, or when each result needs the parent's judgment before the next one.
-- `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops all run inside one tool call, and intermediate results never enter the parent's context.
+- `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops all run inside one tool call, and only what the script returns or prints (plus bounded previews of completed results on failure or budget exhaustion) reaches the parent.
 
 Start with `SubAgents` if you are not sure. A `delegate_task` orchestrator converts to a workflow catalog without changing the sub-agents themselves.
 
@@ -42,11 +42,11 @@ Two sub-agents, one orchestrator:
 from pydantic_ai import Agent
 from pydantic_ai_harness import DynamicWorkflow
 
-reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
-summarizer = Agent('openai:gpt-5', name='summarizer', description='Summarizes findings.')
+reviewer = Agent('{{ openai:medium }}', name='reviewer', description='Reviews code for bugs.')
+summarizer = Agent('{{ openai:medium }}', name='summarizer', description='Summarizes findings.')
 
 orchestrator = Agent(
-    'openai:gpt-5',
+    '{{ openai:medium }}',
     capabilities=[DynamicWorkflow(agents=[reviewer, summarizer])],
 )
 ```
@@ -87,7 +87,7 @@ class Score(BaseModel):
     value: int
     reason: str
 
-critic = Agent('openai:gpt-5', name='critic', description='Scores an answer 0-10.', output_type=Score)
+critic = Agent('{{ openai:medium }}', name='critic', description='Scores an answer 0-10.', output_type=Score)
 ```
 
 Inside the script the model reads the fields by subscript, the way it would read a JSON object:
@@ -98,6 +98,8 @@ result["value"]   # not result.value
 ```
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and reads them by subscript on its own.
+
+An `output_type` can include [`DeferredToolRequests`](../deferred-tools.md) so a top-level caller can approve tools and resume the run. A workflow script cannot do either, so the catalog leaves `DeferredToolRequests` out of the sub-agent's return type, and a sub-agent run that ends with it raises a `RuntimeError` in the script, like any other sub-agent failure.
 
 ## How results come back
 
@@ -151,7 +153,7 @@ DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
 
 ### Workflows do not nest
 
-A sub-agent cannot start its own workflow; a nested `run_workflow` call returns a terminal error instead of running. The practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow` capability. They are the leaves of the orchestration, not orchestrators.
+A sub-agent cannot start its own workflow: a sub-agent that has the `DynamicWorkflow` capability is not offered `run_workflow` while it runs inside a workflow. The practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow` capability. They are the leaves of the orchestration, not orchestrators.
 
 ## Renaming a sub-agent: `WorkflowAgent`
 
@@ -179,13 +181,13 @@ The catalog is fixed when a run starts, which keeps it in the prompt-cache prefi
 
 ```python
 workflow = DynamicWorkflow(agents=[reviewer])
-orchestrator = Agent('openai:gpt-5', deps_type=MyDeps, capabilities=[workflow])
+orchestrator = Agent('{{ openai:medium }}', deps_type=MyDeps, capabilities=[workflow])
 
 # later, from the host or from another tool:
 workflow.reveal(fixer)
 ```
 
-The revealed sub-agent becomes callable on the next step; the model learns about it through a short announcement message that carries the new function's signature. The `run_workflow` description itself stays frozen at the agents present when the run started, so a runtime reveal never moves the prompt-cache prefix. `reveal()` is append-only and validates immediately -- a missing name, an invalid identifier, a reserved keyword, or a name collision raises `UserError` at the call site.
+The revealed sub-agent becomes callable on the next step; the model learns about it through a short system-level announcement message that carries the new function's signature. The `run_workflow` description itself stays frozen at the agents present when the run started, so a runtime reveal never moves the prompt-cache prefix. If compaction or a history processor removes the announcement, the capability announces the sub-agent again on the next step. `reveal()` is append-only and validates immediately -- a missing name, an invalid identifier, a reserved keyword, or a name collision raises `UserError` at the call site.
 
 ## Loading it only when needed: `defer_loading`
 
@@ -199,14 +201,14 @@ DynamicWorkflow(
 )
 ```
 
-`defer_loading=True` needs a stable `id`. See [on-demand capabilities](/ai/capabilities/on-demand/) for the full picture.
+`defer_loading=True` needs a stable `id`. See [on-demand capabilities](../capabilities/on-demand.md) for the full picture.
 
 ## What runs in the sandbox
 
 The script runs in Monty, a subset of Python. Knowing the edges matters:
 
 - No third-party libraries.
-- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use. Filesystem, environment, and clock operations are not configured for workflow scripts.
+- Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
   unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
   a script may sleep for at most that long in total.
@@ -222,7 +224,7 @@ Before a script runs it is statically type-checked against the sub-agent signatu
 
 Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
 sub-agent whose model requests should run as activities, then register every agent with its own
-`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](/ai/harness/code-mode/#temporal-durability),
+`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability),
 and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
@@ -254,17 +256,17 @@ workflow.reveal(agent)            # AbstractAgent | WorkflowAgent; validates bef
 WorkflowAgent(
     agent,                        # AbstractAgent, required, positional
     name=None,                    # sandbox function name; falls back to agent.name
-    description=None,             # function docstring; falls back to agent.description
+    description=None,             # function docstring; None falls back to agent.description, '' hides it
 )
 ```
 
 `DynamicWorkflowToolset` and `WorkflowResourceLimits` are also exported from the module for advanced use.
 
-Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/dynamic_workflow/).
+Source: [`pydantic_ai_harness/dynamic_workflow/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/).
 
 ## Further reading
 
 - [Code Mode](code-mode.md) -- the same sandbox, calling the agent's own tools instead of sub-agents.
 - [Subagents](subagents.md) -- one-delegation-per-tool-call sub-agents, without the scripted choreography.
 - [Rewriting Bun in Rust](https://bun.com/blog/bun-in-rust) (Bun) -- the same pattern at scale, via Claude Code's dynamic workflows.
-- [Capabilities](/ai/capabilities/overview/) and [on-demand capabilities](/ai/capabilities/on-demand/).
+- [Capabilities](../capabilities/overview.md) and [on-demand capabilities](../capabilities/on-demand.md).

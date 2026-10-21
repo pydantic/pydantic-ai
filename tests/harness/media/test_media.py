@@ -7,13 +7,15 @@ import json
 import json as _json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard
 
 import httpx
 import pytest
 from httpx import AsyncClient, MockTransport, Request, Response
+
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     BinaryContent,
@@ -25,11 +27,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-
 from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaContext,
     MediaStore,
+    PostgresConnection,
+    PostgresMediaStore,
     S3MediaStore,
     SqliteMediaStore,
     externalize_media,
@@ -42,8 +45,6 @@ from pydantic_ai_harness.media._s3 import (
     _canonical_uri,  # pyright: ignore[reportPrivateUsage]
     sign_request,
 )
-
-pytestmark = pytest.mark.anyio
 
 
 class TestMediaUriHelpers:
@@ -905,7 +906,7 @@ class TestSigV4Signer:
             access_key_id='AKIAIOSFODNN7EXAMPLE',
             secret_access_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
             content_type='image/png',
-            now=datetime(2013, 5, 24, tzinfo=timezone.utc),
+            now=datetime(2013, 5, 24, tzinfo=UTC),
         )
         assert headers['host'] == 'examplebucket.s3.amazonaws.com'
         assert headers['x-amz-date'] == '20130524T000000Z'
@@ -928,7 +929,7 @@ class TestSigV4Signer:
             access_key_id='K',
             secret_access_key='S',
             content_type=None,
-            now=datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            now=datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC),
         )
         a = sign_request(**common)  # type: ignore[arg-type]
         b = sign_request(**common)  # type: ignore[arg-type]
@@ -943,7 +944,7 @@ class TestSigV4Signer:
             access_key_id='K',
             secret_access_key='S',
             content_type=None,
-            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            now=datetime(2024, 1, 1, tzinfo=UTC),
         )
         sig_a = sign_request(body=b'aaa', **kwargs)['authorization']  # type: ignore[arg-type]
         sig_b = sign_request(body=b'bbb', **kwargs)['authorization']  # type: ignore[arg-type]
@@ -1261,14 +1262,14 @@ class TestS3MediaStoreWithMockTransport:
         assert path == f'/my-bucket/runs/{digest}.bin'
 
 
-@pytest.mark.skipif(  # pragma: no cover
+@pytest.mark.skipif(  # pragma: lax no cover
     not all(
         os.environ.get(k)
         for k in ('S3_ENDPOINT', 'S3_BUCKET_NAME', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'S3_REGION')
     ),
     reason='live S3/R2 env vars not set',
 )
-class TestS3MediaStoreLive:  # pragma: no cover
+class TestS3MediaStoreLive:  # pragma: lax no cover
     """Live integration against the configured S3 endpoint (e.g. R2).
 
     Activated only when all five S3_* env vars are set. Reads creds out of
@@ -1403,9 +1404,17 @@ def _assert_media_store_protocol(store: MediaStore) -> None:
     assert isinstance(store, MediaStore)
 
 
+class _UnusedPostgresPool:
+    """Satisfies `PostgresPool` structurally; a protocol check never acquires."""
+
+    def acquire(self) -> AbstractAsyncContextManager[PostgresConnection]:
+        raise AssertionError('the pool must not be used')  # pragma: no cover
+
+
 def test_concrete_stores_satisfy_protocol(tmp_path: Path) -> None:
     _assert_media_store_protocol(DiskMediaStore(tmp_path))
     _assert_media_store_protocol(SqliteMediaStore(database=tmp_path / 'm.db'))
+    _assert_media_store_protocol(PostgresMediaStore(_UnusedPostgresPool()))
     _assert_media_store_protocol(
         S3MediaStore(
             bucket='b',

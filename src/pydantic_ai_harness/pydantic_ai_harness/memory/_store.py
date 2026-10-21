@@ -3,26 +3,48 @@
 from __future__ import annotations
 
 import bisect
+import hashlib
 import heapq
-import os
+import json
+import logging
+import posixpath
 import re
 import sqlite3
-import tempfile
 import threading
+import uuid
+import warnings
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from copy import copy
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Protocol, TypeVar, runtime_checkable
+from typing import Literal, Protocol, TypeVar, runtime_checkable
 
 import anyio
 import anyio.to_thread
 
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
+
 _VALID_SEGMENT_RE = re.compile(r'[A-Za-z0-9_.-]{1,200}')
-_JOURNAL_NAME = '.memory-store.sqlite3'
-_FILE_RECOVERY_BATCH_SIZE = 256
+_OPERATIONS_NAME = '.memory-operations.json'
+_LEGACY_JOURNAL_NAME = '.memory-store.sqlite3'
+"""The SQLite journal earlier `FileStore` releases kept beside the files; hidden from listings."""
+_TEMP_PREFIX = '.memory-tmp-'
+"""Names the file a write is staged in before it replaces its target; hidden from listings."""
+_HIDDEN_PREFIXES = (_OPERATIONS_NAME, _LEGACY_JOURNAL_NAME, _TEMP_PREFIX)
+_RENAME_TIMEOUT = 30.0
+"""Deadline in seconds for the `mv` that replaces a file, and for removing a staged file after a failure."""
+_MAX_RECEIPTS = 1024
 _SQLITE_SETUP_LOCK = threading.RLock()
 _T = TypeVar('_T')
+logger = logging.getLogger(__name__)
+
+
+class MemoryPathEscapeError(ValueError):
+    """A memory path resolves outside its store directory."""
 
 
 @dataclass(frozen=True)
@@ -397,264 +419,294 @@ class InMemoryStore:
         )
 
 
-_FILE_SCHEMA = """
-CREATE TABLE IF NOT EXISTS file_state (
-    path TEXT PRIMARY KEY,
-    last_operation_id TEXT,
-    version INTEGER,
-    fingerprint TEXT
-);
-CREATE TABLE IF NOT EXISTS file_metadata (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    generation INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS memory_operations (
-    id TEXT PRIMARY KEY,
-    fingerprint TEXT NOT NULL,
-    status TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    path TEXT NOT NULL,
-    expected_version TEXT,
-    new_content TEXT,
-    result_version TEXT,
-    existed INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS one_pending_memory_operation_per_path
-ON memory_operations(path) WHERE status = 'prepared';
-"""
+@dataclass
+class _Receipt:
+    """One idempotent mutation in `FileStore`'s sidecar, kept so a replayed tool call is not applied twice."""
+
+    id: str
+    fingerprint: str
+    kind: Literal['write', 'delete']
+    path: str
+    expected: str | None
+    version: str | None
+    existed: bool
+    done: bool
+
+    def mutation(self) -> MemoryMutation:
+        return MemoryMutation(version=self.version, replayed=True, existed=self.existed)
+
+
+def content_version(content: str) -> str:
+    """`FileStore`'s version for `content`: its SHA-256 hex digest."""
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+async def _replace_text(workspace: Workspace, target: str, content: str) -> None:
+    """Replace the file at `target` with `content`, so a failed write leaves the old content whole.
+
+    The content is staged beside the target and moved over it with `mv`, a rename within one
+    filesystem. On failure the staged file is removed, best effort.
+    """
+    if not supports_commands(workspace):
+        # A filesystem-only workspace offers no rename, so there the write is in place, not atomic.
+        await workspace.write_text(target, content)
+        return
+    directory, name = posixpath.split(target)
+    # The target's name at the end keeps the staged file recognisable in the directory.
+    staged = posixpath.join(directory, f'{_TEMP_PREFIX}{uuid.uuid4().hex}-{name}')
+    try:
+        await workspace.write_text(staged, content)
+        try:
+            result = await workspace.run(['mv', '-f', staged, target], timeout=_RENAME_TIMEOUT)
+        except WorkspaceUnavailableError:
+            raise
+        except Exception as error:
+            raise WorkspaceError(f'Could not replace memory file {target!r}: {error}') from error
+        if result.exit_code != 0:
+            detail = result.stderr.strip() or f'`mv` exited with {result.exit_code}'
+            raise WorkspaceError(f'Could not replace memory file {target!r}: {detail}')
+    except BaseException:
+        with anyio.move_on_after(_RENAME_TIMEOUT, shield=True):
+            try:
+                await workspace.remove(staged)
+            except Exception:
+                pass  # Best effort: the staged file may not exist, and the original error matters more.
+        raise
 
 
 class FileStore:
-    """Plain-Markdown store with atomic replacement and a hidden SQLite journal."""
+    """Plain-Markdown memory files in a workspace directory.
 
-    def __init__(self, directory: str | Path) -> None:
-        self._root = Path(directory)
-        self._thread_lock = threading.RLock()
+    Files live under `directory` in the run's workspace (`ctx.workspace`), or in `workspace` when
+    set; a relative `directory` is relative to the workspace's working directory, so the model can
+    also open the files with its file tools. A file's version is the SHA-256 of its content, so an
+    edit made outside the store is seen as a change. Receipts for the most recent idempotent
+    mutations are kept beside the files in `.memory-operations.json`, so a replayed tool call is
+    not applied twice.
 
-    def _resolve(self, path: str) -> Path:
-        validate_store_path(path)
-        if path.split('/', 1)[0] == _JOURNAL_NAME:
-            raise ValueError(f'{_JOURNAL_NAME!r} is reserved for FileStore bookkeeping')
-        real_root = Path(os.path.realpath(self._root))
-        resolved = Path(os.path.realpath(real_root / path))
-        if not resolved.is_relative_to(real_root):
-            raise ValueError(f'memory path {path!r} resolves outside the store directory')
-        return resolved
+    One writer per directory: one `FileStore` serializes its own operations, but two stores, or
+    two processes, writing the same directory can lose updates. Use `SqliteMemoryStore` or
+    `PostgresMemoryStore` for concurrent writers.
+    """
 
-    def _connect(self) -> sqlite3.Connection:
-        self._root.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self._root / _JOURNAL_NAME, timeout=30)
-        try:
-            connection.execute('PRAGMA busy_timeout = 30000')
-            _enable_wal(connection)
-            with _SQLITE_SETUP_LOCK:
-                connection.executescript(_FILE_SCHEMA)
-                connection.execute('BEGIN IMMEDIATE')
-                columns = {str(row[1]) for row in connection.execute('PRAGMA table_info(file_state)').fetchall()}
-                if 'version' not in columns:
-                    connection.execute('ALTER TABLE file_state ADD COLUMN version INTEGER')
-                if 'fingerprint' not in columns:
-                    connection.execute('ALTER TABLE file_state ADD COLUMN fingerprint TEXT')
-                connection.execute(
-                    'INSERT OR IGNORE INTO file_metadata(id, generation) '
-                    'SELECT 1, COALESCE(MAX(version), 0) FROM file_state'
-                )
-                journal_version_row = connection.execute('PRAGMA user_version').fetchone()
-                assert journal_version_row is not None
-                if int(journal_version_row[0]) < 1:
-                    connection.execute(
-                        'UPDATE memory_operations SET expected_version = NULL, new_content = NULL '
-                        "WHERE status = 'completed' AND (expected_version IS NOT NULL OR new_content IS NOT NULL)"
-                    )
-                    connection.execute('PRAGMA user_version = 1')
-                connection.commit()
-            return connection
-        except BaseException:
-            connection.rollback()
-            connection.close()
-            raise
+    def __init__(self, directory: str | Path, *, workspace: WorkspaceBackend | None = None) -> None:
+        """Create a store.
 
-    def _next_generation(self, connection: sqlite3.Connection) -> int:
-        row = connection.execute(
-            'UPDATE file_metadata SET generation = generation + 1 WHERE id = 1 RETURNING generation'
-        ).fetchone()
-        assert row is not None
-        return int(row[0])
-
-    def _inspect_file(self, target: Path, max_chars: int) -> tuple[str, str, bool]:
-        with target.open(encoding='utf-8') as file:
-            preview = file.read(max_chars + 1)
-            stat = os.fstat(file.fileno())
-        fingerprint = f'{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}'
-        return preview[:max_chars], fingerprint, len(preview) > max_chars
-
-    def _record_file(
-        self,
-        connection: sqlite3.Connection,
-        path: str,
-        *,
-        version: str,
-        operation_id: str | None,
-    ) -> None:
-        target = self._resolve(path)
-        _, fingerprint, _ = self._inspect_file(target, 0)
-        connection.execute(
-            'INSERT INTO file_state(path, last_operation_id, version, fingerprint) VALUES (?, ?, ?, ?) '
-            'ON CONFLICT(path) DO UPDATE SET last_operation_id = excluded.last_operation_id, '
-            'version = excluded.version, fingerprint = excluded.fingerprint',
-            (path, operation_id, int(version), fingerprint),
-        )
-
-    def _matches_content(self, path: str, content: str) -> bool:
-        target = self._resolve(path)
-        if not target.is_file() or target.stat().st_size != len(content.encode()):
-            return False
-        with target.open(encoding='utf-8') as file:
-            return file.read(len(content) + 1) == content
-
-    def _atomic_write(self, target: Path, content: str) -> None:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        handle, tmp_name = tempfile.mkstemp(dir=target.parent, prefix='.memory-tmp-')
-        try:
-            with os.fdopen(handle, 'w', encoding='utf-8') as tmp_file:
-                tmp_file.write(content)
-            os.replace(tmp_name, target)
-        finally:
-            if os.path.exists(tmp_name):  # pragma: no cover
-                os.unlink(tmp_name)
-
-    def _current(self, connection: sqlite3.Connection, path: str, max_chars: int = 0) -> MemoryFile | None:
-        target = self._resolve(path)
-        if not target.is_file():
-            return None
-        content, fingerprint, truncated = self._inspect_file(target, max_chars)
-        row = connection.execute(
-            'SELECT last_operation_id, version, fingerprint FROM file_state WHERE path = ?', (path,)
-        ).fetchone()
-        if row is None or row[1] is None or str(row[2]) != fingerprint:
-            version = str(self._next_generation(connection))
-            self._record_file(connection, path, version=version, operation_id=None)
-            operation_id = None
-        else:
-            operation_id = str(row[0]) if row[0] is not None else None
-            version = str(row[1])
-        return MemoryFile(
-            content=content,
-            version=version,
-            operation_id=operation_id,
-            truncated=truncated,
-        )
-
-    def _recover(self, connection: sqlite3.Connection, path: str) -> None:
-        query = (
-            'SELECT id, kind, path, expected_version, new_content, result_version '
-            "FROM memory_operations WHERE status = 'prepared' AND path = ? ORDER BY rowid"
-        )
-        for row in connection.execute(query, (path,)).fetchall():
-            operation_id, kind, pending_path = str(row[0]), str(row[1]), str(row[2])
-            expected = str(row[3]) if row[3] is not None else None
-            content = str(row[4]) if row[4] is not None else None
-            result_version = str(row[5]) if row[5] is not None else None
-            current = self._current(connection, pending_path)
-            current_version = current.version if current else None
-            if kind == 'write':
-                assert content is not None
-                if current_version == expected:
-                    self._atomic_write(self._resolve(pending_path), content)
-                elif current is None or not self._matches_content(pending_path, content):
-                    raise MemoryConflictError(f'externally modified memory path {pending_path!r} blocks recovery')
-                assert result_version is not None
-                self._record_file(connection, pending_path, version=result_version, operation_id=operation_id)
-            else:
-                if current_version == expected:
-                    self._resolve(pending_path).unlink(missing_ok=True)
-                elif current_version is not None:
-                    raise MemoryConflictError(f'externally modified memory path {pending_path!r} blocks recovery')
-                connection.execute('DELETE FROM file_state WHERE path = ?', (pending_path,))
-            connection.execute(
-                "UPDATE memory_operations SET status = 'completed', expected_version = NULL, new_content = NULL "
-                'WHERE id = ?',
-                (operation_id,),
+        Args:
+            directory: Workspace directory for the memory files, absolute or relative to the
+                workspace's working directory.
+            workspace: A workspace to keep the files in instead of the run's, such as
+                `LocalWorkspaceBackend('/var/memory')` to keep them on this machine while the agent
+                works in a sandbox. Required when the store is used outside a `Memory` run.
+        """
+        self.directory = workspace_path(directory) if isinstance(directory, Path) else directory
+        self.workspace = workspace
+        if workspace is None and (posixpath.isabs(self.directory) or Path(directory).is_absolute()):
+            warnings.warn(
+                f"`FileStore({str(directory)!r})` now keeps memory in the run's workspace, at that path inside it. "
+                f'To keep it in that directory on this machine, pass '
+                f"`FileStore('.', workspace=LocalWorkspaceBackend({str(directory)!r}))`.",
+                category=HarnessDeprecationWarning,
+                stacklevel=2,
             )
+        self._own = secondary_workspace(workspace, 'FileStore')
+        self._run: Workspace | None = None
+        self._real_root: tuple[str, str] | None = None
+        self._lock = anyio.Lock()
 
-    def _get_operation(self, connection: sqlite3.Connection, operation: MemoryOperation) -> MemoryMutation | None:
-        row = connection.execute(
-            'SELECT fingerprint, status, path, result_version, existed FROM memory_operations WHERE id = ?',
-            (operation.id,),
-        ).fetchone()
-        if row is None:
+    def bind(self, workspace: Workspace) -> FileStore:
+        """This store, reading and writing through `workspace` unless it has a `workspace` of its own.
+
+        `Memory` binds the run's workspace this way on every call. The copy shares this store's lock.
+        """
+        if self._own is not None:
+            return self
+        if self._run is workspace:
+            return self
+        bound = copy(self)
+        bound._run = workspace
+        bound._real_root = None
+        return bound
+
+    def _workspace(self) -> Workspace:
+        workspace = self._own or self._run
+        if workspace is None:
+            raise UserError(
+                '`FileStore` has no workspace. Use it through `Memory` in a run with a workspace, '
+                "or pass `workspace=`, such as `LocalWorkspaceBackend('.')`."
+            )
+        return workspace
+
+    async def _root(self, workspace: Workspace) -> str:
+        return await workspace.resolve(self.directory)
+
+    @staticmethod
+    def _target(root: str, path: str) -> str:
+        validate_store_path(path)
+        if path.split('/', 1)[0] in (_OPERATIONS_NAME, _LEGACY_JOURNAL_NAME):
+            raise ValueError(f'{path!r} is reserved for FileStore bookkeeping')
+        return posixpath.join(root, path)
+
+    async def _confine(self, workspace: Workspace, root: str, target: str, path: str) -> str:
+        """Return `target` with symlinks resolved, refusing one that leaves the store directory."""
+        # Keep the original root boundary for this binding: if it is replaced by a
+        # symlink later, target realpaths outside it fail closed rather than following it.
+        if self._real_root is None or self._real_root[0] != root:
+            self._real_root = (root, await workspace.realpath(root))
+        return FileStore._confined(self._real_root[1], await workspace.realpath(target), path)
+
+    @staticmethod
+    def _confined(real_root: str, real_target: str, path: str) -> str:
+        if not real_target.startswith(real_root.rstrip('/') + '/'):
+            raise MemoryPathEscapeError(f'memory path {path!r} resolves outside the store directory')
+        return real_target
+
+    @staticmethod
+    async def _content(workspace: Workspace, target: str) -> str | None:
+        try:
+            return await workspace.read_text(target)
+        except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             return None
-        if str(row[0]) != operation.fingerprint:
-            raise MemoryOperationConflictError(f'operation id {operation.id!r} was reused with different arguments')
-        if str(row[1]) == 'prepared':
-            self._recover(connection, str(row[2]))
-        return MemoryMutation(
-            version=str(row[3]) if row[3] is not None else None,
-            replayed=True,
-            existed=bool(row[4]),
-        )
 
-    def _transaction(self, operation: Callable[[sqlite3.Connection], _T]) -> _T:
-        with self._thread_lock:
-            connection = self._connect()
-            try:
-                connection.execute('BEGIN IMMEDIATE')
-                result = operation(connection)
-                connection.commit()
-                return result
-            except BaseException:
-                connection.rollback()
-                raise
-            finally:
-                connection.close()
+    async def _operations(self, workspace: Workspace, root: str) -> str:
+        return await self._confine(workspace, root, posixpath.join(root, _OPERATIONS_NAME), _OPERATIONS_NAME)
+
+    @staticmethod
+    async def _receipts(workspace: Workspace, operations: str) -> list[_Receipt]:
+        raw = await FileStore._content(workspace, operations)
+        if raw is None:
+            return []
+        try:
+            return [_Receipt(**item) for item in json.loads(raw)]
+        except (json.JSONDecodeError, TypeError):
+            # Invalid receipts cannot establish idempotency; start a fresh journal.
+            logger.warning('Invalid FileStore operation receipts; starting with an empty journal')
+            return []
+
+    @staticmethod
+    async def _save(workspace: Workspace, operations: str, receipts: list[_Receipt]) -> None:
+        kept = [asdict(receipt) for receipt in receipts[-_MAX_RECEIPTS:]]
+        await _replace_text(workspace, operations, json.dumps(kept))
+
+    async def _settle(self, workspace: Workspace, root: str, receipts: list[_Receipt], path: str) -> bool:
+        """Finish or drop receipts for `path` left pending by an interrupted mutation; return whether any changed.
+
+        A pending receipt whose result is on disk is marked done. Otherwise the mutation never
+        landed, so the receipt is dropped and a retry applies it again.
+        """
+        changed = False
+        for receipt in [receipt for receipt in receipts if not receipt.done and receipt.path == path]:
+            content = await self._content(
+                workspace, await self._confine(workspace, root, self._target(root, path), path)
+            )
+            version = None if content is None else content_version(content)
+            changed = True
+            if version == receipt.version:
+                receipt.done = True
+            else:
+                receipts.remove(receipt)
+        return changed
+
+    @staticmethod
+    def _find(receipts: list[_Receipt], operation: MemoryOperation) -> _Receipt | None:
+        receipt = next((receipt for receipt in receipts if receipt.id == operation.id), None)
+        if receipt is not None and receipt.fingerprint != operation.fingerprint:
+            raise MemoryOperationConflictError(f'operation id {operation.id!r} was reused with different arguments')
+        return receipt
 
     async def read(self, path: str, *, max_chars: int) -> MemoryFile | None:
         validate_store_path(path)
         if max_chars <= 0:
             raise ValueError('max_chars must be positive')
-
-        def op(connection: sqlite3.Connection) -> MemoryFile | None:
-            self._recover(connection, path)
-            return self._current(connection, path, max_chars)
-
-        return await anyio.to_thread.run_sync(self._transaction, op)
+        workspace = self._workspace()
+        root = await self._root(workspace)
+        target = await self._confine(workspace, root, self._target(root, path), path)
+        content = await self._content(workspace, target)
+        if content is None:
+            return None
+        version = content_version(content)
+        receipts = await self._receipts(workspace, await self._operations(workspace, root))
+        operation_id = next(
+            (
+                receipt.id
+                for receipt in reversed(receipts)
+                if receipt.done and receipt.kind == 'write' and receipt.path == path and receipt.version == version
+            ),
+            None,
+        )
+        return MemoryFile(
+            content=content[:max_chars],
+            version=version,
+            operation_id=operation_id,
+            truncated=len(content) > max_chars,
+        )
 
     async def get_operation(self, operation: MemoryOperation) -> MemoryMutation | None:
-        def run() -> MemoryMutation | None:
-            def op(connection: sqlite3.Connection) -> MemoryMutation | None:
-                return self._get_operation(connection, operation)
+        workspace = self._workspace()
+        async with self._lock:
+            root = await self._root(workspace)
+            operations = await self._operations(workspace, root)
+            receipts = await self._receipts(workspace, operations)
+            receipt = self._find(receipts, operation)
+            if receipt is None:
+                return None
+            if not receipt.done and await self._settle(workspace, root, receipts, receipt.path):
+                await self._save(workspace, operations, receipts)
+            return receipt.mutation() if receipt.done else None
 
-            return self._transaction(op)
-
-        return await anyio.to_thread.run_sync(run)
-
-    def _prepare_write(
+    async def _mutate(
         self,
-        connection: sqlite3.Connection,
+        kind: Literal['write', 'delete'],
         path: str,
-        content: str,
+        content: str | None,
         expected_version: str | None,
         operation: MemoryOperation | None,
     ) -> MemoryMutation:
-        self._recover(connection, path)
-        if operation is not None and (receipt := self._get_operation(connection, operation)) is not None:
-            return receipt
-        current = self._current(connection, path)
-        if (current.version if current else None) != expected_version:
-            raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
-        version = str(self._next_generation(connection))
-        mutation = MemoryMutation(version=version, replayed=False, existed=current is not None)
-        if operation is None:
-            self._atomic_write(self._resolve(path), content)
-            self._record_file(connection, path, version=version, operation_id=None)
-            return mutation
-        connection.execute(
-            'INSERT INTO memory_operations '
-            '(id, fingerprint, status, kind, path, expected_version, new_content, result_version, existed) '
-            "VALUES (?, ?, 'prepared', 'write', ?, ?, ?, ?, ?)",
-            (operation.id, operation.fingerprint, path, expected_version, content, version, int(current is not None)),
-        )
-        return mutation
+        workspace = self._workspace()
+        async with self._lock:
+            root = await self._root(workspace)
+            target = self._target(root, path)
+            real_target = await self._confine(workspace, root, target, path)
+            operations = await self._operations(workspace, root)
+            receipts = await self._receipts(workspace, operations)
+            settled = await self._settle(workspace, root, receipts, path)
+            if operation is not None and (receipt := self._find(receipts, operation)) is not None:
+                if settled:
+                    await self._save(workspace, operations, receipts)
+                return receipt.mutation()
+            current = await self._content(workspace, target)
+            if (None if current is None else content_version(current)) != expected_version:
+                if settled:
+                    await self._save(workspace, operations, receipts)
+                raise MemoryConflictError(
+                    f'memory path {path!r} changed before it could be {"written" if kind == "write" else "deleted"}'
+                )
+            version = None if content is None else content_version(content)
+            receipt = None
+            if operation is not None:
+                receipt = _Receipt(
+                    operation.id,
+                    operation.fingerprint,
+                    kind,
+                    path,
+                    expected_version,
+                    version,
+                    current is not None,
+                    False,
+                )
+                receipts.append(receipt)
+                await self._save(workspace, operations, receipts)
+            elif settled:
+                await self._save(workspace, operations, receipts)
+            if content is not None:
+                # The real path: `mv` onto a symlink would replace the link rather than write through it.
+                await _replace_text(workspace, real_target, content)
+            elif current is not None:
+                await workspace.remove(target)
+            if receipt is not None:
+                receipt.done = True
+                await self._save(workspace, operations, receipts)
+            return MemoryMutation(version=version, replayed=False, existed=current is not None)
 
     async def write(
         self,
@@ -665,59 +717,7 @@ class FileStore:
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
         validate_store_path(path)
-
-        def prepare() -> MemoryMutation:
-            def op(connection: sqlite3.Connection) -> MemoryMutation:
-                return self._prepare_write(connection, path, content, expected_version, operation)
-
-            return self._transaction(op)
-
-        mutation = await anyio.to_thread.run_sync(prepare)
-        if operation is not None and not mutation.replayed:
-
-            def recover() -> None:
-                def op(connection: sqlite3.Connection) -> None:
-                    self._recover(connection, path)
-
-                self._transaction(op)
-
-            await anyio.to_thread.run_sync(recover)
-        return mutation
-
-    def _prepare_delete(
-        self,
-        connection: sqlite3.Connection,
-        path: str,
-        expected_version: str | None,
-        operation: MemoryOperation | None,
-    ) -> MemoryMutation:
-        self._recover(connection, path)
-        if operation is not None and (receipt := self._get_operation(connection, operation)) is not None:
-            return receipt
-        current = self._current(connection, path)
-        if (current.version if current else None) != expected_version:
-            raise MemoryConflictError(f'memory path {path!r} changed before it could be deleted')
-        mutation = MemoryMutation(version=None, replayed=False, existed=current is not None)
-        self._next_generation(connection)
-        if operation is None:
-            self._resolve(path).unlink(missing_ok=True)
-            connection.execute('DELETE FROM file_state WHERE path = ?', (path,))
-            return mutation
-        if current is None:
-            connection.execute(
-                'INSERT INTO memory_operations '
-                '(id, fingerprint, status, kind, path, expected_version, new_content, result_version, existed) '
-                "VALUES (?, ?, 'completed', 'delete', ?, NULL, NULL, NULL, 0)",
-                (operation.id, operation.fingerprint, path),
-            )
-        else:
-            connection.execute(
-                'INSERT INTO memory_operations '
-                '(id, fingerprint, status, kind, path, expected_version, new_content, result_version, existed) '
-                "VALUES (?, ?, 'prepared', 'delete', ?, ?, NULL, NULL, 1)",
-                (operation.id, operation.fingerprint, path, expected_version),
-            )
-        return mutation
+        return await self._mutate('write', path, content, expected_version, operation)
 
     async def delete(
         self,
@@ -727,70 +727,37 @@ class FileStore:
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
         validate_store_path(path)
-
-        def prepare() -> MemoryMutation:
-            def op(connection: sqlite3.Connection) -> MemoryMutation:
-                return self._prepare_delete(connection, path, expected_version, operation)
-
-            return self._transaction(op)
-
-        mutation = await anyio.to_thread.run_sync(prepare)
-        if operation is not None and mutation.existed and not mutation.replayed:
-
-            def recover() -> None:
-                def op(connection: sqlite3.Connection) -> None:
-                    self._recover(connection, path)
-
-                self._transaction(op)
-
-            await anyio.to_thread.run_sync(recover)
-        return mutation
+        return await self._mutate('delete', path, None, expected_version, operation)
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
         validate_store_prefix(prefix)
         if limit <= 0:
             raise ValueError('limit must be positive')
-        return await anyio.to_thread.run_sync(self._sync_list_paths, prefix, limit)
-
-    def _sync_list_paths(self, prefix: str, limit: int) -> list[str]:
-        def op(connection: sqlite3.Connection) -> list[str]:
-            root = Path(os.path.realpath(self._root))
-            walk_root = root
-            if prefix.endswith('/'):
-                walk_root = self._resolve(prefix.removesuffix('/'))
-
-            def paths(directory: Path) -> Iterable[str]:
-                if not directory.is_dir():
-                    return
-                with os.scandir(directory) as entries:
-                    for entry in entries:
-                        item = Path(entry.path)
-                        if entry.is_dir(follow_symlinks=False):
-                            yield from paths(item)
-                        elif (
-                            entry.is_file(follow_symlinks=False)
-                            and not entry.name.startswith(_JOURNAL_NAME)
-                            and not entry.name.startswith('.memory-tmp-')
-                        ):
-                            relative = item.relative_to(root).as_posix()
-                            if relative.startswith(prefix):
-                                yield relative
-
-            while True:
-                selected = heapq.nsmallest(limit, paths(walk_root))
-                pending = connection.execute(
-                    "SELECT DISTINCT path FROM memory_operations WHERE status = 'prepared' "
-                    'AND substr(path, 1, length(?)) = ? ORDER BY path LIMIT ?',
-                    (prefix, prefix, _FILE_RECOVERY_BATCH_SIZE),
-                ).fetchall()
-                if not pending:
-                    return selected
-                if len(selected) == limit and str(pending[0][0]) > selected[-1]:
-                    return selected
-                for row in pending:
-                    self._recover(connection, str(row[0]))
-
-        return self._transaction(op)
+        workspace = self._workspace()
+        root = await workspace.realpath(await self._root(workspace))
+        start = posixpath.join(root, prefix.removesuffix('/')) if prefix.endswith('/') else root
+        # A scoped prefix can itself be a symlink; check it before listing its first child.
+        if start != root and await workspace.realpath(start) != start:
+            return []
+        paths: list[str] = []
+        pending = [start]
+        while pending:
+            directory = pending.pop()
+            try:
+                entries = await workspace.list_dir(directory)
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            for entry in entries:
+                if entry.is_dir:
+                    # Walking from the real root, a directory whose real path differs is a symlink:
+                    # following it could list another scope's files or leave the store.
+                    if await workspace.realpath(entry.path) == entry.path:
+                        pending.append(entry.path)
+                    continue
+                relative = posixpath.relpath(entry.path, root)
+                if relative.startswith(prefix) and not entry.name.startswith(_HIDDEN_PREFIXES):
+                    paths.append(relative)
+        return heapq.nsmallest(limit, paths)
 
     async def search(
         self,
@@ -805,30 +772,30 @@ class FileStore:
         if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
         paths = await self.list_paths(prefix, limit=max_files + 1)
-        paths_truncated = len(paths) > max_files
-
-        def load() -> tuple[list[tuple[str, str]], bool]:
-            files: list[tuple[str, str]] = []
-            truncated = False
-            for path in paths[:max_files]:
-                try:
-                    with self._resolve(path).open(encoding='utf-8') as file:
-                        content = file.read(max_file_chars + 1)
-                except FileNotFoundError:
-                    truncated = True
-                    continue
-                truncated = truncated or len(content) > max_file_chars
-                files.append((path, content[:max_file_chars]))
-            return files, truncated
-
-        files, content_truncated = await anyio.to_thread.run_sync(load)
+        workspace = self._workspace()
+        # Resolved once here rather than per file.
+        root = await workspace.realpath(await self._root(workspace))
+        files: list[tuple[str, str]] = []
+        content_truncated = False
+        for path in paths[:max_files]:
+            try:
+                target = self._confined(root, await workspace.realpath(self._target(root, path)), path)
+            except ValueError:
+                # A listed file that links outside the store directory is not read.
+                continue
+            content = await self._content(workspace, target)
+            if content is None:
+                content_truncated = True
+                continue
+            content_truncated = content_truncated or len(content) > max_file_chars
+            files.append((path, content[:max_file_chars]))
         result = lexical_search(
             files, query, limit=limit, max_files=max_files, max_chars=max_chars, score_prefix=prefix
         )
         return MemorySearchResult(
             matches=result.matches,
             scanned=result.scanned,
-            truncated=result.truncated or content_truncated or paths_truncated,
+            truncated=result.truncated or content_truncated or len(paths) > max_files,
         )
 
 

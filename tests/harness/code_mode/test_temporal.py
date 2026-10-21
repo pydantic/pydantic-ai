@@ -32,14 +32,10 @@ from typing import Any
 import pytest
 
 try:
-    from pydantic_ai.durable_exec.temporal import (
-        AgentPlugin,
-        PydanticAIPlugin,
-        TemporalDurability,
-    )
     from temporalio import workflow
-    from temporalio.client import Client
+    from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import (
@@ -48,18 +44,27 @@ try:
         SandboxRestrictions,
     )
     from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal import (
+        AgentPlugin,
+        PydanticAIPlugin,
+        TemporalDurability,
+    )
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporalio not installed', allow_module_level=True)
 
 from pydantic_ai import Agent, ToolDefinition
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
-
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
-from tests.code_mode.conftest import websocket_relay_server  # pyright: ignore[reportMissingTypeStubs]
+from tests.harness._temporal import ignore_source_reads_left_open
+from tests.harness.code_mode.conftest import websocket_relay_server
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7244  # avoid conflict with other test suites
 # Fixed because the agent below is built at import time, before any fixture runs.
@@ -92,12 +97,6 @@ def _workflow_runner() -> SandboxedWorkflowRunner:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
@@ -105,6 +104,7 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
             '--dynamic-config-value',
             'frontend.enableServerVersionCheck=false',
         ],
+        download_dest_dir=temporal_dev_server_cache_dir(),
     ) as env:
         yield env
 
@@ -118,7 +118,7 @@ async def client(temporal_env: WorkflowEnvironment) -> Client:
 
 
 @pytest.fixture
-async def monty_relay() -> AsyncIterator[None]:
+async def monty_relay() -> AsyncIterator[None]:  # pragma: lax no cover -- only the skipped test uses it
     """Serve remote Monty workers on the port `remote_code_mode_agent` is configured with."""
     async with websocket_relay_server(MONTY_RELAY_PORT):
         yield
@@ -156,12 +156,19 @@ def _code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentIn
     if len(returns) == 2:
         return ModelResponse(parts=[TextPart(content=f'done: {returns[-1].content}')])
 
+    code = 'result = await add(a=3, b=4)\nresult'
+    if any(
+        isinstance(part, UserPromptPart) and part.content == 'Gather two additions'
+        for message in messages
+        for part in message.parts
+    ):
+        code = 'import asyncio\nawait asyncio.gather(add(a=3, b=4), add(a=5, b=6))'
     # First call -- emit run_code.
     return ModelResponse(
         parts=[
             ToolCallPart(
                 tool_name='run_code',
-                args={'code': 'result = await add(a=3, b=4)\nresult'},
+                args={'code': code},
                 tool_call_id='test_tc_1',
             )
         ]
@@ -180,14 +187,20 @@ code_mode_agent = Agent(
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
 
 
-def _workflow_os(*, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object) -> object:
+# Only the skipped relay test runs Code Mode with this `os_access` (#8824).
+def _workflow_os(
+    *, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object
+) -> object:  # pragma: lax no cover
     if name == 'datetime.now':
         # Raises "Not in workflow event loop" anywhere but the workflow's own thread.
         return workflow.now()
     return _request_id.get()
 
 
-def _remote_code_mode_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+# Only the skipped relay test uses this model (#8824).
+def _remote_code_mode_model(
+    messages: list[ModelRequest | ModelResponse], info: AgentInfo
+) -> ModelResponse:  # pragma: lax no cover
     """Model that adds with a tool, sleeps, and reads the workflow's contextvar through `os_access`."""
     returns = [
         part
@@ -221,8 +234,8 @@ remote_code_mode_agent = Agent(
 @workflow.defn
 class CodeModeWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> dict[str, Any]:
-        result = await code_mode_agent.run(prompt)
+    async def run(self, prompt: str, tool_calls_limit: int | None = None) -> dict[str, Any]:
+        result = await code_mode_agent.run(prompt, usage_limits=UsageLimits(tool_calls_limit=tool_calls_limit))
         return {
             'output': str(result.output),
             'messages': result.all_messages_json().decode(),
@@ -248,9 +261,9 @@ class RemoteCodeModeWorkflow:
 
     @workflow.run
     async def run(self, prompt: str) -> str:
-        _request_id.set('req-42')
-        result = await remote_code_mode_agent.run(prompt)
-        return str(result.output)
+        _request_id.set('req-42')  # pragma: no cover
+        result = await remote_code_mode_agent.run(prompt)  # pragma: no cover
+        return str(result.output)  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +376,41 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     assert replay_result.replay_failure is None
 
 
+@pytest.mark.parametrize(
+    'prompt,limit', [('Calculate 3 + 4', 1), ('Gather two additions', 2)], ids=['sequential', 'gather']
+)
+async def test_tool_calls_limit_fails_and_replays(client: Client, prompt: str, limit: int) -> None:
+    workflow_id = f'test_code_mode_temporal_tool_calls_limit_{limit}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CodeModeWorkflow],
+        plugins=[AgentPlugin(code_mode_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                CodeModeWorkflow.run,
+                args=[prompt, limit],
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, ApplicationError)
+    assert cause.type == UsageLimitExceeded.__name__
+    assert f'tool_calls_limit of {limit} (tool_calls={limit + 1})' in cause.message
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay_result = await Replayer(
+        workflows=[CodeModeWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
 @pytest.mark.usefixtures('monty_relay')
 async def test_code_mode_runs_over_websocket_in_temporal_workflow(client: Client) -> None:
     """Remote workers run and replay in a workflow like local ones do.

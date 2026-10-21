@@ -13,6 +13,7 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NoOpTracer, Tracer
+
 from pydantic_ai import Agent, AgentRunResult, AgentSpec, DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, SkipToolExecution, ToolFailed, UserError
@@ -29,7 +30,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
-
 from pydantic_ai_harness.guardrails import (
     GuardrailError,
     GuardrailResult,
@@ -40,13 +40,6 @@ from pydantic_ai_harness.guardrails import (
     ToolGuardrail,
     ToolResultInfo,
 )
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:
@@ -239,7 +232,7 @@ class TestArgumentGuard:
     async def test_retry_without_a_message_uses_the_default(self):
         guard = ToolGuardrail[object](guard=lambda call: GuardrailResult(action='retry', message=''))
 
-        with pytest.raises(ModelRetry, match='Tool call rejected by tool guardrail.'):
+        with pytest.raises(ModelRetry, match=r'Tool call rejected by tool guardrail.'):
             await _guard_args(guard, {})
 
     async def test_approve_defers_the_call(self):
@@ -573,13 +566,13 @@ class TestConfigurationShape:
 
     def test_a_bare_string_for_hidden_is_refused(self):
         """`set('danger')` holds six letters, so the tool it names would stay on the wire."""
-        with pytest.raises(UserError, match='ToolGuardrail.hidden takes a collection'):
-            ToolGuardrail[object](hidden='danger')  # pyright: ignore[reportArgumentType]
+        with pytest.raises(UserError, match=r'ToolGuardrail.hidden takes a collection'):
+            ToolGuardrail[object](hidden='danger')
 
     def test_a_bare_string_for_tools_is_refused(self):
         """Substring membership would make it match any tool whose name it contains."""
-        with pytest.raises(UserError, match='ToolGuardrail.tools takes a collection'):
-            ToolGuardrail[object](tools='delete_all')  # pyright: ignore[reportArgumentType]
+        with pytest.raises(UserError, match=r'ToolGuardrail.tools takes a collection'):
+            ToolGuardrail[object](tools='delete_all')
 
 
 class TestHiddenTools:

@@ -20,6 +20,11 @@ For servers running locally, use the `http://localhost:11434/v1` base URL. For O
 
 For backward compatibility, [`OllamaModel`][pydantic_ai.models.ollama.OllamaModel] uses Ollama's OpenAI-compatible Chat Completions API (`/v1/chat/completions`).
 
+!!! tip "Decision models"
+    Ollama v0.35.0 and later also runs [decision models](decision.md) such as Nimble and Tev1 locally, which answer
+    typed questions with probabilities instead of writing text. Use them through
+    [`SystemOneModel`](system-one.md#ollama) rather than `OllamaModel`.
+
 ## Environment variable
 
 Set the `OLLAMA_BASE_URL` and (optionally) `OLLAMA_API_KEY` environment variables:

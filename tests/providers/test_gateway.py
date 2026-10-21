@@ -39,7 +39,7 @@ with try_import() as imports_successful:
 if not imports_successful():
     pytest.skip('Providers not installed', allow_module_level=True)  # pragma: lax no cover
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Any URL works here — these tests exercise the explicit `PYDANTIC_AI_GATEWAY_BASE_URL` override path.
 GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
@@ -293,13 +293,9 @@ def gateway_api_key():
 
 
 @pytest.fixture(scope='module')
-def vcr_config():
-    return {
-        'ignore_localhost': False,
-        # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
-    }
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    """The gateway cassettes were recorded against a local gateway, so localhost traffic must replay."""
+    return {**vcr_config, 'ignore_localhost': False}
 
 
 @patch.dict(
@@ -376,7 +372,8 @@ async def test_gateway_provider_with_google_cloud(allow_model_requests: None, ga
 async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
     provider = gateway_provider('anthropic', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = AnthropicModel('claude-sonnet-4-5', provider=provider)
-    agent = Agent(model)
+    # Pinned below the SDK's non-streaming limit so the request matches the local-gateway recording.
+    agent = Agent(model, model_settings={'max_tokens': 4096})
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')

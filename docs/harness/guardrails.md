@@ -45,7 +45,7 @@ def no_pii(output: object) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[
         InputGuardrail(guard=no_secrets),
         OutputGuardrail(guard=no_pii),
@@ -79,7 +79,7 @@ from pydantic_ai_harness import InputGuardrail
 from pydantic_ai_harness.guardrails.detectors import blocked_keywords, redact_secrets
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[InputGuardrail(guard=[redact_secrets, blocked_keywords(['internal-only'])])],
 )
 ```
@@ -240,7 +240,7 @@ def scrub_emails(text: str) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[
         InputGuardrail(guard=scrub_emails),   # strip PII before it reaches the model
         OutputGuardrail(guard=scrub_emails),  # strip PII before it reaches the caller
@@ -342,7 +342,7 @@ def scrub_secrets(info: ToolResultInfo) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[ToolGuardrail(guard=stay_in_the_workspace, result_guard=scrub_secrets)],
 )
 
@@ -387,7 +387,7 @@ def confirm_production(call: ToolCallInfo) -> GuardrailResult:
 
 
 agent = Agent(
-    'openai:gpt-5.4',
+    '{{ openai:medium }}',
     capabilities=[ToolGuardrail(guard=confirm_production)],
     output_type=[str, DeferredToolRequests],
 )
@@ -465,7 +465,7 @@ A `ToolGuardrail` is a control over tools this run executes. For the ones it doe
 
 ## Streaming
 
-`OutputGuardrail` inspects the **final** output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed. `GuardrailResult.retry()` is **not** supported under `run_stream()` and surfaces there as `UnexpectedModelBehavior`. `InputGuardrail` (including `parallel=True`) works the same in streamed and non-streamed runs.
+`OutputGuardrail` inspects the **final** output only -- during `run_stream()` partial chunks reach the caller before the guard runs, so a `block` or `replace` verdict cannot un-send content already streamed. Use `run()` / `run_sync()` when the output must be screened before any of it is exposed. `GuardrailResult.retry()` is **not** supported under `run_stream()` and surfaces there as `UnexpectedModelBehavior`. `InputGuardrail` works the same in streamed and non-streamed runs, with one caveat for `parallel=True`: the model streams while the guard runs, so chunks sent before the guard blocks still reach the caller, before the block message replaces them. If the guard blocks only after the whole response has streamed, the run raises `SkipModelRequest` instead.
 
 ## Tracing
 
@@ -503,4 +503,4 @@ ToolGuardrail(
 
 The guard callable takes the inspected value -- the prompt for `InputGuardrail`, the output for `OutputGuardrail`, a `ToolCallInfo` or `ToolResultInfo` for `ToolGuardrail` -- optionally preceded by a `RunContext`. `InputGuardrailFunc`, `OutputGuardrailFunc`, `ToolGuardrailFunc`, and `ToolResultGuardrailFunc` are the exported signature aliases; `GuardrailError` is the base for `InputBlocked`, `OutputBlocked`, and `ToolBlocked`.
 
-Source: [`pydantic_ai_harness/guardrails/`](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/guardrails/).
+Source: [`pydantic_ai_harness/guardrails/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/guardrails/).

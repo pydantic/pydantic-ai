@@ -13,11 +13,12 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 
-EXAMPLES_DIR = Path(__file__).parent.parent / 'examples'
+EXAMPLES_DIR = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness' / 'examples'
 EXAMPLE_FILES = sorted(EXAMPLES_DIR.glob('*.py'))
 
 

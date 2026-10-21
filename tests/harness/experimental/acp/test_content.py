@@ -5,8 +5,8 @@ from __future__ import annotations
 import base64
 
 import acp
-from pydantic_ai.messages import BinaryContent, ImageUrl
 
+from pydantic_ai.messages import BinaryContent, ImageUrl
 from pydantic_ai_harness.experimental.acp._content import prompt_blocks_to_user_content
 
 

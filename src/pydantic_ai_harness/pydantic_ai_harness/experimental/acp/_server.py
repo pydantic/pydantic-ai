@@ -8,12 +8,12 @@ from typing import Literal
 
 import acp
 from acp import schema
+
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import UsageLimits
-
 from pydantic_ai_harness.experimental.acp._adapter import DEFAULT_VERSION, PydanticAIACPAgent
 from pydantic_ai_harness.experimental.acp._permission import PermissionPolicy
 from pydantic_ai_harness.experimental.acp._presentation import ToolCallPresenter
@@ -47,7 +47,7 @@ async def run_acp_stdio(
         deps: Dependencies passed to every agent run.
         name: Name advertised to the client. Defaults to the agent's name, then `'pydantic-ai-agent'`.
         version: Version advertised to the client.
-        session_config: Per-session factory deriving deps/toolsets from the client's workspace setup.
+        session_config: Per-session factory deriving deps, toolsets, and an optional workspace from the client's setup.
             See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
         permission_policy: Scopes how "always allow"/"always reject" decisions are remembered.
             See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
@@ -64,7 +64,8 @@ async def run_acp_stdio(
             [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
         model_resolver: Maps an advertised model id to the `Model` (or model string) used for the
             run. See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
-        usage_limits: Per-run request/token ceilings applied to every agent run. See
+        usage_limits: Per-run request/token ceilings applied to every agent run. By default, no
+            request limit is applied. See
             [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
     """
     adapter = PydanticAIACPAgent(

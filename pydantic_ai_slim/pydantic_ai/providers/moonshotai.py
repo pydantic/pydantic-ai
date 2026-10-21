@@ -81,7 +81,7 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
             OpenAIModelProfile(
-                openai_supports_tool_choice_required=False,
+                supports_forced_tool_choice=False,
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',

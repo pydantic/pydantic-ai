@@ -6,12 +6,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import RunContext
-
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
@@ -103,7 +101,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         trigger = resolve_token_trigger(
             self.max_tokens, self.max_fraction, request_ctx.model, self.fallback_context_window, self.context_window
         )
-        messages = list(request_context.messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         if (
             trigger is None
             or estimate_context_tokens(
@@ -119,13 +117,13 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
             compact=lambda: self._compact_pinned(messages, request_ctx),
             tokenizer=self.tokenizer,
         )
+        ctx.messages[:] = compacted
         record_compaction_reclaim(
-            request_context,
+            ctx,
             estimate_token_count(messages, self.tokenizer),
             estimate_token_count(compacted, self.tokenizer),
         )
-        request_context.messages = compacted
-        return request_context
+        return replace(request_context, messages=compacted)
 
     async def _compact_pinned(self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> list[ModelMessage]:
         return reinject_pinned(messages, await self.compact(messages, ctx))

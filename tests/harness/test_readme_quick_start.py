@@ -28,8 +28,8 @@ from __future__ import annotations
 import textwrap
 from typing import Any
 
-import pytest
 from inline_snapshot import snapshot
+
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import MCP, WebSearch
 from pydantic_ai.messages import (
@@ -44,19 +44,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage
-
 from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness.code_mode import RunCodeCallPart
 
 from .conftest import IsDatetime, IsPartialDict, IsStr
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (pydantic-ai uses asyncio.create_task internally)."""
-    return 'asyncio'
-
 
 # ---------------------------------------------------------------------------
 # Canned tool responses -- shapes mirror what the cyanheads HN MCP server
@@ -339,7 +330,7 @@ class TestReadmeQuickStart:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(
+                        RunCodeCallPart(
                             tool_name='run_code',
                             args={
                                 'code': """\
@@ -422,6 +413,7 @@ ranked[:5]\
                                 },
                             ],
                             tool_call_id=IsStr(),
+                            tool_kind='code_mode.run_code',
                             metadata=IsPartialDict({'code_mode': True}),
                             timestamp=IsDatetime(),
                         )
@@ -435,7 +427,7 @@ ranked[:5]\
                         TextPart(
                             content='The winner is the Simon Willison post; pulling thread, user, and coverage in parallel.'
                         ),
-                        ToolCallPart(
+                        RunCodeCallPart(
                             tool_name='run_code',
                             args={
                                 'code': """\
@@ -486,6 +478,7 @@ thread, user, coverage = await asyncio.gather(
                                 ],
                             ),
                             tool_call_id=IsStr(),
+                            tool_kind='code_mode.run_code',
                             metadata=IsPartialDict({'code_mode': True}),
                             timestamp=IsDatetime(),
                         )

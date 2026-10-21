@@ -10,9 +10,9 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Self, get_origin
 
-from typing_extensions import Protocol, Self, TypeAliasType, TypeVar
+from typing_extensions import Protocol, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode
 from pydantic_graph.exceptions import GraphBuildingError

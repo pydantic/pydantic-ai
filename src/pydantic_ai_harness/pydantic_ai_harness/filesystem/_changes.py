@@ -7,7 +7,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from pydantic_ai.tools import AgentDepsT, RunContext
-
 from pydantic_ai_harness.filesystem._events import (
     MAX_DIFF_SOURCE_CHARS,
     MAX_EVENT_DIFF_CHARS,

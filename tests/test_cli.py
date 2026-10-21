@@ -187,6 +187,7 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 @pytest.mark.parametrize('stream', [False, True])
 def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, stream: bool):
     """`--mcp-config` parses a Claude-Desktop-style config and connects to the MCP server.
@@ -213,6 +214,7 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, st
     assert ('Called tool temp_get_weather_forecast' in output) is stream
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """Interactive `clai --mcp-config` can invoke a configured server tool before exiting."""
     env.set('OPENAI_API_KEY', 'test')
@@ -235,6 +237,7 @@ def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixtur
     assert 'The weather in a is sunny and 26 degrees Celsius.' in ' '.join(output.split())
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 def test_mcp_config_banner_omits_the_tool_count(
     capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path
 ):
@@ -356,6 +359,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'deepseek',
         'gateway/',
         'heroku',
+        'meta',
         'moonshotai',
         'xai',
         'huggingface',
@@ -378,7 +382,6 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
-@pytest.mark.anyio
 async def test_streaming_with_tool_calls():
     """The streaming CLI render loop interleaves streamed model text with tool-call indicators.
 
@@ -439,7 +442,6 @@ def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return frames
 
 
-@pytest.mark.anyio
 async def test_streaming_with_concurrent_tool_calls(live_frames: list[str]):
     """Every in-flight tool call keeps its own indicator until its own result arrives.
 
@@ -501,7 +503,6 @@ class _City:
     name: str
 
 
-@pytest.mark.anyio
 async def test_streaming_ignores_output_tool_calls():
     """The internal output tool is not reported as a tool call.
 
@@ -520,7 +521,32 @@ async def test_streaming_ignores_output_tool_calls():
     assert 'Called tool' not in rendered
 
 
-@pytest.mark.anyio
+async def test_streaming_ignores_skipped_tool_calls(live_frames: list[str]):
+    """A function tool skipped because an output tool already produced the final result is not reported.
+
+    Under `end_strategy='early'` the skipped call still streams `FunctionToolCallEvent(args_valid=None)` and
+    a `FunctionToolResultEvent` with its stub return, but the tool never ran.
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"city": "Lisbon"}', tool_call_id='call_1'),
+            1: DeltaToolCall(name='final_result', json_args='{"name": "Lisbon"}', tool_call_id='call_2'),
+        }
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=_City, end_strategy='early')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        # Skipped: the output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
+
+    console = Console(file=StringIO(), force_terminal=False, width=80)
+    await ask_agent(agent, 'name a city', stream=True, console=console, code_theme='monokai')
+
+    assert not any('Calling tool' in frame or 'Called tool' in frame for frame in _distinct_frames(live_frames))
+
+
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 
@@ -586,7 +612,6 @@ class _LifetimeToolset(WrapperToolset[Any]):
         return result
 
 
-@pytest.mark.anyio
 async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """Run-scoped toolsets survive between turns instead of being torn down after each one.
 
@@ -613,7 +638,6 @@ async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, e
     assert toolset.full_releases == snapshot(1)
 
 
-@pytest.mark.anyio
 async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """A failed turn is reported without releasing session toolsets or ending the REPL."""
     env.set('OPENAI_API_KEY', 'test')
@@ -857,7 +881,6 @@ def test_handle_slash_command_usage_not_a_flag():
     assert io.getvalue() == snapshot('Unknown command `/usagejson`\n')
 
 
-@pytest.mark.anyio
 async def test_ask_agent_accumulates_usage(env: TestEnv):
     # `ask_agent` increments the shared session usage on both the streaming and non-streaming paths,
     # including tool calls, and threading a turn's history into the next must not re-count prior usage.
@@ -881,7 +904,6 @@ async def test_ask_agent_accumulates_usage(env: TestEnv):
     assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=14, requests=3, tool_calls=1))
 
 
-@pytest.mark.anyio
 async def test_ask_agent_counts_usage_on_failed_turn(env: TestEnv):
     # A turn that makes a billed request and then raises must still be counted, so a later `/usage`
     # does not under-report tokens that were actually spent. The merge happens in `ask_agent`'s `finally`.
@@ -947,7 +969,6 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -966,7 +987,6 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1392,7 +1412,6 @@ def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1416,7 +1435,6 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1437,7 +1455,6 @@ async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv
     )
 
 
-@pytest.mark.anyio
 async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
     from pydantic_ai._cli import ask_agent
 
