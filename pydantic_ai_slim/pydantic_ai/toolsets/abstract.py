@@ -255,11 +255,11 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     def _authors_own_instructions(self) -> bool:
         """Whether `get_instructions` speaks for this toolset rather than aggregating its children.
 
-        True here because a toolset with nothing below it can only be speaking for itself. A
-        container overrides this to answer for the case that actually varies: whether a subclass has
-        taken the method over, or it is still the inherited implementation that just relays.
+        A toolset with nothing below it can only be speaking for itself. A container overrides this
+        to answer for the case that actually varies: whether a subclass has taken the method over, or
+        it is still the inherited implementation that just relays.
         """
-        return True
+        return not self._instruction_children()
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
