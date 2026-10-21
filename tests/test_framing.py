@@ -172,7 +172,10 @@ def _hand_built_framing_tags_in(relative: str, source: str) -> list[tuple[str, i
     found: list[tuple[str, int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.JoinedStr):
-            text = ''.join(value.value if isinstance(value, ast.Constant) else _INTERPOLATION for value in node.values)
+            text = ''.join(
+                value.value if isinstance(value, ast.Constant) and isinstance(value.value, str) else _INTERPOLATION
+                for value in node.values
+            )
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
             text = node.value
         else:
