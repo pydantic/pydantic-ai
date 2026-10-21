@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
@@ -1277,6 +1278,26 @@ class TestFindPromptPart:
         request: list[ModelMessage] = [*history[:2], ModelRequest(parts=[copied])]
         run_ctx, _ = _build_ctx_and_req(messages=history)
         assert _find_prompt_part(run_ctx, request) is copied
+
+    def test_a_copied_prompt_is_found_before_a_part_appended_after_it(self):
+        prompt = UserPromptPart(content='the prompt')
+        copied = dataclasses.replace(prompt)
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[copied, UserPromptPart(content='reminder')])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) is copied
+
+    def test_falls_back_to_the_latest_part_when_the_prompt_position_is_gone(self):
+        prompt = UserPromptPart(content='the prompt')
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='earlier')]),
+            ModelResponse(parts=[TextPart(content='assistant')]),
+            ModelRequest(parts=[prompt]),
+        ]
+        rebuilt = UserPromptPart(content='rebuilt')
+        request: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content='sys'), rebuilt])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) is rebuilt
 
     def test_falls_back_to_the_latest_part_when_none_is_in_the_history(self):
         request: list[ModelMessage] = [

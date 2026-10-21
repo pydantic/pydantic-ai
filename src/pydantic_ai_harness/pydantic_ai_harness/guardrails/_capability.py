@@ -23,8 +23,8 @@ failure. Guards may be sync or async and may optionally take a
 
 `replace` and `block` are recorded as spans on the active OpenTelemetry
 tracer, so a redaction or refusal is visible in Logfire traces. Content
-attributes (the original/replacement values and the refusal message) are
-attached only when `RunContext.trace_include_content` is set.
+attributes (the replacement value and the refusal message) are attached only
+when `RunContext.trace_include_content` is set. The original value is never recorded.
 """
 
 from __future__ import annotations
@@ -104,29 +104,36 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
     the same object, so the guard reads the rewritten text.
 
-    When the prompt is not in `messages` by identity, because a capability replaced it with a copy,
-    the most recent part in `messages` is used, so an earlier turn's prompt still shared with the
-    history is not matched in place of the copy.
+    When a capability replaced the prompt with a copy, the copy is the part at the prompt's
+    position: the same part index in the message the same distance from the end. Parts appended
+    after it and earlier turns are not taken for it. Only when that position holds no user prompt,
+    because the request was rebuilt, is the most recent part in `messages` used.
     """
-    prompt = next(
+    for from_end, message in enumerate(reversed(ctx.messages), start=1):
+        prompts = [(index, part) for index, part in enumerate(message.parts) if isinstance(part, UserPromptPart)]
+        if prompts:
+            index, prompt = prompts[-1]
+            break
+    else:
+        return _latest_prompt_part(messages)
+    if any(part is prompt for request in messages for part in request.parts):
+        return prompt
+    parts = messages[-from_end].parts if from_end <= len(messages) else ()
+    copy = parts[index] if index < len(parts) else None
+    return copy if isinstance(copy, UserPromptPart) else _latest_prompt_part(messages)
+
+
+def _latest_prompt_part(messages: Sequence[ModelMessage]) -> UserPromptPart | None:
+    """The most recent `UserPromptPart` in `messages`, if any."""
+    return next(
         (
             part
-            for message in reversed(ctx.messages)
+            for message in reversed(messages)
             for part in reversed(message.parts)
             if isinstance(part, UserPromptPart)
         ),
         None,
     )
-    latest: UserPromptPart | None = None
-    for message in reversed(messages):
-        for part in reversed(message.parts):
-            if not isinstance(part, UserPromptPart):
-                continue
-            if part is prompt:
-                return part
-            if latest is None:
-                latest = part
-    return latest
 
 
 def _prompt_text(content: str | Sequence[UserContent]) -> str:

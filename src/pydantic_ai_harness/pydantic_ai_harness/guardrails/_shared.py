@@ -152,9 +152,9 @@ def takes_ctx(func: Callable[..., object]) -> bool:
 
     Detected from the positional parameters: a guard always takes the guarded
     value, so a second required positional parameter means it also wants the
-    run context, whether or not it is annotated. Keyword-only parameters and a
-    second positional parameter with a default are options of the guard's own,
-    not the value, so they only count when the first parameter is annotated as
+    run context, whether or not it is annotated. Keyword-only parameters are
+    the guard's own options and never count; a second positional parameter
+    with a default counts only when the first parameter is annotated as
     `RunContext`. A callable whose signature cannot be introspected is treated
     as taking the value only.
     """
