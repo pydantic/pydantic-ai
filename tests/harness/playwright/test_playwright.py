@@ -2045,7 +2045,7 @@ class TestPlaywrightBrowserHooks:
         first = PlaywrightBrowser[None]()
         assert PlaywrightBrowser[None].combine([first, PlaywrightBrowser[None]()]) is first
         with pytest.raises(UserError, match="disagree on 'headless'"):
-            Agent(TestModel(), capabilities=[first, PlaywrightBrowser[None](headless=False)])
+            Agent(TestModel(), deps_type=type(None), capabilities=[first, PlaywrightBrowser[None](headless=False)])
 
     def test_from_spec_refuses_storage_state(self) -> None:
         # Session credentials stay out of a spec: naming it fails loudly rather
