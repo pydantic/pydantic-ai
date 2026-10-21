@@ -54,7 +54,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live', 'elevenlabs_agents']
+ProviderName = Literal['openai', 'gemini', 'xai', 'elevenlabs', 'openai_live', 'elevenlabs_agents']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -104,7 +104,7 @@ def _is_audio_send(frame: dict[str, Any]) -> bool:
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
 _SECRET_RE = re.compile(
-    r'(sk-[A-Za-z0-9_\-]{8,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
+    r'(sk-[A-Za-z0-9_\-]{8,}|(?<![A-Za-z0-9])sk_[A-Za-z0-9]{20,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
 )
 _SECRET_PLACEHOLDER = '<scrubbed>'
 
@@ -710,11 +710,16 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
-    if provider == 'elevenlabs_agents':
-        # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
-        from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs
+    if provider == 'elevenlabs':
+        # Same raw-frame engine as xAI: an OpenAI-protocol clone dialed with the `websockets` library.
+        from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
 
         return rt_elevenlabs.websockets, 'connect'
+    if provider == 'elevenlabs_agents':
+        # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
+        from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs_agents
+
+        return rt_elevenlabs_agents.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'
