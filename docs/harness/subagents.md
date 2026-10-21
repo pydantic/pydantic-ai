@@ -206,6 +206,125 @@ See [capability events](../capabilities/overview.md#capability-events) for how `
 
 `SubAgents` emits no OpenTelemetry spans of its own: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result.
 
+## Task control
+
+By default a delegation finishes inside the `delegate_task` call that started it. With `task_control=True`, delegations become tasks the model manages: they can run in the background, ask questions, be steered or cancelled, and be resumed.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import SubAgent, SubAgents
+
+researcher = Agent('{{ anthropic:large }}', name='researcher', description='Researches a topic and reports findings')
+
+orchestrator = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[SubAgents(agents=[SubAgent(researcher)], task_control=True, auto_background_after=60)],
+)
+```
+
+| Tool | Purpose |
+|---|---|
+| `delegate_task(agent_name, task, background=False, resume=None)` | Start a task, or resume a finished one with its task ID. `background=True` returns a receipt right away. |
+| `list_tasks()` | The tasks this run started and the tasks they started, with status and IDs (the 50 most relevant). |
+| `message_task(task_id, message)` | Steer a running task; it reads the message at its next model request. |
+| `answer_task(task_id, answer)` | Answer the question a task is waiting on. |
+| `cancel_task(task_id, force=False)` | Stop a task before its next model request, or right away with `force=True`, together with the tasks it started. |
+
+- **Reports arrive as messages.** A background task's report is a `SystemPromptPart` framed as untrusted task data, not user instructions. A top-level run whose model ends while its background tasks still run waits for them, so their reports become its next request.
+- **Questions.** Each sub-agent gets an `ask_parent(question)` tool. A question moves its task to the background, because the delegating model can only answer once `delegate_task` returns, and reaches that model as a message. Turn it off per delegate with `SubAgent(can_ask_questions=False)`. A task that can't run in the background (a run-owned workspace that isn't local) gets no `ask_parent`.
+- **Limits.** `auto_background_after` moves a task still running after that many seconds to the background. `max_running_tasks` caps how many tasks a conversation runs at once, across its whole delegation tree. `SubAgent(resumable=False)` makes a delegate one-shot. All are off by default.
+- **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
+- **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Bind your own to keep tasks across runs, persist them, and observe them (see [Managed delegation sessions](#managed-delegation-sessions)).
+- Only one `SubAgents` on an agent can set `task_control`. Task control is not supported under durable execution.
+
+### Task events
+
+With task control, every step of a task is a typed capability event in the `sub_agents` namespace. A task's events go into the event stream of the run that started it, so a nested task's events reach its own parent's run. A bound `DelegationTasks` observer also receives each of them as `DelegationTaskEvent(event=...)`, including those of a task that settles after its delegating run ended.
+
+| Event | When | A listener can |
+|---|---|---|
+| `TaskAssignedEvent`, `TaskFollowUpEvent` | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
+| `TaskStartedEvent` | the task's run is starting, locally or on a worker | |
+| `TaskBackgroundedEvent` | the task moved to the background; `reason` is `requested`, `auto`, `question`, or `released` | |
+| `TaskProgressEvent` | an event of the task's own run, with `forward_events=True` | |
+| `TaskQuestionEvent` | the task asked a question | set `answer`, so the model is not asked |
+| `TaskAnswerEvent` | an answer is about to reach the task | rewrite `answer`, or `veto()` it |
+| `TaskMessageEvent` | a steering message is about to reach the task | rewrite `message`, or `veto()` it |
+| `TaskCancelRequestEvent`, `TaskForceCancelEvent` | a cancellation is about to reach the task | `veto()` it |
+| `TaskRetryEvent` | a worker is running a failed remote task again | |
+| `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
+
+Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. `DelegationStartEvent` and `DelegationEndEvent` still go to an owner's observer only, as in [Managed delegation sessions](#managed-delegation-sessions).
+
+```python
+from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai_harness.subagents import TaskAssignedEvent, TaskQuestionEvent
+
+
+class DelegationPolicy(AbstractCapability):
+    @on_event(TaskAssignedEvent)
+    async def check_task(self, ctx, event: TaskAssignedEvent) -> None:
+        if 'production' in event.prompt:
+            event.veto('ask the user before touching production')
+
+    @on_event(TaskQuestionEvent)
+    async def answer_known(self, ctx, event: TaskQuestionEvent) -> None:
+        if event.question == 'Which branch?':
+            event.answer = 'main'
+```
+
+### Remote sub-agents
+
+A `SubAgentWorker` serves agents to delegating agents in other processes. The delegating side lists them as `RemoteSubAgent`s, by name, and reaches them through a `SubAgentTransport`:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness.subagents import RemoteSubAgent, SubAgent, SubAgents, SubAgentWorker
+
+transport = ...  # a SubAgentTransport both processes reach
+
+
+# In the process that hosts the agent:
+async def serve():
+    researcher = Agent('{{ anthropic:large }}', name='researcher')
+    await SubAgentWorker(agents=[SubAgent(researcher)], transport=transport, deps=None).serve()
+
+
+# In the delegating process:
+orchestrator = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[
+        SubAgents(
+            task_control=True,
+            remote_agents=[RemoteSubAgent(name='researcher', description='Researches a topic')],
+            transport=transport,
+        )
+    ],
+)
+```
+
+- **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessage` events above. `InMemoryTransport` serves a worker in the same process.
+- **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
+- **A task nobody picks up fails.** The worker sends `TaskStartedEvent` when it starts a task. A remote task that no worker picks up within `accept_timeout` seconds (default `30`) fails, and a remote task that stops without its worker's report, for example because its delegating run ended, is force-cancelled on the worker.
+- `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetryEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed.
+- A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartEvent` or `DelegationEndEvent`.
+
+### Agents the model creates
+
+With `dynamic_agents`, the model gets a `create_agent(name, description, instructions, model=None)` tool and can delegate to the agents it creates until the run ends. This works with or without task control.
+
+```python
+from pydantic_ai_harness.subagents import DynamicAgents, SubAgents
+
+SubAgents(models={'fast': '{{ anthropic:small }}'}, dynamic_agents=DynamicAgents(models=['fast'], max_agents=3))
+```
+
+- A created agent is an `Agent` with the model-written instructions and no tools, on the `models` key it was created with, or on the delegating run's model when `DynamicAgents.models` is empty. Pass `DynamicAgents(factory=...)` to build it yourself from the `DynamicAgentSpec`.
+- An `AgentCreatedEvent` is dispatched immediately before the agent is created: a listener can rewrite its `description` and `instructions`, or `veto()` it.
+- `max_agents` (default `5`) caps how many agents one run creates. Only one `SubAgents` on an agent can set `dynamic_agents`.
+
+Task control, remote agents, and created agents are a port of Vstorm's [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai) (MIT licensed).
+
 ## Discovery
 
 The sub-agents are listed in the system prompt via `get_instructions`, using each agent's `description` (or a `SubAgent(description=...)` override). A sub-agent with no description is listed by name alone.
@@ -336,6 +455,14 @@ SubAgents(
     workspace=None,        # WorkspaceBackend to read agent_folders from instead of the run's workspace
     include_self=False,    # also list the running agent itself as the delegate `self`
     max_depth=3,           # delegation levels, counting the top-level run
+    task_control=False,    # background tasks, task-control tools, questions, and task events
+    remote_agents=(),      # Sequence[RemoteSubAgent] -- agents a SubAgentWorker serves, with task_control
+    transport=None,        # SubAgentTransport reaching that worker, required with remote_agents
+    accept_timeout=30.0,   # seconds a remote task waits for a worker to pick it up
+    auto_background_after=None,  # seconds a delegation waits before its task moves to the background
+    max_running_tasks=None,      # tasks a conversation may run at once, across its delegation tree
+    forward_events=False,  # forward the events of task runs as TaskProgressEvent
+    dynamic_agents=None,   # DynamicAgents -- let the model create sub-agents with `create_agent`
 )
 ```
 
@@ -355,6 +482,8 @@ SubAgent(
     max_calls=None,        # max delegations to this sub-agent per parent run
     on_failure=None,       # steering message for soft degradations of this delegate
     contain_errors=None,   # contain an unexpected crash as a bounded retry; None inherits the SubAgents default
+    resumable=True,        # whether a finished task can be resumed, with a task owner
+    can_ask_questions=True,  # give the sub-agent `ask_parent`, with task_control
 )
 ```
 
@@ -383,6 +512,50 @@ SubAgent(
 ::: pydantic_ai_harness.subagents.DelegationStartEvent
 
 ::: pydantic_ai_harness.subagents.DelegationEndEvent
+
+::: pydantic_ai_harness.subagents.RemoteSubAgent
+
+::: pydantic_ai_harness.subagents.SubAgentWorker
+
+::: pydantic_ai_harness.subagents.SubAgentTransport
+
+::: pydantic_ai_harness.subagents.InMemoryTransport
+
+::: pydantic_ai_harness.subagents.DynamicAgents
+
+::: pydantic_ai_harness.subagents.DynamicAgentSpec
+
+::: pydantic_ai_harness.subagents.SubAgentMessage
+
+::: pydantic_ai_harness.subagents.TaskAssignedEvent
+
+::: pydantic_ai_harness.subagents.TaskFollowUpEvent
+
+::: pydantic_ai_harness.subagents.TaskStartedEvent
+
+::: pydantic_ai_harness.subagents.TaskBackgroundedEvent
+
+::: pydantic_ai_harness.subagents.TaskProgressEvent
+
+::: pydantic_ai_harness.subagents.TaskQuestionEvent
+
+::: pydantic_ai_harness.subagents.TaskAnswerEvent
+
+::: pydantic_ai_harness.subagents.TaskMessageEvent
+
+::: pydantic_ai_harness.subagents.TaskCancelRequestEvent
+
+::: pydantic_ai_harness.subagents.TaskForceCancelEvent
+
+::: pydantic_ai_harness.subagents.TaskRetryEvent
+
+::: pydantic_ai_harness.subagents.TaskCompletedEvent
+
+::: pydantic_ai_harness.subagents.TaskFailedEvent
+
+::: pydantic_ai_harness.subagents.TaskCancelledEvent
+
+::: pydantic_ai_harness.subagents.AgentCreatedEvent
 
 ## Managed delegation sessions
 
