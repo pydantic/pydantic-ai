@@ -107,7 +107,9 @@ def _materialize_iterators(value: Any) -> Any:
     when they subclass an iterable type or define `__iter__`, because `_to_xml` formats them by
     their fields, not their items.
     """
-    if isinstance(value, str | bytes | bytearray | BaseModel) or (is_dataclass(value) and not isinstance(value, type)):
+    if isinstance(value, str | bytes | bytearray | Enum | BaseModel) or (
+        is_dataclass(value) and not isinstance(value, type)
+    ):
         return value
     if isinstance(value, Mapping):
         materialized_mapping = {k: _materialize_iterators(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]

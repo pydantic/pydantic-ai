@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, Flag, IntFlag
 from typing import Any, NamedTuple, Self
 from uuid import UUID
 
@@ -802,5 +802,29 @@ def test_iterable_dataclass_formats_by_fields():
     assert format_as_xml(IterData(3), root_tag='r') == snapshot("""\
 <r>
   <x>3</x>
+</r>\
+""")
+
+
+def test_flag_members_format_as_scalars():
+    class F(Flag):
+        A = 1
+        B = 2
+
+    class G(IntFlag):
+        A = 1
+        B = 2
+
+    assert format_as_xml(F.A, root_tag='r') == '<r>F.A</r>'
+    assert format_as_xml([F.A, G.A | G.B], root_tag='r') == snapshot("""\
+<r>
+  <item>F.A</item>
+  <item>3</item>
+</r>\
+""")
+    assert format_as_xml({'k': G.A | G.B, 'f': F.B}, root_tag='r') == snapshot("""\
+<r>
+  <k>3</k>
+  <f>F.B</f>
 </r>\
 """)
