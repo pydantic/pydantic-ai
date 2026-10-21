@@ -225,8 +225,11 @@ class InstrumentationSettings:
                 ]
                 message = replace(message, parts=projected_parts)
             if isinstance(message, ModelRequest):
+                # A baseline records what the request's instructions were and contributes nothing to a trace,
+                # so it's left out before grouping rather than becoming an empty system message.
+                request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]
                 for role, group in itertools.groupby(
-                    message.parts, key=functools.partial(_otel_message_role, version=self.version)
+                    request_parts, key=functools.partial(_otel_message_role, version=self.version)
                 ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
@@ -456,7 +459,7 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     withheld. `tool` is the one role that would actively mislead, being paired with
     `tool_call_response`.
     """
-    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart | InstructionBaselinePart):
+    if isinstance(part, SystemPromptPart | ToolAvailabilityDeltaPart | InstructionDeltaPart):
         return 'system'
     elif version >= 6 and (
         isinstance(part, BaseToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
