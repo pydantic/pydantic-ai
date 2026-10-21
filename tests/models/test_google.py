@@ -134,10 +134,15 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 if not imports_successful():  # pragma: lax no cover
-    # Define placeholder errors module so parametrize decorators can be parsed
+    # Define placeholders so parametrize decorators can be parsed when google-genai is not installed
     from types import SimpleNamespace
 
     errors = SimpleNamespace(ServerError=Exception, ClientError=Exception, APIError=Exception)
+    GoogleFinishReason = SimpleNamespace(
+        IMAGE_RECITATION='IMAGE_RECITATION',
+        TOO_MANY_TOOL_CALLS='TOO_MANY_TOOL_CALLS',
+        IMAGE_OTHER='IMAGE_OTHER',
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
