@@ -14,7 +14,14 @@ import anyio.abc
 import anyio.lowlevel
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult, RawToolArgs
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentNode,
+    CapabilityOrdering,
+    NodeResult,
+    RawToolArgs,
+    SetToolMetadata,
+)
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -32,6 +39,7 @@ from pydantic_ai.tools import (
     ToolSelector,
     matches_tool_selector,
 )
+from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
 from pydantic_ai_harness._background_completion import make_background_completion
 
 if TYPE_CHECKING:
@@ -205,8 +213,20 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             return 'optional'
         return None
 
-    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    def get_ordering(self) -> CapabilityOrdering:
+        # Outside `SetToolMetadata`, so the tools reach `_prepare_tools` with its metadata.
+        return CapabilityOrdering(wraps=[SetToolMetadata])
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        return PreparedToolset(toolset, self._prepare_tools)
+
+    async def _prepare_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
         self._prepared_modes.clear()
+        # Core skips a deferred capability's hooks until it is loaded, but not its wrapper toolset.
+        if self.defer_loading is True and self.id not in ctx.active_capability_ids:
+            return tool_defs
         prepared: list[ToolDefinition] = []
         for tool_def in tool_defs:
             mode = await self._background_mode(ctx, tool_def)

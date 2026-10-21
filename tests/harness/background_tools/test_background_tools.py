@@ -1224,6 +1224,27 @@ class TestBackgroundTools:
         assert _ack_seen(result.all_messages())
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: researched topic')
 
+    async def test_deferred_capability_does_not_offer_run_in_background_before_loading(self) -> None:
+        seen: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            slow = next(t for t in info.function_tools if t.name == 'slow')
+            seen.append(list(slow.parameters_json_schema['properties']))
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[BackgroundTools(defer_loading=True, description='Run tools in the background.')],
+        )
+
+        @agent.tool_plain(metadata={'background': 'optional'})
+        def slow(x: int) -> int:
+            return x  # pragma: no cover
+
+        await agent.run('go')
+
+        assert seen == [['x']]
+
     async def test_callable_selector_decision_stays_stable_for_each_model_response(self) -> None:
         selector_calls = 0
 

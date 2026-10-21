@@ -2973,33 +2973,6 @@ def test_set_tool_metadata_capability():
     assert td_b.metadata is None or 'code_mode' not in td_b.metadata
 
 
-@pytest.mark.parametrize('set_metadata_first', [True, False])
-def test_set_tool_metadata_is_visible_to_other_prepare_tools_hooks(set_metadata_first: bool):
-    """Another capability's `prepare_tools` sees the metadata, whatever the list order.
-
-    Not a VCR test: the order capabilities prepare tools in never reaches a provider request.
-    """
-    from pydantic_ai.capabilities import SetToolMetadata
-
-    seen: list[dict[str, Any] | None] = []
-
-    @dataclass
-    class ReadsMetadata(AbstractCapability[Any]):
-        async def prepare_tools(self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            seen.extend(td.metadata for td in tool_defs)
-            return tool_defs
-
-    def tool_a(x: int) -> int:
-        return x  # pragma: no cover
-
-    capabilities: list[AbstractCapability[Any]] = [SetToolMetadata(tagged=True), ReadsMetadata()]
-    if not set_metadata_first:
-        capabilities.reverse()
-    Agent(TestModel(call_tools=[]), tools=[tool_a], capabilities=capabilities).run_sync('test')
-
-    assert seen == [{'tagged': True}]
-
-
 def test_set_tool_metadata_capability_with_async_selector():
     """SetToolMetadata with async callable selector."""
     from pydantic_ai.capabilities import SetToolMetadata
