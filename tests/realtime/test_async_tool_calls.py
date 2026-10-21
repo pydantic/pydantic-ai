@@ -2,7 +2,7 @@
 
 Gemini Live's `NON_BLOCKING` calls (`async_tool_calls=True`) let the model go on in the turn that made the call
 ("this might take a moment"), and the call's result cuts into that turn when it arrives. Its connection flags such a
-call `ToolCall.runs_asynchronously`, and the `InferredLifecycle` keeps the calling response going past the call
+call `ToolCall.response_continues`, and the `InferredLifecycle` keeps the calling response going past the call
 until its terminal, or until the call's result goes out: the result must directly follow the response with its
 call, as request-response APIs (Anthropic, OpenAI Chat) require, so whatever the model says after that is a
 response of its own.
@@ -69,7 +69,7 @@ with try_import() as openai_imports_successful:
 
 def _call(call_id: str = 'bg_1', tool_name: str = 'slow') -> ToolCall:
     """An asynchronous call, as Gemini Live reports a `NON_BLOCKING` one."""
-    return ToolCall(tool_call_id=call_id, tool_name=tool_name, args='{}', runs_asynchronously=True)
+    return ToolCall(tool_call_id=call_id, tool_name=tool_name, args='{}', response_continues=True)
 
 
 def _shape(messages: Sequence[ModelMessage]) -> list[tuple[str, list[str]]]:
@@ -593,7 +593,7 @@ def _speech_while_tool_ran_events() -> tuple[list[RealtimeCodecEvent], list[Real
             InputTranscript(text="What's the weather in Lisbon?", is_final=True),
             OutputTranscript(text='Let me check.', is_final=True),
             ToolCall(
-                tool_call_id='call_1', tool_name='get_weather', args='{"city": "Lisbon"}', runs_asynchronously=True
+                tool_call_id='call_1', tool_name='get_weather', args='{"city": "Lisbon"}', response_continues=True
             ),
             OutputTranscript(text='This might take a moment.', is_final=True),
             ResponseDone(),

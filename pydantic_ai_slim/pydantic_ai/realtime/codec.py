@@ -261,7 +261,7 @@ class ToolCall:
     Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
     as one cut off by a dropped connection or by closing the session.
     """
-    runs_asynchronously: bool = False
+    response_continues: bool = False
     """Whether the model goes on with the same response while this call runs.
 
     Gemini Live's `NON_BLOCKING` calls do on the models that take `INTERRUPT` scheduling (the native-audio models

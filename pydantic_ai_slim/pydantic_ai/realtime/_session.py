@@ -2342,7 +2342,7 @@ class RealtimeSession:
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
-        runs_asynchronously: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> _SettledToolResult:
@@ -2432,9 +2432,9 @@ class RealtimeSession:
             # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
             return result_part, user_content
         if not response_usage_follows:
-            # A message the tool enqueued goes out ahead of its result. The response that made an asynchronous call,
-            # which the model talked on in, isn't waited for: the result ends it.
-            await self._drain_pending_messages('asap', ending=call_part.tool_call_id if runs_asynchronously else None)
+            # A message the tool enqueued goes out ahead of its result. A response that went on past the call isn't
+            # waited for: the result ends it.
+            await self._drain_pending_messages('asap', ending=call_part.tool_call_id if response_continues else None)
         failed = isinstance(result_part, RetryPromptPart) or result_part.outcome == 'failed'
         await self._send_tool_result(call_part, output, wire_content, failed=failed)
         return result_part, user_content
@@ -2560,7 +2560,7 @@ class RealtimeSession:
         execution_prerequisites: tuple[asyncio.Event, ...],
         completion: asyncio.Event,
         response_usage_follows: bool,
-        runs_asynchronously: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
         order_index: int,
@@ -2573,7 +2573,7 @@ class RealtimeSession:
                 validation_done=validation_done,
                 execution_prerequisites=execution_prerequisites,
                 response_usage_follows=response_usage_follows,
-                runs_asynchronously=runs_asynchronously,
+                response_continues=response_continues,
                 run_step=run_step,
                 reserved_budget=reserved_budget,
             )
@@ -2715,7 +2715,7 @@ class RealtimeSession:
                 execution_prerequisites=execution_prerequisites,
                 completion=completion,
                 response_usage_follows=event.response_usage_follows,
-                runs_asynchronously=event.runs_asynchronously,
+                response_continues=event.response_continues,
                 run_step=tool_run_step,
                 reserved_budget=reserves_budget,
                 order_index=order_index,

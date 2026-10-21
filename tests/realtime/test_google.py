@@ -1399,7 +1399,7 @@ def test_map_tool_call_that_the_model_talks_through(
         tool_name='get_weather',
         args='{}',
         response_usage_follows=not talks_through,
-        runs_asynchronously=talks_through,
+        response_continues=talks_through,
     )
     assert events == ([call] if talks_through else [call, SessionUsage(usage=RequestUsage())])
 

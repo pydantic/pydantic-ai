@@ -2047,7 +2047,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         tool_name=name,
                         args=to_json(call.args or {}).decode(),
                         response_usage_follows=not self._talks_through_tool_calls,
-                        runs_asynchronously=self._talks_through_tool_calls,
+                        response_continues=self._talks_through_tool_calls,
                     )
                 )
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
