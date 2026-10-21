@@ -24,6 +24,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Temporary rate-limit probe. This job runs on every CI completion -- about 95 times an
+      # hour -- so bracketing its own API work gives a dense reading of the REST bucket that
+      # every workflow here shares, and that several now fail against with "API rate limit
+      # exceeded for installation". Reading it costs no quota; see the script for why nothing
+      # else in `.github/` can answer this. Remove both steps and the script once it is answered.
+      - name: Probe rate limit (before)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/rate-limit-probe.sh before
+
       - name: Collect CI duration telemetry
         continue-on-error: true
         run: uv run --no-project --with certifi --with logfire python .github/scripts/ci_duration.py collect --output ci-duration-record.json
@@ -37,6 +48,16 @@ jobs:
           LOGFIRE_URL: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
           OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
+
+      # The pair matters more than either reading. This job's own API work is two requests, so a
+      # large drop across a job this short is drain from outside it -- which is the question:
+      # whether the bucket is spent here or arrives already empty.
+      - name: Probe rate limit (after)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/rate-limit-probe.sh after
 
       - name: Store CI duration record
         if: hashFiles('ci-duration-record.json') != ''
