@@ -588,7 +588,7 @@ class ModelSettings(TypedDict, total=False):
       `gpt-oss-safeguard` models, which take no thinking parameter)
     """
 
-    include_citations: bool
+    citations: bool
     """Whether to ask for citations from providers that only return them when asked.
 
     Citations are put on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations]. To also keep the provider's
@@ -596,12 +596,12 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools)
+    * Anthropic (documents, including those returned by tools, and Web Fetch)
     * Bedrock (TXT and PDF documents, including those returned by tools, with Anthropic models)
     * xAI (inline citations)
 
-    Providers that always return citations ignore this setting. Citations for fetched pages are enabled on the
-    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] itself, with `enable_citations`.
+    Providers that always return citations ignore this setting. A
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] whose `enable_citations` is set uses that value instead.
     """
 
     cache: CacheSetting
@@ -722,7 +722,7 @@ ModelSettingName: TypeAlias = Literal[
     'stop_sequences',
     'extra_headers',
     'thinking',
-    'include_citations',
+    'citations',
     'cache',
     'service_tier',
     'extra_body',

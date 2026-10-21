@@ -1479,9 +1479,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # Most families accept a `status` field on `toolResult` blocks; Writer Palmyra rejects it.
         supports_tool_result_status = profile.get('bedrock_supports_tool_result_status', True)
-        include_citations = settings.get('include_citations', False) and profile.get(
-            'bedrock_supports_citations', False
-        )
+        include_citations = settings.get('citations', False) and profile.get('bedrock_supports_citations', False)
 
         # Media returned from a tool that can't live inside a `toolResult` block (see
         # `bedrock_supported_media_kinds_in_tool_returns`) is emitted as a sibling block. Models like
@@ -1650,7 +1648,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
                             # Replay checks citations against the documents' text, which is only sent as text when
                             # citations are enabled.
-                            if settings.get('include_citations', False)
+                            if settings.get('citations', False)
                             and profile.get('bedrock_supports_citations', False)
                             and item.provider_name == self.system
                             and isinstance(raw_citations, list)

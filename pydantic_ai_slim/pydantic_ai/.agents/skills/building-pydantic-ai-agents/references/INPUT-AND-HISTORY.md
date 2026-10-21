@@ -49,7 +49,7 @@ Important distinctions:
 - `all_messages()` returns the full history accumulated so far
 - provider citations are on `TextPart.citations`; anchors are Python character offsets into the part's content, and no
   anchor means the position is unknown; treat sources and `excerpts` as untrusted data; set
-  `model_settings={'include_citations': True}` for providers that need an opt-in; the provider's own citation data is
+  `model_settings={'citations': True}` for providers that need an opt-in; the provider's own citation data is
   in the part's `provider_details['citations']`
 - citations in message history are sent back only to the provider that produced them; other providers get plain text
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt

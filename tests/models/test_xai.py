@@ -5191,16 +5191,16 @@ async def test_xai_include_settings(allow_model_requests: None):
         pytest.param('provider-disabled', False, id='provider-setting-wins'),
     ],
 )
-async def test_xai_include_citations_setting(
+async def test_xai_citations_setting(
     allow_model_requests: None,
     settings_kind: Literal['shared', 'provider-disabled'],
     expect_inline_citations: bool,
 ) -> None:
     """The shared setting maps to xAI's inline-citation include option."""
     settings = (
-        ModelSettings(include_citations=True)
+        ModelSettings(citations=True)
         if settings_kind == 'shared'
-        else XaiModelSettings(include_citations=True, xai_include_inline_citations=False)
+        else XaiModelSettings(citations=True, xai_include_inline_citations=False)
     )
     response = create_response(content='test', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])

@@ -1388,7 +1388,7 @@ async def test_bedrock_unified_service_tier_auto_omits(
 
 
 @pytest.mark.parametrize(
-    ('model_name', 'include_citations', 'citations_enabled'),
+    ('model_name', 'citations', 'citations_enabled'),
     [
         pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', False, False, id='claude-not-asked'),
         pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', True, True, id='claude-asked'),
@@ -1396,13 +1396,13 @@ async def test_bedrock_unified_service_tier_auto_omits(
         pytest.param('us.amazon.nova-pro-v1:0', True, False, id='nova-asked'),
     ],
 )
-async def test_bedrock_include_citations_request_setting(
+async def test_bedrock_citations_request_setting(
     allow_model_requests: None,
     bedrock_provider: BedrockProvider,
     mocker: MockerFixture,
     text_document_content: BinaryContent,
     model_name: str,
-    include_citations: bool,
+    citations: bool,
     citations_enabled: bool,
 ) -> None:
     """The shared setting is forwarded on Bedrock document blocks only when enabled and the model supports it."""
@@ -1415,7 +1415,7 @@ async def test_bedrock_include_citations_request_setting(
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
 
-    await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(
+    await Agent(model, model_settings=ModelSettings(citations=citations)).run(
         ['What is in this document?', text_document_content]
     )
 
@@ -1430,7 +1430,7 @@ async def test_bedrock_include_citations_request_setting(
     assert document == expected
 
 
-async def test_bedrock_include_citations_for_uploaded_document(
+async def test_bedrock_citations_for_uploaded_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
     """The shared setting also applies to supported documents already stored in S3."""
@@ -1443,7 +1443,7 @@ async def test_bedrock_include_citations_for_uploaded_document(
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
 
-    await Agent(model, model_settings=ModelSettings(include_citations=True)).run(
+    await Agent(model, model_settings=ModelSettings(citations=True)).run(
         [
             'What is in this document?',
             UploadedFile(file_id='s3://bucket/report.pdf', provider_name='bedrock', media_type='application/pdf'),
@@ -1458,7 +1458,7 @@ async def test_bedrock_include_citations_for_uploaded_document(
     }
 
 
-async def test_bedrock_include_citations_rejects_non_utf8_text_document(
+async def test_bedrock_citations_rejects_non_utf8_text_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
     """Citations require text documents to be sent as UTF-8 text, rather than opaque bytes."""
@@ -1466,14 +1466,14 @@ async def test_bedrock_include_citations_rejects_non_utf8_text_document(
     mock_converse = mocker.patch.object(model.client, 'converse')
 
     with pytest.raises(UserError, match='Bedrock citations require UTF-8 text documents'):
-        await Agent(model, model_settings=ModelSettings(include_citations=True)).run(
+        await Agent(model, model_settings=ModelSettings(citations=True)).run(
             ['What is in this document?', BinaryContent(data=b'\xff', media_type='text/plain')]
         )
 
     mock_converse.assert_not_called()
 
 
-async def test_bedrock_include_citations_ignores_unsupported_document_format(
+async def test_bedrock_citations_ignores_unsupported_document_format(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
     """Bedrock document citations support TXT and PDF only; other formats remain ordinary documents."""
@@ -1486,7 +1486,7 @@ async def test_bedrock_include_citations_ignores_unsupported_document_format(
         'ResponseMetadata': {'HTTPStatusCode': 200},
     }
 
-    await Agent(model, model_settings=ModelSettings(include_citations=True)).run(
+    await Agent(model, model_settings=ModelSettings(citations=True)).run(
         ['What is in this document?', BinaryContent(data=b'column\nvalue\n', media_type='text/csv')]
     )
 
@@ -1522,7 +1522,7 @@ async def test_bedrock_tool_return_documents_without_citation_support(bedrock_pr
     ]
 
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(include_citations=True)
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(citations=True)
     )
 
     assert bedrock_messages == [
@@ -1586,7 +1586,7 @@ async def test_bedrock_tool_return_document_citations_request(bedrock_provider: 
     ]
 
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(include_citations=True)
+        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(citations=True)
     )
 
     assert bedrock_messages[2] == snapshot(
@@ -1982,7 +1982,7 @@ async def _bedrock_replayed_answer(
     model = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=bedrock_provider,
-        settings=ModelSettings(include_citations=True),
+        settings=ModelSettings(citations=True),
     )
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {

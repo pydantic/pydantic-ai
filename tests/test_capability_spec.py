@@ -1687,7 +1687,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
-                        'include_citations': {'title': 'Include Citations', 'type': 'boolean'},
+                        'citations': {'title': 'Citations', 'type': 'boolean'},
                         'cache': {
                             'anyOf': [
                                 {'type': 'boolean'},
@@ -1789,7 +1789,11 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Blocked Domains',
                         },
-                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
+                        'enable_citations': {
+                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Enable Citations',
+                        },
                         'max_content_tokens': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
