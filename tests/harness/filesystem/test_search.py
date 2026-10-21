@@ -361,33 +361,72 @@ async def test_the_fallback_is_logged_once_per_workspace(
     assert record.getMessage().startswith(f'`rg` is not on the PATH of the workspace at {tmp_path.resolve()}')
 
 
-async def test_include_glob_matches_alike_on_every_search_path(tmp_path: Path, no_rg_path: str) -> None:
-    """`include_glob` is an `fnmatch` glob against root-relative paths, whatever runs the search.
-
-    `rg --glob` anchors a glob with a `/` and its `*` stops at `/`, so `src/*.py` alone would miss
+async def test_include_glob_with_a_slash_matches_alike_on_every_search_path(
+    tmp_path: Path, no_rg_path: str, no_rg_git_path: str
+) -> None:
+    """`rg --glob` anchors a glob with a `/` and its `*` stops at `/`, so `src/*.py` alone would miss
     `src/pkg/m.py` there while the walker and the POSIX fallback find it.
     """
     (tmp_path / 'src' / 'pkg').mkdir(parents=True)
     (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
     (tmp_path / 'src' / 'pkg' / 'm.txt').write_text('needle\n')
-    (tmp_path / 'tests').mkdir()
-    (tmp_path / 'tests' / 'test_m.py').write_text('needle\n')
-    (tmp_path / 'test_root.py').write_text('needle\n')
     tools = FileSystem[None]().get_toolset()
     assert isinstance(tools, FileSystemToolset)
     workspaces = {
         'rg': LocalWorkspaceBackend(tmp_path),
         'posix': LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_path}),
+        # `find` prints `./src/pkg/m.py`, which the glob is matched against without the `./`.
+        'posix without git': LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_git_path}),
         'walker': ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))),
     }
     for name, workspace in workspaces.items():
         nested = await tools.search_files('needle', include_glob='src/*.py', workspace=workspace)
         assert nested == 'src/pkg/m.py:1:needle', name
-        # Without a `/` the glob still matches the whole root-relative path, not just the file name.
-        rooted = await tools.search_files('needle', include_glob='test_*.py', workspace=workspace)
-        assert rooted == 'test_root.py:1:needle', name
         below = await tools.search_files('needle', path='src', include_glob='*.py', workspace=workspace)
         assert below == 'src/pkg/m.py:1:needle', name
-        # The glob is matched against the root-relative path, not the path below the search directory.
-        relative = await tools.search_files('needle', path='src', include_glob='pkg/*.py', workspace=workspace)
-        assert relative == 'No matches found.', name
+
+
+async def test_include_glob_without_a_slash_matches_file_names_at_any_depth_with_rg(
+    tmp_path: Path, no_rg_git_path: str
+) -> None:
+    """A glob without a `/` still goes to `rg --glob`, which matches it against file names at any depth."""
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 'test_m.py').write_text('needle\n')
+    (tmp_path / 'test_root.py').write_text('needle\n')
+    (tmp_path / 'm.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    found = await tools.search_files('needle', include_glob='test_*.py', workspace=LocalWorkspaceBackend(tmp_path))
+    assert found == 'test_root.py:1:needle\ntests/test_m.py:1:needle'
+    # Without `rg` or git, `find` prints `./test_root.py`, which the glob is matched against without the `./`.
+    no_git = LocalWorkspaceBackend(tmp_path, env={'PATH': no_rg_git_path})
+    assert await tools.search_files('needle', include_glob='test_*.py', workspace=no_git) == 'test_root.py:1:needle'
+
+
+async def test_include_glob_with_rg_only_syntax_still_goes_to_rg(tmp_path: Path) -> None:
+    """`fnmatch` has no `**/` for zero directories, `{a,b}`, `!` exclusion, or `/` anchor, so `rg` keeps such a glob."""
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'a.py').write_text('needle\n')
+    (tmp_path / 'src' / 'b.txt').write_text('needle\n')
+    (tmp_path / 'tests').mkdir()
+    (tmp_path / 'tests' / 't.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    assert await tools.search_files('needle', include_glob='src/**/*.py', workspace=workspace) == 'src/a.py:1:needle'
+    both = await tools.search_files('needle', include_glob='src/*.{py,txt}', workspace=workspace)
+    assert both == 'src/a.py:1:needle\nsrc/b.txt:1:needle'
+    others = await tools.search_files('needle', include_glob='!tests/**', workspace=workspace)
+    assert others == 'src/a.py:1:needle\nsrc/b.txt:1:needle'
+    assert await tools.search_files('needle', include_glob='/src/*.py', workspace=workspace) == 'src/a.py:1:needle'
+
+
+async def test_include_glob_is_also_matched_below_the_search_directory(tmp_path: Path) -> None:
+    (tmp_path / 'src' / 'pkg').mkdir(parents=True)
+    (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    found = await tools.search_files(
+        'needle', path='src', include_glob='pkg/*.py', workspace=LocalWorkspaceBackend(tmp_path)
+    )
+    assert found == 'src/pkg/m.py:1:needle'
