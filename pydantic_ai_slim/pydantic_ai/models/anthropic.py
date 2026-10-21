@@ -547,6 +547,11 @@ _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
 
+AnthropicWebToolCaller: TypeAlias = Literal[
+    'direct', 'code_execution_20250825', 'code_execution_20260120', 'code_execution_20260521'
+]
+"""Who may invoke Anthropic's web search and web fetch tools, as sent in their `allowed_callers` field."""
+
 
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
@@ -700,6 +705,20 @@ class AnthropicModelSettings(ModelSettings, total=False):
     `'20260120'` for Sonnet 4.5+ and Opus 4.5+, otherwise `'20250825'`.
     Set a concrete version to force that tool version; a `UserError` is raised if
     the selected model profile does not support that version.
+    """
+
+    anthropic_web_tools_allowed_callers: list[AnthropicWebToolCaller]
+    """Who may invoke [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and
+    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool], sent as their `allowed_callers`.
+
+    By default the field is omitted and Anthropic picks the caller from the tool version. The
+    `web_search_20260209` and `web_fetch_20260209` versions default to calls from code execution
+    only, which gives the model a server-side code execution sandbox to filter results in
+    ("dynamic filtering") even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]
+    is not enabled. Set `['direct']` to have the model call the web tools itself with no sandbox,
+    which turns off dynamic filtering and makes the tools eligible for Zero Data Retention.
+    The value is sent on whichever web tool version the model uses.
+    See [the Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers).
     """
 
     anthropic_eager_input_streaming: bool
@@ -2045,9 +2064,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         implicit_code_execution_names = {'code_execution', 'bash_code_execution', 'text_editor_code_execution'}
         if 'code_execution' in enabled_server_tool_names:
             enabled_server_tool_names.update(implicit_code_execution_names)
-        # The 20260209 web tools provision code execution for dynamic filtering server-side.
-        if self.profile.get('anthropic_supports_dynamic_filtering', False) and any(
-            isinstance(tool, WebSearchTool | WebFetchTool) for tool in model_request_parameters.native_tools
+        # The 20260209 web tools provision code execution for dynamic filtering server-side,
+        # unless `allowed_callers` keeps them to direct calls.
+        if any(
+            tool.get('type') in ('web_search_20260209', 'web_fetch_20260209')
+            and any(caller != 'direct' for caller in tool.get('allowed_callers', ['code_execution_20260120']))
+            for tool in native_tools
         ):
             enabled_server_tool_names.update(implicit_code_execution_names)
         return frozenset(enabled_server_tool_names)
@@ -2116,11 +2138,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     @staticmethod
     def _map_web_search_tool(
-        tool: WebSearchTool, supports_dynamic_filtering: bool
+        tool: WebSearchTool, supports_dynamic_filtering: bool, allowed_callers: list[AnthropicWebToolCaller] | None
     ) -> BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param:
         user_location = BetaUserLocationParam(type='approximate', **tool.user_location) if tool.user_location else None
+        web_search_tool: BetaWebSearchTool20260209Param | BetaWebSearchTool20250305Param
         if supports_dynamic_filtering:
-            return BetaWebSearchTool20260209Param(
+            web_search_tool = BetaWebSearchTool20260209Param(
                 name='web_search',
                 type='web_search_20260209',
                 max_uses=tool.max_uses,
@@ -2128,35 +2151,39 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 blocked_domains=tool.blocked_domains,
                 user_location=user_location,
             )
-        return BetaWebSearchTool20250305Param(
-            name='web_search',
-            type='web_search_20250305',
-            max_uses=tool.max_uses,
-            allowed_domains=tool.allowed_domains,
-            blocked_domains=tool.blocked_domains,
-            user_location=user_location,
-        )
+        else:
+            web_search_tool = BetaWebSearchTool20250305Param(
+                name='web_search',
+                type='web_search_20250305',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                user_location=user_location,
+            )
+        if allowed_callers is not None:
+            web_search_tool['allowed_callers'] = allowed_callers
+        return web_search_tool
 
     @staticmethod
     def _map_web_fetch_tool(
-        tool: WebFetchTool, supports_dynamic_filtering: bool
+        tool: WebFetchTool, supports_dynamic_filtering: bool, allowed_callers: list[AnthropicWebToolCaller] | None
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
         citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        web_fetch_tool: BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param
+        beta_feature: str | None
         if supports_dynamic_filtering:
-            return (
-                BetaWebFetchTool20260209Param(
-                    name='web_fetch',
-                    type='web_fetch_20260209',
-                    max_uses=tool.max_uses,
-                    allowed_domains=tool.allowed_domains,
-                    blocked_domains=tool.blocked_domains,
-                    citations=citations,
-                    max_content_tokens=tool.max_content_tokens,
-                ),
-                None,
+            web_fetch_tool = BetaWebFetchTool20260209Param(
+                name='web_fetch',
+                type='web_fetch_20260209',
+                max_uses=tool.max_uses,
+                allowed_domains=tool.allowed_domains,
+                blocked_domains=tool.blocked_domains,
+                citations=citations,
+                max_content_tokens=tool.max_content_tokens,
             )
-        return (
-            BetaWebFetchTool20250910Param(
+            beta_feature = None
+        else:
+            web_fetch_tool = BetaWebFetchTool20250910Param(
                 name='web_fetch',
                 type='web_fetch_20250910',
                 max_uses=tool.max_uses,
@@ -2164,9 +2191,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 blocked_domains=tool.blocked_domains,
                 citations=citations,
                 max_content_tokens=tool.max_content_tokens,
-            ),
-            'web-fetch-2025-09-10',
-        )
+            )
+            beta_feature = 'web-fetch-2025-09-10'
+        if allowed_callers is not None:
+            web_fetch_tool['allowed_callers'] = allowed_callers
+        return web_fetch_tool, beta_feature
 
     def _add_native_tools(  # noqa: C901
         self,
@@ -2177,10 +2206,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         beta_features: set[str] = set()
         mcp_servers: list[BetaRequestMCPServerURLDefinitionParam] = []
         supports_dynamic_filtering = self.profile.get('anthropic_supports_dynamic_filtering', False)
+        web_tools_allowed_callers = model_settings.get('anthropic_web_tools_allowed_callers')
 
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering))
+                tools.append(self._map_web_search_tool(tool, supports_dynamic_filtering, web_tools_allowed_callers))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tool_version = self._get_code_execution_tool_version(model_settings)
                 tools.append(_map_code_execution_tool(tool_version))
@@ -2189,7 +2219,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if tool.files and any(file.provider_name == self.system for file in tool.files):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
-                web_fetch_tool, beta_feature = self._map_web_fetch_tool(tool, supports_dynamic_filtering)
+                web_fetch_tool, beta_feature = self._map_web_fetch_tool(
+                    tool, supports_dynamic_filtering, web_tools_allowed_callers
+                )
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
                     beta_features.add(beta_feature)

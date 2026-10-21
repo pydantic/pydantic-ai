@@ -766,6 +766,24 @@ result = agent.run_sync(
 !!! note
     Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.
 
+## Web Tool Callers
+
+On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic only lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.
+
+Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model call the web tools itself, with no sandbox. This turns off dynamic filtering and makes the tools eligible for Zero Data Retention. `['direct', 'code_execution_20260120']` allows both kinds of call.
+
+```py {title="anthropic_web_tools_allowed_callers.py"}
+from pydantic_ai import Agent, WebSearchTool
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[NativeTool(WebSearchTool())],
+    model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']),
+)
+```
+
 ## Code Execution Tool Version
 
 By default, Pydantic AI chooses a compatible Anthropic code execution tool version for the selected model. You can override this with [`AnthropicModelSettings.anthropic_code_execution_tool_version`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_code_execution_tool_version] when you need a specific supported Anthropic tool version:
