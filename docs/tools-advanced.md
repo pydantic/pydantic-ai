@@ -96,7 +96,7 @@ A file the model can't read would fail the request if it were sent, which is out
 File d9a13f (audio/mpeg, 48,213 bytes) was not sent: this model cannot read audio files.
 ```
 
-The model can then tell the user, or try another tool. Like the framing, the note is only in the request: the file stays on the `ToolReturnPart` in your message history, and each model a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries decides for itself, so one that can read the file is sent it. With the [File Understanding](capabilities/file-understanding.md) capability, the file is described in text by a model that can read it instead. A file in a user prompt, or in [`ToolReturn.content`](#advanced-tool-returns), is sent as it is, and a model that can't take it still fails the request: you or your user chose to send it.
+The model can then tell the user, or try another tool. Like the framing, the note is only in the request: the file stays on the `ToolReturnPart` in your message history, and each model a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries decides for itself, so one that can read the file is sent it. A file in a user prompt, or in [`ToolReturn.content`](#advanced-tool-returns), is sent as it is, and a model that can't take it still fails the request: you or your user chose to send it.
 
 ### Advanced Tool Returns
 

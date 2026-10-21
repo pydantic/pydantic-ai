@@ -6373,7 +6373,7 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
         assert model.system == provider_name
         if isinstance(model, OpenAIChatModel):
             assert model.profile.get('openai_chat_supports_document_input') is False
-            # Only the documents the mapping inlines as text remain, so `FileUnderstanding` describes the rest.
+            # Only the documents the mapping inlines as text remain; any other is replaced by a note.
             assert model.profile.get('supported_document_media_types') == snapshot(
                 frozenset({'text/csv', 'text/html', 'text/markdown', 'text/plain'})
             )

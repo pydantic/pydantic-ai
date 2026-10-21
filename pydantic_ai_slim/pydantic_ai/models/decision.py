@@ -546,8 +546,7 @@ class DecisionModel(Model[InterfaceClient]):
 
         Images are read only when the class sets
         [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
-        audio and video never are, so [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] describes
-        those files instead of letting them be refused, and a tool's file is otherwise replaced by a note.
+        audio and video never are, so a file of those kinds that a tool returns is replaced by a note.
         """
         return merge_profile(
             super().profile,

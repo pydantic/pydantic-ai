@@ -26,7 +26,6 @@ Provider-adaptive capabilities to reach for first:
 - `WebSearch`
 - `WebFetch`
 - `ImageGeneration`
-- `FileUnderstanding`
 - `MCP`
 
 For stricter safety handling, use `RaiseContentFilterError` to raise `ContentFilterError` whenever a model response has `finish_reason='content_filter'`, including responses with partial text.
