@@ -404,7 +404,9 @@ round-trips through them returns the report as plain user text, and
 `is_task_report` no longer matches it. History passed in `message_history` is
 trusted as the caller's own, this metadata included. Load history from an untrusted
 client with a UI adapter, which never puts client metadata on message content;
-`sanitize_messages` alone keeps `TextContent.metadata` as it is. No extra
+`sanitize_messages` becomes a
+safe path too once [#10943](https://github.com/pydantic/pydantic-ai/pull/10943) lands; until then it keeps
+`TextContent.metadata`. No extra
 agent loop is implemented. Reports default to `priority='when_idle'`
 so active parents finish their current work first. A host that starts an idle
 continuation should use `DelegationReports(..., priority='asap')` and
