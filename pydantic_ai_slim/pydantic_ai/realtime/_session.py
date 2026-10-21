@@ -71,6 +71,7 @@ from ..messages import (
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
+    TextContent,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -486,6 +487,21 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
     )
 
 
+def _user_prompt_text(part: UserPromptPart) -> str | None:
+    """The text of a prompt made only of text, a `str` or `str`/`TextContent` items, or `None` if it holds anything else."""
+    if isinstance(part.content, str):
+        return part.content
+    texts: list[str] = []
+    for item in part.content:
+        if isinstance(item, str):
+            texts.append(item)
+        elif isinstance(item, TextContent):
+            texts.append(item.content)
+        else:
+            return None
+    return '\n'.join(texts) if texts else None
+
+
 def _pending_message_text(pending: PendingMessage) -> str:
     """Render enqueued messages down to the text a realtime session can deliver.
 
@@ -494,17 +510,17 @@ def _pending_message_text(pending: PendingMessage) -> str:
     standard run's non-leading system prompts. Anything else can't cross the live input channel.
     """
     error = UserError(
-        '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support plain-text prompts and system-prompt '
-        'parts only. Multimodal content and model responses cannot be delivered over the live input '
-        'channel.'
+        '`RealtimeSession.enqueue()` and `RunContext.enqueue()` in a realtime session support text prompts '
+        '(a `str` or `TextContent`) and system-prompt parts only. Multimodal content and model responses cannot '
+        'be delivered over the live input channel.'
     )
     texts: list[str] = []
     for message in pending.messages:
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                texts.append(part.content)
+            if isinstance(part, UserPromptPart) and (text := _user_prompt_text(part)) is not None:
+                texts.append(text)
             elif isinstance(part, SystemPromptPart):
                 texts.append(_wrap_in_system_tags(part.content))
             else:
@@ -512,6 +528,24 @@ def _pending_message_text(pending: PendingMessage) -> str:
     if not texts:
         raise error
     return '\n\n'.join(texts)
+
+
+def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] | None:
+    """The parts to record for a delivered message that carries `TextContent`, so its metadata survives.
+
+    A capability recognizes content it enqueued, such as a background task's report, by that metadata, so
+    the history keeps the enqueued user prompt parts as they were. Any other message is recorded as the one
+    text part it was sent as. That includes one with a `SystemPromptPart`, which is sent as `<system>` text.
+    """
+    parts = [part for message in pending.messages if isinstance(message, ModelRequest) for part in message.parts]
+    if all(isinstance(part, UserPromptPart) for part in parts) and any(
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and any(isinstance(item, TextContent) for item in part.content)
+        for part in parts
+    ):
+        return parts
+    return None
 
 
 class _RealtimePendingMessages(PendingMessageQueue):
@@ -1572,8 +1606,11 @@ class RealtimeSession:
         else:
             assert_never(content)
 
-    async def _send_text(self, content: str, *, respond: bool) -> ModelRequest:
-        request = self._new_request([UserPromptPart(content=content)])
+    async def _send_text(
+        self, content: str, *, respond: bool, parts: list[ModelRequestPart] | None = None
+    ) -> ModelRequest:
+        """Send *content* as a text turn, recording *parts* for it when given, else one `UserPromptPart`."""
+        request = self._new_request(parts if parts is not None else [UserPromptPart(content=content)])
         await self._send_frame(content if respond else TextContext(content), request=request)
         return request
 
@@ -1592,8 +1629,8 @@ class RealtimeSession:
 
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items. Realtime
-                delivery supports text parts and
-                [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
+                delivery supports text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent])
+                and [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, which are joined into
                 one user turn. System parts use the `<system>…</system>` convention to indicate that
                 the text is not the person speaking; that marks where it came from, not that it should
                 be handled silently. The model still gets a turn and decides whether to reply, call a
@@ -1601,7 +1638,8 @@ class RealtimeSession:
                 [`send(..., respond=False)`][pydantic_ai.realtime.RealtimeSession.send]. The delivered
                 turn is recorded in history as a
                 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]. Calling with no positional
-                arguments is a no-op.
+                arguments is a no-op. A message holding `TextContent` and only user prompt parts is
+                recorded as those parts instead, so their metadata, which isn't sent, stays in history.
             priority: When to deliver:
                 `'asap'` (default) — as soon as no reply is being generated; a reply already in
                     progress is allowed to finish first.
@@ -2505,7 +2543,9 @@ class RealtimeSession:
                 return
             selected = self._pending_messages.pop_priority(priority)
             for pending in selected:
-                request = await self._send_text(_pending_message_text(pending), respond=True)
+                request = await self._send_text(
+                    _pending_message_text(pending), respond=True, parts=_pending_message_record(pending)
+                )
                 self._queue_put(EnqueuedMessagesEvent(enqueue_id=pending.enqueue_id, messages=(request,)))
             if priority == 'asap':
                 self._asap_drain_deferred = False

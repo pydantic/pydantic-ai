@@ -2,7 +2,8 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -27,8 +28,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.step_persistence import FileStepStore, StepPersistence
 from pydantic_ai_harness.subagents import (
@@ -43,6 +47,7 @@ from pydantic_ai_harness.subagents import (
     is_task_report,
 )
 from tests.harness.conftest import IsDatetime
+from tests.realtime_connections import InferredConnection
 
 WAIT = 10
 
@@ -343,6 +348,84 @@ async def test_report_output_survives_server_owned_system_prompt_replacement() -
     request_parts = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
     assert [part.content for part in request_parts if isinstance(part, SystemPromptPart)] == ['server prompt']
     assert any(is_task_report(part) and 'child evidence' in str(part.content) for part in request_parts)
+
+
+class _OneReplyConnection(InferredConnection):
+    """Answers the first input it receives with one finished response, then ends."""
+
+    def __init__(self) -> None:
+        self.sent: list[RealtimeInput] = []
+        self._input = asyncio.Event()
+
+    async def send_input(self, content: RealtimeInput) -> None:
+        self.sent.append(content)
+        self._input.set()
+
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        await self._input.wait()
+        yield ResponseDone()
+
+
+class _OneReplyModel(RealtimeModel):
+    def __init__(self, connection: _OneReplyConnection) -> None:
+        self.connection = connection
+
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(supports_text_output=True)
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[RealtimeConnection]:
+        yield self.connection
+
+
+async def test_report_reaches_a_realtime_session_and_keeps_its_metadata() -> None:
+    """A realtime session delivers a report enqueued on it, and records it as the report part."""
+    owner = DelegationTasks()
+    connection = _OneReplyConnection()
+    async with owner.opened():
+        record = DelegationTask(
+            id='a' * 32,
+            agent_name='worker',
+            prompt='p',
+            conversation_id='c',
+            background=True,
+            status='finished',
+            outcome='ok',
+            output='child evidence',
+        )
+        owner.records[record.id] = record
+        async with Agent().realtime(_OneReplyModel(connection)).session() as session:
+            with owner.receiving(conversation_id='c', parent_id=None, enqueue=session.enqueue):
+                _ = [event async for event in session]
+    report = record.report()
+    assert not isinstance(report.content, str)
+    (text,) = report.content
+    assert isinstance(text, TextContent)
+    # The frame's text crosses the live input channel; the metadata, which is never sent, stays in history.
+    assert connection.sent == [text.content]
+    (delivered,) = [
+        part
+        for message in session.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if is_task_report(part)
+    ]
+    assert delivered.content == report.content
 
 
 async def test_steer_reaches_a_running_child_only() -> None:

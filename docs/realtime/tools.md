@@ -273,13 +273,15 @@ if __name__ == '__main__':
 
 The default `priority='asap'` delivers after any active response finishes;
 `priority='when_idle'` waits until the model is idle, after all `'asap'` items. Neither priority
-interrupts assistant speech. Text parts and system parts are joined into one user turn, with system
+interrupts assistant speech. Text (a `str` or [`TextContent`][pydantic_ai.messages.TextContent]) and system parts are joined into one user turn, with system
 parts wrapped in `<system>…</system>` to distinguish them from the person speaking. A system part
 marks where the text came from, not that it should be handled silently: the model still gets a turn
 and may reply, call a tool, or move on. To add context without prompting a turn, use
 [`send(..., respond=False)`](turns.md#text-turns) instead. Delivered turns become ordinary
 [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s in history, as in
-[injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
+[injecting messages mid-run](../message-history.md#injecting-messages-mid-run). A message of user
+prompt parts that holds `TextContent` is recorded as those parts, so their metadata, which isn't sent
+to the model, stays in history for the code that recognizes it, such as a background task's report.
 
 `enqueue()` does not replace `send()`: it waits for the response in flight to finish, while
 [`send()`][pydantic_ai.realtime.RealtimeSession.send] delivers immediately, even while a tool call or
