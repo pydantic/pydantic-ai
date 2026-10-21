@@ -59,7 +59,6 @@ from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
     Coder,
-    Memory,
     Planning,
     Researcher,
     SpendLimits,
@@ -162,10 +161,6 @@ def _check_skills(merged: Any) -> None:
     assert [source.directories for source in merged._sources] == [('first',), ('second',)]
 
 
-def _check_memory(merged: Any) -> None:
-    assert merged.heading == 'Second'
-
-
 def _check_planning(merged: Any) -> None:
     assert merged.inject is False
 
@@ -215,10 +210,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (Skills[Any]('first'), Skills[Any]('second')),
         _check_skills,
     ),
-    'Memory': Combines(
-        'one memory configuration per agent; its toolset registers fixed tool names',
-        lambda: (Memory[Any](heading='First'), Memory[Any](heading='Second')),
-        _check_memory,
+    'Memory': Narrows(
+        'one notebook per id, and its store and namespace are a tenant boundary; two that differ need their own ids',
+        lambda cls: (cls(namespace='first'), cls(namespace='second')),
     ),
     'Planning': Combines(
         'one plan per agent; `PlanningToolset` registers fixed tool names',
