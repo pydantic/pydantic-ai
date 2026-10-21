@@ -65,16 +65,14 @@ The tool invokes `macroscope codereview --raw` for machine-readable streaming
 output, which needs a recent CLI build. The installer fetches the latest and the
 CLI self-updates on use, so a fresh install satisfies this.
 
-The model cannot fix setup problems either, so they end the run with `UserError`:
-
-| Cause | Message |
-|---|---|
-| CLI not installed | the install command, or the configured path when `command` is one |
-| CLI cannot launch | the launcher's error |
-| Review never starts | run `macroscope` to sign in, or fix the configured `base` |
-
-If the review fails to start with a `base` the model chose, the model gets a
-retry instead, so it can change or drop the ref.
+The model cannot fix these setup problems, so the tool raises `UserError` and the
+run stops rather than spending tool retries on them. A missing binary reports the
+install command, or names the path when `command` is one, a binary that cannot be
+launched reports the OS error, and a review that never starts (usually because you
+are not signed in) tells you to run `macroscope` to finish setup, or to fix the
+configured `base` if the CLI reports an unknown ref. The exception is a review that
+fails to start with a `base` the model passed: that is reported to the model as a
+retry so it can drop or change the ref.
 
 ## The tool
 

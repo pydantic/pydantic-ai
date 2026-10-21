@@ -49,17 +49,15 @@ workspace first:
 1. Install: `curl -sSL https://raw.githubusercontent.com/prassoai/macroscope-local/main/install.sh | bash`
 2. Sign in and pick a Macroscope workspace by running `macroscope` once.
 
-The capability cannot install or authenticate on your behalf, and the model
-cannot fix setup problems either, so they end the run with `UserError`:
-
-| Cause | Message |
-|---|---|
-| CLI not installed | the install command, or the configured path when `command` is one |
-| CLI cannot launch | the launcher's error |
-| Review never starts | run `macroscope` to sign in, or fix the configured `base` |
-
-If the review fails to start with a `base` the model chose, the model gets a
-retry instead, so it can change or drop the ref.
+The capability cannot install or authenticate on your behalf. The model cannot
+fix these setup problems either, so the tool raises `UserError` and the run
+stops rather than spending tool retries on them. A missing binary reports the
+install command, or names the path when `command` is one, a binary that cannot
+be launched reports the OS error, and a review that never starts (usually
+because you are not signed in) tells you to run `macroscope` to finish setup,
+or to fix the configured `base` if the CLI reports an unknown ref. The
+exception is a review that fails to start with a `base` the model passed: that
+is reported to the model as a retry so it can drop or change the ref.
 
 The tool invokes `macroscope codereview --raw` for machine-readable streaming
 output, which needs a recent CLI build. The installer fetches the latest and the
@@ -85,8 +83,7 @@ out before it starts, the model gets a retry.
 
 ## Options
 
-The fields of `Macroscope` and their defaults (`id` is inherited from
-`AbstractCapability`):
+Every field of `Macroscope` with its default:
 
 ```python
 from pydantic_ai_harness import Macroscope
@@ -100,14 +97,13 @@ Macroscope(
 )
 ```
 
-- A per-call `base` argument takes precedence over the field. A `base` that
-  starts with `-` is rejected, so it cannot reach the CLI as an option.
-- `command` cannot start with `-` or contain `=`; put the CLI on the
-  workspace's `PATH` instead.
-- On timeout, the workspace stops the CLI (see [The tool](#the-tool) for what
-  the model gets back).
-- The tool is not offered when the workspace cannot run commands, such as a
-  read-only one.
+A per-call `base` argument takes precedence over the field. Reviews call a
+remote service, so the timeout is generous by default; on timeout the
+workspace stops the CLI and the model gets the findings that arrived (see
+[The tool](#the-tool)). The tool is not offered when the workspace cannot run
+commands (for example a read-only one). A `base` that starts with `-` is
+rejected. `command` cannot start with `-` or contain `=`; put the CLI on the
+workspace's `PATH` instead.
 
 ## Scope and composition
 
