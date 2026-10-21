@@ -84,6 +84,11 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+# Off: gh-aw's daily AI-credits guardrail lists every run's artifacts from the past 24h on
+# each activation (~700 REST calls on CI Review), and AI credits don't measure the Z.AI
+# Coding Plan's quota (`shared/provider-health.md` gates that). Only a `-1` in the
+# workflow's own frontmatter removes the guardrail; an imported one leaves its steps.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
