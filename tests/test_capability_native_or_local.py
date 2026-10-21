@@ -801,6 +801,18 @@ class TestMCPCapability:
         await tokened.run(
             'hi', capabilities=[MCP(url='https://new@mcp.example.com/a/?tenant=x#top', native=True, local=False)]
         )
+        # So does an explicit default port.
+        await tokened.run(
+            'hi', capabilities=[MCP(url='https://mcp.example.com:443/a?tenant=x', native=True, local=False)]
+        )
+        # A malformed port can't be normalized, so it's compared as written and reported as a collision.
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            await tokened.run(
+                'hi', capabilities=[MCP(url='https://mcp.example.com:notaport/a?tenant=x', native=True, local=False)]
+            )
         # The query can select a tenant, so a query change might be a different server: ask for an explicit id.
         with pytest.raises(
             UserError,
@@ -824,6 +836,7 @@ class TestMCPCapability:
         assert seen == [
             ['https://mcp.example.com/a'],
             ['https://new@mcp.example.com/a/?tenant=x#top'],
+            ['https://mcp.example.com:443/a?tenant=x'],
             ['https://mcp.example.com/b'],
         ]
 
