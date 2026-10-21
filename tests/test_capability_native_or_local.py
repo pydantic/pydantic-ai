@@ -1989,7 +1989,11 @@ class TestGetModelHook:
             value: int
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+            retried = any(
+                isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+                for message in messages
+                for part in message.parts
+            )
             value = 42 if retried else 'not a number'
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'value': value})])
 

@@ -915,7 +915,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -942,7 +941,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -959,6 +957,59 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
+
+    @overload
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[object, RunOutputDataT]: ...
+
+    @overload
+    @classmethod
+    def from_spec(
+        cls,
+        spec: dict[str, Any] | AgentSpec,
+        *,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[T, RunOutputDataT]: ...
 
     @classmethod
     def from_spec(
@@ -1079,7 +1130,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1107,7 +1157,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[Any] = str,
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1124,6 +1173,61 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
     ) -> Agent[T, str]: ...
+
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        fmt: Literal['yaml', 'json'] | None = None,
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[object, RunOutputDataT]: ...
+
+    @overload
+    @classmethod
+    def from_file(
+        cls,
+        path: Path | str,
+        *,
+        fmt: Literal['yaml', 'json'] | None = None,
+        deps_type: type[T],
+        custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
+        model: models.Model | models.KnownModelName | str | None = None,
+        output_type: OutputSpec[RunOutputDataT],
+        instructions: AgentInstructions[Any] = None,
+        system_prompt: str | Sequence[str] = (),
+        name: str | None = None,
+        description: TemplateStr[Any] | str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int | AgentRetries | None = None,
+        validation_context: Any = None,
+        tools: Sequence[Tool[Any] | ToolFuncEither[Any, ...]] = (),
+        toolsets: Sequence[AgentToolset[Any]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy | None = None,
+        metadata: AgentMetadata[Any] | None = None,
+        tool_timeout: float | None = None,
+        max_concurrency: _concurrency.AnyConcurrencyLimit = None,
+        capabilities: Sequence[AgentCapability[Any]] | None = None,
+    ) -> Agent[T, RunOutputDataT]: ...
 
     @classmethod
     def from_file(
