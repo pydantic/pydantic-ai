@@ -164,7 +164,7 @@ def test_init(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     model = OpenAIDecisionsModel('gpt-6-luna')
     assert model.model_name == 'gpt-6-luna'
-    assert isinstance(model._provider, OpenAIProvider)  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(model.provider, OpenAIProvider)
     assert model.system == 'openai-decisions'
     assert model.base_url == 'https://api.openai.com/v1/'
     assert isinstance(model.client, AsyncOpenAI)
@@ -172,7 +172,7 @@ def test_init(env: TestEnv):
     assert model.model_id == 'openai-decisions:gpt-6-luna'
     inferred = infer_model(model.model_id)
     assert isinstance(inferred, OpenAIDecisionsModel)
-    assert type(inferred._provider) is OpenAIProvider  # pyright: ignore[reportPrivateUsage]
+    assert type(inferred.provider) is OpenAIProvider
 
 
 DECISION_PROFILE = {
