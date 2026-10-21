@@ -1,4 +1,9 @@
-"""Sub-agent capability: delegate self-contained tasks to named child agents."""
+"""Sub-agent capability: delegate self-contained tasks to named child agents.
+
+Task control (`SubAgents(task_control=True)`), remote agents, and agents the model creates are a port of
+Vstorm's [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai), MIT licensed,
+copyright (c) 2026 Vstorm.
+"""
 
 from __future__ import annotations
 
@@ -7,17 +12,53 @@ from typing import TYPE_CHECKING
 
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._capability import SubAgents, ToolResolver
+from pydantic_ai_harness.subagents._control import DynamicAgentFactory, DynamicAgents, DynamicAgentSpec, RemoteSubAgent
 from pydantic_ai_harness.subagents._disk import AgentOverride
 from pydantic_ai_harness.subagents._events import (
     MAX_EVENT_TEXT_CHARS,
     SUB_AGENTS_EVENTS,
+    AgentCreatedEvent,
+    BackgroundReason,
+    ChildMessage,
     DelegationEndEvent,
     DelegationOutcome,
     DelegationStartEvent,
+    ParentMessage,
+    Recipient,
+    SubAgentMessage,
+    TaskAnswerEvent,
+    TaskAssignedEvent,
+    TaskBackgroundedEvent,
+    TaskCancelledEvent,
+    TaskCancelRequestEvent,
+    TaskCompletedEvent,
+    TaskFailedEvent,
+    TaskFollowUpEvent,
+    TaskForceCancelEvent,
+    TaskMessageEvent,
+    TaskProgressEvent,
+    TaskQuestionEvent,
+    TaskRetryEvent,
+    TaskSettledEvent,
+    TaskStartedEvent,
+    TaskStartEvent,
 )
 from pydantic_ai_harness.subagents._models import ModelOption
-from pydantic_ai_harness.subagents._tasks import DelegationReports, DelegationTask, DelegationTaskEvent, DelegationTasks
+from pydantic_ai_harness.subagents._tasks import (
+    CANCELLED_ANSWER,
+    DelegationReports,
+    DelegationTask,
+    DelegationTaskEvent,
+    DelegationTasks,
+)
 from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset
+from pydantic_ai_harness.subagents._transport import (
+    InMemoryTransport,
+    SubAgentTransport,
+    deserialize_message,
+    serialize_message,
+)
+from pydantic_ai_harness.subagents._worker import SubAgentWorker
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._effort import MINIMUM_EFFORT_FLOOR, clamp_effort
@@ -26,7 +67,11 @@ __all__ = [
     'MAX_EVENT_TEXT_CHARS',
     'MINIMUM_EFFORT_FLOOR',
     'SUB_AGENTS_EVENTS',
+    'CANCELLED_ANSWER',
+    'AgentCreatedEvent',
     'AgentOverride',
+    'BackgroundReason',
+    'ChildMessage',
     'DelegationEndEvent',
     'DelegationOutcome',
     'DelegationStartEvent',
@@ -34,12 +79,40 @@ __all__ = [
     'DelegationTask',
     'DelegationTaskEvent',
     'DelegationTasks',
+    'DynamicAgentFactory',
+    'DynamicAgentSpec',
+    'DynamicAgents',
+    'InMemoryTransport',
     'ModelOption',
+    'ParentMessage',
+    'Recipient',
+    'RemoteSubAgent',
     'SubAgent',
+    'SubAgentMessage',
     'SubAgentToolset',
+    'SubAgentTransport',
+    'SubAgentWorker',
     'SubAgents',
+    'TaskAnswerEvent',
+    'TaskAssignedEvent',
+    'TaskBackgroundedEvent',
+    'TaskCancelRequestEvent',
+    'TaskCancelledEvent',
+    'TaskCompletedEvent',
+    'TaskFailedEvent',
+    'TaskFollowUpEvent',
+    'TaskForceCancelEvent',
+    'TaskMessageEvent',
+    'TaskProgressEvent',
+    'TaskQuestionEvent',
+    'TaskRetryEvent',
+    'TaskSettledEvent',
+    'TaskStartEvent',
+    'TaskStartedEvent',
     'ToolResolver',
     'clamp_effort',
+    'deserialize_message',
+    'serialize_message',
 ]
 
 

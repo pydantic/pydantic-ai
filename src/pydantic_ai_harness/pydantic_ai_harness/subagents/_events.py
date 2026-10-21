@@ -11,11 +11,13 @@ persisted or forwarded to a UI cannot be flooded by one verbose delegation.
 As with any capability event, a listener that raises aborts the parent run.
 """
 
-from dataclasses import dataclass
-from typing import Literal
+from __future__ import annotations
 
-from pydantic_ai import CapabilityEvent
-from pydantic_ai.usage import RunUsage
+from dataclasses import dataclass, field
+from typing import ClassVar, Literal, TypeAlias
+
+from pydantic_ai import AgentStreamEvent, CapabilityEvent
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 SUB_AGENTS_EVENTS = 'sub_agents'
 
@@ -85,3 +87,254 @@ class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='del
     parent_id: str | None = None
     duration_seconds: float
     """Wall-clock seconds from just after the start event was emitted until the delegation settled."""
+
+
+Recipient: TypeAlias = Literal['worker', 'task', 'parent']
+"""Which side of a task a message is for: the worker serving the agent, the running task, or its parent."""
+
+
+@dataclass(kw_only=True)
+class SubAgentMessage(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='immediate', abstract=True):
+    """A message between a delegating run and one of its tasks, with `SubAgents(task_control=True)`.
+
+    Messages are dispatched immediately: listeners run before the message takes effect, so they can
+    rewrite its fields or, for a `ParentMessage`, veto it. A `SubAgentTransport` carries them to and
+    from a `SubAgentWorker` in another process.
+    """
+
+    recipient: ClassVar[Recipient]
+    """Which side of the task receives this message."""
+
+    task_id: str
+    """The task this message belongs to."""
+
+    agent_name: str
+    """The name of the sub-agent running the task."""
+
+    @property
+    def mailbox(self) -> str:
+        """The address a transport delivers this message to.
+
+        `agent:<agent_name>` for a message that starts a run, `task:<task_id>:worker` for one the running
+        task receives, and `task:<task_id>:parent` for one its parent receives.
+        """
+        if self.recipient == 'worker':
+            return f'agent:{self.agent_name}'
+        return f'task:{self.task_id}:{"worker" if self.recipient == "task" else "parent"}'
+
+
+@dataclass(kw_only=True)
+class ParentMessage(SubAgentMessage, abstract=True):
+    """A message from a delegating run to its task. A listener can veto it, and then it has no effect."""
+
+    recipient: ClassVar[Recipient] = 'task'
+
+    vetoed: bool = False
+    """Whether a listener vetoed this message."""
+
+    veto_reason: str | None = None
+    """Why it was vetoed, reported to the model that tried to send it."""
+
+    def veto(self, reason: str | None = None) -> None:
+        """Stop this message from taking effect."""
+        self.vetoed = True
+        self.veto_reason = reason
+
+
+@dataclass(kw_only=True)
+class ChildMessage(SubAgentMessage, abstract=True):
+    """A message from a task to its delegating run."""
+
+    recipient: ClassVar[Recipient] = 'parent'
+
+
+@dataclass(kw_only=True)
+class TaskStartEvent(ParentMessage, abstract=True):
+    """A message that starts a run of the sub-agent: a new task or a follow-up."""
+
+    recipient: ClassVar[Recipient] = 'worker'
+
+    prompt: str
+    """What the sub-agent is asked to do. A listener can rewrite it."""
+
+    parent_task_id: str | None = None
+    """The task whose run started this one, or `None` when the top-level run did."""
+
+    depth: int = 2
+    """The delegation level the task runs at, counting the top-level run as 1, like `SubAgents.max_depth`."""
+
+    can_ask_questions: bool = True
+    """Whether the sub-agent gets an `ask_parent` tool."""
+
+    forward_events: bool = False
+    """Whether the sub-agent's stream events are forwarded as `TaskProgressEvent`s."""
+
+    usage_limits: UsageLimits | None = None
+    """The delegating run's usage limits, which a worker in another process applies to the sub-agent's own usage."""
+
+    trace_context: dict[str, str] = field(default_factory=dict[str, str])
+    """W3C trace context of the delegation, so a worker in another process continues the delegating run's trace."""
+
+
+@dataclass(kw_only=True)
+class TaskAssignedEvent(TaskStartEvent, name='task_assigned'):
+    """The delegating run assigns a new task to a sub-agent."""
+
+
+@dataclass(kw_only=True)
+class TaskFollowUpEvent(TaskStartEvent, name='task_follow_up'):
+    """The delegating run resumes a finished task's conversation with a new prompt."""
+
+
+@dataclass(kw_only=True)
+class TaskMessageEvent(ParentMessage, name='task_message'):
+    """The delegating run steers a running task, which sees the message at its next model request."""
+
+    message: str
+    """The steering message. A listener can rewrite it."""
+
+
+@dataclass(kw_only=True)
+class TaskAnswerEvent(ParentMessage, name='task_answer'):
+    """The delegating run answers the question a task is waiting on."""
+
+    question_id: str
+    """The `TaskQuestionEvent.question_id` this answers."""
+
+    answer: str
+    """The answer. A listener can rewrite it."""
+
+
+@dataclass(kw_only=True)
+class TaskCancelRequestEvent(ParentMessage, name='task_cancel_request'):
+    """The delegating run asks a running task to stop before its next model request."""
+
+
+@dataclass(kw_only=True)
+class TaskForceCancelEvent(ParentMessage, name='task_force_cancel'):
+    """The delegating run stops a running task immediately, interrupting its current model request or tool calls."""
+
+
+@dataclass(kw_only=True)
+class TaskStartedEvent(ChildMessage, name='task_started'):
+    """A worker picked the task up and its run is starting.
+
+    A remote task that no worker picks up within `SubAgents.accept_timeout` fails.
+    """
+
+
+@dataclass(kw_only=True)
+class TaskProgressEvent(ChildMessage, name='task_progress', dispatch='stream'):
+    """An event from the sub-agent's own run, forwarded while the task runs, with `SubAgents.forward_events`.
+
+    Dispatched at its stream position, like the event it carries.
+    """
+
+    event: AgentStreamEvent
+    """The sub-agent's stream event."""
+
+
+@dataclass(kw_only=True)
+class TaskQuestionEvent(ChildMessage, name='task_question'):
+    """The task asks its delegating run a question and waits for a `TaskAnswerEvent`.
+
+    A listener can answer it by setting `answer`, and then the delegating model is not asked.
+    """
+
+    question_id: str
+    """Identifies the question, so the answer can name it."""
+
+    question: str
+    """The question."""
+
+    answer: str | None = None
+    """An answer a listener supplies, sent to the task without involving the delegating model."""
+
+
+@dataclass(kw_only=True)
+class TaskRetryEvent(ChildMessage, name='task_retry'):
+    """A remote task's run failed and its worker is running it again, as `SubAgentWorker.retries` allows."""
+
+    attempt: int
+    """The attempt about to start; the first retry is attempt 2."""
+
+    error: str
+    """The error the previous attempt failed with."""
+
+
+@dataclass(kw_only=True)
+class TaskSettledEvent(ChildMessage, abstract=True):
+    """The task's run ended. This is the task's report to its delegating run."""
+
+    usage: RunUsage | None = None
+    """The sub-agent's usage when a worker in another process counted it separately.
+
+    `None` for a sub-agent that ran in the delegating run's process: its usage was counted the way
+    `SubAgents.forward_usage` and `SubAgent.usage_limits` decide.
+    """
+
+
+@dataclass(kw_only=True)
+class TaskCompletedEvent(TaskSettledEvent, name='task_completed'):
+    """The task finished with an output."""
+
+    output: str
+    """The sub-agent's output, as text. A listener can rewrite it before the delegating model reads it."""
+
+
+@dataclass(kw_only=True)
+class TaskFailedEvent(TaskSettledEvent, name='task_failed'):
+    """The task's run failed, or ended in a way that delivered no output."""
+
+    error: str
+    """What went wrong, as reported to the delegating model."""
+
+
+@dataclass(kw_only=True)
+class TaskCancelledEvent(TaskSettledEvent, name='task_cancelled'):
+    """The task stopped because it was cancelled. A resumable task can be followed up on."""
+
+    forced: bool
+    """Whether the task was stopped immediately rather than before its next model request."""
+
+
+BackgroundReason: TypeAlias = Literal['requested', 'auto', 'question', 'released']
+"""Why a task moved to the background.
+
+- `requested`: the model delegated with `background=True`.
+- `auto`: the task ran longer than `SubAgents.auto_background_after`.
+- `question`: the task asked a question, which the delegating model can only answer once the delegation tool returns.
+- `released`: the application released it with `DelegationTasks.background`.
+"""
+
+
+@dataclass(kw_only=True)
+class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='task_backgrounded'):
+    """A task now runs in the background: the delegation tool returned a receipt, and its report arrives later."""
+
+    task_id: str
+    agent_name: str
+    reason: BackgroundReason
+
+
+@dataclass(kw_only=True)
+class AgentCreatedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='agent_created', dispatch='immediate'):
+    """The model is creating a sub-agent with `create_agent` (`SubAgents.dynamic_agents`).
+
+    Dispatched immediately, so a listener can rewrite `description` and `instructions`, or veto the
+    creation.
+    """
+
+    name: str
+    description: str
+    instructions: str
+    model: str | None
+    """The `SubAgents.models` key the sub-agent runs on, or `None` for the delegating run's model."""
+
+    vetoed: bool = False
+    veto_reason: str | None = None
+
+    def veto(self, reason: str | None = None) -> None:
+        """Stop the sub-agent from being created."""
+        self.vetoed = True
+        self.veto_reason = reason
