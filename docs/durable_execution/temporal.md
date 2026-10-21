@@ -794,7 +794,7 @@ from pydantic_ai.toolsets import FunctionToolset
 toolset = FunctionToolset(id='delegation')
 
 
-@toolset.tool(
+@toolset.tool_plain(
     metadata={
         'temporal': {
             'child_workflow': ChildWorkflowConfig(execution_timeout=timedelta(minutes=10))
