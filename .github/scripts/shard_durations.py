@@ -4,8 +4,8 @@ Every sharded test job stores the durations of the tests it ran (`pytest --store
 --clean-durations`) and uploads them as an artifact named `<prefix><shard>`.
 
 - `fetch`, run once per workflow run by `test-durations-baseline`, merges those artifacts from the
-  newest `main` run that had uploaded all of them when this run was created, so the split follows the
-  suite as it is now instead of a committed file that drifts. Every shard then reads that one file, so
+  newest `main` run for each prefix that had uploaded all its shards when this run was created, so
+  the split follows the suite as it is now instead of a committed file that drifts. Every shard then reads that one file, so
   they all agree on the split even when the API fails (the file is then empty).
 - `select` assigns whole test modules to shards by those durations (by source size without them) and
   prints the `--ignore` options that leave pytest only this shard's modules.
@@ -25,7 +25,7 @@ import subprocess
 import sys
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -44,6 +44,26 @@ REPORT_ROW_LIMIT = 30
 def gh_api(path: str) -> bytes:
     """Call the GitHub REST API through the `gh` CLI, which authenticates with `GH_TOKEN`."""
     return subprocess.run(['gh', 'api', path], check=True, capture_output=True).stdout
+
+
+@dataclass
+class CachedApi:
+    responses: dict[str, bytes] = field(default_factory=dict[str, bytes])
+    failures: dict[str, OSError | subprocess.CalledProcessError] = field(
+        default_factory=dict[str, OSError | subprocess.CalledProcessError]
+    )
+
+    def __call__(self, path: str) -> bytes:
+        # Share REST responses and failures across prefixes for this invocation only.
+        if path in self.failures:
+            raise self.failures[path]
+        if path not in self.responses:
+            try:
+                self.responses[path] = gh_api(path)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                self.failures[path] = exc
+                raise
+        return self.responses[path]
 
 
 def _read_durations_zip(content: bytes) -> Durations:
@@ -203,9 +223,11 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     fetch_parser = subparsers.add_parser('fetch', help="Fetch the latest `main` run's per-test durations.")
-    fetch_parser.add_argument('--prefix', required=True, help='Artifact name prefix; the shard number follows it.')
-    fetch_parser.add_argument('--shards', type=int, required=True)
-    fetch_parser.add_argument('--output', type=Path, required=True)
+    fetch_parser.add_argument(
+        '--prefix', action='append', required=True, help='Artifact name prefix; repeat with --shards and --output.'
+    )
+    fetch_parser.add_argument('--shards', action='append', type=int, required=True)
+    fetch_parser.add_argument('--output', action='append', type=Path, required=True)
 
     select_parser = subparsers.add_parser(
         'select', help="Print the `--ignore` options that leave pytest only this shard's test modules."
@@ -222,21 +244,26 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == 'fetch':
+        if not len(args.prefix) == len(args.shards) == len(args.output):
+            parser.error('each --prefix needs one --shards and one --output')
+        api = CachedApi()
+
         # Balancing is an optimization: never fail the run over it. An empty baseline splits by size.
-        durations: Durations = {}
-        try:
-            repo = os.environ['GITHUB_REPOSITORY']
-            this_run = json.loads(gh_api(f'repos/{repo}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'))
-            found = fetch(repo, args.prefix, args.shards, before=this_run['created_at'])
-        except (KeyError, OSError, subprocess.CalledProcessError, ValueError, zipfile.BadZipFile) as exc:
-            print(f'::warning::Could not fetch `{args.prefix}*` test durations, splitting by module size: {exc!r}')
-        else:
-            if found is None:
-                print(f'No `main` run has `{args.prefix}*` durations yet; splitting by module size.')
+        for prefix, shards, output in zip(args.prefix, args.shards, args.output):
+            durations: Durations = {}
+            try:
+                repo = os.environ['GITHUB_REPOSITORY']
+                this_run = json.loads(api(f'repos/{repo}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'))
+                found = fetch(repo, prefix, shards, before=this_run['created_at'], api=api)
+            except (KeyError, OSError, subprocess.CalledProcessError, ValueError, zipfile.BadZipFile) as exc:
+                print(f'::warning::Could not fetch `{prefix}*` test durations, splitting by module size: {exc!r}')
             else:
-                run_id, durations = found
-                print(f'Fetched `{args.prefix}*` durations of {len(durations)} tests from run {run_id}.')
-        args.output.write_text(json.dumps(durations, sort_keys=True), encoding='utf-8')
+                if found is None:
+                    print(f'No `main` run has `{prefix}*` durations yet; splitting by module size.')
+                else:
+                    run_id, durations = found
+                    print(f'Fetched `{prefix}*` durations of {len(durations)} tests from run {run_id}.')
+            output.write_text(json.dumps(durations, sort_keys=True), encoding='utf-8')
         return 0
 
     if args.command == 'select':
