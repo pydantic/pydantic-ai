@@ -36,7 +36,7 @@ def test_unexpected_error_is_reported_whichever_order_operations_finish() -> Non
 def test_unexpected_consumer_error_is_reported_once() -> None:
     """An exception other than a `RealtimeError` escaping the session's iterator is a violation, judged once."""
     with OpenAISimulation(strict=True) as sim:
-        sim.consumer_error = RuntimeError('boom')
+        sim.consumer_errors.append(RuntimeError('boom'))
         with pytest.raises(
             InvariantViolation, match=r"\[api\.unexpected_error\] iterating the session raised RuntimeError\('boom'\)"
         ):
@@ -78,6 +78,25 @@ def test_codec_contract_violation_is_reported() -> None:
         with pytest.raises(
             InvariantViolation,
             match=r"\[codec\.duplicate_tool_call\] tool call 'call_1' reported twice \(codec event #1\)",
+        ):
+            sim.check()
+
+
+def test_a_reply_settled_by_a_response_that_never_saw_the_input_is_reported() -> None:
+    """The session must settle an input with its own answer, not a response the server started before it had it."""
+    with OpenAISimulation(strict=True) as sim:
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop()
+        sim.send_text(respond=False)
+        session = sim.session
+        assert session is not None
+        (text,) = [input_ for input_ in sim.truth.inputs if input_.kind == 'text']
+        assert text.client_index is not None
+        # What a connection that took the provider's reply for the text's would make the session do.
+        session._core._answered_by[text.client_index] = 'resp_1'  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(
+            InvariantViolation, match=r"\[obligation\.misattributed\] 't1' is settled by resp_1, which the server"
         ):
             sim.check()
 

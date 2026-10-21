@@ -57,6 +57,30 @@ class ResponseStarted(LifecycleEvent):
     for a protocol that gives its responses none."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class AnswersRevised(LifecycleEvent):
+    """Which inputs a response answers turned out different from what its `ResponseStarted` said.
+
+    A connection that works its responses' `answers` out (`basis='inferred'`) can learn better as the response goes
+    on: GPT-Live answers text sent mid-reply in the speech already under way, and Gemini cuts off a reply that an
+    input reaches mid-generation, leaving that input to the next one. `claimed` is valid while the response is under
+    way, `released` until its reply (tool rounds included) is over.
+
+    It moves no message: history keeps every input where it joined the conversation.
+    """
+
+    response_id: str
+    claimed: tuple[InputId, ...] = ()
+    """Inputs still owed a reply that this response answers after all. Only while it is under way (before its
+    `ResponseEnded`)."""
+    released: tuple[InputId, ...] = ()
+    """Inputs this response was said to answer that it doesn't: a later response answers them, naming them in its
+    `ResponseStarted.answers` (or in a `claimed` of its own).
+
+    Before its `ResponseEnded`, or after it while its reply goes on: in the answer to its tool calls, say, which the
+    provider can cancel when an input cuts the turn off."""
+
+
 ResponseStatus = Literal['completed', 'cancelled', 'failed', 'incomplete', 'lost']
 """How a response ended. `'lost'` is a response the connection gave up on: its connection dropped (and the
 reconnect did not carry it over) or closed before the provider reported it done."""
@@ -131,6 +155,21 @@ class ResponseRequestRefused(LifecycleEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ToolCallsAbandoned(LifecycleEvent):
+    """The provider gave up on these tool calls: no response will answer their results.
+
+    Eleven Realtime gives up on a finished response's calls once another response starts before their results are in,
+    and GPT-Live on the calls its delegated backend asked for when that backend fails. The calls still run, and each
+    result is recorded in history (and still sent, where the provider takes it), but nothing waits for a reply to it:
+    the exchange is over once nothing else is owed. Unlike a
+    [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled], it doesn't stop them.
+    """
+
+    tool_call_ids: tuple[str, ...]
+    """The calls, as their [`ToolCall`][pydantic_ai.realtime.codec.ToolCall]s named them."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class OutputItemDetails(LifecycleEvent):
     """What the provider says about one item of a response's output, to keep on the part that item makes.
 
@@ -141,6 +180,25 @@ class OutputItemDetails(LifecycleEvent):
     response_id: str
     item_id: str
     provider_details: dict[str, Any]
+
+
+@dataclass(frozen=True, kw_only=True)
+class OutputItemCut(LifecycleEvent):
+    """The provider says the listener heard only part of one spoken output item, before or after its response ended.
+
+    Generation outruns playback, so the reply the user cuts off has usually ended already. Its message in history is
+    marked interrupted, and swapped for a copy in the same position, as one the session cuts off itself on a barge-in
+    is: a snapshot of history already handed out doesn't change. Like ElevenLabs' `agent_response_correction`.
+    """
+
+    item_id: str
+    """The output item, as the codec events streaming it named it (`OutputTranscript.item_id`)."""
+    heard_transcript: str | None = None
+    """What the listener heard of the item's transcript, which history then records instead, keeping the provider's
+    original in the part's `provider_details['original_transcript']`: `''` for an item they heard none of. `None`
+    leaves the transcript as it is."""
+    heard_ms: int | None = None
+    """How much of the item's audio the listener heard, in milliseconds, if known."""
 
 
 @dataclass(frozen=True)
