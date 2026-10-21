@@ -218,7 +218,7 @@ async def test_escape_declines_the_whole_request() -> None:
     assert screen.events == ['taken', 'released']
 
 
-def test_render_answer_lists_picks_or_the_decline() -> None:
+def test_render_answer_lists_picks_decline_or_failure() -> None:
     answered = AskUserAnsweredEvent(
         request_id='r1',
         response=AskUserResponse(
@@ -232,9 +232,12 @@ def test_render_answer_lists_picks_or_the_decline() -> None:
     console = Console(file=output, width=80)
     console.print(render_answer(answered))
     console.print(render_answer(AskUserAnsweredEvent(request_id='r2', response=AskUserResponse(cancelled=True))))
+    console.print(
+        render_answer(AskUserAnsweredEvent(request_id='r3', response=AskUserResponse(cancelled=True), failed=True))
+    )
     text = output.getvalue()
     assert '● Approach: Patch\n● Targets: api.py, db.py\n' in text
-    assert '● You declined to answer' in text
+    assert text.endswith('● You declined to answer\n● The question failed\n')
 
 
 @pytest.mark.parametrize('sandboxed', [False, True])

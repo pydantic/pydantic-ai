@@ -334,7 +334,7 @@ def test_url_derived_mcp_tool_call_name_is_masked_in_request_span() -> None:
 
 
 def test_cached_history_name_projection_is_conservative_across_requests() -> None:
-    identity = 'mcp.example.test-SENTINEL-path'
+    identity = 'mcp.example.test'
     history = ModelResponse(parts=[NativeToolCallPart(tool_name=f'mcp_server:{identity}', tool_call_id='call-1')])
     settings, exporter = redacted_setup(True)
     cache: MessageJsonCache = {}
@@ -431,7 +431,8 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
     assert isinstance(serialized, str)
     assert 'SENTINEL-path' not in serialized
     assert observed_parameters
-    assert capability.id is not None and 'SENTINEL-path' in capability.id
+    # The id is derived from the hostname alone, so the path's token never reaches it.
+    assert capability.id == 'mcp.example.test'
     if native:
         assert json.loads(serialized)['native_tools'][0]['id'] == '[REDACTED]'
         assert any(

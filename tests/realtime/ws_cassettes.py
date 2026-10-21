@@ -395,6 +395,15 @@ class ReplayWebSocket:
     def __init__(self, cassette: RealtimeCassette, *, hold_open: bool = False) -> None:
         # A copy: a session-ending send reorders it (see `_SESSION_END_TYPES`), and the cassette is the recording.
         self._interactions = list(cassette.interactions)
+        # Recorded before ElevenLabs Agents typed turns went out under an id naming their input (see
+        # `_CascadeLifecycle.text_sent`): the server made ids up for them, which the replies' `in_response_to_ids` name.
+        self._unnamed_user_messages = any(
+            isinstance(interaction, CassetteMessage)
+            and interaction.direction == 'sent'
+            and interaction.data.get('type') == 'user_message'
+            and 'id' not in interaction.data
+            for interaction in self._interactions
+        )
         self._hold_open = hold_open
         self._position = 0
         cassette._replay = self  # pyright: ignore[reportPrivateUsage]
@@ -458,6 +467,14 @@ class ReplayWebSocket:
             item: dict[str, Any] = actual.get('item') or {}
             if str(item.get('id', '')).startswith('pydantic_ai_item_'):
                 del item['id']
+        if (
+            actual.get('type') == 'user_message'
+            and 'id' not in expected
+            and str(actual.get('id', '')).startswith('pydantic_ai_input_')
+        ):
+            # Recorded before a typed turn went out under an id naming its input (see `_unnamed_user_messages`);
+            # only that id is let through, and the rest of the frame is still pinned.
+            del actual['id']
         if actual.get('type') == 'response.create' and 'response' not in expected:
             # Recorded before a `response.create` carried the `metadata` naming the inputs it answers (see
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
@@ -539,7 +556,12 @@ class ReplayWebSocket:
             if interaction.direction == 'received':
                 self._advance()
                 self._delivered.append(interaction.at)
-                return interaction.data
+                data = interaction.data
+                if self._unnamed_user_messages and data.get('type') == 'agent_response':
+                    # The ids the server made up name nothing the connection sent: replayed without them, revising nothing.
+                    data = {**data, 'agent_response_event': dict(data['agent_response_event'])}
+                    data['agent_response_event'].pop('in_response_to_ids', None)
+                return data
             await self._condition.wait()
 
     async def __aiter__(self):

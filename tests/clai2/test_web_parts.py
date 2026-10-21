@@ -30,7 +30,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -145,7 +144,7 @@ def test_tool_calls_results_shell_output_and_diffs() -> None:
     assert translate(FunctionToolResultEvent(part=ToolReturnPart('shell', 'a.py', tool_call_id='c1'))) == [
         ToolDone(id='c1', text='a.py', state='done')
     ]
-    retry = RetryPromptPart('bad arguments', tool_name='shell', tool_call_id='c2')
+    retry = ToolReturnPart('shell', 'bad arguments', tool_call_id='c2', outcome='retried')
     [failed] = translate(FunctionToolResultEvent(part=retry))
     assert isinstance(failed, ToolDone) and failed.state == 'error' and 'bad arguments' in failed.text
 
@@ -203,7 +202,9 @@ def test_a_run_code_cell_streams_with_its_sandbox_calls() -> None:
     ]
     finished = SandboxCallFinishedEvent(result=ToolReturnPart('shell', 'a.py', tool_call_id='cell__1'))
     assert translate(finished) == [SubCallDone(id='cell', call_id='cell__1', text='a.py', state='done')]
-    failed = SandboxCallFinishedEvent(result=RetryPromptPart('no', tool_name='grep', tool_call_id='cell__spec_2'))
+    failed = SandboxCallFinishedEvent(
+        result=ToolReturnPart('grep', 'no', tool_call_id='cell__spec_2', outcome='retried')
+    )
     [done] = translate(failed)
     assert isinstance(done, SubCallDone) and (done.call_id, done.state) == ('cell__spec_2', 'error')
     call = ToolCallPart('run_code', {'code': 'ls'}, tool_call_id='cell')
@@ -269,7 +270,7 @@ def test_history_items() -> None:
         ModelRequest(
             parts=[
                 ToolReturnPart('read_file', long, tool_call_id='r1'),
-                RetryPromptPart('no such command', tool_name='shell', tool_call_id='s1'),
+                ToolReturnPart('shell', 'no such command', tool_call_id='s1', outcome='retried'),
                 ToolReturnPart('missing', 'orphan', tool_call_id='zz'),
             ]
         ),
