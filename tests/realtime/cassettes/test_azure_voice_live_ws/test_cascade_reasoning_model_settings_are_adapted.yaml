@@ -4,10 +4,10 @@ interactions:
   direction: received
   at: 0.0
   data:
-    event_id: event_3hItPQl49OMfwpkqwcKehP
+    event_id: event_23lTiYhFtCyZsCUBGyTajk
     type: session.created
     session:
-      id: sess_7Y9Hj0b1boukRVdatbNU4j
+      id: sess_56bpAHqs1Zp8cCBRomO7dt
       model: gpt-5
       modalities:
       - audio
@@ -67,7 +67,7 @@ interactions:
       tool_choice: auto
       temperature: 1.0
       max_response_output_tokens: inf
-      expires_at: 1790649155
+      expires_at: 1790729691
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -100,12 +100,12 @@ interactions:
       reasoning_effort: high
 - kind: message
   direction: received
-  at: 0.076
+  at: 0.066
   data:
-    event_id: event_74SJWOqeAM4Fc3napjcwrr
+    event_id: event_2m1av5xwCwrr66bCkydK9K
     type: session.updated
     session:
-      id: sess_7Y9Hj0b1boukRVdatbNU4j
+      id: sess_56bpAHqs1Zp8cCBRomO7dt
       model: gpt-5
       modalities:
       - text
@@ -155,7 +155,7 @@ interactions:
       tool_choice: auto
       temperature: 1.0
       max_response_output_tokens: inf
-      expires_at: 1790649155
+      expires_at: 1790729691
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -169,11 +169,12 @@ interactions:
       handoff: null
 - kind: message
   direction: sent
-  at: 0.076
+  at: 0.067
   data:
     type: conversation.item.create
     event_id: pydantic_ai.content.0
     item:
+      id: pydantic_ai_item_0
       type: message
       role: user
       content:
@@ -182,19 +183,22 @@ interactions:
           the ball. How much is the ball?
 - kind: message
   direction: sent
-  at: 0.076
+  at: 0.067
   data:
     type: response.create
     event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 0.148
+  at: 0.128
   data:
-    event_id: event_xXRWkHkoaqui6fqsR6RtC
+    event_id: event_DLVTecrFhO9Mz1LF5Ra8j
     type: conversation.item.created
     previous_item_id: ''
     item:
-      id: item_2vKzgMaebGulLKMZpuHSF4
+      id: pydantic_ai_item_0
       object: realtime.item
       type: message
       status: completed
@@ -205,13 +209,13 @@ interactions:
           the ball. How much is the ball?
 - kind: message
   direction: received
-  at: 0.15
+  at: 0.128
   data:
-    event_id: event_7WBajwiUoYGBDZZY4960ax
+    event_id: event_3x2CYyLk0jEhDTiQiTrTJI
     type: response.created
     response:
       object: realtime.response
-      id: resp_2VO0N69Dj4q8bOxca6BPYD
+      id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
       status: in_progress
       status_details: null
       output: []
@@ -234,17 +238,18 @@ interactions:
       output_audio_format: pcm16
       temperature: 1.0
       max_output_tokens: null
-      metadata: null
+      metadata:
+        pydantic_ai_inputs: '0'
 - kind: message
   direction: received
-  at: 5.397
+  at: 3.59
   data:
-    event_id: event_1EXUhLVEBHEtDzUR4tSVmH
+    event_id: event_7SHFevwQQdCEow5byh6K3H
     type: response.output_item.added
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
     output_index: 0
     item:
-      id: msg_5tj0UlPmklArgrLSmb7O1V
+      id: msg_3BjZDdFjvkQp2i1JlydXYw
       object: realtime.item
       type: message
       status: incomplete
@@ -252,13 +257,13 @@ interactions:
       content: []
 - kind: message
   direction: received
-  at: 5.397
+  at: 3.59
   data:
-    event_id: event_1udbmO1tZWIwNJY06vI5YM
+    event_id: event_4BtmFG5SCL648XU3oyiQde
     type: conversation.item.created
     previous_item_id: ''
     item:
-      id: msg_5tj0UlPmklArgrLSmb7O1V
+      id: msg_3BjZDdFjvkQp2i1JlydXYw
       object: realtime.item
       type: message
       status: incomplete
@@ -266,12 +271,12 @@ interactions:
       content: []
 - kind: message
   direction: received
-  at: 5.397
+  at: 3.59
   data:
-    event_id: event_1yI9F3qPfiwDiy0cn7Wr2y
+    event_id: event_7fkAVeTgAO8PCUdv72Q9GK
     type: response.content_part.added
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     part:
@@ -279,100 +284,100 @@ interactions:
       text: ''
 - kind: message
   direction: received
-  at: 5.397
+  at: 3.59
   data:
-    event_id: event_3byHBePD9jzdgmZXY3v6bC
+    event_id: event_1wBnDVo2BnEcwtnOhdcndO
     type: response.text.delta
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     delta: The
 - kind: message
   direction: received
-  at: 5.397
+  at: 3.591
   data:
-    event_id: event_6cjDiukgjffu0kMLQAEeWC
+    event_id: event_fVALO66wB9UpOOWm2NwAl
     type: response.text.delta
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     delta: ' ball'
 - kind: message
   direction: received
-  at: 5.407
+  at: 3.6
   data:
-    event_id: event_3CGkpXPvLSHA4Mz2d3JNQi
+    event_id: event_4n59LNgYmOgqSa0QgZKi9M
     type: response.text.delta
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     delta: ' costs'
 - kind: message
   direction: received
-  at: 5.421
+  at: 3.61
   data:
-    event_id: event_4kdflM7YYWWmDxpGwheU55
+    event_id: event_6YdCiuHEQW3wcLRX0LGLCM
     type: response.text.delta
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     delta: ' '
 - kind: message
   direction: received
-  at: 5.431
+  at: 3.619
   data:
-    event_id: event_W9TSORic0PptmFsnNJ6Pm
+    event_id: event_1dnUVgjKeiZnxJJdj7qEx7
     type: response.text.delta
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     delta: '5'
 - kind: message
   direction: received
-  at: 5.445
+  at: 3.629
   data:
-    event_id: event_3roXo8WETG61nAiUU4ANIQ
+    event_id: event_7VNdVhwC99bPsKsOKeu2SD
     type: response.text.delta
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     delta: ' cents'
 - kind: message
   direction: received
-  at: 5.457
+  at: 3.639
   data:
-    event_id: event_2Uyk7r2nz5nnYkSLlT7krj
+    event_id: event_3rK9lK1bgZgf9ijDmfx0ov
     type: response.text.delta
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     delta: .
 - kind: message
   direction: received
-  at: 5.484
+  at: 3.664
   data:
-    event_id: event_6q5eJMZCJYJRFRO1ndWBSp
+    event_id: event_4Z1FsCS0KAjn5FDwS8Wm8p
     type: response.text.done
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     text: The ball costs 5 cents.
 - kind: message
   direction: received
-  at: 5.484
+  at: 3.664
   data:
-    event_id: event_5YVp6yRhJZGwwj0rinlJtt
+    event_id: event_24KkNSQRJDW98A3WftyYYZ
     type: response.content_part.done
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
-    item_id: msg_5tj0UlPmklArgrLSmb7O1V
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
+    item_id: msg_3BjZDdFjvkQp2i1JlydXYw
     output_index: 0
     content_index: 0
     part:
@@ -380,14 +385,14 @@ interactions:
       text: The ball costs 5 cents.
 - kind: message
   direction: received
-  at: 5.484
+  at: 3.664
   data:
-    event_id: event_1nQj78s8FyE7m6yZfDdb7B
+    event_id: event_1jMgK9KBjhN5CscWWZ2xzv
     type: response.output_item.done
-    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    response_id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
     output_index: 0
     item:
-      id: msg_5tj0UlPmklArgrLSmb7O1V
+      id: msg_3BjZDdFjvkQp2i1JlydXYw
       object: realtime.item
       type: message
       status: completed
@@ -397,17 +402,17 @@ interactions:
         text: The ball costs 5 cents.
 - kind: message
   direction: received
-  at: 5.644
+  at: 3.791
   data:
-    event_id: event_7luaEwtEZprKq0seflg0dq
+    event_id: event_30T8YH5PoDNs5yLWEMLhqE
     type: response.done
     response:
       object: realtime.response
-      id: resp_2VO0N69Dj4q8bOxca6BPYD
+      id: resp_7Z8PyjCZfTAVLmjA9pyXnZ
       status: completed
       status_details: null
       output:
-      - id: msg_5tj0UlPmklArgrLSmb7O1V
+      - id: msg_3BjZDdFjvkQp2i1JlydXYw
         object: realtime.item
         type: message
         status: completed
@@ -416,9 +421,9 @@ interactions:
         - type: text
           text: The ball costs 5 cents.
       usage:
-        total_tokens: 384
+        total_tokens: 320
         input_tokens: 48
-        output_tokens: 336
+        output_tokens: 272
         input_token_details:
           cached_tokens: 0
           cache_write_tokens: 0
@@ -430,9 +435,9 @@ interactions:
             audio_tokens: 0
             image_tokens: 0
         output_token_details:
-          text_tokens: 336
+          text_tokens: 272
           audio_tokens: 0
-          reasoning_tokens: 320
+          reasoning_tokens: 256
       conversation_id: ''
       modalities:
       - text
@@ -451,4 +456,5 @@ interactions:
       output_audio_format: pcm16
       temperature: 1.0
       max_output_tokens: null
-      metadata: null
+      metadata:
+        pydantic_ai_inputs: '0'

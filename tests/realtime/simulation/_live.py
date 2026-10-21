@@ -96,6 +96,9 @@ class LiveServer:
         self.speaking: TruthResponse | None = None
         self.last_voice: float | None = None
         self.triggers: list[str] = []
+        self.inline: list[str] = []
+        """Text placed on the timeline while a reply goes on: that reply answers it if it says anything more, as Live
+        speaks to text in the reply under way (seen live), and the next reply otherwise."""
         self.delegations: dict[str, _Delegation] = {}
         self.seconds = 0.0
         self.backend_terminals_read = 0
@@ -142,7 +145,20 @@ class LiveServer:
         elif kind == 'session.commentary.append':
             text = frame.get('content', '')
             self.truth.add_input(text, 'text', solicits=True)
-            self.triggers.append(text)
+            start, end = self._timeline()
+            # Live acknowledges commentary as it places it on its timeline, under the client's `event_id`.
+            self._emit(
+                {
+                    'type': 'session.commentary.appended',
+                    'start_ms': start,
+                    'end_ms': end,
+                    'client_event_id': frame.get('event_id'),
+                }
+            )
+            if self.speaking is not None and self.speaking.status == 'in_progress' and not self._quiet():
+                self.inline.append(text)
+            else:
+                self.triggers.append(text)
         elif kind == 'session.thinking.append':
             self.truth.add_input(frame.get('content', ''), 'context')
         elif kind == 'response.item.create':
@@ -187,16 +203,29 @@ class LiveServer:
 
     def _spoken_response(self) -> TruthResponse:
         """The reply the model is speaking, or a new one if it has been quiet longer than the turn silence."""
-        now = self._now()
-        # Delegated work suspends the turn clock: however long the model is quiet then, the reply goes on.
-        quiet = not self.delegations and (self.last_voice is None or now - self.last_voice >= TURN_SILENCE_MS / 1000)
-        if self.speaking is None or quiet:
+        if self.speaking is None or self._quiet():
             if self.speaking is not None and self.speaking.status == 'in_progress':  # pragma: lax no cover (unread end)
                 self.speaking.status = 'completed'
                 self.speaking.seq_end = self.truth.tick()
+            self._inline_unanswered()
             triggers, self.triggers = self.triggers, []
             self.speaking = self.truth.new_response(trigger='auto', answers=triggers)
+        elif self.inline:
+            # The reply goes on past the text placed in it: it speaks to it here.
+            self.truth.answer(self.speaking, self.inline)
+            self.inline = []
         return self.speaking
+
+    def _quiet(self) -> bool:
+        """Whether the model has been quiet longer than the turn silence, which ends the reply it was speaking."""
+        # Delegated work suspends the turn clock: however long the model is quiet then, the reply goes on.
+        last_voice = self.last_voice
+        return not self.delegations and (last_voice is None or self._now() - last_voice >= TURN_SILENCE_MS / 1000)
+
+    def _inline_unanswered(self) -> None:
+        """The reply ended without saying anything past the text placed in it: the next reply answers it."""
+        self.triggers.extend(self.inline)
+        self.inline.clear()
 
     def speak(self, chunks: int = 1) -> None:
         response = self._spoken_response()
@@ -376,6 +405,7 @@ class LiveServer:
                 response.status = 'completed'
                 response.seq_end = response.terminal_read
             self.speaking = None
+            self._inline_unanswered()
 
 
 class LiveSimulation(Simulation):
@@ -392,10 +422,6 @@ class LiveSimulation(Simulation):
     @property
     def truth(self) -> GroundTruth:
         return self.server.truth
-
-    @property
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        return self.server.network.failed_sends
 
     def build_model(self) -> RealtimeModel:
         return OpenAILiveModel('gpt-live-1', provider=OpenAIProvider(api_key='simulated'))

@@ -43,6 +43,12 @@ class TruthInput:
     """The session's number for this input (the `event_id` echo), when the frame carried one."""
     rejected: bool = False
     answered_by: str | None = None
+    committed_read: int | None = None
+    """For a spoken turn: when the client read that the provider committed it (`input_audio_buffer.committed`)."""
+    transcript_read: int | None = None
+    """For a spoken turn: when the client read its transcript (or that transcription failed)."""
+    committed_by_client: bool = False
+    """For a spoken turn: whether the client committed it itself (`commit_audio()`), so knows it exists."""
     refused_at: int | None = None
     """When the server refused this input, or the response it asked for."""
     refused_read: int | None = None
@@ -68,6 +74,8 @@ class TruthResponse:
     words: list[str] = field(default_factory=list[str])
     audio_bytes: int = 0
     tool_calls: list[str] = field(default_factory=list[str])
+    items: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    """The words of each assistant message item it spoke, by item id."""
     input_tokens: int = 0
     output_tokens: int = 0
     started_read: int | None = None
@@ -96,6 +104,22 @@ class ToolCallTruth:
 
 
 @dataclass
+class Restoration:
+    """What a re-dialed session held when it started its first response, against what came before it.
+
+    Items are `conversation_fingerprint`s. A session that reports `state_restored` owes the new
+    conversation everything it recorded that an earlier one held (`history.not_restored`).
+    """
+
+    connection: int
+    response: str
+    before: set[str]
+    """What every earlier session's conversation held."""
+    held: set[str]
+    """What this session's conversation held."""
+
+
+@dataclass
 class GroundTruth:
     """The provider-side record of a simulated conversation."""
 
@@ -112,6 +136,12 @@ class GroundTruth:
     next_user_number: int = 1
     truncations: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
     """`(item id, audio_end_ms)` for every truncation the server applied."""
+    pruned: list[str] = field(default_factory=list[str])
+    """The fingerprint of every item the session deleted from a server conversation (`openai_prune_tool_items`)."""
+    pruned_unanswered: list[str] = field(default_factory=list[str])
+    """Calls whose items the session deleted before the model answered their results."""
+    item_responses: dict[str, TruthResponse] = field(default_factory=dict[str, TruthResponse])
+    """The response that spoke each assistant message item."""
     refused_truncations: list[str] = field(default_factory=list[str])
     """Why the server refused each truncation it was asked for."""
     connection_losses: list[int] = field(default_factory=list[int])
@@ -122,14 +152,32 @@ class GroundTruth:
     """How many usage-bearing frames the client read, duplicates included."""
     repeated_terminals: set[str] = field(default_factory=set[str])
     """Responses the client read a second terminal for."""
+    ambiguous_inputs: set[str] = field(default_factory=set[str])
+    """Inputs a send delivered but reported as failed (an `ambiguous` fault), which the client may send again."""
     speech_started: dict[str, int] = field(default_factory=dict[str, int])
     """When server VAD heard each spoken user turn start, on the shared clock."""
+    speech_committed: set[str] = field(default_factory=set[str])
+    """The spoken user turns whose audio was committed (xAI adds a turn's item before it commits it)."""
+    speech_cleared: set[str] = field(default_factory=set[str])
+    """Spoken user turns whose buffered audio was cleared while the user was still saying them."""
+    speech_cleared_read: set[str] = field(default_factory=set[str])
+    """Those whose `input_audio_buffer.cleared` the client read."""
+    speech_stopped_uncommitted: set[str] = field(default_factory=set[str])
+    """Spoken user turns server VAD heard stop without committing them (the user went on, as one turn)."""
+    speech_reopened: set[str] = field(default_factory=set[str])
+    """xAI: spoken user turns its VAD heard stop, then start again under the same item before it committed them."""
+    transcripts_read: dict[str, int] = field(default_factory=dict[str, int])
+    """When the client read each spoken user turn's completed transcript."""
+    models_every_spoken_turn: bool = False
+    """Whether every spoken user turn the provider has is an input here, so history can have no other."""
     word_seq: dict[str, int] = field(default_factory=dict[str, int])
     """When the server generated each word a response said, on the shared clock."""
     word_read: dict[str, int] = field(default_factory=dict[str, int])
     """When the client read each word (tracked by the Gemini server, for the async tool round)."""
     merged_requests: int = 0
     """How many requests for a response the client folded into another one's single request."""
+    restorations: list[Restoration] = field(default_factory=list[Restoration])
+    """Each re-dialed session's conversation as its first response started (OpenAI protocol only)."""
 
     def tick(self) -> int:
         self.clock += 1
@@ -168,6 +216,13 @@ class GroundTruth:
             if input_.key in response.answers and input_.answered_by is None:
                 input_.answered_by = response.key
         return response
+
+    def answer(self, response: TruthResponse, keys: list[str]) -> None:
+        """`response`, already under way, answers the inputs `keys` too."""
+        response.answers.extend(keys)
+        for input_ in self.inputs:
+            if input_.key in keys and input_.answered_by is None:
+                input_.answered_by = response.key
 
     def new_call_id(self) -> str:
         call_id = f'call_{self.next_call_number}'

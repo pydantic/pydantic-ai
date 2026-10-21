@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._docs_examples import documented_cleanup, python_blocks, run_block
-from .conftest import skip_temporal_sandbox_on_314
+from ._temporal import skip_temporal_sandbox_on_314
 
 _PAGE = """
 ```python

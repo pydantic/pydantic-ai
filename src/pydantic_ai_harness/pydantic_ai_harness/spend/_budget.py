@@ -11,9 +11,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Generic, Literal
+from typing import Any, Generic, Literal, assert_never
 
-from typing_extensions import TypedDict, assert_never
+from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext

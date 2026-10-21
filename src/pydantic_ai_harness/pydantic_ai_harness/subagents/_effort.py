@@ -1,15 +1,14 @@
-"""Minimum thinking-effort floor shared by the sub-agent capability and its orchestrator."""
+"""Thinking-effort floor retained for application-specific policies."""
 
 from __future__ import annotations
 
 from pydantic_ai.settings import ThinkingEffort, ThinkingLevel
 
 MINIMUM_EFFORT_FLOOR: ThinkingEffort = 'low'
-"""Lowest thinking effort any agent this capability builds is allowed to run at.
+"""Default floor applied by `clamp_effort`.
 
 `clamp_effort` raises anything below this to the floor. The constant is exported
-so an orchestrator that builds its own agents can apply the same floor to them
-(the orchestrator-side application is the caller's responsibility)."""
+so applications can preserve the former sub-agent policy when needed."""
 
 _EFFORT_RANK: dict[ThinkingEffort, int] = {'minimal': 0, 'low': 1, 'medium': 2, 'high': 3, 'xhigh': 4}
 """Ordering of the concrete effort levels, low to high."""

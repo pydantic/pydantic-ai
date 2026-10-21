@@ -173,10 +173,21 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config>.
     """
 
+    google_web_search_billed_per_prompt: bool
+    """Whether Google Search grounding is billed once per grounded prompt rather than per search query. Default: `False`.
+
+    Gemini 2.5 and older bill a request once, however many queries it ran, and only when it returned a web source;
+    Gemini 3+ bills each unique search query. This decides the `web_searches` count on
+    [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+    See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
+    """
+
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the full `GOOGLE_THINKING_LEVELS` scale.
+    # listed support the full `GOOGLE_THINKING_LEVELS` scale, except where only one API enforces
+    # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
+    # does for `gemini-3.1-flash-image` on the Gemini API.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
@@ -185,6 +196,10 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Verified live 2026-09-06: the Developer API 404s this id toward `gemini-3.1-pro-preview`.
     # The level set is from Google's documented thinking table.
     ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
+    # https://ai.google.dev/gemini-api/docs/generate-content/long-decode: "Gemini 4 Argon does not support
+    # minimal. Use low, medium, or high." Verified live 2026-10-13 against the Gemini API and Vertex `global`:
+    # `LOW`, `MEDIUM` and `HIGH` are accepted, `MINIMAL` returns 400.
+    ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Model name prefixes mapped to their documented thinking levels."""
 
@@ -252,6 +267,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_thinking_level=google_supports_thinking_level,
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
+        google_web_search_billed_per_prompt=is_older_gemini,
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
@@ -374,6 +390,12 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # a model sending only one boundary would never finish an empty answer. `GoogleRealtimeModel.profile`
     # keeps it on for Vertex AI only, the one surface it was verified on.
     profile['google_closes_tool_call_turn_separately'] = is_half_cascade
+    # Verified live 2026-10-19/20: text sent while `gemini-3.1-flash-live-preview` or `gemini-3.8-live` generates a
+    # reply cuts it off (`interrupted`, `turn_complete`), and the next turn answers it; speech that cuts it off is
+    # reported first (`voice_activity`), which tells the two apart. Vertex's `gemini-live-2.5-flash` cuts a reply off
+    # for text too, but reports no `voice_activity`, so a speech barge-in can't be told apart: it is left off, as is
+    # `gemini-2.5-flash-native-audio-preview-09-2025`, which finishes the reply and answers the text after it.
+    profile['google_input_cuts_off_reply'] = model_name.startswith('gemini-3.1-flash-live') or is_3_8_live
     # Verified live 2026-09-25 with `enable_affective_dialog`: `gemini-3.1-flash-live-preview` refuses the
     # handshake with `1007 Request contains an invalid argument`, and `gemini-3.8-live` and
     # `gemini-3.8-live-extended-thinking` accept it and then close the session with that same `1007` on the
@@ -476,6 +498,21 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         # `$defs`/`$ref` and `anyOf [X, null]` have no OpenAPI-subset equivalent, so definitions are
         # inlined and a nullable union becomes the plain type plus `nullable: true`.
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
+
+    def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
+        if self.defs.get(key) is False:
+            raise UserError(
+                "Gemini's OpenAPI schema cannot represent a boolean `false` definition, which rejects all inputs."
+            )
+        return super()._walk_def(key, siblings)
+
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        # `transform` drops `additionalProperties` and `Schema` has no `patternProperties`, so neither
+        # subschema reaches Gemini. Walking them anyway would refuse a recursive `dict[str, Node]` over a
+        # `$ref` the declaration doesn't contain.
+        schema.pop('additionalProperties', None)
+        schema.pop('patternProperties', None)
+        return super()._handle_object(schema)
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives

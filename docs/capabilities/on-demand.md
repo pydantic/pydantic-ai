@@ -27,7 +27,7 @@ def refund_status(order_id: str) -> str:
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     instructions='You are a customer support assistant.',
     capabilities=[refunds],
 )
@@ -36,9 +36,14 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability may have tools; they stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
 ```
+
+The catalog is tagged so that when it changes between runs of a conversation, for example because a capability was added, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the cached prompt.
 
 The model does not receive the refund instructions or the `refund_status` tool definition yet, so it has no reason to call the tool. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool definition until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
 
@@ -46,7 +51,7 @@ The model does not receive the refund instructions or the `refund_status` tool d
 2. **Load.** Pydantic AI returns the capability's instructions — *"Always confirm the order ID before issuing a refund."* — as the tool result and exposes the `refund_status` definition on the next request.
 3. **Request 2.** The model now sees those instructions in history and `refund_status` in its tool list. It calls `refund_status(order_id='ABC-123')` and answers the user from the result.
 
-Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one.
+Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one. A `load_capability` tool call for a capability that is already active, or one that an earlier call in the same response already loads, is answered with a retry prompt instead of a second copy of its instructions.
 
 Searching cannot reveal a capability-owned tool: it stays hidden until its capability loads. In runs that also have searchable deferred tools, the catalog explicitly steers the model to load the capability rather than search for its tools; in capability-only runs — where no search surface exists — the catalog omits any mention of searching.
 
@@ -96,7 +101,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import MCP
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         MCP(
             url='https://mcp.example.com/analytics',
@@ -217,7 +222,7 @@ class DeepReasoning(AbstractCapability[Any]):
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         DeepReasoning(
             id='deep-reasoning',
@@ -253,7 +258,7 @@ class AccountSecurityWorkflow(AbstractCapability):
         return args
 
 
-agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow()])
+agent = Agent('openai-responses:{{ openai:medium.name }}', capabilities=[AccountSecurityWorkflow()])
 ```
 
 !!! note "Checking other capabilities"
@@ -268,7 +273,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    '{{ anthropic:medium }}',
     capabilities=[
         WebSearch(
             local='duckduckgo',
@@ -350,7 +355,7 @@ class AccountSecurity(AbstractCapability[Store]):
 
 
 support_agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     deps_type=Store,
     instructions='You are a customer-support agent for an e-commerce store.',
     capabilities=[orders, AccountSecurity()],
@@ -398,7 +403,7 @@ refund_policy = Capability(
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[
         refund_policy,
         RunbookRequired(requirements={'issue_refund': 'refund-policy'}),
@@ -454,7 +459,7 @@ def load_skill(path: Path) -> Capability:
 
 
 agent = Agent(
-    'openai-responses:gpt-5.4',
+    'openai-responses:{{ openai:medium.name }}',
     instructions='You are a customer support assistant.',
     capabilities=[load_skill(p) for p in Path('skills').glob('*.md')],
 )

@@ -7,9 +7,10 @@ from rich.console import Console
 
 from pydantic_ai import FunctionToolCallEvent
 from pydantic_ai.messages import ToolCallPart
-from pydantic_clai2 import StreamRenderer, theme
+from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings, resolve_settings
-from pydantic_clai2.tool_output import tool_arguments_text
+from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.tool_output import tool_arguments_text
 
 
 async def render(args: dict[str, object] | str, *, width: int = 200, tool_arg_chars: int = 40) -> str:

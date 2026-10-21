@@ -208,6 +208,16 @@ async def test_posix_search_files_explicit_file(tmp_path: Path, no_rg_path: str,
     assert await tools.search_files('needle', path='-notes.txt', workspace=no_git) == '-notes.txt:1:needle'
 
 
+async def test_posix_search_files_applies_include_glob(tmp_path: Path, no_rg_path: str) -> None:
+    (tmp_path / 'app.py').write_text('needle\n')
+    (tmp_path / 'notes.txt').write_text('needle\n')
+    backend = CountingBackend(tmp_path, no_rg_path)
+    tools = FileSystem[None](root_dir=tmp_path).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    assert await tools.search_files('needle', include_glob='*.py', workspace=backend) == 'app.py:1:needle'
+    assert backend.reads == 0
+
+
 async def test_posix_oversized_line_keeps_later_matches(tmp_path: Path, no_rg_git_path: str) -> None:
     (tmp_path / 'a.txt').write_text('needle' + 'x' * (1 << 20) + '\n')
     (tmp_path / 'b.txt').write_text('needle\n')
@@ -217,7 +227,10 @@ async def test_posix_oversized_line_keeps_later_matches(tmp_path: Path, no_rg_gi
     assert await tools.grep('needle', workspace=backend) == 'b.txt:1:needle\n[... truncated at 1000 lines]'
 
 
-async def test_posix_output_cap_reports_truncation(tmp_path: Path) -> None:
+async def test_posix_output_cap_reports_truncation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`; the file still overflows it and the pipe buffer
+    # many times over, so `head` closes the pipe while the search is still writing.
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
     bin_dir, scratch, root = tmp_path / 'bin', tmp_path / 'scratch', tmp_path / 'ws'
     path = tools_path(bin_dir, exclude=frozenset({'rg', 'mktemp'}))
     # Put the search's temp files in a known directory: BSD mktemp ignores TMPDIR here.
@@ -225,14 +238,27 @@ async def test_posix_output_cap_reports_truncation(tmp_path: Path) -> None:
     (bin_dir / 'mktemp').chmod(0o755)
     scratch.mkdir()
     root.mkdir()
-    (root / 'many.txt').write_text(('needle ' + 'X' * 100 + '\n') * 85000)
+    (root / 'many.txt').write_text(('needle ' + 'X' * 100 + '\n') * 10_000)
     backend = CountingBackend(root, path)
-    tools = FileSystem[None](root_dir=root, max_search_results=200000, tools=['grep']).get_toolset()
+    tools = FileSystem[None](root_dir=root, max_search_results=20_000, tools=['grep']).get_toolset()
     assert isinstance(tools, FileSystemToolset)
     result = await tools.grep('needle', workspace=backend)
     assert result.startswith('many.txt:1:needle')
     assert 'truncated' in result
     assert list(scratch.iterdir()) == []  # the capped search removed its temp files
+
+
+async def test_posix_output_cap_drops_the_match_line_it_cuts(
+    tmp_path: Path, no_rg_git_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A smaller cap stands in for `_MAX_OUTPUT_BYTES`, so it lands inside the second file's long line cheaply.
+    monkeypatch.setattr('pydantic_ai_harness.filesystem._command_search._MAX_OUTPUT_BYTES', 50_000)
+    (tmp_path / 'a.txt').write_text('needle\n')
+    (tmp_path / 'b.txt').write_text('needle' + 'x' * 100_000 + '\n')
+    backend = CountingBackend(tmp_path, no_rg_git_path)
+    tools = FileSystem[None](root_dir=tmp_path, tools=['grep']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    assert await tools.grep('needle', workspace=backend) == 'a.txt:1:needle\n[... truncated at 1000 lines]'
 
 
 async def test_posix_git_search_skips_tracked_hidden_paths(tmp_path: Path, no_rg_path: str) -> None:

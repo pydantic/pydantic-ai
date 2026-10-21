@@ -6,6 +6,7 @@ import json
 import math
 from collections.abc import Iterator, Sequence
 from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -14,17 +15,23 @@ import anyio.abc
 import anyio.lowlevel
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult, RawToolArgs
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentNode,
+    CapabilityOrdering,
+    NodeResult,
+    RawToolArgs,
+    SetToolMetadata,
+)
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
     ToolFailedError,
     ToolRetryError,
-    UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -32,6 +39,12 @@ from pydantic_ai.tools import (
     ToolDefinition,
     ToolSelector,
     matches_tool_selector,
+)
+from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
+from pydantic_ai_harness._background_completion import (
+    escape_tool_result_body,
+    make_background_completion,
+    tool_result_tags,
 )
 
 if TYPE_CHECKING:
@@ -48,25 +61,41 @@ with independent work. If none remains, end your response; the run will resume w
 
 _RUN_IN_BACKGROUND = 'run_in_background'
 
+_RUN_IN_BACKGROUND_SCHEMA = {
+    'type': 'boolean',
+    'description': 'Set to true to keep working and get the result later as a follow-up message.',
+}
+
+_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar('_backgrounded_call', default=None)
+"""The tool call a background task is running, so another `BackgroundTools` instance does not schedule it again."""
+
 
 def _instructions(ctx: RunContext[Any]) -> str | None:
     # Realtime sessions run tools concurrently already; see `_background_mode`.
     return None if ctx.realtime else _INSTRUCTIONS
 
 
+def _dispatched_by_tool(ctx: RunContext[Any]) -> bool:
+    """Whether another tool, such as code mode's `run_code`, dispatched this call and awaits its value."""
+    # A nested `ToolManager` carries the context of the call that dispatched it.
+    dispatcher = ctx.tool_manager.ctx if ctx.tool_manager is not None else None
+    return dispatcher is not None and dispatcher.tool_call_id is not None
+
+
 def _with_run_in_background(tool_def: ToolDefinition) -> ToolDefinition:
     """Add the optional `run_in_background` argument to a tool's schema."""
     properties = tool_def.parameters_json_schema.get('properties', {})
     if _RUN_IN_BACKGROUND in properties:
+        if properties[_RUN_IN_BACKGROUND] == _RUN_IN_BACKGROUND_SCHEMA:
+            return tool_def  # Another `BackgroundTools` instance already added it.
         raise UserError(
             f"Tool '{tool_def.name}' already has a '{_RUN_IN_BACKGROUND}' parameter, "
             'so it cannot be an optional background tool.'
         )
-    flag = {
-        'type': 'boolean',
-        'description': 'Set to true to keep working and get the result later as a follow-up message.',
+    schema = {
+        **tool_def.parameters_json_schema,
+        'properties': {**properties, _RUN_IN_BACKGROUND: _RUN_IN_BACKGROUND_SCHEMA},
     }
-    schema = {**tool_def.parameters_json_schema, 'properties': {**properties, _RUN_IN_BACKGROUND: flag}}
     return replace(tool_def, parameters_json_schema=schema)
 
 
@@ -80,16 +109,23 @@ def _deliver(ctx: RunContext[Any], outcome: _Outcome) -> None:
     ctx.enqueue(*outcome)
 
 
-def _format_background_error(error: ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError) -> str:
-    """Describe a tool-signalled failure to the model."""
+def _format_background_failure(
+    tool_name: str, task_id: str, error: ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError
+) -> TextContent:
+    """Describe a tool-signalled failure to the model, framed as the call's failed result."""
     if isinstance(error, (ApprovalRequired, CallDeferred)):
-        return f'{type(error).__name__} was raised; background tools cannot defer a running task.'
-    content = error.tool_retry.content if isinstance(error, ToolRetryError) else error.tool_failed.content
-    return content if isinstance(content, str) and content else type(error).__name__
+        message = f'{type(error).__name__} was raised; background tools cannot defer a running task.'
+    else:
+        content = error.tool_retry.content if isinstance(error, ToolRetryError) else error.tool_failed.content
+        message = escape_tool_result_body(content) if isinstance(content, str) and content else type(error).__name__
+    open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
+    return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
 
 
-def _format_background_result(tool_name: str, task_id: str, result: Any) -> tuple[UserContent, ...]:
-    """Format a tool result as model-visible user content without application metadata."""
+def _format_background_result(
+    tool_name: str, task_id: str, result: Any
+) -> tuple[TextContent, *tuple[UserContent, ...]]:
+    """Format a tool result as model-visible user content with completion metadata."""
     if isinstance(result, ToolReturn):
         return_value: object = result.return_value
         extra_content = result.content
@@ -98,19 +134,23 @@ def _format_background_result(tool_name: str, task_id: str, result: Any) -> tupl
         extra_content = None
 
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
-    return_text = return_part.model_response_str()
-    content: list[UserContent] = [return_text, *return_part.files]
+    # The frame's attributes name the call the "running in background" reply announced, so the result needs no
+    # preamble. `ToolReturn.content` follows the frame unwrapped, as core sends it: content the tool author chose
+    # to add for the model.
+    open_tag, close_tag = tool_result_tags(tool_name, task_id)
+    completion_text = f'{open_tag}\n{escape_tool_result_body(return_part.model_response_str())}'
+    files = return_part.files
+    if not files:
+        completion_text = f'{completion_text}\n{close_tag}'
+    content: list[UserContent] = [completion_text, *files, close_tag] if files else [completion_text]
     if isinstance(extra_content, str):
         content.append(extra_content)
     elif extra_content is not None:
         content.extend(extra_content)
 
-    prefix = f"Background tool '{tool_name}' (task {task_id}) completed.\nResult:"
-    content[0] = f'{prefix} {content[0]}'
-
     if all(isinstance(item, str) for item in content):
-        return ('\n'.join(item for item in content if isinstance(item, str)),)
-    return tuple(content)
+        return (make_background_completion('\n'.join(item for item in content if isinstance(item, str)), task_id),)
+    return (make_background_completion(completion_text, task_id), *content[1:])
 
 
 @dataclass
@@ -151,7 +191,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     default is `{'background': True}`.
 
     A tool marked with `metadata={'background': 'optional'}` lets the model decide for each call
-    unless this selector chooses it. Sequential tools and realtime sessions run normally.
+    unless this selector chooses it. Sequential tools, realtime sessions, and calls that code mode's
+    `run_code` makes from its sandbox run normally.
     """
 
     id: str | None = 'background_tools'
@@ -202,8 +243,20 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             return 'optional'
         return None
 
-    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    def get_ordering(self) -> CapabilityOrdering:
+        # Outside `SetToolMetadata`, so the tools reach `_prepare_tools` with its metadata.
+        return CapabilityOrdering(wraps=[SetToolMetadata])
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        return PreparedToolset(toolset, self._prepare_tools)
+
+    async def _prepare_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
         self._prepared_modes.clear()
+        # Core skips a deferred capability's hooks until it is loaded, but not its wrapper toolset.
+        if self.defer_loading is True and self.id not in ctx.active_capability_ids:
+            return tool_defs
         prepared: list[ToolDefinition] = []
         for tool_def in tool_defs:
             mode = await self._background_mode(ctx, tool_def)
@@ -232,8 +285,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         if isinstance(args, str):
             try:
                 parsed = json.loads(args)
-            except ValueError:
-                return args  # Core turns malformed JSON into a retry.
+            except (ValueError, RecursionError):
+                return args  # Core turns malformed or too deeply nested JSON into a retry.
         if not isinstance(parsed, dict):
             return args
         # The tool's validator rejects unknown arguments, so the flag is removed and checked here.
@@ -254,7 +307,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     ) -> Any:
         mode = await self._prepared_mode(ctx, tool_def)
         # The flag was removed before validation, so it is read from the call as the model sent it.
-        if mode is None or (mode == 'optional' and call.args_as_dict().get(_RUN_IN_BACKGROUND) is not True):
+        if (
+            mode is None
+            or _dispatched_by_tool(ctx)
+            or _backgrounded_call.get() is call
+            or (mode == 'optional' and call.args_as_dict().get(_RUN_IN_BACKGROUND) is not True)
+        ):
             return await handler(args)
 
         task_id = call.tool_call_id
@@ -265,22 +323,20 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             try:
                 # A task the run cancelled before it got to start must not run the tool.
                 await anyio.lowlevel.checkpoint_if_cancelled()
+                # Set inside the task, so only this call's own handler chain sees it.
+                _backgrounded_call.set(call)
                 try:
                     result = await handler(args)
                 except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError) as e:
-                    outcome = (f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",)
+                    outcome = (_format_background_failure(tool_name, task_id, e),)
                 except anyio.get_cancelled_exc_class() as e:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.
                     await anyio.lowlevel.checkpoint_if_cancelled()
                     outcome = e
-                except UnexpectedModelBehavior as e:
-                    # The retry budget ran out: it ends the run, as it would for a sequential tool.
-                    outcome = e
-                except Exception as e:
-                    # Exception messages can contain private details, so the model only learns the type.
-                    outcome = (f"Background tool '{tool_name}' (task {task_id}) failed: {type(e).__name__}",)
                 except BaseException as e:
+                    # Unexpected failures, including an exhausted retry budget, end the run as they
+                    # would for a sequential tool.
                     outcome = e
                 else:
                     outcome = _format_background_result(tool_name, task_id, result)

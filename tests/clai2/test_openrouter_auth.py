@@ -16,9 +16,9 @@ from pydantic import SecretStr, TypeAdapter
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
-from pydantic_clai2 import openrouter
+from pydantic_clai2.models import openrouter
 from pydantic_clai2.openrouter_auth import OpenRouterAuth, authorization_code
-from tests.clai2.menu_script import make_context
+from tests.clai2.menu_script import QUIET, make_context
 
 
 @pytest.mark.parametrize('text', ['code', 'http://127.0.0.1:123/callback?code=code', '/callback?code=code'])
@@ -35,7 +35,9 @@ def test_invalid_code(text: str) -> None:
     assert 'secret' not in str(error.value)
 
 
-@pytest.mark.parametrize('mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'eof', 'timeout', 'cancel'])
+@pytest.mark.parametrize(
+    'mode', ['callback', 'paste', 'manual', 'browser_error', 'denied', 'declined', 'timeout', 'cancel']
+)
 async def test_login(mode: str) -> None:
     output = StringIO()
     console = Console(file=output)
@@ -55,13 +57,13 @@ async def test_login(mode: str) -> None:
 
     lines = iter(['', 'http://127.0.0.1/callback?code=secret-code'])
 
-    async def read_line(message: str) -> str:
+    async def read_line(message: str) -> str | None:
         prompt_started.set()
         try:
             if mode in ('paste', 'manual', 'browser_error'):
                 return next(lines)
-            if mode == 'eof':
-                raise EOFError
+            if mode == 'declined':
+                return None
             await asyncio.Future[None]()
             raise AssertionError('unreachable')  # pragma: no cover
         finally:
@@ -105,8 +107,10 @@ async def test_login(mode: str) -> None:
         login.cancel()
         with pytest.raises(asyncio.CancelledError):
             await login
-    elif mode in ('denied', 'eof', 'timeout'):
-        with pytest.raises(UserError, match={'denied': 'denied', 'eof': 'cancelled', 'timeout': 'timed out'}[mode]):
+    elif mode in ('denied', 'declined', 'timeout'):
+        with pytest.raises(
+            UserError, match={'denied': 'denied', 'declined': 'cancelled', 'timeout': 'timed out'}[mode]
+        ):
             await login
     else:
         assert (await login).get_secret_value() == 'private-api-key'
@@ -138,6 +142,7 @@ async def test_connect_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(openrouter, 'menu_key', lambda: next(keys))
 
     async def login(self: OpenRouterAuth) -> SecretStr:
+        self.console.print('https://openrouter.ai/auth?code_challenge=x')
         return SecretStr('browser-key')
 
     async def discover(connection: openrouter.Connection) -> list[str]:
@@ -152,13 +157,15 @@ async def test_connect_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         return names[0]
 
     monkeypatch.setattr(openrouter, 'choose', choose)
-    assert await openrouter.connect(context, []) == 'Saved model. Applied.'
+    output = StringIO()
+    assert await openrouter.connect(context, [], console=Console(file=output)) == 'Saved model. Applied.'
     assert openrouter.model('openrouter:my/model').model_name == 'my/model'
+    assert 'https://openrouter.ai/auth' in output.getvalue(), 'the sign-in URL goes to the shell console'
 
 
 async def test_cancel_authentication_menu(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(openrouter, 'menu_key', lambda: 'escape')
-    assert await openrouter.prompt_connection() is None
+    assert await openrouter.prompt_connection(console=QUIET) is None
 
 
 async def test_listener_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -205,10 +212,10 @@ async def test_browser_failure_preserves_connection(
     monkeypatch.setattr(openrouter, 'discover', discover)
     monkeypatch.setattr(openrouter, 'choose', choose)
     if cancel_model:
-        assert await openrouter.connect(context, []) == 'Connection cancelled.'
+        assert await openrouter.connect(context, [], console=QUIET) == 'Connection cancelled.'
     else:
         with pytest.raises(UserError, match='Login failed'):
-            await openrouter.connect(context, [])
+            await openrouter.connect(context, [], console=QUIET)
     raw = openrouter.load_codex_credentials(account='openrouter')
     assert raw is not None
     assert openrouter.Connection.model_validate_json(raw) == original

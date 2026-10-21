@@ -31,6 +31,8 @@ External assumptions, verified 2026-07-28 against mongod 8.2.12 (`mongo:8`):
   round trip; the server rejects anything over 16777216 with a `WriteError`
   (code 10334). A document inside that ~16KiB window therefore fails on the
   server, not in the driver -- both loudly, but as different exception types.
+  Inside `insert_many` the server refuses both sizes, as a `BulkWriteError` and
+  an `OperationFailure`, since the driver only checks the whole batch.
   Source:
   <https://www.mongodb.com/docs/manual/reference/limits/#mongodb-limit-BSON-Document-Size>.
 """
@@ -50,7 +52,7 @@ from bson.errors import InvalidDocument
 from pydantic import TypeAdapter
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
-from pymongo.errors import DocumentTooLarge, DuplicateKeyError, PyMongoError, WriteError
+from pymongo.errors import DuplicateKeyError, OperationFailure, PyMongoError
 
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai_harness.media import MongoMediaStore, parse_media_uri
@@ -181,21 +183,20 @@ def test_live_tests_run_on_asyncio_backend(anyio_backend: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ('payload_bytes', 'expected'),
+    'payload_bytes',
     [
-        pytest.param(_SERVER_REFUSED_BYTES, WriteError, id='server-refused'),
-        pytest.param(_DRIVER_REFUSED_BYTES, DocumentTooLarge, id='driver-refused'),
+        pytest.param(_SERVER_REFUSED_BYTES, id='server-refused'),
+        pytest.param(_DRIVER_REFUSED_BYTES, id='driver-refused'),
     ],
 )
-async def test_oversized_snapshot_fails_loudly_without_media_externalization(
-    payload_bytes: int, expected: type[PyMongoError]
-) -> None:
-    """A snapshot past the 16MB BSON cap raises instead of silently truncating."""
+async def test_oversized_message_fails_loudly_without_media_externalization(payload_bytes: int) -> None:
+    """A message past the 16MB BSON cap raises instead of silently truncating, and saves no snapshot."""
     async with _live_database() as db:
         store = MongoStepStore(client=db.client, database=db.name, media_store=None)
         snapshot = _text_snapshot('run-too-large', 'x' * payload_bytes)
 
-        with pytest.raises(expected):
+        # Each message is its own document, stored with `insert_many`.
+        with pytest.raises(OperationFailure):
             await store.save_snapshot(snapshot)
 
         assert await store.latest_snapshot(run_id='run-too-large') is None

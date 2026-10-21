@@ -2,16 +2,21 @@
 
 import time
 from collections.abc import Iterator
+from io import StringIO
 from pathlib import Path
 
+from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
-from pydantic_clai2.command_context import CommandContext
-from pydantic_clai2.field_menu import Runners
-from pydantic_clai2.menu_worker import worker_stopping
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.field_menu import Runners
+from pydantic_clai2.ui.menus.menu_worker import worker_stopping
+
+QUIET = Console(file=StringIO())
+"""A console for commands whose output a test does not read, such as the shell console `/model add` takes."""
 
 
 def make_context(tmp_path: Path) -> tuple[CommandContext, list[str]]:
@@ -20,7 +25,6 @@ def make_context(tmp_path: Path) -> tuple[CommandContext, list[str]]:
     context = CommandContext(
         settings=store.load(),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: applied.append(key),
     )
     return context, applied

@@ -2,13 +2,14 @@
 
 The simulator checks the contract on the traces its fake servers produce; this checks it on the real
 ones. Each cassette's provider frames are replayed through a fresh connection of the right class (with no
-session, and the recorded client frames ignored), and the codec events it yields are fed to the same
-`LifecycleChecker` the simulator uses. See `_conformance.py` for the rules.
+session; the recorded client frames are read only to count the inputs they sent), and the codec events it
+yields are fed to the same `LifecycleChecker` the simulator uses. See `_conformance.py` for the rules.
 """
 
 from __future__ import annotations as _annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -19,13 +20,16 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.realtime._lifecycle import (
+        AnswersRevised,
         InputAdded,
         InputLost,
         LifecycleEvent,
+        OutputItemCut,
+        OutputItemDetails,
         ResponseEnded,
         ResponseRequestRefused,
         ResponseStarted,
-        UserTurnDiscarded,
+        UserTurnClosed,
         UserTurnEnded,
         UserTurnStarted,
     )
@@ -39,13 +43,11 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.usage import RequestUsage
 
-    from ._cassette_replay import replay_codec_events, replay_lifecycle_events, websocket_cassettes
+    from ..ws_cassettes import CassetteClose, CassetteMessage, RealtimeCassette
+    from ._cassette_replay import CASSETTES_DIR, replay_codec_events, replay_lifecycle_events, websocket_cassettes
     from ._conformance import LifecycleChecker
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs not installed'),
-]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs not installed')
 
 
 @pytest.mark.parametrize(
@@ -60,12 +62,76 @@ async def test_cassette_obeys_the_codec_lifecycle(recording: Path) -> None:
         for event in events:
             checker.feed(event)
         assert checker.issues == []
-    for events in await replay_lifecycle_events(recording):
-        checker = LifecycleChecker(lifecycle=True)
+    for events, inputs_sent in await replay_lifecycle_events(recording):
+        checker = LifecycleChecker(lifecycle=True, inputs_sent=lambda sent=inputs_sent: sent)
         for event in events:
             checker.feed(event)
         checker.finish()
         assert checker.issues == []
+
+
+def _response(event_type: str, response_id: str, status: str, inputs: str) -> dict[str, Any]:
+    """A Voice Live `response.created`/`response.done` frame echoing the `response.create` metadata."""
+    return {
+        'event_id': f'event_{event_type}_{response_id}',
+        'type': event_type,
+        'response': {
+            'object': 'realtime.response',
+            'id': response_id,
+            'status': status,
+            'status_details': None,
+            'output': [],
+            'usage': None,
+            'metadata': {'pydantic_ai_inputs': inputs},
+        },
+    }
+
+
+async def test_replay_counts_the_inputs_the_client_sent(tmp_path: Path) -> None:
+    """A response's echoed metadata names the inputs it answers, checked against what the client sent.
+
+    The server echoes `response.create`'s metadata, so the lifecycle stream says which inputs each
+    response answers. The replay counts the inputs the recorded `response.create` frames name, so an
+    answer to one of them isn't flagged as never sent, while an answer naming an input the client never
+    sent still is.
+    """
+    session = {'event_id': 'event_session', 'type': 'session.created', 'session': {'model': 'gpt-realtime'}}
+    item = {'id': 'pydantic_ai_item_0', 'type': 'message', 'role': 'user'}
+    cassette = RealtimeCassette(
+        interactions=[
+            CassetteMessage('received', session),
+            CassetteMessage(
+                'sent', {'type': 'conversation.item.create', 'event_id': 'pydantic_ai.content.0', 'item': item}
+            ),
+            CassetteMessage(
+                'sent',
+                {
+                    'type': 'response.create',
+                    'event_id': 'pydantic_ai.response.0',
+                    'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+                },
+            ),
+            CassetteMessage('received', _response('response.created', 'resp_1', 'in_progress', '0')),
+            CassetteMessage('received', _response('response.done', 'resp_1', 'completed', '0')),
+            CassetteClose(code=1000, reason='', ok=True),
+            # Input indexes count up across a session, so input 0 still counts on the next socket, but input
+            # 1 was never sent.
+            CassetteMessage('received', session),
+            CassetteMessage('received', _response('response.created', 'resp_2', 'in_progress', '1')),
+            CassetteMessage('received', _response('response.done', 'resp_2', 'completed', '1')),
+        ]
+    )
+    path = tmp_path / 'test_azure_voice_live_ws' / 'echoed_metadata.yaml'
+    cassette.dump(path)
+
+    issues: list[list[str]] = []
+    for events, inputs_sent in await replay_lifecycle_events(path):
+        checker = LifecycleChecker(lifecycle=True, inputs_sent=lambda sent=inputs_sent: sent)
+        for event in events:
+            checker.feed(event)
+        checker.finish()
+        issues.append([issue.code for issue in checker.issues])
+    assert issues == snapshot([[], ['lifecycle.unknown_answer']])
 
 
 def feed_all(*events: RealtimeCodecEvent) -> list[str]:
@@ -135,7 +201,58 @@ def test_lifecycle_contract_rules() -> None:
         ['lifecycle.content_outside_response', 'lifecycle.input_settled_twice', 'lifecycle.input_added_twice']
     )
     turn = UserTurnStarted(turn_id='item_u1')
-    assert feed_lifecycle(turn, UserTurnEnded(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')) == snapshot(
-        ['lifecycle.turn_end_without_start']
-    )
+    # A turn that joined the conversation can still be discarded (it gets no more audio), but only once.
+    assert feed_lifecycle(
+        turn,
+        UserTurnEnded(turn_id='item_u1'),
+        UserTurnClosed(turn_id='item_u1'),
+        UserTurnClosed(turn_id='item_u1'),
+    ) == snapshot(['lifecycle.turn_end_without_start'])
     assert feed_lifecycle(turn, turn) == snapshot(['lifecycle.turn_started_twice', 'lifecycle.turn_unended_at_close'])
+    assert feed_lifecycle(UserTurnEnded(turn_id='item_u2')) == snapshot(['lifecycle.turn_end_without_start'])
+    details = OutputItemDetails(response_id='resp_1', item_id='item_a1', provider_details={'phase': 'commentary'})
+    assert feed_lifecycle(start, details, end, details, inputs_sent=1) == snapshot(
+        ['lifecycle.content_outside_response']
+    )
+    # A cut can come after its response ended, but only of an item some content named.
+    named = AudioDelta(b'\x00', response_id='resp_1', item_id='item_a1')
+    assert feed_lifecycle(
+        start, named, end, OutputItemCut(item_id='item_a1', heard_transcript=''), inputs_sent=1
+    ) == snapshot([])
+    assert feed_lifecycle(OutputItemCut(item_id='item_b1')) == snapshot(['lifecycle.cut_of_unknown_item'])
+
+
+def test_answers_revised_rules() -> None:
+    """A response under way claims inputs, and one releases only what it answers: a released input is owed again."""
+    start = ResponseStarted(response_id='resp_1', answers=(0, 1))
+    end = ResponseEnded(response_id='resp_1', status='cancelled')
+    released = AnswersRevised(response_id='resp_1', released=(1,))
+    assert feed_lifecycle(
+        start,
+        released,
+        end,
+        ResponseStarted(response_id='resp_2', answers=(1,)),
+        AnswersRevised(response_id='resp_2', claimed=(2,)),
+        ResponseEnded(response_id='resp_2', status='completed'),
+        inputs_sent=3,
+    ) == snapshot([])
+    assert feed_lifecycle(
+        start,
+        AnswersRevised(response_id='resp_1', released=(2,)),
+        end,
+        AnswersRevised(response_id='resp_1', claimed=(2,)),
+        inputs_sent=3,
+    ) == snapshot(['lifecycle.bad_revision', 'lifecycle.bad_revision'])
+
+
+async def test_recorded_abnormal_close_is_replayed_as_one() -> None:
+    """A socket the recording saw drop with 1011 ends its replay the same way, not as a clean close."""
+    # The xAI reconnect recording, whatever it is called: the test drops it with a 1011.
+    recording = next(
+        path for path in sorted((CASSETTES_DIR / 'test_xai_ws').glob('*.yaml')) if 'code: 1011' in path.read_text()
+    )
+    dropped, resumed = await replay_codec_events(recording)
+    assert isinstance(error := dropped[-1], RealtimeSessionErrorEvent)
+    assert '1011' in error.message
+    assert isinstance(error := resumed[-1], RealtimeSessionErrorEvent)
+    assert '1011' not in error.message

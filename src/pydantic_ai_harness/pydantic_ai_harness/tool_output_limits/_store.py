@@ -9,8 +9,10 @@ under a key, read it back by handle. `LocalFileStore` implements it on the host 
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
+import stat
 import tempfile
 import threading
 import time
@@ -152,6 +154,13 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
     return real_path
 
 
+def _default_root() -> Path:
+    """Per-user root under the system temp dir, so users on one host never share it."""
+    geteuid = getattr(os, 'geteuid', None)
+    name = 'pyai_harness_overflow' if geteuid is None else f'pyai_harness_overflow-{geteuid()}'
+    return Path(tempfile.gettempdir()) / name
+
+
 @dataclass
 class LocalFileStore:
     """`OverflowStore` that writes each payload to a file on the host running the agent.
@@ -161,20 +170,26 @@ class LocalFileStore:
     see them.
 
     The handle equals the key: a relative `run_id/tool_call_id.retry` path under
-    `base_dir`. The root is stable and shareable on purpose -- a later agent or run can
+    `base_dir`. The root is stable on purpose -- a later agent or run by the same user can
     read a spill a previous run produced, so the store is not isolated per instance.
 
-    Security comes from two mechanisms, not isolation: the root is created with `0700`
-    perms (owner-only), and `read` resolves the target (following symlinks) and rejects
-    anything that escapes the root via symlink, `..`, or an absolute path. Handle segments
-    are also sanitized by `_safe_segment`.
+    Security comes from three mechanisms: the default root is per user
+    (`pyai_harness_overflow-<euid>` under the system temp dir); the root itself cannot be a
+    symlink, and on POSIX it must be owned by the current user and is tightened to `0700` if
+    group or other bits are set; and `read` resolves the target (following symlinks) and
+    rejects anything that escapes the root via symlink, `..`, or an absolute path. Handle
+    segments are also sanitized by `_safe_segment`. On Windows there is no uid, so the
+    default root is `pyai_harness_overflow` and the ownership check is skipped.
 
     Files are kept after the run by default (a later `read_tool_result` may need them).
     Set `cleanup_after` to opt into age-based pruning; see that field.
     """
 
     base_dir: Path | None = None
-    """Root directory for spilled files. Defaults to a stable temp subdirectory."""
+    """Root directory for spilled files. Defaults to a per-user temp subdirectory.
+
+    An explicit `base_dir` gets the same ownership check as the default root.
+    """
 
     cleanup_after: timedelta | None = None
     """Opt-in TTL for spilled files. `None` (default) keeps files forever.
@@ -189,20 +204,37 @@ class LocalFileStore:
     _root: Path = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._root = (
-            self.base_dir if self.base_dir is not None else Path(tempfile.gettempdir()) / 'pyai_harness_overflow'
-        )
+        self._root = self.base_dir if self.base_dir is not None else _default_root()
 
     def _path(self, key: str) -> Path:
         return self._root.joinpath(*_segments(key))
 
     def _ensure_root(self) -> None:
-        """Create the root directory owned by the current user with `0700` perms."""
-        self._root.mkdir(parents=True, exist_ok=True)
-        try:
+        """Create the root and make sure only the current user can reach it.
+
+        A root that already exists may have been created by someone else (the default
+        lives in the shared temp dir), so ownership is checked rather than assumed. A root
+        this call creates gets `0700` at creation, so there is no window before the `chmod`
+        in which another user could plant an entry in it.
+        """
+        self._root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._check_root()
+
+    def _check_root(self) -> None:
+        """Refuse a symlinked root, then enforce POSIX ownership and permissions."""
+        st = self._root.lstat()
+        if stat.S_ISLNK(st.st_mode):
+            raise PermissionError(f'Overflow store root {str(self._root)!r} is a symbolic link; refusing to use it.')
+        geteuid = getattr(os, 'geteuid', None)
+        if geteuid is None:
+            return
+        if st.st_uid != geteuid():
+            raise PermissionError(
+                f'Overflow store root {str(self._root)!r} is not owned by the current user; '
+                'refusing to write spilled tool output there.'
+            )
+        if stat.S_IMODE(st.st_mode) & 0o077:
             self._root.chmod(0o700)
-        except OSError:  # pragma: no cover - best effort on a root we do not own
-            pass
 
     async def write(self, key: str, data: bytes) -> str:
         # Disk I/O runs in a worker thread so it never blocks the event loop.
@@ -220,6 +252,7 @@ class LocalFileStore:
         return await anyio.to_thread.run_sync(self._read, handle)
 
     def _read(self, handle: str) -> bytes:
+        self._check_root()
         target = self._path(handle).resolve()
         root = self._root.resolve()
         if not target.is_relative_to(root):
@@ -245,6 +278,7 @@ class LocalFileStore:
     def _prune_sync(self) -> None:
         """Delete files older than `cleanup_after` (by `st_mtime`)."""
         assert self.cleanup_after is not None
+        self._check_root()
         cutoff = time.time() - self.cleanup_after.total_seconds()
         for path in self._root.rglob('*'):
             if not path.is_file():
