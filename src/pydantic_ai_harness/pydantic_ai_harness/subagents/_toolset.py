@@ -289,6 +289,18 @@ def _is_capability_contributed(toolset: AbstractToolset[AgentDepsT]) -> bool:
     return found
 
 
+def _resumable_here(owner: DelegationTasks, resume: str, *, conversation_id: str, agent_name: str) -> DelegationTask:
+    """The task `resume` names, if the delegating run, and not another task, started it.
+
+    Raises:
+        ModelRetry: the task can't be resumed, or another task started it.
+    """
+    previous = owner.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
+    if previous.parent_id != DelegationTasks.child_id():
+        raise ModelRetry(f'Task {resume} was started by another task; only the agent that started it can resume it.')
+    return previous
+
+
 def _conversation_id(ctx: RunContext[Any], owner: DelegationTasks) -> str:
     """The conversation the current run's tasks belong to: a child's tasks belong to its parent's."""
     parent_id = DelegationTasks.child_id()
@@ -547,6 +559,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if owner is not None and resume is not None and model is None and resume in owner.records:
             model = owner.records[resume].model
 
+        if owner is not None and resume is not None and run_owned(owner):
+            # In the tree of a task-control run, plain delegations keep its rule on who resumes a task.
+            _resumable_here(owner, resume, conversation_id=_conversation_id(ctx, owner), agent_name=agent_name)
+
         # Resolved before the call budget is charged, so a bad model key costs nothing.
         key = self._resolve_model_key(agent_name, sub_agent, model)
 
@@ -615,11 +631,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         conversation_id = _conversation_id(ctx, owner)
         previous = None
         if resume is not None:
-            previous = owner.check_resume(resume, conversation_id=conversation_id, agent_name=agent_name)
-            if previous.parent_id != parent_id:
-                raise ModelRetry(
-                    f'Task {resume} was started by another task; only the agent that started it can resume it.'
-                )
+            previous = _resumable_here(owner, resume, conversation_id=conversation_id, agent_name=agent_name)
             if model is None:
                 model = previous.model
         backgroundable = not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend)

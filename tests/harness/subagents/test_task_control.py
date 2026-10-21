@@ -36,6 +36,7 @@ from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness.subagents import (
+    CANCELLED_ANSWER,
     AgentCreatedEvent,
     DelegationTask,
     DelegationTaskEvent,
@@ -1798,3 +1799,42 @@ class TestTaskControlBoundaries:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert result.output.endswith('(ok):\nchild output')
+
+    async def test_a_task_asked_to_stop_while_putting_a_question_gets_no_answer_to_wait_for(self) -> None:
+        owner = DelegationTasks()
+        async with owner.opened():
+
+            async def run(record: DelegationTask) -> str:
+                owner.request_stop(record.id)
+                return await owner.ask(record.id, question_id='q1', question='Which?')
+
+            with anyio.fail_after(WAIT):
+                result = await owner.delegate(
+                    agent_name='worker',
+                    prompt='p',
+                    conversation_id='root',
+                    model=None,
+                    background=False,
+                    resume=None,
+                    run=run,
+                )
+        assert result.endswith(f'(ok):\n{CANCELLED_ANSWER}')
+
+    async def test_a_plain_task_in_a_task_control_tree_cannot_resume_a_sibling(self) -> None:
+        def resume_sibling(messages: list[ModelMessage]) -> ModelResponse:
+            return call('delegate_task', agent_name='researcher', task='Mine now.', resume=user_texts(messages)[0])
+
+        middle = Agent(
+            scripted(resume_sibling, echo_last_return), name='middle', capabilities=[SubAgents(agents=[researcher()])]
+        )
+
+        def delegate_middle(messages: list[ModelMessage]) -> ModelResponse:
+            return call('delegate_task', agent_name='middle', task=task_id_in(tool_returns(messages)[-1]))
+
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), delegate_middle, echo_last_return),
+            capabilities=[controlled(researcher(), SubAgent(middle))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert 'only the agent that started it can resume it' in result.output

@@ -655,6 +655,9 @@ class DelegationTasks:
         The question is queued on the parent's run like a report. `request_stop` answers it with
         `CANCELLED_ANSWER`.
         """
+        if task_id in self._stops:
+            # Asked to stop while it was putting the question, so it gets no turn to wait for an answer.
+            return CANCELLED_ANSWER
         record = self.records[task_id]
         pending = self._questions[task_id] = _Question(
             question_id=question_id, text=question, answer=asyncio.get_running_loop().create_future()
