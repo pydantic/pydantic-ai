@@ -349,11 +349,11 @@ def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
 def _back_to_request(messages: list[ModelMessage], cutoff: int) -> int:
     """Move *cutoff* back to the nearest request it can split the history at without orphaning a tool call.
 
-    The summary is an assistant turn, so a kept tail that opened with a response would put two
-    assistant turns in a row: providers that combine them would start the response with the summary
-    text (which Anthropic rejects ahead of a thinking block), and strict-alternation chat templates
-    reject them outright. Keeping one more turn is cheaper than either. A history with no such request
-    before *cutoff* keeps *cutoff* as it is.
+    The summary is stored in a response, so a kept tail that opened with a response would leave two
+    responses in a row in the stored history. Provider models send the summary in the user channel,
+    but a `FunctionModel`, a UI adapter or a history processor reading the history gets the typed
+    parts, and keeping one more turn spares them that shape. A history with no such request before
+    *cutoff* keeps *cutoff* as it is.
     """
     if not 0 < cutoff < len(messages):
         return cutoff
@@ -629,7 +629,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         else:
             cutoff = find_safe_cutoff(messages, self.keep_messages)
         if not self.keep_user_messages:
-            # The summary is an assistant turn, so the kept tail must open with a request; see
+            # The summary is stored in a response, so the kept tail opens with a request; see
             # `_back_to_request`. Retained user copies sit between them instead, when there are any.
             cutoff = _back_to_request(messages, cutoff)
 
@@ -665,7 +665,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         summary = self._maybe_bridge_prefix(summary, messages, ctx)
 
         # The summary is model-written text standing in for the turns it replaced, so it is a
-        # `CompactionPart` in a response of its own: core sends it as framed assistant text and treats
+        # `CompactionPart` in a response of its own: core sends it as framed user-voice text and treats
         # it as a compaction boundary, and the standing system prompt stays exactly as it was. The
         # original first user turn precedes everything it summarizes, so it goes ahead of it; recent user
         # turns kept by `keep_user_messages` follow it, as they always did.

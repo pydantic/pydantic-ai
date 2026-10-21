@@ -478,17 +478,17 @@ instead of using `keep_messages`.
 The summary is a `CompactionPart` in a `ModelResponse` of its own. The original system prompts stay
 exactly as they were, ahead of it along with the original first user turn when
 `preserve_first_user_message` keeps it. The kept tail always opens with a request, moving back a turn
-when the cutoff would start it at a response, so the summary is never followed by a second assistant
-turn. Each provider model receives it as assistant text inside `<conversation_summary>` (a
-`FunctionModel` gets the part itself), never as part of the system prompt: a model wrote it, from a
-history that can include tool output. Because it is a compaction part, Pydantic AI also treats it as a
-compaction boundary, so tool discoveries and on-demand capability loads from before it are announced
-again, and `WarnOnCacheBusts` reports the cache drop it causes as `compacted`. The response carries
-`{'pydantic-ai-harness.compaction.summary.v1': True}` in its `metadata`, which the model never sees;
-that marker, not the part type, is how `SummarizingCompaction` recognizes its own summaries, so a
-`CompactionPart` your application wrote is left alone. A history saved before this, with the summary in
-a system prompt opening with `Summary of previous conversation:`, keeps working: that summary anchors
-the next one and is replaced by it.
+when the cutoff would start it at a response, so the stored history alternates for anything that reads
+it. Each provider model receives the summary as user-voice text inside `<conversation_summary>`, saying
+a separate summarization model wrote it (a `FunctionModel` gets the part itself), never as part of the
+system prompt: a model wrote it, from a history that can include tool output. Because it is a compaction
+part, Pydantic AI also treats it as a compaction boundary, so tool discoveries and on-demand capability
+loads from before it are announced again, and `WarnOnCacheBusts` reports the cache drop it causes as
+`compacted`. The response carries `{'pydantic-ai-harness.compaction.summary.v1': True}` in its
+`metadata`, which the model never sees; that marker, not the part type, is how `SummarizingCompaction`
+recognizes its own summaries, so a `CompactionPart` your application wrote is left alone. A history
+saved before this, with the summary in a system prompt opening with `Summary of previous conversation:`,
+keeps working: that summary anchors the next one and is replaced by it.
 
 Both prompt surfaces of the summary request are fields: `summary_prompt` is the user-turn template (it
 must contain a `{messages}` placeholder), and `instructions` sets the internal agent's static instructions,

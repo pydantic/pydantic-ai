@@ -19,7 +19,7 @@ or its part type, and a `CompactionPart` an application wrote itself is never mi
 def summary_response(summary: str) -> ModelResponse:
     """The response holding *summary*: a provider-less `CompactionPart`, marked as this capability's own.
 
-    Core's provider models send such a part as framed assistant text.
+    Core's provider models send such a part as framed user-voice text.
     """
     return ModelResponse(parts=[CompactionPart(content=summary)], metadata={SUMMARY_METADATA_KEY: True})
 
