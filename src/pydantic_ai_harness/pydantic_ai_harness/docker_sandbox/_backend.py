@@ -3,8 +3,9 @@
 CLI behavior verified 2026-10-21 against Docker 29.2 (runc, in Colima) and Podman 6.1.4 (crun, in a Podman
 machine) on macOS, see https://docs.docker.com/reference/cli/docker/ and
 https://docs.podman.io/en/latest/Commands.html. Re-check these before changing how containers are created,
-commands run or stopped, or errors read, with `-m docker_live` and `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE`
-set to `docker` and to `podman`:
+commands run or stopped, or errors read, by running
+`PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 DOCKER_REQUIRE_LIVE=1 pytest -m docker_live tests/harness/docker_sandbox` once
+as is and once with `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE=podman`:
 
 - `docker run --workdir` creates a missing directory; `podman run --workdir` refuses it.
 - Killing the local `docker exec` client leaves its command running in the container.
