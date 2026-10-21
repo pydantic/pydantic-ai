@@ -45,7 +45,6 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_token_count,
     exceeds,
-    find_first_user_message,
     find_safe_cutoff,
     find_token_cutoff,
     is_realtime_model,
@@ -352,18 +351,34 @@ def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPa
     return parts
 
 
+def _first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
+    """The first request holding a user part that is neither harness bookkeeping nor harness data."""
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, UserPromptPart)
+            and not is_pinned(part)
+            and not is_receipt_part(part)
+            and not _is_harness_data(part)
+            for part in message.parts
+        ):
+            return message
+    return None
+
+
 def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPromptPart]) -> ModelRequest:
     """The first user message to keep after compaction, without what the summary request carries.
 
     Continuing a history merges consecutive requests, so after a compaction the first user message
     also holds that compaction's summary request. Its summaries and receipts are superseded by the
-    new ones, and its leading system prompts are already copied into the new summary request.
+    new ones, and its leading system prompts are already copied into the new summary request. Harness data
+    in it isn't the user's message: it is summarized, not kept.
     """
     carried = {part.content for part in system_parts}
     kept = [
         part
         for part in message.parts
         if not is_receipt_part(part)
+        and not _is_harness_data(part)
         and not (
             isinstance(part, SystemPromptPart) and (part.content.startswith(_SUMMARY_PREFIX) or part.content in carried)
         )
@@ -663,7 +678,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if len(preserved) > retained_tail_slots:
                     preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
         elif self.preserve_first_user_message:
-            first_user_msg = find_first_user_message(messages)
+            first_user_msg = _first_user_message(messages)
             if first_user_msg is not None:
                 idx = messages.index(first_user_msg)
                 if idx < cutoff and first_user_msg not in preserved:

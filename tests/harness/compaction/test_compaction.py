@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     ModelResponse as _MR,
     NativeToolCallPart,
@@ -5130,6 +5131,44 @@ class TestHarnessData:
         assert all(part.content != [background] for part in user_parts(history))
         assert '<harness_data origin="pydantic-ai-harness.background_tools.result.v1">' in captured[0]
         assert '<message role="user">\nthe real ask' not in captured[0]
+
+    @pytest.mark.parametrize('mixed', [False, True], ids=['harness-data-only', 'mixed'])
+    async def test_first_user_message_preservation_never_keeps_harness_data(self, mixed: bool) -> None:
+        """`preserve_first_user_message` keeps the user's own first words, never harness data beside or before them."""
+        background = TextContent(
+            '<tool_result tool_name="lookup" tool_call_id="t1">\nresult\n</tool_result>',
+            metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 't1'},
+        )
+        first_parts: list[ModelRequestPart] = [UserPromptPart(content=[background])]
+        if mixed:
+            first_parts.append(UserPromptPart(content='the real ask'))
+        history: list[ModelMessage] = [ModelRequest(parts=first_parts), _assistant('a')]
+        if not mixed:
+            history += [_user('the real ask'), _assistant('b')]
+        history += [_user('c'), _assistant('d'), _user('e')]
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn),
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=False,
+            bridge_prefix=False,
+        )
+        rc = _make_request_context(history)
+        compacted = (await comp.before_model_request(_make_ctx(rc.messages), rc)).messages
+
+        user_contents = [
+            part.content
+            for message in compacted
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
+        assert [background] not in user_contents
+        assert user_contents[0] == 'the real ask'
 
     async def test_any_harness_origin_is_labeled_and_its_tags_escaped(self) -> None:
         """Every `pydantic-ai-harness.` origin is data; other origins, and a tag after what the user typed, aren't."""
