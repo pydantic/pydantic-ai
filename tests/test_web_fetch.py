@@ -995,7 +995,7 @@ class TestMarkdownConverter:
                 _convert_html(html)
 
     def test_whitespace_closed_comment_does_not_hide_markup(self):
-        """A comment closed by `-- >` cannot hide markup from the budget."""
+        """Markup after a comment ending in `-- >` is either counted toward the budget or not rendered."""
         html = '<!--comment-- >' + '<li>x</li>' * 21
         # Python versions disagree on whether '-- >' closes the comment. The page must
         # either be rejected for complexity or produce no visible content.
