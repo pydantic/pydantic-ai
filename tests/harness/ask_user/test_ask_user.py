@@ -508,6 +508,20 @@ class TestSchema:
                 options=(QuestionOption(label='Delete all'), QuestionOption(label=f'Delete{space}all')),
             )
 
+    # Only NFKC makes these equal: casefolding and the space mapping leave them distinct.
+    @pytest.mark.parametrize(
+        ('label', 'lookalike'),
+        [('A', '\uff21'), ('a', '\uff41')],
+        ids=['full-width-upper', 'full-width-lower'],
+    )
+    def test_labels_that_only_differ_in_compatibility_form_are_duplicates(self, label: str, lookalike: str) -> None:
+        with pytest.raises(ValidationError, match='option labels must be unique'):
+            Question(
+                header='Cleanup',
+                question='What now?',
+                options=(QuestionOption(label=label), QuestionOption(label=lookalike)),
+            )
+
     def test_whitespace_is_stripped(self) -> None:
         option = QuestionOption(label='  Keep  ')
         assert option.label == 'Keep' and option.description is None
