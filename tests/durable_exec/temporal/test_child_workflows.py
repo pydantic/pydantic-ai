@@ -8,26 +8,31 @@ from typing import Protocol
 
 import anyio
 import pytest
-from temporalio import activity, workflow
-from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
-from temporalio.contrib.pydantic import pydantic_data_converter
-from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError, TerminatedError
-from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
-from temporalio.workflow import (
-    ChildWorkflowCancellationType,
-    ChildWorkflowConfig,
-    _Definition as WorkflowDefinition,
-)
 
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
-from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
-from ._shared import TASK_QUEUE
+try:
+    from temporalio import activity, workflow
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
+    from temporalio.contrib.pydantic import pydantic_data_converter
+    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError, TerminatedError
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.workflow import (
+        ChildWorkflowCancellationType,
+        ChildWorkflowConfig,
+        _Definition as WorkflowDefinition,
+    )
+
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
+
+    from ._shared import TASK_QUEUE
+except ImportError:  # pragma: lax no cover
+    pytest.skip('temporal not installed', allow_module_level=True)
 
 pytestmark = pytest.mark.anyio
 
