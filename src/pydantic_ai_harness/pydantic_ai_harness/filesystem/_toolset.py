@@ -49,6 +49,7 @@ from pydantic_ai_harness.filesystem._events import (
     SearchKind,
 )
 from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
+from pydantic_ai_harness.filesystem._tool_kinds import FILE_SYSTEM_TOOL_KINDS
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -624,7 +625,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if name in self._tools:
                 # Approval must run in the workflow before the durable workspace write activity.
                 metadata = {'temporal': False} if name in {'write_file', 'edit_file', 'create_directory'} else None
-                self.add_function(registrations[name], name=name, metadata=metadata)
+                self.add_function(
+                    registrations[name], name=name, metadata=metadata, tool_kind=FILE_SYSTEM_TOOL_KINDS[name]
+                )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer only the tools the run's workspace can serve.
