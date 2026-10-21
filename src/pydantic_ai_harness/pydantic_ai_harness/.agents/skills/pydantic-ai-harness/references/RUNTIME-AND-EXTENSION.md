@@ -267,8 +267,12 @@ Gotchas:
   set both `StepSemantics.AT_MOST_ONCE_PER_RETRY` and `retry_strategy=RetryPresets.none()`. Step
   retries stack with Pydantic AI and provider-client retries, so disable one side.
 - Tool calls run sequentially inside a durable handler. Nested durable runs are rejected.
-- Changing the tools, MCP servers, model, or `event_stream_handler` breaks in-flight executions. Deploy
-  a new published version.
+- Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
+  replay matches checkpoints by position, so concurrent runs can be served each other's results.
+- Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
+  `event_stream_handler`) breaks in-flight executions, and the mismatch is not detected. Deploy a new
+  published version.
+- Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
 - Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 

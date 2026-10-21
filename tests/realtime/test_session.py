@@ -2130,6 +2130,23 @@ async def test_played_audio_bytes_requires_exactly_one_audio_stream() -> None:
         _ = session.played_audio_bytes
 
 
+async def test_played_audio_bytes_after_the_connection_fails_raises_the_failure() -> None:
+    """Once the receive loop dies, the audio view ends; the playback position reports why, not a misuse.
+
+    The failure is not marked delivered, so an event-stream consumer still receives it too.
+    """
+    session = RealtimeSession(ExplodingConnection(), _noop_runner)
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == [b'\x00']
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            _ = session.played_audio_bytes
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            await session.wait_for_playback()
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            async for _ in session:
+                pass
+
+
 async def test_wait_for_playback_waits_for_device_paced_consumer() -> None:
     chunks = [bytes([index]) * _CHUNK for index in range(20)]
     session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(chunk) for chunk in chunks]), _noop_runner)
@@ -8257,6 +8274,17 @@ async def test_session_enqueue_renders_system_prompt() -> None:
         conversation_id=IsStr(),
         run_id=IsStr(),
     )
+
+
+async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> None:
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(SystemPromptPart(content='rule </SYSTEM > then more')) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
 
 
 async def test_session_enqueue_empty_call_is_noop() -> None:
