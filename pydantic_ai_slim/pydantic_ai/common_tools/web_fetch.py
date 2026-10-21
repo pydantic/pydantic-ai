@@ -6,14 +6,11 @@ HTTP requests and the `markdownify` library for HTML-to-markdown conversion.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import sys
 from collections.abc import Callable
-from contextlib import ExitStack
 from dataclasses import KW_ONLY, dataclass, field
-from html import parser as html_parser
 from html.parser import HTMLParser
 
 import anyio
@@ -22,11 +19,7 @@ from anyio.lowlevel import RunVar
 from typing_extensions import Any, TypedDict
 
 from pydantic_ai._ssrf import safe_download
-from pydantic_ai._utils import (
-    _thread_executor,  # pyright: ignore[reportPrivateUsage]
-    is_text_like_media_type,
-    run_in_executor,
-)
+from pydantic_ai._utils import is_text_like_media_type, run_in_executor
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
@@ -44,11 +37,6 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
-# Match HTMLParser's start-tag grammar on supported CPython versions so quoted
-# attributes and comments cannot hide or falsely spend the malformed-tag budget.
-# These parser internals are exercised on each supported Python in CI.
-_HTML_ATTR_RE: re.Pattern[str] = getattr(html_parser, 'attrfind_tolerant')
-_HTML_TAG_RE: re.Pattern[str] = getattr(html_parser, 'tagfind_tolerant')
 _WHITESPACE_RUN_RE = re.compile(r'[\t \r\n]+')
 _LINE_WITH_CONTENT_RE = re.compile(r'^(.*)', flags=re.MULTILINE)
 # `markdownify`'s stub doesn't declare its per-tag `convert_<tag>` methods, which it looks up by name.
@@ -66,13 +54,10 @@ _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 # This rejects 15 nested `<dd>` tags with 300k short lines before 600 KB of HTML expands
 # to ~19 MB of Markdown (0.7 s in a local conversion benchmark).
 _MAX_HTML_CONVERSION_COST = 20_000_000
-# Bound parser work separately from conversion. Large reference pages can exceed 40k
-# parser events (tags, attributes, entities), so leave headroom for ordinary pages.
-_MAX_HTML_MARKUP_OPENERS = 100_000
-# `html.parser` repeatedly scans an unfinished tag when a body contains many `<tag` fragments.
-_MAX_HTML_UNFINISHED_OPENERS = 16
-_MAX_HTML_UNFINISHED_TAG_CHARS = 64 * 1024
-_MAX_HTML_TAG_ATTRIBUTES = 2_000
+# Bound parsing and conversion work by parser events (tags, attributes, entities, comments)
+# before building the tree. A 2.9 MB Wikipedia article has ~100k events and converts in ~3 s;
+# 500k events of `<p>x</p>` take ~20 s.
+_MAX_HTML_MARKUP_EVENTS = 500_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
@@ -165,7 +150,7 @@ class WebFetchLocalTool:
         media_type = response.headers.get('content-type', '')
         media_type = media_type.split(';')[0].strip().lower()
 
-        title, content = '', ''
+        title = ''
 
         if not media_type or is_text_like_media_type(media_type):
             # The server picks the charset, and decoding costs time proportional to the body, or
@@ -187,27 +172,8 @@ class WebFetchLocalTool:
                     limiter = anyio.Semaphore(_MAX_CONCURRENT_HTML_CONVERSIONS)
                     _HTML_CONVERSION_LIMITER.set(limiter)
                 try:
-                    try:
-                        asyncio.get_running_loop()
-                    except RuntimeError:
-                        # Trio's thread offload shields cancellation until the worker completes.
-                        async with limiter:
-                            title, content = await run_in_executor(_convert_html, text)
-                    else:
-                        # A custom asyncio executor can keep running after its await is cancelled.
-                        # Keep the slot until the independent conversion task actually completes.
-                        await limiter.acquire()
-                        with ExitStack() as rollback:
-                            rollback.callback(limiter.release)
-                            conversion_call = run_in_executor(_convert_html, text)
-                            rollback.callback(conversion_call.close)
-                            conversion = asyncio.create_task(conversion_call)
-                            rollback.pop_all()
-                        conversion.add_done_callback(lambda task: limiter.release())
-                        conversion.add_done_callback(lambda task: None if task.cancelled() else task.exception())
-                        with anyio.CancelScope(shield=_thread_executor.get() is None):
-                            await asyncio.wait((conversion,))
-                            title, content = conversion.result()
+                    async with limiter:
+                        title, content = await run_in_executor(_convert_html, text)
                 except RecursionError as e:
                     # `markdownify` walks the document recursively, so a page nested deeper than the
                     # interpreter's recursion limit can't be converted; let the model try elsewhere.
@@ -246,47 +212,14 @@ def _decode_text(response: httpx.Response) -> str:
 
 
 class _HTMLMarkupBudget(HTMLParser):
-    def __init__(self, html_length: int) -> None:
+    def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
         self.count = 0
-        self.tag_scan_cost = 0
-        self.tag_scan_limit = 2 * html_length
 
     def _count(self, amount: int = 1) -> None:
         self.count += amount
-        if self.count > _MAX_HTML_MARKUP_OPENERS:
+        if self.count > _MAX_HTML_MARKUP_EVENTS:
             raise ModelRetry('the document is too complex')
-
-    def check_for_whole_start_tag(self, i: int) -> int:
-        closing_bracket = self.rawdata.find('>', i)
-        if closing_bracket == -1:
-            if (
-                len(self.rawdata) - i > _MAX_HTML_UNFINISHED_TAG_CHARS
-                or self.rawdata.count('<', i) >= _MAX_HTML_UNFINISHED_OPENERS
-            ):
-                raise ModelRetry('the document is too complex')
-        # Count with HTMLParser.parse_starttag's attribute grammar before its whole-tag
-        # regex runs, which can use large temporary memory on older Python versions.
-        tag_match = _HTML_TAG_RE.match(self.rawdata, i + 1)
-        assert tag_match is not None
-        position = tag_match.end()
-        attributes = 0
-        while True:
-            attr_match = _HTML_ATTR_RE.match(self.rawdata, position)
-            if attr_match is None:
-                break
-            attributes += 1
-            if attributes > _MAX_HTML_TAG_ATTRIBUTES:
-                raise ModelRetry('the document is too complex')
-            position = attr_match.end()
-        end = super().check_for_whole_start_tag(i)
-        # Older parsers can retry a bogus tag after scanning to a distant '>'. A quoted
-        # '>' can make our find short while the parser scans the rest of the input.
-        scan_end = len(self.rawdata) if end == -1 else max(closing_bracket + 1, end)
-        self.tag_scan_cost += scan_end - i
-        if self.tag_scan_cost > self.tag_scan_limit:
-            raise ModelRetry('the document is too complex')
-        return end
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._count(1 + len(attrs))
@@ -318,7 +251,7 @@ class _HTMLMarkupBudget(HTMLParser):
 
 def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
-    budget = _HTMLMarkupBudget(len(html))
+    budget = _HTMLMarkupBudget()
     budget.feed(html)
     budget.close()
     soup = BeautifulSoup(html, 'html.parser')
