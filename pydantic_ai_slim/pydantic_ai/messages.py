@@ -2795,7 +2795,24 @@ class CapabilityInstructionSource:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-InstructionSource: TypeAlias = AgentInstructionSource | ToolsetInstructionSource | CapabilityInstructionSource
+@dataclass(frozen=True, repr=False)
+class RunInstructionSource:
+    """Instructions passed to a run method's `instructions` argument.
+
+    Only a named [`InstructionPart`][pydantic_ai.messages.InstructionPart] is addressed by it, as
+    `'run:<name>'`: a run's instructions belong to whoever starts the run, and the name is what says
+    a value passed to a later run of the same conversation is the same block.
+    """
+
+    def __str__(self) -> str:
+        return 'run'
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+InstructionSource: TypeAlias = (
+    AgentInstructionSource | ToolsetInstructionSource | CapabilityInstructionSource | RunInstructionSource
+)
 """The source that authored an instruction part."""
 
 
@@ -2804,7 +2821,7 @@ class InstructionId:
     """The key an instruction part is addressed by: who contributed it, and which of their parts it is."""
 
     source: InstructionSource
-    """Who contributed the part: the agent, a toolset with an `id`, or a capability with an `id`."""
+    """Who contributed the part: the agent, a toolset with an `id`, a capability with an `id`, or a run."""
 
     _: KW_ONLY
 
@@ -2829,6 +2846,8 @@ def _deserialize_instruction_id(value: str | InstructionId | None) -> Instructio
         return InstructionId(AgentInstructionSource())
     if value.startswith('agent:'):
         return InstructionId(AgentInstructionSource(), name=value.removeprefix('agent:'))
+    if value.startswith('run:'):
+        return InstructionId(RunInstructionSource(), name=value.removeprefix('run:'))
     for namespace, source_type in (
         ('toolset', ToolsetInstructionSource),
         ('capability', CapabilityInstructionSource),
@@ -2916,6 +2935,7 @@ class InstructionPart:
     - [`AgentInstructionSource`][pydantic_ai.messages.AgentInstructionSource] — the agent's literal instructions
     - [`ToolsetInstructionSource`][pydantic_ai.messages.ToolsetInstructionSource] — a toolset with an `id`
     - [`CapabilityInstructionSource`][pydantic_ai.messages.CapabilityInstructionSource] — a capability with an `id`
+    - [`RunInstructionSource`][pydantic_ai.messages.RunInstructionSource] — a named part passed to a run method's `instructions`
 
     An id renders and serializes as its segments joined by `:` — `'agent'`, `'toolset:weather'`, or
     `'capability:budget:remaining'`.
@@ -4931,6 +4951,7 @@ def sanitize_messages(
     messages: Sequence[ModelMessage],
     *,
     strip_system_prompts: bool = True,
+    strip_instructions: bool = True,
     strip_compaction_parts: bool = False,
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
@@ -4957,6 +4978,11 @@ def sanitize_messages(
       the part, so it can't earn the system voice, whatever it says. A
       tool-less legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is translated into
       the feedback part it always meant and takes the same rule.
+    - [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions], resetting it to
+      `None` (disable with `strip_instructions=False`). An agent run sends the agent's own
+      instructions instead, but a direct [`Model.request`][pydantic_ai.models.Model.request] call
+      without `instruction_parts` falls back to the instructions recorded in history. Every request an
+      agent run records carries them, so this doesn't warn.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
       cause the model provider to fetch the object using the server-side IAM role, so they should
@@ -5002,6 +5028,8 @@ def sanitize_messages(
             [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s, and demote
             `'no_output'` [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s to fenced
             user text. Other retry feedback is kept either way.
+        strip_instructions: Whether to reset
+            [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] to `None`.
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -5050,7 +5078,10 @@ def sanitize_messages(
             )
             stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
             if new_request_parts:
-                sanitized.append(replace(message, parts=new_request_parts))
+                # Reset silently: every request an agent run records carries the agent's own instructions, so
+                # a warning would fire on every turn of a normal round trip, and agent runs never send them.
+                instructions = None if strip_instructions else message.instructions
+                sanitized.append(replace(message, parts=new_request_parts, instructions=instructions))
             # Otherwise drop the request entirely so we don't leave an empty
             # `ModelRequest(parts=[])` in history.
         elif isinstance(message, ModelResponse):

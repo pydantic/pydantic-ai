@@ -309,7 +309,7 @@ TieredCompaction(
 
 ## `ClearToolResults`: the cheap first tier
 
-Tool outputs typically dominate an agent's context, and the agent can usually re-run a tool if it needs the data again. `ClearToolResults` replaces the content of the oldest tool *results* with a short placeholder while keeping the most recent `keep_pairs` tool-call / tool-return pairs intact. The tool calls stay paired with their now-blanked results, so the history stays valid.
+Tool outputs typically dominate an agent's context, and the agent can usually re-run a tool if it needs the data again. `ClearToolResults` replaces the content of the oldest tool *results* with a short placeholder while keeping the most recent `keep_pairs` tool-call / tool-return pairs intact. The tool calls stay paired with their now-blanked results, so the history stays valid. A retried return, which asks the model to make the call again, isn't a result: it is never cleared and doesn't count toward `keep_pairs`, and `DeduplicateFileReads` doesn't let a retried read supersede an earlier one.
 
 Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are left intact (a small token floor), because their structured content is re-parsed on later requests and rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. [`FileSystem`](filesystem.md)'s typed `read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless their `metadata` is something other than `None` or a `dict`: a cleared result is marked in its `metadata`, so one whose metadata can't hold the mark is left uncleared.
 
