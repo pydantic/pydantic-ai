@@ -2666,9 +2666,9 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
 
 
 _CONVERSATION_SUMMARY_FRAMING_TAG_OPENER = re.compile(
-    r'<(?=\s*(?:/\s*conversation_summary|(?:/\s*)?system)(?:[\s/>]|$))', re.IGNORECASE
+    r'<(?=\s*(?:/\s*)?(?:conversation_summary|system)(?:[\s/>]|$))', re.IGNORECASE
 )
-"""The `<` of a closing `conversation_summary` tag, or of an opening or closing `system` tag.
+"""The `<` of an opening or closing `conversation_summary` or `system` tag.
 
 Any case, whitespace around the `/`, attributes and a tag cut off by the end of the text all match,
 as `_framing` matches closing tags; a longer tag name that merely starts with one of these doesn't.
@@ -2690,8 +2690,8 @@ def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFuncti
     has a native block for it and every adapter would otherwise leave it out. A separate model wrote
     it, not the assistant continuing the conversation and not the operator, so it goes out in the user
     channel inside `<conversation_summary>`, opening with a line that says where it came from, as
-    Claude Code, Codex and OpenCode send theirs. The summary can't close its frame or open a `<system>`
-    tag. Parts without content have nothing to send and are left for the adapter to omit, and a part a
+    Claude Code, Codex and OpenCode send theirs. The summary can't open or close a frame of its own or
+    a `<system>` tag. Parts without content have nothing to send and are left for the adapter to omit, and a part a
     provider produced stays in that provider's own role.
 
     The part is stored on the response side, so it is moved out into a request of its own and merged

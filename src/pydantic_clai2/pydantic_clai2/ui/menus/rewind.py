@@ -49,6 +49,7 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
                 for part in message.parts
                 if isinstance(part, SystemPromptPart)
             ),
+            # Any compaction part (provider-native, app-written or the harness's) rewrote what came before it.
             *(
                 message.timestamp
                 for message in messages
