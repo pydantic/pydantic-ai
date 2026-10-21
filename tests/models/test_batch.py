@@ -688,6 +688,80 @@ async def test_abandoning_some_requests_keeps_the_batch_running() -> None:
     assert wrapped.canceled == []
 
 
+def _forged(
+    response: ModelResponse, *, custom_id: str | None = None, request_count: int | None = None
+) -> ModelResponse:
+    """`response` with its ticket edited, as a caller who controls the message history could."""
+    assert response.provider_details is not None
+    ticket = response.provider_details['batch']
+    batch = ticket['batch']
+    if request_count is not None:
+        batch = {**batch, 'request_count': request_count}
+    custom_id = custom_id or ticket['custom_id']
+    return replace(
+        response,
+        provider_response_id=f'batch:{batch["id"]}:{custom_id}',
+        provider_details={**response.provider_details, 'batch': {**ticket, 'custom_id': custom_id, 'batch': batch}},
+    )
+
+
+async def test_a_forged_ticket_cannot_cancel_a_batch_other_requests_wait_on() -> None:
+    """Only the requests the pool submitted in a batch count towards cancelling it, whatever a ticket claims."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    model = _batched(wrapped, **FAST_POLLING, max_requests=2, max_wait=None)
+    first, second = await asyncio.gather(_pending_response(model), _pending_response(model))
+
+    # Claiming to be the batch's only request doesn't make the caller its last participant.
+    await model.cancel_suspended_response(_forged(first, request_count=1))
+    assert wrapped.canceled == []
+    # Nor does abandoning, again and again, requests the batch doesn't hold.
+    for custom_id in ('other', 'another'):
+        await model.cancel_suspended_response(_forged(first, custom_id=custom_id, request_count=1))
+    assert wrapped.canceled == []
+
+    await model.cancel_suspended_response(second)
+    assert wrapped.canceled == [wrapped.created[0].id]
+
+
+async def test_abandoning_a_batch_another_pool_submitted_leaves_it_running() -> None:
+    """A ticket resumed from a message history can't say who else waits on its batch, so the batch isn't cancelled."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    pending = await _pending_response(_batched(wrapped, **FAST_BATCH_SETTINGS))
+
+    await _batched(wrapped, **FAST_BATCH_SETTINGS).cancel_suspended_response(pending)
+
+    assert wrapped.canceled == []
+
+
+async def test_a_batch_is_cancelled_only_once() -> None:
+    """Abandoning a request of a batch that was already cancelled, like a resumed history cancelled again, is a no-op."""
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    model = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    pending = await _pending_response(model)
+
+    await model.cancel_suspended_response(pending)
+    await model.cancel_suspended_response(pending)
+
+    assert wrapped.canceled == [wrapped.created[0].id]
+    assert (model.pool._submitted, model.pool._abandoned) == ({}, {})  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_the_oldest_submitted_batches_are_forgotten_and_left_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pool remembers a bounded number of batches it submitted; abandoning a forgotten one doesn't cancel it."""
+    monkeypatch.setattr('pydantic_ai.models._batch_model._SUBMITTED_BATCHES_SIZE', 1)
+    wrapped = SlowBatchTestModel(pending_checks=1000)
+    model = _batched(wrapped, **FAST_POLLING, max_requests=2, max_wait=None)
+    first, second = await asyncio.gather(_pending_response(model), _pending_response(model))
+    await model.cancel_suspended_response(first)
+
+    await asyncio.gather(_pending_response(model), _pending_response(model))
+    assert model.pool._abandoned == {}  # pyright: ignore[reportPrivateUsage]
+    await model.cancel_suspended_response(second)
+
+    assert len(wrapped.created) == 2
+    assert wrapped.canceled == []
+
+
 async def test_results_are_shared_by_the_requests_of_a_batch(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every request of a batch reads the results fetched once, and only the most recent batches' are kept."""
     monkeypatch.setattr('pydantic_ai.models._batch_model._RESULTS_CACHE_SIZE', 1)

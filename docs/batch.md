@@ -117,7 +117,7 @@ async def collect(stored_messages: bytes) -> City | bytes:
 
 A run that needs several model requests, for example to call tools, ends with a `PendingModelResponse` for each of them. This works for any request the provider keeps working on after it's been sent, including [OpenAI background mode](models/openai.md#background-mode).
 
-Without `PendingModelResponse` in the output type, a run waits for its batch, and you only get its message history once it ends. If your process may stop while a batch is processed, end runs with a `PendingModelResponse` or use [durable execution](#durable-execution). Cancelling a run that's waiting abandons its request: Pydantic AI cancels the provider batch once every request in it has been abandoned in the same process, and requests the provider already completed may still be billed.
+Without `PendingModelResponse` in the output type, a run waits for its batch, and you only get its message history once it ends. If your process may stop while a batch is processed, end runs with a `PendingModelResponse` or use [durable execution](#durable-execution). Cancelling a run that's waiting abandons its request: Pydantic AI cancels the provider batch once every request it submitted in that batch has been abandoned, and requests the provider already completed may still be billed. A batch submitted by another process, or by another `BatchModelRequests` instance, is left running, since a message history can't be trusted to say which other requests share the batch.
 
 ### Tracing
 

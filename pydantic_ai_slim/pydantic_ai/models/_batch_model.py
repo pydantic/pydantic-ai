@@ -47,6 +47,7 @@ from .wrapper import WrapperModel
 
 _TICKET_KEY = 'batch'
 _RESULTS_CACHE_SIZE = 32
+_SUBMITTED_BATCHES_SIZE = 1024
 # Used directly rather than through the global propagator, which can be configured to propagate more, or to warn.
 _TRACE_CONTEXT = TraceContextTextMapPropagator()
 _EXITED_MESSAGE = '`BatchModelRequests` exited while the request was waiting for its batch.'
@@ -205,6 +206,10 @@ class BatchPool:
             tuple[asyncio.AbstractEventLoop, _BatchKey], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
         ] = {}
         self._results: OrderedDict[_BatchKey, dict[str, BatchResult]] = OrderedDict()
+        # The IDs of the requests in each batch this pool submitted that hasn't ended or been cancelled, as only these
+        # batches are cancelled once they're abandoned: a ticket in a message history can't be trusted to say which
+        # other requests share its batch. The oldest are forgotten first, which leaves their batches running.
+        self._submitted: OrderedDict[_BatchKey, frozenset[str]] = OrderedDict()
         self._abandoned: dict[_BatchKey, set[str]] = {}
         # The batches each request span is already linked to, so a span waiting on several checks links to one once.
         self._linked: weakref.WeakKeyDictionary[Span, set[_BatchKey]] = weakref.WeakKeyDictionary()
@@ -330,6 +335,9 @@ class BatchPool:
             for queued in requests:
                 queued.future.set_exception(error)
         else:
+            self._submitted[_batch_key(batch)] = frozenset(queued.request.custom_id for queued in requests)
+            while len(self._submitted) > _SUBMITTED_BATCHES_SIZE:
+                self._abandoned.pop(self._submitted.popitem(last=False)[0], None)
             for queued in requests:
                 queued.future.set_result((batch, trace_context))
             for queued in requests:
@@ -354,17 +362,20 @@ class BatchPool:
             await model.batch_cancel(batch)
 
     def abandon(self, batch: Batch, custom_id: str) -> bool:
-        """Record that a request no longer waits on its batch, and return whether none still does."""
-        if _batch_key(batch) in self._results:
-            # The batch has ended, so there's nothing left to cancel.
+        """Record that a request no longer waits on its batch, and return whether to cancel the batch.
+
+        A provider cancels whole batches, so a batch is only cancelled once every request this pool submitted in it
+        has been abandoned. A batch this pool didn't submit, like one recorded in a message history from another
+        process, is left running, as is one that has ended. Returns `True` at most once per batch.
+        """
+        key = _batch_key(batch)
+        if (submitted := self._submitted.get(key)) is None or custom_id not in submitted:
             return False
-        abandoned = self._abandoned.setdefault(_batch_key(batch), set())
+        abandoned = self._abandoned.setdefault(key, set())
         abandoned.add(custom_id)
-        # A provider cancels whole batches, so only cancel once no request in it is still waiting. This process only
-        # knows about the requests abandoned here; any others keep the batch running.
-        if len(abandoned) < batch.request_count:
+        if abandoned < submitted:
             return False
-        del self._abandoned[_batch_key(batch)]
+        del self._submitted[key], self._abandoned[key]
         return True
 
     async def poll(
@@ -416,6 +427,7 @@ class BatchPool:
             results = {result.custom_id: result for result in await model.batch_results(batch)}
         self._results[_batch_key(batch)] = results
         # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
+        self._submitted.pop(_batch_key(batch), None)
         self._abandoned.pop(_batch_key(batch), None)
         while len(self._results) > _RESULTS_CACHE_SIZE:
             self._results.popitem(last=False)
