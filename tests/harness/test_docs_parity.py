@@ -158,6 +158,7 @@ _CAPABILITY_PAGE_META = {
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
+    'docker-sandbox.md': ('docker_sandbox', 'Docker Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
