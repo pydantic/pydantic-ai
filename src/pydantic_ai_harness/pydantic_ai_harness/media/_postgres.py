@@ -16,13 +16,13 @@ from typing import Protocol, runtime_checkable
 import anyio
 
 from pydantic_ai_harness.media._store import (
-    EMPTY_CONTEXT,
+    _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
     PublicUrlResolver,
-    coerce_metadata_mapping,
+    _coerce_metadata_mapping,  # pyright: ignore[reportPrivateUsage]
+    _resolve_public_url,  # pyright: ignore[reportPrivateUsage]
     media_uri_for,
     parse_media_uri,
-    resolve_public_url,
 )
 
 # Postgres truncates identifiers past 63 bytes, which would let two distinct
@@ -130,7 +130,7 @@ class PostgresMediaStore:
                 )
             self._schema_ready = True
 
-    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str:
+    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
         uri = media_uri_for(data)
         digest = parse_media_uri(uri)
         await self._ensure_schema()
@@ -146,7 +146,7 @@ class PostgresMediaStore:
             )
         return uri
 
-    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
+    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
         digest = parse_media_uri(uri)
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
@@ -158,17 +158,17 @@ class PostgresMediaStore:
             raise ValueError(f'media row for {digest} has wrong types')
         return data
 
-    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool:
+    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
         digest = parse_media_uri(uri)
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
             row = await connection.fetchrow(f'SELECT 1 FROM {self._table} WHERE sha256 = $1', digest)
         return row is not None
 
-    async def public_url(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> str | None:
-        return await resolve_public_url(self._public_url_resolver, uri, context)
+    async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
+        return await _resolve_public_url(self._public_url_resolver, uri, context)
 
-    async def get_metadata(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> Mapping[str, str]:
+    async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
@@ -178,4 +178,4 @@ class PostgresMediaStore:
         value = row[0]
         if not isinstance(value, str):
             raise ValueError(f'media row for {digest} has wrong types')
-        return coerce_metadata_mapping(json.loads(value))
+        return _coerce_metadata_mapping(json.loads(value))
