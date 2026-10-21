@@ -1573,15 +1573,23 @@ class TestDynamicAgentLimits:
 class FailingTransport(InMemoryTransport):
     """An in-memory transport that can't send the messages of `kinds`, of any task or only of `task_id`."""
 
-    def __init__(self, *kinds: str, task_id: str | None = None) -> None:
+    def __init__(self, *kinds: str, task_id: str | None = None, release_fails: bool = False) -> None:
         super().__init__()
         self.kinds = set(kinds)
         self.task_id = task_id
+        self.release_fails = release_fails
+        self.released: list[str] = []
 
     async def send(self, message: SubAgentMessage) -> None:
         if message.kind in self.kinds and self.task_id in (None, message.task_id):
             raise ConnectionError(f'cannot send {message.kind}')
         await super().send(message)
+
+    async def release(self, mailbox: str) -> None:
+        if self.release_fails:
+            raise ConnectionError(f'cannot release {mailbox}')
+        self.released.append(mailbox)
+        await super().release(mailbox)
 
 
 class SandboxWorkspace(WorkspaceBackend):
@@ -1755,4 +1763,38 @@ class TestTaskControlBoundaries:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert result.output.endswith('(failed):\nConnectionError: cannot send sub_agents.task_assigned')
-        assert 'Could not clean up remote sub-agent task' in caplog.text
+        assert 'Could not stop remote sub-agent task' in caplog.text
+        # The mailbox is released even though the worker could not be told to stop.
+        [mailbox] = transport.released
+        assert mailbox.startswith('task:') and mailbox.endswith(':parent')
+
+        failing_release = FailingTransport('sub_agents.task_assigned', release_fails=True)
+        parent, _ = remote_parent(
+            failing_release, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(failed):\nConnectionError: cannot send sub_agents.task_assigned')
+        assert 'Could not release the mailbox of remote sub-agent task' in caplog.text
+
+    async def test_a_plain_run_under_another_owner_in_a_task_is_not_a_task(self) -> None:
+        inner = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Inner.'), echo_last_return),
+            capabilities=[SubAgents(agents=[researcher()])],
+        )
+
+        async def nested() -> str:
+            """Run the inner agent under an owner of its own."""
+            other = DelegationTasks()
+            async with other.opened():
+                with other.bind():
+                    return (await inner.run('Inner go.')).output
+
+        middle = Agent(scripted(call('nested'), echo_last_return), name='middle', tools=[nested])
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='middle', task='Go.'), echo_last_return),
+            capabilities=[controlled(SubAgent(middle))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(ok):\nchild output')

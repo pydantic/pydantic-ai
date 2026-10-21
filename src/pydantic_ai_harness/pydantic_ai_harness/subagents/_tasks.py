@@ -166,7 +166,7 @@ class DelegationTasks:
         self._queued_questions: dict[str, str] = {}
         self._asked = asyncio.Event()
         self._stops: set[str] = set()
-        self._emitters: dict[tuple[str, str | None], Emitter] = {}
+        self._emitters: dict[tuple[str, str | None], list[Emitter]] = {}
         self._starting: dict[str, int] = {}
         self._open = False
 
@@ -185,11 +185,15 @@ class DelegationTasks:
         """Route this run's delegations to the owner without taking ownership of the run."""
         if not self._open:
             raise RuntimeError('Open the delegation task owner before binding it')
+        # A child of another owner, whose tool binds this one, is none of this owner's children.
+        child = _CHILD.set(None) if _CURRENT.get() is not self else None
         token = _CURRENT.set(self)
         try:
             yield
         finally:
             _CURRENT.reset(token)
+            if child is not None:
+                _CHILD.reset(child)
 
     @asynccontextmanager
     async def opened(self) -> AsyncGenerator[DelegationTasks]:
@@ -605,16 +609,15 @@ class DelegationTasks:
     def publishing(self, *, conversation_id: str, parent_id: str | None, emit: Emitter) -> Generator[None]:
         """Send the task events of a run's children into that run's event stream, while it lasts."""
         key = (conversation_id, parent_id)
-        previous = self._emitters.get(key)
-        self._emitters[key] = emit
+        # Several runs, or capabilities of one run, can publish for the same parent; the latest gets the events.
+        emitters = self._emitters.setdefault(key, [])
+        emitters.append(emit)
         try:
             yield
         finally:
-            if previous is None:
+            emitters.remove(emit)
+            if not emitters:
                 del self._emitters[key]
-            else:
-                # Another capability of the same run registered first, and still publishes.
-                self._emitters[key] = previous
 
     def delegation_of(self, run_id: str | None) -> DelegationTask | None:
         """The child that the run `run_id` runs, or `None` for a run that isn't one of this owner's delegations.
@@ -634,9 +637,9 @@ class DelegationTasks:
 
         Returns the event once the parent run's listeners have seen it, so a caller can read their decisions.
         """
-        emit = self._emitters.get((record.conversation_id, record.parent_id))
-        if emit is not None:
-            await emit(event)
+        emitters = self._emitters.get((record.conversation_id, record.parent_id))
+        if emitters is not None:
+            await emitters[-1](event)
         if observe:
             await self.notify(record, event)
         return event

@@ -285,16 +285,19 @@ async def run_remote(
             return error
         return await _settle_remote(owner, record, settled, usage)
     finally:
+        # What ended the task matters more to the delegating run than a failed cleanup, so cleanup errors are logged.
         with anyio.CancelScope(shield=True):
-            try:
-                if settled is None:
-                    # The task is ending without its worker's report, so stop it rather than leave it running there.
-                    # This is teardown, not a decision listeners could veto.
+            if settled is None:
+                # The task is ending without its worker's report, so stop it rather than leave it running there.
+                # This is teardown, not a decision listeners could veto.
+                try:
                     await transport.send(TaskForceCancelEvent(task_id=record.id, agent_name=record.agent_name))
+                except Exception:
+                    _logger.exception('Could not stop remote sub-agent task %s on its worker.', record.id)
+            try:
                 await transport.release(mailbox)
             except Exception:
-                # What ended the task matters more to the delegating run than a failed cleanup.
-                _logger.exception('Could not clean up remote sub-agent task %s.', record.id)
+                _logger.exception('Could not release the mailbox of remote sub-agent task %s.', record.id)
 
 
 async def _relay(
