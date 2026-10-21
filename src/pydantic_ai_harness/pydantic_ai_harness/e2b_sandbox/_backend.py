@@ -511,7 +511,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
         # reports that as `FileNotFoundError`. envd's stat follows links, so a dangling
         # symlink reads as missing; it is still removed itself.
-        if not exists and (await self._probe(['test', '-L', path], f'Could not remove {path!r}')).exit_code != 0:
+        if not exists and (await self._probe(['test', '-L', path], context)).exit_code != 0:
             raise _not_found(path)
         # The removal is recursive, so refuse the working directory and its ancestors, like the
         # built-in backends. The leaf stays unresolved: removing a link removes only the link.
