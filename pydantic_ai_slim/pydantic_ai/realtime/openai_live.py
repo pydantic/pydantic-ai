@@ -69,7 +69,8 @@ from ..messages import (
     PartStartEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     TextContent,
     TextPart,
@@ -79,8 +80,14 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
+from ..models import (
+    Model,
+    ModelRequestParameters,
+    infer_model,
+    parse_model_id,
+)
 from ..models._speech import assistant_speech_text
 from ..models.openai import (
     OpenAIResponsesModel,
@@ -110,7 +117,13 @@ from ._openai_protocol import (
     tool_choice_config,
 )
 from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
-from ._utils import DEFAULT_MAX_RECONNECTS, inject_trace_context, reconnect_with_backoff, resolve_advertised_tools
+from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
+    inject_trace_context,
+    reconnect_with_backoff,
+    resolve_advertised_tools,
+    seed_retry_feedback_text,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -471,17 +484,21 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     seeded history, and not a developer note: its content comes from whatever the tool read, which
     must not be replayed with more authority than it had as a tool result.
     """
+    # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one of
+    # them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and reads
+    # exactly like the retried return the framework emits for the same failure.
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        part = _translate_legacy_retry_part(part)
     if isinstance(part, UserPromptPart):
         return 'user', _prompt_text(part, provider_name=provider_name)
     if isinstance(part, SpeechPart):
         return 'user', part.transcript or ''
     if isinstance(part, ToolReturnPart):
+        # A retried call's content is wrapped in an `{"error": ...}` object, so without it the
+        # `ToolCallPart` before it would not read as a round that failed.
         return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
-    if isinstance(part, RetryPromptPart):
-        # Without this the `ToolCallPart` before it seeds as a call with no outcome, and the backend
-        # reads a round that failed as one that succeeded.
-        attempt = f'`{part.tool_name}` failed' if part.tool_name else 'The previous attempt failed'
-        return 'user', f'{attempt}: {part.model_response()}'
+    if isinstance(part, RetryFeedbackPart):
+        return 'user', seed_retry_feedback_text(part)
     return None
 
 

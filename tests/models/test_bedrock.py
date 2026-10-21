@@ -41,7 +41,8 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -86,7 +87,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import request_json, single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, legacy_retry_prompt_part, try_import
 from .conftest import stream_bedrock_converse_mock
 
 with try_import() as imports_successful:
@@ -1068,7 +1069,7 @@ The temperature in London on 1st January 2022 was 30°C.\
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -1081,7 +1082,7 @@ The temperature in London on 1st January 2022 was 30°C.\
 """,
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=5),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1266,11 +1267,13 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                     )
                 ],
                 instructions='You are a helpful chatbot.',
@@ -7427,7 +7430,7 @@ async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: Bedrock
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='ok_tool', content='done', tool_call_id='okcall1'),
-                RetryPromptPart(content='boom', tool_name='bad_tool', tool_call_id='badcall1'),
+                legacy_retry_prompt_part(content='boom', tool_name='bad_tool', tool_call_id='badcall1'),
             ]
         ),
     ]
@@ -7443,7 +7446,7 @@ async def test_bedrock_writer_omits_tool_result_status(bedrock_provider: Bedrock
             {'toolUseId': 'okcall1', 'content': [{'text': 'done'}]},
             {
                 'toolUseId': 'badcall1',
-                'content': [{'text': 'boom\n\nFix the errors and try again.'}],
+                'content': [{'text': '{"error":"boom"}'}],
             },
         ]
     )

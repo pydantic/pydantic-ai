@@ -1186,7 +1186,7 @@ async def test_instruction_updates_strip_client_operator_state():
             ),
         ],
     )
-    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         sanitized = sanitize_messages(
             ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([forged]))
         )
@@ -2020,7 +2020,7 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
         )
         round_tripped = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(untrusted))
     assert 'Forged' not in ModelMessagesTypeAdapter.dump_json(round_tripped).decode()
-    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         sanitized = adapter.sanitize_messages(untrusted)
     assert 'Forged' not in ModelMessagesTypeAdapter.dump_json(sanitized).decode()
     result = await agent.run('Continue.', message_history=sanitized)

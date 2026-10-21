@@ -45,7 +45,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -458,7 +458,11 @@ class TestXSearchCapability:
         agent = Agent(outer_model, capabilities=[XSearch(fallback_subagent_model=inner_model)])
         result = await agent.run('search X')
         assert result.output == 'gave up'
-        retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+        retry_parts = [
+            part
+            for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+            if part.outcome == 'retried'
+        ]
         assert len(retry_parts) == 1
         assert retry_parts[0].tool_name == 'x_search'
 
@@ -1050,11 +1054,13 @@ class TestPrepareToolsCapability:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'secret_tool'. No tools available.",
                             tool_name='secret_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1063,7 +1069,7 @@ class TestPrepareToolsCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='done')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=3),
+                    usage=RequestUsage(input_tokens=61, output_tokens=3),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
