@@ -1929,6 +1929,89 @@ class TestGetModelHook:
             assert selected[0] == (None, history)
         assert result.output == 'done'
 
+    async def test_selector_escalates_on_output_validator_retry(self):
+        """A selector escalates once an output validator has rejected an output, and stays escalated after a function tool step.
+
+        The output retry count is run state that a function tool step in between doesn't reset, so the
+        selector doesn't need to find the retry prompt in the messages. It's the count and budget the
+        output validator sees.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        def small_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('draft')
+
+        def large_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            last = messages[-1]
+            assert isinstance(last, ModelRequest)
+            if any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return make_text_response('final')
+            return ModelResponse(parts=[ToolCallPart('lookup', {})])
+
+        small = FunctionModel(small_respond, model_name='small')
+        large = FunctionModel(large_respond, model_name='large')
+        selected: list[tuple[int, int, int, str]] = []
+        validated: list[tuple[str, int, int]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            model = large if ctx.retry >= 1 else small
+            selected.append((ctx.run_step, ctx.retry, ctx.max_retries, model.model_name))
+            return model
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)], retries={'output': 2})
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'facts'
+
+        @agent.output_validator
+        def reject_draft(ctx: RunContext[None], output: str) -> str:
+            validated.append((output, ctx.retry, ctx.max_retries))
+            if output == 'draft':
+                raise ModelRetry('Not good enough.')
+            return output
+
+        result = await agent.run('hello')
+        assert result.output == 'final'
+        assert selected == [(1, 0, 2, 'small'), (2, 1, 2, 'large'), (3, 1, 2, 'large')]
+        assert validated == [('draft', 0, 2), ('final', 1, 2)]
+
+    async def test_selection_context_counts_output_tool_validation_failures(self):
+        """Output tool arguments failing validation count as output retries, against the run's output budget.
+
+        `ToolOutput(max_retries=...)` gives the output tool its own budget, which `max_retries` doesn't reflect.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        class Answer(BaseModel):
+            value: int
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            retried = any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts)
+            value = 42 if retried else 'not a number'
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'value': value})])
+
+        model = FunctionModel(respond)
+        selected: list[tuple[int, int, int]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            selected.append((ctx.run_step, ctx.retry, ctx.max_retries))
+            return model
+
+        agent = Agent(
+            None,
+            deps_type=NoneType,
+            output_type=ToolOutput(Answer, max_retries=5),
+            capabilities=[SelectModel(select)],
+            retries={'output': 1},
+        )
+
+        result = await agent.run('hello')
+        assert result.output == Answer(value=42)
+        assert selected == [(1, 0, 1), (2, 1, 1)]
+
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
 
@@ -2396,6 +2479,20 @@ class TestGetModelHook:
         assert await agent.system_prompt_parts(deps='tenant', prompt='hello') == snapshot(
             [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
         )
+
+    async def test_system_prompt_parts_selector_sees_output_retry_budget(self):
+        """`system_prompt_parts()` gives the selector the output budget a run would have, including an override's."""
+        max_retries: list[int] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            max_retries.append(ctx.max_retries)
+            return _text_model('selected')
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)], retries={'output': 2})
+        await agent.system_prompt_parts()
+        with agent.override(retries={'output': 5}):
+            await agent.system_prompt_parts()
+        assert max_retries == [2, 5]
 
     async def test_callable_model_selection_streaming(self):
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:

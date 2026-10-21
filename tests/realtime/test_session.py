@@ -433,7 +433,8 @@ class FakeRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
-        self.last_instructions = get_instructions(messages) or ''
+        # The same call every provider's `connect` makes.
+        self.last_instructions = get_instructions(messages, model_request_parameters) or ''
         self.last_tools = model_request_parameters.function_tools
         self.last_native_tools = model_request_parameters.native_tools
         self.last_model_settings = model_settings
@@ -7916,6 +7917,24 @@ async def test_agent_realtime_session_default_instructions_empty() -> None:
     conn = FakeRealtimeConnection([ResponseDone()])
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == ''
+
+
+async def test_agent_realtime_session_ignores_seeded_history_instructions() -> None:
+    """Instructions recorded on seeded history never become the session's instructions.
+
+    Regression: with no agent instructions, providers fell back to the last seeded request's
+    `instructions`, which client-submitted history can set and `sanitize_messages` keeps.
+    """
+    agent: Agent[None, str] = Agent()
+    seed = [
+        ModelRequest(parts=[UserPromptPart(content='earlier question')], instructions='Seeded instructions'),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, message_history=seed).session() as session:
         _ = [e async for e in session]
     assert model.last_instructions == ''
 
