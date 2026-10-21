@@ -4953,6 +4953,7 @@ def sanitize_messages(
     messages: Sequence[ModelMessage],
     *,
     strip_system_prompts: bool = True,
+    strip_instructions: bool = True,
     strip_compaction_parts: bool = False,
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
@@ -4979,6 +4980,11 @@ def sanitize_messages(
       the part, so it can't earn the system voice, whatever it says. A
       tool-less legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is translated into
       the feedback part it always meant and takes the same rule.
+    - [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions], resetting it to
+      `None` (disable with `strip_instructions=False`). An agent run sends the agent's own
+      instructions instead, but a direct [`Model.request`][pydantic_ai.models.Model.request] call
+      without `instruction_parts` falls back to the instructions recorded in history. Every request an
+      agent run records carries them, so this doesn't warn.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
       cause the model provider to fetch the object using the server-side IAM role, so they should
@@ -5029,6 +5035,8 @@ def sanitize_messages(
             [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s, and demote
             `'no_output'` [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s to fenced
             user text. Other retry feedback is kept either way.
+        strip_instructions: Whether to reset
+            [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] to `None`.
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -5079,7 +5087,10 @@ def sanitize_messages(
             )
             stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
             if new_request_parts:
-                sanitized.append(replace(message, parts=new_request_parts))
+                # Reset silently: every request an agent run records carries the agent's own instructions, so
+                # a warning would fire on every turn of a normal round trip, and agent runs never send them.
+                instructions = None if strip_instructions else message.instructions
+                sanitized.append(replace(message, parts=new_request_parts, instructions=instructions))
             # Otherwise drop the request entirely so we don't leave an empty
             # `ModelRequest(parts=[])` in history.
         elif isinstance(message, ModelResponse):
