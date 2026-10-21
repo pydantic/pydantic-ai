@@ -513,14 +513,15 @@ class TestSummarizingCompactionTokenRetention:
         assert 'OLDER_RESPONSE_SENTINEL' in prompts[0]
         assert 'PROTECTED_USER_SENTINEL' not in prompts[0]
         assert 'PROTECTED_RESPONSE_SENTINEL' not in prompts[0]
+        # A retained copy's text is marked `TextContent`.
         retained_users = [
-            part.content
+            item.content
             for message in result[: -len(suffix)]
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, UserPromptPart)
-            and isinstance(part.content, str)
-            and 'OLDER_USER_SENTINEL' in part.content
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent) and 'OLDER_USER_SENTINEL' in item.content
         ]
         assert bool(retained_users) is keep_user_messages
         assert all(len(text) <= 30 for text in retained_users)
