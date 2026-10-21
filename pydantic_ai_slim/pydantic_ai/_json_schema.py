@@ -236,6 +236,10 @@ class JsonSchemaTransformer(ABC):
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
+        # Inlining drops `$defs`, so a `$ref` left under `propertyNames` would point at nothing.
+        if self.prefer_inlined_defs and (property_names := schema.get('propertyNames')) is not None:
+            schema['propertyNames'] = self._handle(property_names)
+
         return schema
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:
@@ -248,6 +252,10 @@ class JsonSchemaTransformer(ABC):
             schema['items'] = [self._handle(item) for item in items]
         elif items:
             schema['items'] = self._handle(items)
+
+        # Same as `propertyNames` in `_handle_object`.
+        if self.prefer_inlined_defs and (contains := schema.get('contains')) is not None:
+            schema['contains'] = self._handle(contains)
 
         return schema
 
@@ -306,18 +314,6 @@ class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)
-
-    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_object(schema)
-        if (property_names := schema.get('propertyNames')) is not None:
-            schema['propertyNames'] = self._handle(property_names)
-        return schema
-
-    def _handle_array(self, schema: JsonSchema) -> JsonSchema:
-        schema = super()._handle_array(schema)
-        if (contains := schema.get('contains')) is not None:
-            schema['contains'] = self._handle(contains)
-        return schema
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         return schema

@@ -12,6 +12,7 @@ from typing_extensions import TypeAliasType
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
@@ -883,6 +884,40 @@ def test_inline_defs_resolves_property_names_ref_through_tool_preparation():
         FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')),
         tools=[accept_values],
     )
+    assert agent.run_sync('accept').output == 'done'
+
+
+def test_inlining_subclass_resolves_property_names_ref_through_tool_preparation():
+    """Any transformer that drops `$defs` inlines the `$ref` under `propertyNames`, not only `InlineDefsJsonSchemaTransformer`."""
+
+    class InliningOpenAIJsonSchemaTransformer(OpenAIJsonSchemaTransformer):
+        def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
+            super().__init__(schema, strict=strict)
+            self.prefer_inlined_defs = True
+
+    def accept_values(values: dict[Key, int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'values': {
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'type': 'string'},
+                        'type': 'object',
+                        'properties': {},
+                    }
+                },
+                'required': ['values'],
+                'type': 'object',
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    profile = ModelProfile(json_schema_transformer=InliningOpenAIJsonSchemaTransformer)
+    agent = Agent(FunctionModel(model_function, profile=profile), tools=[accept_values])
     assert agent.run_sync('accept').output == 'done'
 
 
