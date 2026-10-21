@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
+    from .boat_sandbox import BoatSandbox, BoatSandboxBackend
     from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
@@ -84,6 +85,8 @@ __all__ = [
     'ApprovalReviewer',
     'AskUser',
     'BackgroundTools',
+    'BoatSandbox',
+    'BoatSandboxBackend',
     'BoxLiteSandbox',
     'BoxLiteSandboxBackend',
     'BrowserUse',
@@ -172,6 +175,7 @@ _CAPABILITY_EXPORTS = {
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
+    'BoatSandbox': 'boat_sandbox',
     'BoxLiteSandbox': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
@@ -232,6 +236,7 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'BoatSandboxBackend': 'boat_sandbox',
     'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',

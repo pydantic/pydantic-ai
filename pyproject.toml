@@ -516,6 +516,7 @@ markers = [
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
+    "boat_live: runs against a real Boat control plane; needs credentials",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",

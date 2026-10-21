@@ -162,6 +162,7 @@ _CAPABILITY_PAGE_META = {
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
+    'boat-sandbox.md': ('boat_sandbox', 'Boat Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
