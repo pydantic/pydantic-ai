@@ -28,6 +28,8 @@ from pydantic_ai.common_tools.web_fetch import (
 )
 from pydantic_ai.exceptions import ModelRetry
 
+READINESS_WAIT_TIMEOUT = 10
+
 
 def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx2.Response:
     """Helper to create a mock HTML response."""
@@ -87,17 +89,24 @@ class TestWebFetchLocalTool:
             async with anyio.create_task_group() as group:
                 try:
                     group.start_soon(fetch, tool)
-                    with anyio.fail_after(10):
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                         await started.wait()
                     scopes[0].cancel()
                     await anyio.wait_all_tasks_blocked()
                     assert not finished.is_set()
+                    assert _HTML_CONVERSION_LIMITER.get().value == 3
                 finally:
                     release.set()
+        assert finished.is_set()
+        assert _HTML_CONVERSION_LIMITER.get().value == 4
 
     async def test_html_conversion_keeps_default_workers_available(self):
         """Concurrent HTML conversions are capped, so unrelated worker-thread calls still run."""
         loop = asyncio.get_running_loop()
+        # With five worker tokens, eight uncapped conversions would leave none for the unrelated call.
+        thread_limiter = anyio.to_thread.current_default_thread_limiter()
+        total_tokens = thread_limiter.total_tokens
+        thread_limiter.total_tokens = 5
         started = asyncio.Event()
         release = Event()
         lock = Lock()
@@ -123,12 +132,14 @@ class TestWebFetchLocalTool:
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
             tasks = [asyncio.create_task(tool('https://example.com')) for _ in range(8)]
             try:
-                await asyncio.wait_for(started.wait(), timeout=10)
+                await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
                 assert running == 4
-                assert await run_in_executor(lambda: 'available') == 'available'
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    assert await run_in_executor(lambda: 'available') == 'available'
             finally:
                 release.set()
                 await asyncio.gather(*tasks)
+                thread_limiter.total_tokens = total_tokens
 
     @pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
     async def test_fetch_html(self, anyio_backend: str):
@@ -935,43 +946,71 @@ def scaled_text_scan_budget():
 
 
 class TestMarkdownConverter:
-    def test_large_well_formed_reference_list_is_accepted(self):
-        """An ordinary wide reference list may have over 40k parser events."""
-        html = '<ul>' + '<li class="r"><a href="/x">Ref</a> &ndash; note</li>' * 6_000 + '</ul>'
-        _, content = _convert_html(html)
-        assert content.count('Ref') == 6_000
+    def test_large_well_formed_reference_list_passes_markup_budgets(self):
+        """A page with more markup than a 2.9 MB Wikipedia article (~101k parser events) reaches parsing."""
+
+        class Parsed(Exception):
+            pass
+
+        html = '<ul>' + '<li class="r"><a href="/x">Ref</a> &ndash; note</li>' * 17_000 + '</ul>'
+        with patch('pydantic_ai.common_tools.web_fetch.BeautifulSoup', side_effect=Parsed):
+            with pytest.raises(Parsed):
+                _convert_html(html)
+
+    @pytest.mark.parametrize(
+        'html',
+        [
+            pytest.param('<p>' + '< ' * 21 + '</p>', id='less-than'),
+            pytest.param('</>' * 21, id='empty-end-tag'),
+            pytest.param('<p>' + '& ' * 21 + '</p>', id='ampersand'),
+        ],
+    )
+    def test_markup_delimiters_are_counted_before_parsing(self, html: str):
+        """`<` and `&` that produce no parser event still count, before any parser runs."""
+        with (
+            patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_DELIMITERS', 20),
+            patch('pydantic_ai.common_tools.web_fetch._HTMLMarkupBudget', side_effect=AssertionError('parsed')),
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
 
     @pytest.mark.parametrize('tag', ['script', 'style'])
     def test_raw_text_markup_does_not_spend_budget(self, tag: str):
+        """Tag-like text inside `<script>` or `<style>` does not spend the event budget."""
         html = f'<{tag} data-kind="text">' + '<div></div>' * 21 + f'</{tag}><p>ok</p>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             assert 'ok' in _convert_html(html)[1]
 
     def test_self_closing_raw_text_tag_does_not_hide_markup(self):
+        """A self-closing `<script/>` does not start a raw-text section that hides later markup."""
         html = '<script/>' + '<div></div>' * 21
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
     def test_raw_text_string_in_attribute_does_not_hide_markup(self):
+        """A `<script>` string inside an attribute value does not hide later markup."""
         html = '<div data-text="<script>">' + '<li>x</li>' * 21 + '</div></script>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
     def test_unquoted_attribute_quote_does_not_hide_markup(self):
+        """A quote inside an unquoted attribute value does not hide later markup."""
         html = "<div data=x' >" + '<li>x</li>' * 21 + "</div><span data=y' >"
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
     def test_markup_string_in_comment_does_not_spend_budget(self):
+        """Tag-like text inside a comment does not spend the event budget."""
         html = '<!--' + '<div></div>' * 21 + '--><p>ok</p>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             assert 'ok' in _convert_html(html)[1]
 
     @pytest.mark.parametrize('entity', ['&amp;', '&#65;'])
     def test_many_entities_are_rejected_before_parsing(self, entity: str):
+        """Entity and character references are counted before the document is parsed."""
         html = '<p>' + entity * 21 + '</p>'
         with (
             patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20),
@@ -981,12 +1020,14 @@ class TestMarkdownConverter:
                 _convert_html(html)
 
     def test_attributes_share_markup_budget(self):
+        """Each attribute counts toward the same budget as its tag."""
         html = '<div a=1 b=2 c=3><span d=4>ok</span></div>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 5):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
     def test_whitespace_closed_comment_does_not_hide_markup(self):
+        """A comment closed by `-- >` cannot hide markup from the budget."""
         html = '<!--comment-- >' + '<li>x</li>' * 21
         # Python versions disagree on whether '-- >' closes the comment. The page must
         # either be rejected for complexity or produce no visible content.
@@ -1004,17 +1045,20 @@ class TestMarkdownConverter:
         ids=['malformed-comment', 'processing-instruction', 'doctype', 'cdata'],
     )
     def test_markup_after_special_section_is_counted(self, prefix: str, suffix: str):
+        """Markup after a comment, processing instruction, doctype or CDATA section is still counted."""
         html = prefix + '<li>x</li>' * 21 + suffix
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
     def test_cdata_markup_does_not_spend_budget(self):
+        """Tag-like text inside a CDATA section does not spend the event budget."""
         html = '<![CDATA[' + '<div></div>' * 21 + ']]><p>ok</p>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             assert 'ok' in _convert_html(html)[1]
 
     def test_text_less_than_signs_do_not_spend_markup_budget(self):
+        """A `<` in plain text does not spend the event budget."""
         html = '<pre>' + 'if (a < b) x++;\n' * 21 + '</pre>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             assert _convert_html(html)[1]
