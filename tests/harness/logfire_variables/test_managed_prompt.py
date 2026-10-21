@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import warnings
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -534,6 +535,15 @@ async def test_invalid_remote_template_falls_back_to_default(capfire: CaptureLog
     assert instructions_seen(result.all_messages()) == ['Hello Alice!', 'Hello Alice!']
     # The run is credited to the code default that ran, not to the remote version that failed.
     assert seen == [(None, HandlebarsParseError, {'logfire.variables.prompt__broken_template': '<code_default>'})]
+    [log] = [s for s in capfire.exporter.exported_spans_as_dict() if s['attributes'].get('logfire.level_num') == 13]
+    assert log['attributes']['variable'] == 'prompt__broken_template'
+    assert log['attributes']['label'] == 'production'
+    assert log['attributes']['version'] == 2
+    assert log['attributes']['logfire.msg'] == (
+        'Managed prompt prompt__broken_template (label production, version 2) is not a valid template; '
+        'using the code default'
+    )
+    assert [e['name'] for e in log['events']] == ['exception']
 
 
 async def test_invalid_remote_template_falls_back_to_callable_default(capfire: CaptureLogfire) -> None:
@@ -555,6 +565,20 @@ async def test_invalid_remote_template_falls_back_to_callable_default(capfire: C
             result = await agent.run('hi', deps=NameDeps(name='Bob'))
 
     assert instructions_seen(result.all_messages()) == ['Hi Bob.']
+
+
+async def test_invalid_remote_and_default_templates_raise_without_fallback_warning(capfire: CaptureLogfire) -> None:
+    config = _remote_prompt_config('prompt__both_broken', 'Hello {{#if name}}')
+    with _variables_provider_configured(capfire, config):
+        capability: ManagedPrompt[NameDeps] = ManagedPrompt(
+            'both_broken', default='Hi {{#each name}}', label='production', render_template=True
+        )
+        agent = Agent(TestModel(), deps_type=NameDeps, capabilities=[capability])
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', RuntimeWarning)
+            with pytest.raises(HandlebarsParseError):
+                await agent.run('hi', deps=NameDeps(name='Alice'))
 
 
 async def test_invalid_default_template_raises() -> None:

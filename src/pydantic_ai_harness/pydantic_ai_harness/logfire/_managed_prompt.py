@@ -130,8 +130,8 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     `deps` (the same mechanism as [`TemplateStr`][pydantic_ai.template.TemplateStr]); `{{field}}` is
     filled from `deps`. Anyone who can edit the prompt in Logfire can then place any `deps` value
     in the system prompt. A remote prompt that fails to compile falls back to the code default
-    with a `RuntimeWarning`, and the run is then reported as the code default. Defaults to `False`,
-    so the resolved prompt is used verbatim."""
+    with a `RuntimeWarning` and a Logfire warning log, and the run is then reported as the code
+    default. Defaults to `False`, so the resolved prompt is used verbatim."""
 
     logfire_instance: Logfire | None = None
     """Logfire instance to resolve the variable on. When `None`, the global default instance
@@ -262,10 +262,20 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
                 fallback = self._variable.get(targeting_key=targeting_key, attributes=attributes)
             if fallback.value == resolved.value:
                 raise
-            warnings.warn(
+            template = TemplateStr[object](fallback.value)  # an invalid code default raises here
+            message = (
                 f'Managed prompt {self._variable.name!r} (label {resolved.label!r}, version {resolved.version!r}) '
-                f'is not a valid template, so the code default is used: {e}',
-                RuntimeWarning,
+                f'is not a valid template, so the code default is used: {e}'
+            )
+            warnings.warn(message, RuntimeWarning)
+            # Also log it where whoever edited the prompt in Logfire will see it.
+            self._variable.logfire_instance.warning(
+                'Managed prompt {variable} (label {label}, version {version}) is not a valid template; '
+                'using the code default',
+                variable=self._variable.name,
+                label=resolved.label,
+                version=resolved.version,
+                _exc_info=e,
             )
             fallback.exception = e
-            return fallback, TemplateStr[object](fallback.value)
+            return fallback, template
