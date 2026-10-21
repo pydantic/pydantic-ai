@@ -576,9 +576,10 @@ class TestRun:
         backend = await started()
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run(['sleep', '99'], timeout=0.05)
-        assert [record.getMessage() for record in caplog.records if record.levelname == 'WARNING'] == [
-            'Could not stop E2B command in sandbox sbx-1'
-        ]
+        warnings = [record for record in caplog.records if record.levelname == 'WARNING']
+        assert [record.getMessage() for record in warnings] == ['Could not stop E2B command in sandbox sbx-1']
+        # The cause is logged with the warning, so a stop that keeps failing can be diagnosed.
+        assert all(record.exc_info is not None for record in warnings)
 
     async def test_a_failed_operation_names_what_failed(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.run_error = SandboxException('no such user')

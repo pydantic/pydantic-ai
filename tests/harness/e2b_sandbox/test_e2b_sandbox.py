@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import re
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -392,17 +393,16 @@ async def test_commands_need_asyncio(fake_e2b: FakeE2B, anyio_backend: str, oper
     # The E2B SDK starts each command's output reader on an asyncio task, so Trio gets a clear error, not a
     # crash. File reads, removes and `working_dir()` run a command, so they refuse before creating a sandbox.
     backend = E2BSandboxBackend()
+    # A lookup, not an if/else chain: an id that matches no entry fails instead of reusing another case.
+    operations: dict[str, Callable[[], Awaitable[object]]] = {
+        'run': lambda: backend.run(['true']),
+        'read_bytes': lambda: backend.read_bytes('/file'),
+        'remove': lambda: backend.remove('/file'),
+        'working_dir': backend.working_dir,
+        'relative_path': lambda: Workspace(backend).read_text('file'),
+    }
     with pytest.raises(UserError, match='need the asyncio event loop'):
-        if operation == 'run':
-            await backend.run(['true'])
-        elif operation == 'read_bytes':
-            await backend.read_bytes('/file')
-        elif operation == 'remove':
-            await backend.remove('/file')
-        elif operation == 'working_dir':
-            await backend.working_dir()
-        else:
-            await Workspace(backend).read_text('file')
+        await operations[operation]()
     assert not fake_e2b.sandboxes
 
 
