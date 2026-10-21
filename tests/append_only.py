@@ -791,70 +791,72 @@ def discover_capabilities(packages: Sequence[str]) -> dict[str, CapabilityRef]:
     `pydantic_ai.capabilities._tool_search.ToolSearch` is public because `pydantic_ai.capabilities` imports it.
     """
     source = _Source(
-        {module: tree for package in ('pydantic_ai', *packages) for module, tree in _module_trees(package)}
+        {module: path for package in ('pydantic_ai', *packages) for module, path in _module_paths(package)}
     )
-    bases = {
-        f'{module}.{node.name}': {resolved for base in node.bases if (resolved := source.resolve_base(module, base))}
-        for module, tree in source.trees.items()
-        for node in tree.body
-        if isinstance(node, ast.ClassDef)
-    }
-    capabilities = {_ABSTRACT_CAPABILITY}
-    while new := {name for name, names in bases.items() if name not in capabilities and names & capabilities}:
-        capabilities |= new
-
     found: dict[str, CapabilityRef] = {}
-    for qualified in sorted(capabilities - {_ABSTRACT_CAPABILITY}):
-        module, name = qualified.rsplit('.', 1)
+    for module in source.paths:
+        if not any(module == package or module.startswith(f'{package}.') for package in packages):
+            continue
         public_module = '.'.join(segment for segment in module.split('.') if not segment.startswith('_'))
-        if name.startswith('_') or not any(
-            module == package or module.startswith(f'{package}.') for package in packages
-        ):
-            continue
-        if source.resolve(public_module, name) != qualified:
-            continue
-        # Cases and table entries are keyed by class name, so two public capabilities sharing one would
-        # silently test only the second.
-        assert name not in found, f'two public capabilities are named `{name}`: {found[name].module}, {module}'
-        found[name] = CapabilityRef(name, module)
+        for name in source.classes(module):
+            qualified = f'{module}.{name}'
+            if name.startswith('_') or not source.is_capability(qualified):
+                continue
+            if qualified == _ABSTRACT_CAPABILITY or source.resolve(public_module, name) != qualified:
+                continue
+            # Cases and table entries are keyed by class name, so two public capabilities sharing one would
+            # silently test only the second.
+            assert name not in found, f'two public capabilities are named `{name}`: {found[name].module}, {module}'
+            found[name] = CapabilityRef(name, module)
     return found
 
 
 _ABSTRACT_CAPABILITY = 'pydantic_ai.capabilities.abstract.AbstractCapability'
 
 
-def _module_trees(package: str) -> Iterator[tuple[str, ast.Module]]:
+def _module_paths(package: str) -> Iterator[tuple[str, Path]]:
     spec = importlib.util.find_spec(package)
     assert spec is not None and spec.submodule_search_locations is not None
     root = Path(next(iter(spec.submodule_search_locations)))
     for path in sorted(root.rglob('*.py')):
         parts = path.relative_to(root).with_suffix('').parts
-        module = '.'.join((package, *(parts[:-1] if parts[-1] == '__init__' else parts)))
-        yield module, ast.parse(path.read_text(encoding='utf-8'))
+        yield '.'.join((package, *(parts[:-1] if parts[-1] == '__init__' else parts))), path
 
 
 @dataclass
 class _Source:
-    """The modules of the scanned packages, with what each top-level name in them refers to."""
+    """The modules of the scanned packages, parsed only when resolving a name needs them.
 
-    trees: dict[str, ast.Module]
-    classes: dict[str, set[str]] = field(init=False)
+    Collection pays for every parse on every worker, and most of `pydantic_ai` (the model adapters) defines
+    nothing a Harness capability's bases lead to, so modules are read on demand.
+    """
+
+    paths: dict[str, Path]
     packages: set[str] = field(init=False)
     """The modules that are packages, having modules of their own."""
-    imports: dict[str, dict[str, tuple[str, str | None]]] = field(init=False)
-    """Per module, each imported name and what it refers to: `(module, attribute)`, or `(module, None)`."""
+    _definitions: dict[str, tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]] = field(
+        init=False, default_factory=dict[str, tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]]
+    )
+    _capabilities: dict[str, bool] = field(init=False, default_factory=dict[str, bool])
 
     def __post_init__(self) -> None:
-        self.packages = {module.rpartition('.')[0] for module in self.trees}
-        self.classes = {
-            module: {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
-            for module, tree in self.trees.items()
-        }
-        self.imports = {module: self._imports(module, tree) for module, tree in self.trees.items()}
+        self.packages = {module.rpartition('.')[0] for module in self.paths}
 
-    def _imports(self, module: str, tree: ast.Module) -> dict[str, tuple[str, str | None]]:
+    def classes(self, module: str) -> dict[str, ast.ClassDef]:
+        """The module's top-level classes, by name."""
+        return self._definitions_of(module)[0]
+
+    def imports(self, module: str) -> dict[str, tuple[str, str | None]]:
+        """Each name the module imports and what it refers to: `(module, attribute)`, or `(module, None)`."""
+        return self._definitions_of(module)[1]
+
+    def _definitions_of(self, module: str) -> tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]:
+        if (cached := self._definitions.get(module)) is not None:
+            return cached
+        tree = ast.parse(self.paths[module].read_text(encoding='utf-8'))
+        classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
         # A package's `__init__` is the package itself, so relative imports there start from it.
-        package = module if self._is_package(module) else module.rpartition('.')[0]
+        package = module if module in self.packages else module.rpartition('.')[0]
         names: dict[str, tuple[str, str | None]] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
@@ -868,18 +870,32 @@ class _Source:
                 for alias in node.names:
                     local = alias.asname or alias.name.split('.')[0]
                     names[local] = (alias.name if alias.asname else local, None)
-        return names
+        self._definitions[module] = classes, names
+        return classes, names
 
-    def _is_package(self, module: str) -> bool:
-        return module in self.packages
+    def is_capability(self, qualified: str) -> bool:
+        """Whether the class's bases lead to `AbstractCapability`, resolving each through the source."""
+        if qualified == _ABSTRACT_CAPABILITY:
+            return True
+        if (cached := self._capabilities.get(qualified)) is not None:
+            return cached
+        # Settled as not a capability while it's being worked out, so a cycle of bases ends.
+        self._capabilities[qualified] = False
+        module, name = qualified.rsplit('.', 1)
+        result = any(
+            resolved is not None and self.is_capability(resolved)
+            for resolved in (self.resolve_base(module, base) for base in self.classes(module)[name].bases)
+        )
+        self._capabilities[qualified] = result
+        return result
 
     def resolve(self, module: str, name: str, depth: int = 0) -> str | None:
         """The qualified class `name` refers to in `module`, through any chain of imports, or `None`."""
-        if depth > 20 or module not in self.trees:
+        if depth > 20 or module not in self.paths:
             return None
-        if name in self.classes[module]:
+        if name in self.classes(module):
             return f'{module}.{name}'
-        if (target := self.imports[module].get(name)) is None or target[1] is None:
+        if (target := self.imports(module).get(name)) is None or target[1] is None:
             return None
         return self.resolve(target[0], target[1], depth + 1)
 
@@ -893,7 +909,7 @@ class _Source:
         while isinstance(base, ast.Attribute):
             path.insert(0, base.attr)
             base = base.value
-        if not isinstance(base, ast.Name) or (target := self.imports[module].get(base.id)) is None:
+        if not isinstance(base, ast.Name) or (target := self.imports(module).get(base.id)) is None:
             return None
         # `import a.b as c` or `from a import b` (a module): the attribute chain continues from that module.
         prefix = target[0] if target[1] is None else f'{target[0]}.{target[1]}'
