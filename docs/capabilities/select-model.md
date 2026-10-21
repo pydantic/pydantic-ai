@@ -90,7 +90,7 @@ retry_states: list[tuple[int, int]] = []
 
 
 @agent.output_validator
-def validate_output(ctx: RunContext[None], value: str) -> str:
+def validate_output(ctx: RunContext[object], value: str) -> str:
     retry_states.append((ctx.retry, ctx.max_retries))
     if value == 'draft':
         raise ModelRetry('This is still a draft.')
