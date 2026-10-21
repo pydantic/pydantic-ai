@@ -65,9 +65,9 @@ def backup_response(messages: list[ModelMessage], _info: AgentInfo) -> ModelResp
     return ModelResponse(parts=[ToolCallPart('look_up_answer')])
 
 
+# These deterministic responses stand in for calls to the primary and backup models.
 primary = FunctionModel(primary_response, model_name='primary')
 backup = FunctionModel(backup_response, model_name='backup')
-# These deterministic responses stand in for calls to the primary and backup models.
 
 
 def select_model(ctx: ModelSelectionContext[object]) -> FunctionModel:
