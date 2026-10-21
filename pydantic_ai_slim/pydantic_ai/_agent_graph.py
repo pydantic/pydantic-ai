@@ -2097,7 +2097,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # Diff the tools this request will actually carry — after the hooks, which may have changed them —
             # and record newcomers where both this request and the persisted history will carry them.
             model_request_parameters = _record_tool_population_changes(
-                ctx, model_request_parameters, _history_recording_targets(ctx, messages)
+                ctx, model_request_parameters, messages, _history_recording_targets(ctx, messages)
             )
 
             # Instruction parts are request configuration, but the message recording the
@@ -2223,7 +2223,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
 
             # A continuation completes a turn the provider already has, so nothing is appended to it.
-            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, ())
+            model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, messages, ())
 
             # A processor may have deliberately rewritten persistent history from the request
             # view, putting the suspended continuation seed back at the tail. Trim the live
@@ -3110,6 +3110,7 @@ def _revealed_tool_names(
 def _record_tool_population_changes(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
     parameters: models.ModelRequestParameters,
+    messages: list[_messages.ModelMessage],
     requests: Sequence[_messages.ModelRequest],
 ) -> models.ModelRequestParameters:
     """Diff this step's tool population against what the model has been given, and record the difference.
@@ -3125,11 +3126,16 @@ def _record_tool_population_changes(
     marked in `introduced_tool_names` so visibility resolution delivers it on the provider's
     tool-addition channel rather than rewriting `tools`, the request's first cache section.
 
-    What the model has been given is `established_tool_names` plus whatever history's deltas name,
-    read from the post-compaction window through `discovered_tool_names`. Reading history is what
+    What the model has been given is `established_tool_names` plus whatever the deltas in `messages`,
+    the outgoing history after the hooks, name in its post-compaction window. Reading history is what
     makes this idempotent: a retried request, a revived run, or a durable replay finds the delta it
-    already recorded and doesn't record it again; a compaction that summarized the delta away gets it
-    recorded once more, since the model no longer has it.
+    already recorded and doesn't record it again. A compaction or history processor that removed the
+    delta, including one that ran in this step's hooks, gets it recorded once more, since the model no
+    longer has it. Reading the run's `discovered_tool_names` instead would miss that, as it is refreshed
+    before the hooks run: the tool would go into `tools` for this request and leave it on the next.
+
+    Each delta recorded is also emitted as a `ToolAvailabilityDeltaEvent`, once however many requests
+    carry it, so a UI that rebuilds history from the event stream keeps it.
 
     Deferred tools are left to the reveal machinery that already owns them, and a tool that leaves the
     population is not recorded (removals are https://github.com/pydantic/pydantic-ai/issues/6985).
@@ -3147,7 +3153,7 @@ def _record_tool_population_changes(
     without a delta.
     """
     immediate = [tool.name for tool in parameters.function_tools if not tool.defer_loading]
-    discovered = ctx.deps.discovered_tool_names
+    discovered = parse_discovered_tools(messages)
     established = ctx.deps.established_tool_names
     if established is None:
         established = ctx.deps.established_tool_names = {name for name in immediate if name not in discovered}
@@ -3165,8 +3171,9 @@ def _record_tool_population_changes(
         delta = _messages.ToolAvailabilityDeltaPart(tools_added=announced)
         for request in requests:
             request.parts = [*request.parts, delta]
+        ctx.state.event_stream_buffer.append(_messages.ToolAvailabilityDeltaEvent(part=delta))
         # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
-        discovered.update(announced)
+        ctx.deps.discovered_tool_names.update(announced)
     return replace(parameters, introduced_tool_names=set(introduced))
 
 

@@ -14,7 +14,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability, PrepareTools, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareTools, ProcessHistory
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
@@ -394,16 +395,42 @@ async def test_newcomer_is_re_announced_after_compaction_drops_its_delta():
     assert _deltas(result.all_messages()) == [['later'], ['later']]
 
 
-async def test_stripped_delta_falls_back_to_an_ordinary_tools_entry():
-    """If a history processor drops the delta, the newcomer is still callable, so it is sent in `tools` as before."""
+def _strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            message.parts = [part for part in message.parts if not isinstance(part, ToolAvailabilityDeltaPart)]
+    return messages
+
+
+def _strip_deltas_once(at_request: int) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+    """Strip the deltas on one request only, as a history-compacting hook would."""
+    calls = 0
+
+    def strip(messages: list[ModelMessage]) -> list[ModelMessage]:
+        nonlocal calls
+        calls += 1
+        return _strip_deltas(messages) if calls == at_request else messages
+
+    return strip
+
+
+@pytest.mark.parametrize(
+    'make_processor',
+    [
+        pytest.param(lambda: _strip_deltas, id='every-request'),
+        pytest.param(lambda: _strip_deltas_once(3), id='once-after-recording'),
+    ],
+)
+async def test_delta_removed_by_a_hook_is_recorded_again(
+    make_processor: Callable[[], Callable[[list[ModelMessage]], list[ModelMessage]]],
+):
+    """A newcomer whose delta a history hook removed is recorded again, so it stays on its channel.
+
+    Deduplication reads the history the hooks return. Reading the history from before them would see the
+    removed delta and record nothing, sending the tool in `tools` for that request and taking it back out on
+    the next, which moves the cached prefix twice.
+    """
     seen: list[ModelRequestParameters] = []
-
-    def strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
-        for message in messages:
-            if isinstance(message, ModelRequest):
-                message.parts = [part for part in message.parts if not isinstance(part, ToolAvailabilityDeltaPart)]
-        return messages
-
     toolset = FunctionToolset[Any]()
 
     @toolset.tool_plain
@@ -411,13 +438,23 @@ async def test_stripped_delta_falls_back_to_an_ordinary_tools_entry():
         toolset.add_function(_later, name='later')
         return 'unlocked'
 
-    model = FunctionModel(_recording(_unlock_later_done, seen), profile={'tool_addition_mode': 'with_definitions'})
-    result = await Agent(model, toolsets=[toolset], capabilities=[ProcessHistory(strip_deltas)]).run('go')
+    def unlock_then_later_twice(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
+        if len(seen) in (2, 3):
+            return ModelResponse(parts=[ToolCallPart('later', {}, tool_call_id=f'c{len(seen)}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    model = FunctionModel(_recording(unlock_then_later_twice, seen), profile={'tool_addition_mode': 'with_definitions'})
+    result = await Agent(model, toolsets=[toolset], capabilities=[ProcessHistory(make_processor())]).run('go')
 
     assert result.output == 'done'
-    # The delta is recorded after history processing, so the processor first sees (and strips) it a step later.
-    assert seen[1].tool_visibility == {'unlock': 'visible', 'later': 'via_history'}
-    assert seen[2].tool_visibility == {'unlock': 'visible', 'later': 'visible'}
+    assert [params.tool_visibility for params in seen] == [
+        {'unlock': 'visible'},
+        {'unlock': 'visible', 'later': 'via_history'},
+        {'unlock': 'visible', 'later': 'via_history'},
+        {'unlock': 'visible', 'later': 'via_history'},
+    ]
 
 
 @pytest.mark.parametrize(
@@ -512,7 +549,20 @@ async def test_continuation_establishes_fresh_tools_and_keeps_announced_ones_on_
     ] * 2
 
 
-async def test_rotating_out_every_visible_tool_establishes_the_newcomers(allow_model_requests: None):
+@pytest.mark.parametrize(
+    ('native_tools', 'expected_deltas'),
+    [
+        pytest.param([], [], id='no-native-tools'),
+        # Anthropic doesn't support X search, so the optional tool is left out of the request: it must not
+        # count as the plainly declared tool that would let the newcomer go deferred. The agent graph can't
+        # tell it apart from a supported one, so it records the newcomer, which is harmless: the record
+        # names a tool the request declares anyway.
+        pytest.param([XSearchTool(optional=True)], [['later']], id='unsupported-optional-native-tool'),
+    ],
+)
+async def test_rotating_out_every_visible_tool_establishes_the_newcomers(
+    allow_model_requests: None, native_tools: list[AbstractNativeTool], expected_deltas: list[list[str]]
+):
     """When every established tool leaves, the tools present establish a new `tools` section instead of all going deferred.
 
     Otherwise a revealed newcomer on Anthropic would be the request's only tool, with `defer_loading=True`,
@@ -537,7 +587,7 @@ async def test_rotating_out_every_visible_tool_establishes_the_newcomers(allow_m
 
     after = FunctionToolset[Any]()
     after.add_function(_later, name='later')
-    agent = Agent(model)
+    agent = Agent(model, capabilities=[NativeTool(tool) for tool in native_tools])
 
     @agent.toolset
     def rotating(ctx: RunContext[Any]) -> AbstractToolset[Any]:
@@ -546,7 +596,7 @@ async def test_rotating_out_every_visible_tool_establishes_the_newcomers(allow_m
     result = await agent.run('go')
 
     assert result.output == 'done'
-    assert _deltas(result.all_messages()) == []
+    assert _deltas(result.all_messages()) == expected_deltas
     assert [
         [(tool['name'], tool.get('defer_loading', False)) for tool in kwargs['tools']]
         for kwargs in get_mock_chat_completion_kwargs(client)

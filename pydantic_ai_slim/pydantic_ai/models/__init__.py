@@ -2672,6 +2672,15 @@ def resolve_request_tools(
         function_tools.append(t)
         visibility_by_name[t.name] = visibility
 
+    # A newcomer goes on the addition channel to keep the request's `tools` section stable. With nothing
+    # else plainly declared there is no section to keep, so it is declared like any other tool, which also
+    # keeps an Anthropic request from carrying only deferred tools. The agent graph makes the same call when
+    # recording the newcomer, but only this function knows which native tools survive for this model: an
+    # unsupported `optional` one the graph counted is left out here.
+    if not params.output_tools and not supported_natives and 'visible' not in visibility_by_name.values():
+        for name in params.introduced_tool_names & visibility_by_name.keys():
+            visibility_by_name[name] = 'visible'
+
     return replace(
         params,
         native_tools=supported_natives,

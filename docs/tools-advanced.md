@@ -1039,7 +1039,7 @@ For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), 
 
 #### Tools that appear mid-run {#mid-run-tool-additions}
 
-A tool can also join a run without being searched for or loaded. It might be added to a [`FunctionToolset`](toolsets.md#function-toolset) from inside another tool, returned by a [dynamically built toolset](toolsets.md#dynamically-building-a-toolset), listed by an MCP server after it sends `notifications/tools/list_changed`, or let through by a [`prepare_tools`](#prepare-tools) function. Pydantic AI compares the tools available at each step with the tools the run started with, and records each new one in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The new tool then reaches the model the same way a revealed deferred tool does:
+A tool can also join a run without being searched for or loaded. It might be added to a [`FunctionToolset`](toolsets.md#function-toolset) from inside another tool, returned by a [dynamically built toolset](toolsets.md#dynamically-building-a-toolset), listed by an MCP server after it sends `notifications/tools/list_changed`, or let through by a [`prepare_tools`](#prepare-tools) function. Pydantic AI compares the immediately available function tools at each step with the ones the run started with, and records each new one in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. A new tool with `defer_loading=True` isn't recorded: it joins the [tool search](#tool-search) corpus and is revealed when a search finds it. A recorded tool then reaches the model the same way a revealed deferred tool does:
 
 | Provider | How the new tool arrives | Cache prefix |
 |---|---|---|
