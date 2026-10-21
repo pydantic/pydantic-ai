@@ -73,8 +73,8 @@ LocalStack(manage_container=True)
 Commands run as an argument vector (no shell), so shell operators and
 redirection in the command string have no effect. Each command runs with stdin
 closed and with its own empty AWS config and credentials files in place of
-`~/.aws/config` and `~/.aws/credentials`, so settings from `aws configure` last
-for that one command and never reach your own AWS configuration. Output is
+`~/.aws/config` and `~/.aws/credentials`, so `aws configure` reads and writes
+those throwaway files and its settings last for that one command. Output is
 labelled with `[stdout]` / `[stderr]` markers and an `[exit code: N]` line on
 non-zero exit. When it exceeds `max_output_chars` the **tail** is kept (the head
 is dropped), so errors survive truncation. The cap applies to the command's
@@ -145,14 +145,17 @@ them at an externally managed instance (`manage_container=False`).
 Managed containers bind to `127.0.0.1` by default, reached through
 `localhost.localstack.cloud`. Set `host_address` to publish on a different
 address; any value other than `127.0.0.1` or `0.0.0.0` is then also the host of
-the tool endpoint and of the endpoint the instructions name.
-
-Since LocalStack 2026.03.0, `localstack/localstack` needs an auth token to start
-(a free Hobby token covers community usage). `LOCALSTACK_AUTH_TOKEN`, or the
-legacy `LOCALSTACK_API_KEY` when no token is set, is forwarded from the current
-process through the Docker CLI environment, never the `docker run` arguments,
-unless `container_env` already sets one of them. To run without a token, pin
-`image` to a `localstack/localstack:4.x` tag.
+the tool endpoint and of the endpoint the instructions name. The default image is
+`localstack/localstack`, which since LocalStack 2026.03.0 is a single image that
+requires an auth token to start (a free Hobby/OSS token covers community usage).
+When `LOCALSTACK_AUTH_TOKEN` is set in the current process it is forwarded to the
+container automatically; a legacy `LOCALSTACK_API_KEY` value is forwarded when no
+auth token is set, but new setups should use `LOCALSTACK_AUTH_TOKEN`. Auth values
+are forwarded through the Docker CLI environment rather than embedded in the
+`docker run` command arguments. The default `localstack/localstack` image
+requires a token to start, so a managed run needs one configured. To run
+tokenless, set `image` to a tag from before the account requirement, such as a
+`localstack/localstack:4.x` release.
 
 Some AWS services expose ports outside the gateway. LocalStack reserves
 `4510-4559` for those service endpoints, and Docker-backed services such as
