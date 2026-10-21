@@ -21,6 +21,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._batch_model import BatchPool
 from pydantic_ai.models.batch import Batch, BatchRequest
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
 from tests.conftest import try_import
 
@@ -97,6 +98,15 @@ def _model(api_key: str = 'test-key', model_name: str = 'gpt-4.1-nano', **client
         ),
         pytest.param(
             lambda: OpenAICodexModel('gpt-5.6', provider=OpenAIProvider(api_key='k')), None, id='codex-subclass'
+        ),
+        pytest.param(
+            lambda: OpenAIResponsesModel(
+                'gpt-4.1-nano',
+                provider=OpenAIProvider(api_key='k'),
+                profile=OpenAIModelProfile(openai_responses_requires_streaming=True),
+            ),
+            None,
+            id='requires-streaming-profile',
         ),
         pytest.param(lambda: OpenAIChatModel('gpt-4.1-nano', provider=OpenAIProvider(api_key='k')), None, id='chat'),
     ],
