@@ -221,12 +221,17 @@ class TestGitHub:
         ('capability', 'headers'),
         [
             (GitHub[str | None](auth='token'), {}),
+            (GitHub[str | None](auth='token', lockdown=True), {'X-MCP-Lockdown': 'true'}),
+            (
+                GitHub[str | None](auth='token', read_only=True, toolsets=['actions']),
+                {'X-MCP-Readonly': 'true', 'X-MCP-Toolsets': 'actions'},
+            ),
             (
                 GitHub[str | None](auth='token', read_only=True, lockdown=True, toolsets=['actions', 'notifications']),
                 {'X-MCP-Readonly': 'true', 'X-MCP-Lockdown': 'true', 'X-MCP-Toolsets': 'actions,notifications'},
             ),
         ],
-        ids=['default', 'configured'],
+        ids=['default', 'lockdown', 'read-only', 'configured'],
     )
     def test_server_settings_are_sent_as_headers(self, capability: GitHub[str | None], headers: dict[str, str]) -> None:
         assert transport(capability.get_toolset()).headers == headers
