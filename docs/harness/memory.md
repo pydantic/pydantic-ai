@@ -13,7 +13,7 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 
 Memory gives each agent a notebook made of Markdown files:
 
-- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are added beside the latest user prompt as delimited user-role context.
+- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are recorded with the user's prompt as delimited user-role context, once per run in which they changed.
 - Other files hold longer or focused notes. The model reads them on demand or finds them with bounded text search.
 
 The model gets four tools:
@@ -46,7 +46,7 @@ The namespace is resolved by application code, not supplied to the tools. The mo
 
 ## Injection modes and limits
 
-Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
+Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part recorded with the user's prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
@@ -61,13 +61,15 @@ memory = Memory(
 )
 ```
 
-Only the current request retains the injected user-role part, so copies do not accumulate in message history. A part saved to history by an earlier release is removed on the next request. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
+The snapshot is added to the conversation's message history, so every later request sends it unchanged and the cached prompt prefix holds. `Memory` adds one on the first request of a run, with the user's prompt, and only when memory changed since the latest snapshot in the history (or there is none yet). A conversation therefore carries one snapshot per run in which memory changed; earlier ones stay where they were sent, and the default guidance tells the model that a later `<memory>` block supersedes earlier ones. When memory is emptied, the new snapshot says so.
 
-The block goes on the request that holds the latest user prompt, so after a tool call, or when a run resumes after a deferred tool approval, it stays with the user's prompt rather than following the tool results, where a model could read it as a new message from the user. With no user prompt in the history, it goes on the last request. While the snapshot is unchanged, each request in a tool loop starts with the previous one, so prefix caching keeps working. When the snapshot changes, or a new user prompt moves the block, the content from the block's earlier position onward changes once.
+A snapshot is never added after tool results, where a model could read it as a new message from the user. Memory that changes during a run, through `write_memory` or an external update, reaches the model with the next user prompt; the model's own writes are already in the conversation as its tool calls. A run that resumes without a prompt, such as after a deferred tool approval, adds no snapshot unless the history has none, and then adds it to the last request.
 
-When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
+Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`, never by their text. A history that loses that metadata on the way through a UI client gets a fresh snapshot on every run. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
 
-Set `inject_memory=False` for cache-stable prompts. The tools remain available, and the model can fetch memory only when it needs it:
+When combining it with compaction, list compaction before `Memory`: if compaction drops the latest snapshot, `Memory` then sees that and records the current memory again on the run's first request.
+
+Set `inject_memory=False` to keep memory out of the conversation entirely. The tools remain available, and the model can fetch memory only when it needs it. Snapshots that earlier runs added stay in the history:
 
 ```python
 from pydantic_ai_harness import Memory
@@ -76,7 +78,7 @@ from pydantic_ai_harness.memory import FileStore
 memory = Memory(FileStore('.agent-memory'), inject_memory=False)
 ```
 
-With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts, and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. Tool failures are still returned as tool errors; this setting controls automatic injection only.
+With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts and whether a snapshot was appended (`memory.appended`), and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. Tool failures are still returned as tool errors; this setting controls automatic injection only.
 
 ## Persistence and concurrency
 
@@ -208,7 +210,7 @@ Memory(
     agent_name='main',                 # storage segment inside the namespace; never shown to the model
     heading='',                        # optional heading on guidance and injected content
     namespace='',                      # string or per-run resolver
-    inject_memory=True,                # False keeps prompts cache-stable
+    inject_memory=True,                # False keeps memory out of the conversation
     max_tokens=2_000,                  # finite approximate total injection budget
     max_lines=200,                     # additional main-notebook line limit
     max_memory_size=65_536,            # per-file read, search, and write boundary

@@ -274,12 +274,6 @@ _NO_DEFAULT_ID = (Known('ids', f'{_ISSUES}7237 (no default `id`)', 'instructions
 """A static block without a default `id`: it never changes today, so nothing rewrites yet, but it can't append."""
 
 
-_MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
-    'openai-chat': {'user-prompt': 2, 'model-response': 3, 'tool-return': 4},
-    'openai-responses': {'user-prompt': 2, 'model-response': 4, 'tool-return': 4},
-}
-"""How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
-
 KNOWN: dict[str, tuple[Known, ...]] = {
     'AskUser': _NO_DEFAULT_ID,
     'CodeMode(dynamic_catalog=True)': (
@@ -297,17 +291,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
     'ConversationSearch': _NO_DEFAULT_ID,
     'Macroscope': _NO_DEFAULT_ID,
     'ManagedPrompt': _NO_DEFAULT_ID,
-    # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
-    # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
-    # every later message back a position.
-    'Memory': (
-        Known('prefix', f'{_ISSUES}8996', 'messages', 'user-prompt', count=3, providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8996', 'messages', identity, count=count, providers=(provider,))
-            for provider, counts in _MEMORY_OPENAI_MOVES.items()
-            for identity, count in counts.items()
-        ),
-    ),
     # The summary goes into the standing system prompt instead of joining history: ahead of the agent's
     # instructions (which it pushes back) on Anthropic and Chat, and as a leading system message on Responses.
     'SummarizingCompaction': (

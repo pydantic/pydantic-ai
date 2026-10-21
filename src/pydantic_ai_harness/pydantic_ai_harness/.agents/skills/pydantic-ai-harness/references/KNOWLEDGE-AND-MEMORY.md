@@ -18,8 +18,12 @@ demand). Only `Skills` needs an extra.
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
-of other files is injected into each request as a delimited user-role part, attached to the request
-that holds the latest user prompt (not after tool results), or to the last request when there is none.
+of other files is recorded in message history as a delimited user-role `<memory>` part, with the
+user's prompt on a run's first request, and only when memory changed since the latest snapshot in
+history. History stays append-only: earlier snapshots are kept, a later one supersedes them, and a
+change made during a run (including `write_memory`) reaches the model with the next user prompt,
+never after tool results. Snapshots carry `TextContent.metadata`
+`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`; list compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent
@@ -114,7 +118,7 @@ I/O.
 - `max_tokens=2_000` (approx, 4 chars/token) bounds guidance + notebook + file list together;
   `max_lines=200` additionally limits `MEMORY.md`; `max_memory_size=65_536` bounds per-file read,
   search, and write. Overflow is omitted with a pointer to `read_memory` / `search_memory`.
-- `inject_memory=False` keeps the prompt cache-stable; the tools remain. Also use it when
+- `inject_memory=False` keeps memory out of the conversation; the tools remain. Also use it when
   less-trusted actors can write to the store (memory is untrusted, model-written content).
 - `injection_errors='ignore'` (default) skips injection on a store failure; `'raise'` fails the run.
 - `search_memory` is literal, bounded text search: `max_search_results=10`,
@@ -126,8 +130,8 @@ I/O.
 
 ### Several memories on one agent
 
-Give each instance a distinct `agent_name` or `namespace` (otherwise their injections replace each
-other), a distinct `heading`, and a distinct `id` (all default to `'memory'`; duplicates raise
+Give each instance a distinct `agent_name` or `namespace` (otherwise they share one scope and one
+snapshot), a distinct `heading`, and a distinct `id` (all default to `'memory'`; duplicates raise
 `UserError` at `Agent` construction), and wrap all but one with `.prefix_tools(...)` so tool
 names do not collide:
 

@@ -5,13 +5,13 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable
 from copy import copy
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Literal
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, TextContent, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
@@ -40,20 +40,23 @@ _DEFAULT_GUIDANCE = (
     'file with `read_memory` when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
-    'in this turn.'
+    'in this turn. A later `<memory>` block in the conversation supersedes earlier ones.'
 )
 
 _MEMORY_DATA_PREFIX = '<memory>\n'
 _MEMORY_DATA_SUFFIX = '\n</memory>'
-_MEMORY_PART_METADATA = 'pydantic-ai-harness.memory.v1'
+_EMPTY_SNAPSHOT = f'{_MEMORY_DATA_PREFIX}[memory is empty]{_MEMORY_DATA_SUFFIX}'
+_MEMORY_ORIGIN = 'pydantic-ai-harness.memory.v1'
+"""The `origin` in a snapshot's `TextContent.metadata`, next to the hash of its scope under `scope`."""
 
 
 @dataclass
 class Memory(AbstractCapability[AgentDepsT]):
     """Persistent agent memory across sessions.
 
-    `MEMORY.md` is injected as user-role context and longer topic files are
-    available through `read_memory` and `search_memory`. Automatic snapshot
+    A snapshot of `MEMORY.md` is recorded in the conversation as user-role data,
+    once per run in which it changed, and longer topic files are available
+    through `read_memory` and `search_memory`. Automatic snapshot
     loading is journaled by durability engines that support capability
     operations.
     """
@@ -223,15 +226,21 @@ class Memory(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Add a bounded memory snapshot beside the latest user prompt, for this request only."""
+        """Record a memory snapshot in history at the start of a run, when memory changed since the last one.
+
+        The snapshot is added to the conversation once and sent unchanged with every later request, so
+        history only ever grows. It is added only on a run's first request, with the user's prompt: later
+        requests in a run carry tool results, where a block of user-channel text reads as a new message
+        from the user.
+        """
+        if not self.inject_memory or ctx.run_step > 1:
+            return request_context
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
-        # Scope-qualify the marker so several `Memory` capabilities on one agent
-        # each refresh only their own injection instead of clobbering each other.
-        marker = f'{_MEMORY_PART_METADATA}:{scope_hash}'
-        self._remove_previous_injection(ctx.messages, marker)
-        self._remove_previous_injection(request_context.messages, marker)
-        if not self.inject_memory:
+        latest = _latest_snapshot(ctx.messages, scope_hash)
+        # A run without a prompt of its own (resuming after a deferred tool approval) is sent tool results:
+        # the snapshot already in history stays current until the next prompt.
+        if latest is not None and not _has_user_prompt(ctx.messages[-1]):
             return request_context
         with ctx.tracer.start_as_current_span(
             'memory.inject', record_exception=False, set_status_on_exception=False
@@ -263,29 +272,13 @@ class Memory(AbstractCapability[AgentDepsT]):
                 return request_context
 
             main_content = '' if main is None else main.content
-            rendered = ''
-            guidance = self._render_guidance()
-            content_budget = (
-                self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
-            )
-            if content_budget > 0 and (main_content or subfiles or files_truncated):
-                rendered = render_memory_prompt(
-                    main_content,
-                    subfiles,
-                    heading=self.heading,
-                    guidance='',
-                    max_lines=self.max_lines,
-                    max_tokens=max(1, content_budget // 4),
-                    main_truncated=main is not None and main.truncated,
-                    files_truncated=files_truncated,
-                )[:content_budget]
-                rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
-                part = UserPromptPart([TextContent(rendered, metadata=marker)])
-                index = _snapshot_index(ctx.messages, request_context.messages)
-                target = request_context.messages[index]
-                if not isinstance(target, ModelRequest):  # pragma: no cover - guaranteed by the agent graph
-                    raise RuntimeError('model request history must end with a ModelRequest')
-                request_context.messages[index] = replace(target, parts=[*target.parts, part])
+            rendered = self._render_snapshot(main, subfiles, files_truncated)
+            # An empty snapshot is only worth recording when it replaces one the model would still read as current.
+            if rendered == _EMPTY_SNAPSHOT and latest is None:
+                rendered = None
+            appended = rendered if rendered is not None and rendered != latest else None
+            if appended is not None:
+                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=_snapshot_metadata(scope_hash))]))
             if span.is_recording():
                 span.set_attributes(
                     {
@@ -294,10 +287,32 @@ class Memory(AbstractCapability[AgentDepsT]):
                         'memory.files': len(subfiles),
                         'memory.files_truncated': files_truncated,
                         'memory.main_truncated': main is not None and main.truncated,
-                        'memory.injected_chars': len(rendered),
+                        'memory.appended': appended is not None,
+                        'memory.injected_chars': len(appended or ''),
                     }
                 )
         return request_context
+
+    def _render_snapshot(self, main: MemoryFile | None, subfiles: list[str], files_truncated: bool) -> str | None:
+        """The framed snapshot, or `None` when the guidance leaves no budget for one."""
+        main_content = '' if main is None else main.content
+        guidance = self._render_guidance()
+        content_budget = self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
+        if content_budget <= 0:
+            return None
+        if not (main_content or subfiles or files_truncated):
+            return _EMPTY_SNAPSHOT
+        rendered = render_memory_prompt(
+            main_content,
+            subfiles,
+            heading=self.heading,
+            guidance='',
+            max_lines=self.max_lines,
+            max_tokens=max(1, content_budget // 4),
+            main_truncated=main is not None and main.truncated,
+            files_truncated=files_truncated,
+        )[:content_budget]
+        return f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(
@@ -318,34 +333,6 @@ class Memory(AbstractCapability[AgentDepsT]):
             # workflow. Return content-safe failure metadata as the durable result instead.
             return None, [], False, type(exc).__name__
         return main, subfiles, files_truncated, None
-
-    def _remove_previous_injection(self, messages: list[ModelMessage], marker: str) -> None:
-        for index, message in enumerate(messages):
-            if not isinstance(message, ModelRequest):
-                continue
-            parts: list[ModelRequestPart] = []
-            changed = False
-            for part in message.parts:
-                if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
-                    parts.append(part)
-                    continue
-                # The bare `_MEMORY_PART_METADATA` match is a compatibility strip for
-                # histories persisted before markers were scope-qualified; without it a
-                # resumed pre-upgrade conversation keeps one stale block permanently.
-                # Removable once pre-upgrade histories are no longer a concern.
-                content = [
-                    item
-                    for item in part.content
-                    if not (isinstance(item, TextContent) and item.metadata in (marker, _MEMORY_PART_METADATA))
-                ]
-                if len(content) == len(part.content):
-                    parts.append(part)
-                else:
-                    changed = True
-                    if content:
-                        parts.append(replace(part, content=content))
-            if changed:
-                messages[index] = replace(message, parts=parts)
 
     @classmethod
     def from_spec(
@@ -407,21 +394,28 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
 
-def _snapshot_index(history: list[ModelMessage], request: list[ModelMessage]) -> int:
-    """Index of the request holding the latest user prompt, or of the last message when there is none.
+def _latest_snapshot(messages: list[ModelMessage], scope_hash: str) -> str | None:
+    """The text of the latest snapshot for this scope in history, or `None` when there is none.
 
-    A block after tool results reads as a new user turn, so the snapshot stays with the user's prompt.
-    The prompt is found in the persisted `history` because `wrap_model_request` hooks such as
-    `SystemReminders` add request-only user parts before this hook runs. Hooks that rewrite history,
-    such as compaction, rewrite the request list too, so both lists share indexes; when they don't,
-    the snapshot falls back to the last message.
+    Snapshots are recognized by the metadata `Memory` sets on them, never by their text. Versions before
+    snapshots were kept in history marked them with a plain string, which still identifies them.
     """
-    for index in range(len(history) - 1, -1, -1):
-        if _has_user_prompt(history[index]):
-            if index < len(request) and _has_user_prompt(request[index]):
-                return index
-            break
-    return len(request) - 1
+    current = _snapshot_metadata(scope_hash)
+    legacy = (f'{_MEMORY_ORIGIN}:{scope_hash}', _MEMORY_ORIGIN)
+    for message in reversed(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in reversed(message.parts):
+            if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
+                continue
+            for item in reversed(part.content):
+                if isinstance(item, TextContent) and (item.metadata == current or item.metadata in legacy):
+                    return item.content
+    return None
+
+
+def _snapshot_metadata(scope_hash: str) -> dict[str, str]:
+    return {'origin': _MEMORY_ORIGIN, 'scope': scope_hash}
 
 
 def _has_user_prompt(message: ModelMessage) -> bool:

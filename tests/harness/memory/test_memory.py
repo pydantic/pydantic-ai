@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
@@ -21,14 +22,12 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    SystemPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -117,6 +116,9 @@ async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> No
         await toolset.write_memory(ctx, 'hello')
     with pytest.raises(ToolFailed):
         await toolset.delete_memory(ctx, 'topic')
+
+
+_MAIN_SCOPE_HASH = hashlib.sha256(b'main').hexdigest()[:16]
 
 
 def _latest_instructions(messages: list[ModelMessage]) -> str:
@@ -1014,10 +1016,10 @@ class TestInjection:
         with pytest.raises(RuntimeError, match='resolver boom'):
             await Agent(TestModel(), capabilities=[Memory(store_resolver=broken_resolver)]).run('go')
 
-    async def test_current_request_injection_and_external_update_restore(self) -> None:
+    async def test_snapshot_is_recorded_once_per_run_and_appended_when_memory_changes(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version one')
-        captured: list[str] = []
+        captured: list[list[str]] = []
         calls = 0
 
         async def external_update() -> str:
@@ -1026,8 +1028,7 @@ class TestInjection:
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             nonlocal calls
-            captured.append(_latest_memory_context(messages))
-            assert len(_memory_contexts(messages)) == 1
+            captured.append(_memory_contexts(messages))
             calls += 1
             if calls == 1:
                 return ModelResponse(parts=[ToolCallPart('read_memory', {'file': 'MEMORY.md'}, tool_call_id='read')])
@@ -1037,16 +1038,70 @@ class TestInjection:
 
         agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)])
         agent.tool_plain(external_update)
-        await agent.run('go')
+        first = await agent.run('go')
 
-        assert '- version one' in captured[0]
-        assert '- version one' in captured[1]
-        assert '- version two' in captured[2]
+        # Every request of the run sends the same snapshot: a change mid-run waits for the next prompt.
+        assert len(captured) == 3
+        assert all(contexts == captured[0] for contexts in captured)
+        assert len(captured[0]) == 1
+        assert '- version one' in captured[0][0]
+        assert _memory_contexts(first.all_messages()) == captured[0]
 
         captured.clear()
-        calls = 3
-        await agent.run('new run')
-        assert '- version two' in captured[0]
+        second = await agent.run('new run', message_history=first.all_messages())
+        # The earlier snapshot is kept as it was sent, and the changed memory is appended after the new prompt.
+        assert len(captured) == 1
+        assert captured[0][0] == _memory_contexts(first.all_messages())[0]
+        assert len(captured[0]) == 2
+        assert '- version two' in captured[0][1]
+        history = second.all_messages()
+        assert _memory_request_indexes(history) == [1, len(first.all_messages()) + 1]
+        assert 'new run' in _user_text(history[len(first.all_messages()) : len(first.all_messages()) + 1])
+
+        captured.clear()
+        third = await agent.run('unchanged', message_history=history)
+        assert len(captured) == 1
+        assert len(captured[0]) == 2
+        assert _memory_contexts(third.all_messages()) == _memory_contexts(history)
+
+    async def test_snapshot_metadata_names_its_origin_and_scope(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'team/MEMORY.md', '- a fact')
+
+        result = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store, agent_name='team')]).run('go')
+
+        metadata = [
+            content.metadata
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for content in part.content
+            if isinstance(content, TextContent)
+        ]
+        assert metadata == [
+            {'origin': 'pydantic-ai-harness.memory.v1', 'scope': hashlib.sha256(b'team').hexdigest()[:16]}
+        ]
+
+    async def test_emptied_memory_appends_an_empty_snapshot(self) -> None:
+        store = InMemoryStore()
+        mutation = await _seed(store, 'main/MEMORY.md', '- a fact')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store, guidance='')])
+
+        first = await agent.run('first')
+        assert len(_memory_contexts(first.all_messages())) == 1
+        await store.delete('main/MEMORY.md', expected_version=mutation.version)
+
+        second = await agent.run('second', message_history=first.all_messages())
+        contexts = _memory_contexts(second.all_messages())
+        assert len(contexts) == 2
+        assert contexts[1] == '<memory>\n[memory is empty]\n</memory>'
+
+        third = await agent.run('third', message_history=second.all_messages())
+        assert _memory_contexts(third.all_messages()) == contexts
+
+        # A conversation that never had memory gets no empty snapshot.
+        assert not _memory_contexts((await agent.run('fresh')).all_messages())
 
     async def test_stored_content_is_user_role_data_not_instructions(self) -> None:
         store = InMemoryStore()
@@ -1130,6 +1185,34 @@ class TestInjection:
         assert _memory_request_indexes(captured[1]) == [0]
         assert 'what do I like?' in _user_text(captured[1][:1])
 
+    async def test_resumed_run_appends_no_snapshot_after_tool_results(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        captured: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            if len(captured) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)], output_type=[str, DeferredToolRequests])
+        agent.tool_plain(requires_approval=True)(lookup)
+        first = await agent.run('what do I like?')
+        await _seed(store, 'main/MEMORY.md', '- likes coffee')
+
+        await agent.run(
+            message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'lookup': True}),
+        )
+
+        # The changed memory waits for the next prompt rather than following the approved tool's result.
+        assert _memory_contexts(captured[1]) == _memory_contexts(captured[0])
+        assert '- likes tea' in _memory_contexts(captured[1])[0]
+
     async def test_snapshot_without_user_prompt_goes_to_last_request(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
@@ -1143,69 +1226,26 @@ class TestInjection:
 
         assert _memory_request_indexes(captured[0]) == [len(captured[0]) - 1]
 
-    async def test_snapshot_goes_to_last_request_when_request_list_diverges_from_history(self) -> None:
-        store = InMemoryStore()
-        await _seed(store, 'main/MEMORY.md', '- likes tea')
-        captured: list[list[ModelMessage]] = []
-
-        @dataclass
-        class SendLatestRequestOnly(AbstractCapability[None]):
-            async def before_model_request(
-                self, ctx: RunContext[None], request_context: ModelRequestContext
-            ) -> ModelRequestContext:
-                return replace(request_context, messages=request_context.messages[-1:])
-
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            captured.append(messages)
-            if len(captured) == 1:
-                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
-            return ModelResponse(parts=[TextPart('done')])
-
-        def lookup() -> str:
-            return 'found'
-
-        capabilities: list[AbstractCapability[None]] = [SendLatestRequestOnly(), Memory(store=store)]
-        agent = Agent(FunctionModel(model), deps_type=type(None), capabilities=capabilities)
-        agent.tool_plain(lookup)
-        await agent.run('what do I like?')
-
-        # The persisted prompt's index holds the tool results here, so the snapshot uses the last request.
-        assert len(captured[1]) == 1
-        assert _memory_request_indexes(captured[1]) == [0]
-
-    async def test_continued_and_serialized_history_refreshes_request_only_memory_context(self) -> None:
+    async def test_serialized_history_keeps_snapshots(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version one')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)])
 
-        def finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('done')])
+        first = await agent.run('first')
+        restored = ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
+        assert _memory_contexts(restored) == _memory_contexts(first.all_messages())
 
-        first = await Agent(FunctionModel(finish), capabilities=[Memory(store=store)]).run('first')
-        serialized = first.all_messages_json()
-        assert not _memory_contexts(first.all_messages())
+        unchanged = await agent.run('continue', message_history=restored)
+        assert len(_memory_contexts(unchanged.all_messages())) == 1
+
         await _seed(store, 'main/MEMORY.md', '- version two')
+        changed = await agent.run('continue', message_history=restored)
+        contexts = _memory_contexts(changed.all_messages())
+        assert len(contexts) == 2
+        assert '- version one' in contexts[0]
+        assert '- version two' in contexts[1]
 
-        for history in (
-            first.all_messages(),
-            ModelMessagesTypeAdapter.validate_json(serialized),
-        ):
-            captured: list[list[str]] = []
-
-            def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-                captured.append(_memory_contexts(messages))
-                return ModelResponse(parts=[TextPart('done')])
-
-            continued = await Agent(FunctionModel(capture), capabilities=[Memory(store=store)]).run(
-                'continue', message_history=history
-            )
-
-            assert len(captured) == 1
-            assert len(captured[0]) == 1
-            assert '- version one' not in captured[0][0]
-            assert '- version two' in captured[0][0]
-            assert not _memory_contexts(continued.all_messages())
-
-    async def test_compaction_before_memory_preserves_request_only_injection(self) -> None:
+    async def test_compaction_before_memory_keeps_a_snapshot_in_view(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- fresh fact')
         captured: list[list[str]] = []
@@ -1214,72 +1254,30 @@ class TestInjection:
             captured.append(_memory_contexts(messages))
             return ModelResponse(parts=[TextPart('done')])
 
-        history: list[ModelMessage] = [
-            ModelRequest(parts=[UserPromptPart('old')]),
-            ModelResponse(parts=[TextPart('old response')]),
-        ]
-        result = await Agent(
+        agent = Agent(
             FunctionModel(capture),
             capabilities=[
                 SlidingWindowCompaction(max_messages=2, keep_messages=2, preserve_first_user_message=False),
                 Memory(store=store),
             ],
-        ).run('continue', message_history=history)
+        )
+        first = await agent.run('first')
+        assert len(captured[0]) == 1
 
+        # Compaction drops the run's snapshot from the window, so `Memory` records the same memory again.
+        captured.clear()
+        second = await agent.run('continue', message_history=first.all_messages())
         assert len(captured) == 1
         assert len(captured[0]) == 1
         assert '- fresh fact' in captured[0][0]
-        persisted = result.all_messages()
-        assert len(persisted) == 3
-        assert isinstance(persisted[0], ModelResponse)
-        assert not _memory_contexts(persisted)
+        assert len(_memory_contexts(second.all_messages())) == 1
 
-    async def test_cleanup_preserves_user_content_merged_with_memory_context(self) -> None:
-        store = InMemoryStore()
-        await _seed(store, 'main/MEMORY.md', '- fact')
-
-        history: list[ModelMessage] = [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart('unrelated system context'),
-                    UserPromptPart(
-                        [
-                            TextContent('UNRELATED USER CONTEXT'),
-                            TextContent('<memory>\n- stale fact\n</memory>', metadata='pydantic-ai-harness.memory.v1'),
-                        ]
-                    ),
-                    UserPromptPart('ORIGINAL USER PROMPT'),
-                ]
-            ),
-            ModelResponse(parts=[TextPart('done')]),
-        ]
-
-        captured: list[list[ModelMessage]] = []
-
-        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            captured.append(messages)
-            return ModelResponse(parts=[TextPart('done')])
-
-        continued = await Agent(FunctionModel(capture), capabilities=[Memory(store=store)]).run(
-            'continue', message_history=history
-        )
-
-        assert len(captured) == 1
-        assert 'ORIGINAL USER PROMPT' in _user_text(captured[0])
-        assert 'UNRELATED USER CONTEXT' in _user_text(captured[0])
-        assert len(_memory_contexts(captured[0])) == 1
-        assert 'ORIGINAL USER PROMPT' in _user_text(continued.all_messages())
-        assert 'UNRELATED USER CONTEXT' in _user_text(continued.all_messages())
-        assert not _memory_contexts(continued.all_messages())
-
-    async def test_disabled_injection_removes_memory_context_from_continued_history(self) -> None:
+    async def test_disabled_injection_keeps_earlier_snapshots_and_adds_none(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- version one')
 
-        def finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('done')])
-
-        first = await Agent(FunctionModel(finish), capabilities=[Memory(store=store)]).run('first')
+        first = await Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)]).run('first')
+        await _seed(store, 'main/MEMORY.md', '- version two')
         captured: list[list[str]] = []
 
         def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1287,11 +1285,11 @@ class TestInjection:
             return ModelResponse(parts=[TextPart('done')])
 
         continued = await Agent(FunctionModel(capture), capabilities=[Memory(store=store, inject_memory=False)]).run(
-            'continue', message_history=ModelMessagesTypeAdapter.validate_json(first.all_messages_json())
+            'continue', message_history=first.all_messages()
         )
 
-        assert captured == [[]]
-        assert _memory_contexts(continued.all_messages()) == []
+        assert captured == [_memory_contexts(first.all_messages())]
+        assert _memory_contexts(continued.all_messages()) == captured[0]
 
     async def test_for_run_returns_isolated_instances(self) -> None:
         capability = Memory[None]()
@@ -1355,37 +1353,44 @@ class TestInjection:
             assert len(contexts) == 2
             assert any('personal fact' in context for context in contexts)
             assert any('org fact' in context for context in contexts)
-        assert not _memory_contexts(second.all_messages())
+        # Neither memory changed, so the second run sends the first run's snapshots and adds none.
+        assert captured[1] == captured[0]
+        assert _memory_contexts(second.all_messages()) == captured[0]
 
-    async def test_legacy_unqualified_marker_is_stripped_from_continued_history(self) -> None:
+    @pytest.mark.parametrize(
+        'marker', ['pydantic-ai-harness.memory.v1', f'pydantic-ai-harness.memory.v1:{_MAIN_SCOPE_HASH}']
+    )
+    async def test_legacy_snapshots_are_kept_and_superseded(self, marker: str) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- durable fact')
         history: list[ModelMessage] = [
             ModelRequest(
                 parts=[
-                    UserPromptPart('earlier'),
                     UserPromptPart(
-                        [TextContent('<memory>\n- stale fact\n</memory>', metadata='pydantic-ai-harness.memory.v1')]
+                        [
+                            TextContent('UNRELATED USER CONTEXT'),
+                            TextContent('<memory>\n- stale fact\n</memory>', metadata=marker),
+                        ]
                     ),
+                    UserPromptPart('ORIGINAL USER PROMPT'),
                 ]
             ),
             ModelResponse(parts=[TextPart('ok')]),
         ]
-        captured: list[list[str]] = []
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)])
 
-        def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            captured.append(_memory_contexts(messages))
-            return ModelResponse(parts=[TextPart('done')])
+        result = await agent.run('continue', message_history=history)
 
-        result = await Agent(FunctionModel(capture), capabilities=[Memory(store=store)]).run(
-            'continue', message_history=history
-        )
+        assert result.all_messages()[: len(history)] == history
+        contexts = _memory_contexts(result.all_messages())
+        assert len(contexts) == 2
+        assert 'stale fact' in contexts[0]
+        assert 'durable fact' in contexts[1]
 
-        assert len(captured) == 1
-        assert len(captured[0]) == 1
-        assert 'durable fact' in captured[0][0]
-        assert 'stale fact' not in captured[0][0]
-        assert not _memory_contexts(result.all_messages())
+        # A legacy snapshot that matches the current memory is current, so nothing is appended.
+        current = [ModelRequest(parts=[UserPromptPart([TextContent(contexts[1], metadata=marker)])]), history[1]]
+        unchanged = await agent.run('continue', message_history=current)
+        assert len(_memory_contexts(unchanged.all_messages())) == 1
 
 
 class TestConfigurationAndSpecs:
