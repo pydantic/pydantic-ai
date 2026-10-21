@@ -269,10 +269,9 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
                 f'is not a valid template, so the code default is used: {e}',
                 RuntimeWarning,
             )
-            default = self._variable.default
-            if callable(default):
-                # Logfire passes its merged targeting context here; the run's own key and attributes
-                # are the closest public equivalent.
-                default = default(targeting_key, attributes)
+            # Resolve the code default through Logfire, so a callable default sees the same merged
+            # targeting context (resource attributes, baggage, targeting key fallback) it would in `get()`.
+            with self._variable.override(self._variable.default):
+                default = self._variable.get(targeting_key=targeting_key, attributes=attributes).value
             fallback = ResolvedVariable(name=resolved.name, value=default, exception=e, reason='other_error')
             return fallback, TemplateStr[object](default)

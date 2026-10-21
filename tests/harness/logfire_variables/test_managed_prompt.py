@@ -540,7 +540,8 @@ async def test_invalid_remote_template_falls_back_to_callable_default(capfire: C
     with _variables_provider_configured(capfire, config):
 
         def default_prompt(targeting_key: str | None, attributes: Mapping[str, Any] | None) -> str:
-            return 'Hi {{name}}.'
+            # Valid only with Logfire's merged targeting context, which adds the resource attributes.
+            return 'Hi {{name}}.' if attributes and 'service.name' in attributes else 'Hi {{#if name}}'
 
         var = logfire.var(name='prompt__broken_callable', type=str, default=default_prompt)
         agent = Agent(
