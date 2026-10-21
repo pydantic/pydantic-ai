@@ -4056,6 +4056,32 @@ class TestKeepUserMessages:
             second = await comp.compact([*first, _user('third'), _assistant('c')], _make_ctx())
         assert sum('first' in text for text in _user_texts(second)) == 1
 
+    async def test_a_retained_copy_whose_text_has_dict_metadata_survives_a_merge(self):
+        """The marker joins the caller's metadata as a key, so the copy is still recognized and the keys stay."""
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts), max_messages=3, keep_messages=2, keep_user_messages=True
+        )
+        tagged = ModelRequest(parts=[UserPromptPart([TextContent('KEPT TURN', metadata={'source': 'caller'})])])
+        messages: list[ModelMessage] = [tagged, _assistant('a'), _user('second'), _assistant('b')]
+        first = await comp.compact(messages, _make_ctx(messages))
+        continued = repair_messages([*first, _user('third'), _assistant('c'), _user('fourth')])
+
+        second = await comp.compact(continued, _make_ctx(continued))
+
+        assert 'KEPT TURN' not in prompts[1]
+        assert sum('KEPT TURN' in text for text in _user_texts(second)) == 1
+        [kept_item] = [
+            item
+            for message in second
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent) and item.content == 'KEPT TURN'
+        ]
+        assert kept_item.metadata == {'source': 'caller', _KEPT_USER_MESSAGE_METADATA: True}
+
     async def test_a_retained_copy_merged_into_a_later_request_is_still_recognized(self):
         """Continuing a history merges adjacent requests and drops their metadata; the marker on the text survives."""
         prompts: list[str] = []

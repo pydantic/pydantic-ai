@@ -369,26 +369,38 @@ def _is_kept_user_part(part: ModelRequestPart) -> bool:
     return (
         isinstance(part, UserPromptPart)
         and not isinstance(part.content, str)
-        and any(isinstance(item, TextContent) and item.metadata == _KEPT_USER_MESSAGE_METADATA for item in part.content)
+        and any(isinstance(item, TextContent) and _is_kept_marker(item.metadata) for item in part.content)
     )
+
+
+def _is_kept_marker(metadata: object) -> bool:
+    """Whether a `TextContent.metadata` value carries the `keep_user_messages` marker."""
+    if metadata == _KEPT_USER_MESSAGE_METADATA:
+        return True
+    return isinstance(metadata, dict) and cast(dict[str, Any], metadata).get(_KEPT_USER_MESSAGE_METADATA) is True
 
 
 def _mark_kept(part: UserPromptPart) -> UserPromptPart:
     """*part* with its text marked as a `keep_user_messages` copy; other items are left as they are.
 
     A plain string becomes a single `TextContent`, which the model reads the same way. A `TextContent`
-    that already carries metadata keeps it, so a part with no other text keeps only the request-level
-    marker.
+    without metadata gets the marker as its metadata; one whose metadata is a dict gets the marker as an
+    extra key, so the caller's keys stay. One whose metadata is any other value has no model-invisible
+    place for a marker, so a part with no other text keeps only the request-level marker, which the
+    history cleanup that merges requests drops: a known limit until core provenance lands.
     """
     items = [part.content] if isinstance(part.content, str) else part.content
-    marked: list[UserContent] = [
-        TextContent(item, metadata=_KEPT_USER_MESSAGE_METADATA)
-        if isinstance(item, str)
-        else replace(item, metadata=_KEPT_USER_MESSAGE_METADATA)
-        if isinstance(item, TextContent) and item.metadata is None
-        else item
-        for item in items
-    ]
+    marked: list[UserContent] = []
+    for item in items:
+        if isinstance(item, str):
+            marked.append(TextContent(item, metadata=_KEPT_USER_MESSAGE_METADATA))
+        elif isinstance(item, TextContent) and item.metadata is None:
+            marked.append(replace(item, metadata=_KEPT_USER_MESSAGE_METADATA))
+        elif isinstance(item, TextContent) and isinstance(item.metadata, dict):
+            metadata = cast(dict[str, Any], item.metadata)
+            marked.append(replace(item, metadata={**metadata, _KEPT_USER_MESSAGE_METADATA: True}))
+        else:
+            marked.append(item)
     return replace(part, content=marked)
 
 
