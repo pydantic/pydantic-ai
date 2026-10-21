@@ -29,7 +29,7 @@ import pytest
 
 from pydantic_ai import Agent, AgentRunResultEvent, PendingModelResponse
 from pydantic_ai.concurrency import ConcurrencyLimiter
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -49,6 +49,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, UsageLimits
+
+from ..continuation_utils import ScriptedContinuationModel, scripted_response
 
 _TIMESTAMP = datetime(2024, 1, 1, tzinfo=UTC)
 READINESS_WAIT_TIMEOUT = 5
@@ -1389,6 +1391,45 @@ async def test_a_repeated_cancellation_gives_up_on_a_hanging_suspended_job_cance
     task.cancel()
     await asyncio.sleep(0)
     assert not task.done()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, READINESS_WAIT_TIMEOUT)
+
+
+async def test_a_failing_suspended_job_cancel_does_not_replace_the_error_that_aborted_the_run() -> None:
+    """A provider error from the teardown cancel is swallowed, so the run surfaces the error that aborted it."""
+
+    class FailingCancelModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            await super().cancel_suspended_response(response)
+            raise ModelHTTPError(status_code=404, model_name='scripted', body='job not found')
+
+    model = FailingCancelModel(
+        responses=[
+            scripted_response(
+                texts=['partial'], state='suspended', provider_response_id='job1', input_tokens=1, output_tokens=1
+            ),
+            ModelHTTPError(status_code=500, model_name='scripted', body='server error'),
+        ]
+    )
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(model).run('hi')
+    assert exc_info.value.status_code == 500
+    assert [response.provider_response_id for response in model.cancelled] == ['job1']
+
+    # A cancellation that interrupts the teardown still propagates once the failing cancel has finished.
+    started = asyncio.Event()
+
+    class SlowFailingCancelModel(TestModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            started.set()
+            await asyncio.sleep(0)
+            raise ModelHTTPError(status_code=404, model_name='test', body='job not found')
+
+    task = asyncio.create_task(
+        cancel_suspended_job(SlowFailingCancelModel(), ModelResponse(parts=[], state='suspended'))
+    )
+    await asyncio.wait_for(started.wait(), READINESS_WAIT_TIMEOUT)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, READINESS_WAIT_TIMEOUT)
