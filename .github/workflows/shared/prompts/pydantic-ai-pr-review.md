@@ -84,9 +84,10 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   system voice, no framework voice sent as a user string, no unescaped wrapper
   payload, no framework record found by its text, and the same history always
   renders to the same bytes. For tags: lowercase `snake_case` names, an
-  existing tag before a new one, `_framing.wrap()` rather than a hand-rolled
-  escaper, neutralizing every opening and closing spelling of every registered
-  framing tag inside a data frame (only `system` inside a `<system>` body),
+  existing tag before a new one, an escape that neutralizes every opening and
+  closing spelling of every registered framing tag inside a data frame (only
+  `system` inside a `<system>` body; through `_framing.wrap()` once #10547
+  merges),
   with tests for the variants and a cross-tag case, attributes limited to identity and
   outcome, no unframed framework preamble before a frame on a user turn, no
   "the tag that follows" references, and a live probe for new framing. Code that
