@@ -84,7 +84,9 @@ async def test_bedrock_contains(
     def capture(params: JsonSchema, **_: object) -> None:
         requests.append(deepcopy(params))
 
-    contains_provider.client.meta.events.register('before-parameter-build.bedrock-runtime.Converse', capture)
+    # `request()` streams a Claude request behind the scenes when it sends the model's maximum output as `maxTokens`.
+    for operation in ('Converse', 'ConverseStream'):
+        contains_provider.client.meta.events.register(f'before-parameter-build.bedrock-runtime.{operation}', capture)
     model = BedrockConverseModel(model_name, provider=contains_provider)
     output_type = NativeOutput(Result) if output_mode == 'native' else ToolOutput(Result, strict=True)
     prompt = 'Return values equal to ["ok"].' if output_mode == 'native' else 'Call final_result with values ["ok"].'

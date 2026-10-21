@@ -35,11 +35,15 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 
     except errors.APIError as e:
         if (status_code := e.code) >= 400:
-            raise ModelHTTPError(
+            status = e.status if isinstance(e.status, str) else None
+            raise ModelHTTPError.for_category(
+                _model_errors.google_status_category(status, e.message)
+                or _model_errors.http_status_category(status_code, e.message),
                 status_code=status_code,
                 model_name=model_name,
                 body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                 headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                provider_error_code=status,
             ) from e
 
         raise
