@@ -980,7 +980,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         ],
     )
     # Previously raised `UserError` from the DBOS id-less-MCP guard because the contributed MCP leaf
-    # had `id=None`; it now derives `mcp.example.com-api` from the URL, so construction succeeds.
+    # had `id=None`; it now derives `mcp.example.com` from the URL's hostname, so construction succeeds.
     dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
     leaves: list[AbstractToolset[object]] = []
