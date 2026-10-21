@@ -164,7 +164,14 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     # The downstream Anthropic flag survives the merge, so `thinking='xhigh'` passes through on Bedrock too.
     assert anthropic_profile.get('anthropic_supports_xhigh_effort', False) is True
 
-    for model_name in ('claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-5-5'):
+    for model_name in (
+        'claude-opus-4-8',
+        'claude-opus-5',
+        'claude-opus-5-5',
+        'claude-sonnet-5',
+        'claude-sonnet-5-5',
+        'claude-haiku-5-5',
+    ):
         anthropic_profile = provider.model_profile(f'global.anthropic.{model_name}')
         anthropic_model_profile_mock.assert_called_with(model_name)
         assert isinstance(anthropic_profile, dict)
