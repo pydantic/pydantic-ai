@@ -102,9 +102,10 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
 - The agent needs a `name` (or pass `name=` to `AbsurdDurability`), and every function, MCP, or
   dynamic toolset needs a unique `id`; `Agent(...)` raises a `UserError` otherwise. Don't rename
   either once deployed: in-flight tasks re-run the steps whose names changed.
-- A checkpointed tool's return value is stored as JSON. If it can't be serialized, the run raises a
-  `UserError` after the tool ran, and that failure is checkpointed. The task still retries under its
-  retry strategy, and each attempt raises the error again without running the tool.
+- A checkpointed tool's return value is stored as JSON. If it can't be serialized, the run raises
+  `UnserializableStepResultError` (a `UserError`) after the tool ran, and that failure is
+  checkpointed. The task still retries under its retry strategy, and each attempt raises the error
+  again without running the tool.
 - A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
   re-runs the tool. Keep side effects in tools and in an `event_stream_handler` idempotent.
 - While a step runs, it extends the worker's claim on the task, so a model request or tool call can
@@ -112,9 +113,9 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
   cancelled or this attempt already failed (for example, its claim expired and the task was retried),
   the step is cancelled and the Absurd SDK's error propagates. A worker with `claim_timeout=0` holds
   claims that never expire, so its steps don't extend them.
-- Inside a task, an `MCPToolset` keeps one session for the whole run. The first step that runs
-  instead of replaying from its checkpoint connects to the server, so a failed connection fails that
-  step and the task's retry connects again.
+- Inside a task, an `MCPToolset` keeps one session for the whole run. The first step that runs and
+  needs the server connects to it, so a failed connection fails that step and the task's retry
+  connects again.
 - Checkpoints hold model responses and tool results as JSON in the queue's Postgres tables, and a
   retry uses them as stored. Limit write access to the Absurd schema accordingly, and don't return
   secrets from tools unless they may be stored there.
