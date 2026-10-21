@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, Any, overload
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
+from pydantic_ai import messages as _messages
 from pydantic_ai._run_context import AnchoredEvidence, CapabilityEventT, CustomEventT, ToolNamePath
 from pydantic_ai.capabilities.abstract import select_workspace
 from pydantic_ai.durable_exec._toolset import DispatchSnapshots, EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CapabilityEvent, CustomEvent
+from pydantic_ai.messages import CapabilityEvent, CustomEvent, ToolKindLike
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
@@ -163,6 +164,18 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             return snapshot
         return super().available_tool_names
 
+    def tool_name_for_kind(self, kind: ToolKindLike) -> str | None:
+        """The name of the tool with this kind, from the snapshot serialized at activity dispatch time.
+
+        The tool manager doesn't cross the activity boundary, but the step's tools were resolved when
+        the activity was dispatched, so a tool result built in the activity can still name another
+        tool by kind. Custom subclasses whose `serialize_run_context` doesn't carry the snapshot keep
+        the base behavior, which returns `None` without a tool manager.
+        """
+        if (snapshot := self.__dict__.get('_tool_names_by_kind')) is not None:
+            return snapshot.get(_messages._tool_kind_id(kind))  # pyright: ignore[reportPrivateUsage]
+        return super().tool_name_for_kind(kind)
+
     @property
     def active_capability_ids(self) -> set[str]:
         """The set of active capability ids serialized at activity dispatch time.
@@ -248,6 +261,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             # A resolved snapshot: at dispatch time live tool state exists, so this carries the
             # always-visible tools that the in-activity `discovered_tool_names` fallback misses.
             'available_tool_names': ctx.available_tool_names,
+            # What `tool_name_for_kind` answers from inside the activity, resolved while the step's
+            # tools are live: the first tool of each kind, in the order `ctx.tools` lists them.
+            '_tool_names_by_kind': _tool_names_by_kind(ctx),
             # Likewise a snapshot rather than the registry: these ids are plain strings, while the
             # capability objects they key are not serializable. `is_tool_available` consults this
             # for any capability-owned tool, so without it the definition form — the form the docs
@@ -331,3 +347,11 @@ def _restore_workspace(ctx: RunContext[Any], agent: AbstractAgent[Any, Any]) -> 
             )
         )
     ctx.__dict__['workspace'] = restored
+
+
+def _tool_names_by_kind(ctx: RunContext[Any]) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for name, tool_def in ctx.tools.items():
+        if tool_def.tool_kind is not None:
+            names.setdefault(tool_def.tool_kind, name)
+    return names

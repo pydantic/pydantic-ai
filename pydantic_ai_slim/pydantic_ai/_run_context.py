@@ -774,14 +774,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
         It reads the same tools as [`tools`][pydantic_ai.tools.RunContext.tools], so a tool hidden by
         deferred loading counts, keeping instructions that name it stable when it is revealed, and a
         tool left out by [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] doesn't.
-        When several tools have the kind, it returns the first in the order the agent lists its tools
-        (the order of [`tools`][pydantic_ai.tools.RunContext.tools]), so the answer is stable from step
-        to step; iterate `tools` to see them all.
+        When several tools have the kind, it returns the first in the order of
+        [`tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list
+        them in, so the answer is stable from step to step; iterate `tools` to see them all.
 
         The step's tools are resolved before its instructions are rendered, so instruction functions,
         model request hooks and tools all see the current step. Inside `get_tools` or a `prepare_tools`
         hook they are still being resolved: there it answers from the previous step, or returns `None`
-        on the first. Where no tool manager is attached, such as inside a Temporal activity, it returns `None`.
+        on the first. Inside a Temporal activity, where the tool manager isn't attached, it answers from a
+        snapshot taken when the activity was dispatched; anywhere else without a tool manager it returns `None`.
 
         Args:
             kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.

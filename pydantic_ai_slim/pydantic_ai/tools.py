@@ -851,7 +851,8 @@ class ToolDefinition:
     change when that tool is revealed mid-run.
 
     A tool is only left out in favor of a tool that stays. When tools would each be left out in favor
-    of the other, the one listed first in the agent's tools stays.
+    of the other, the one listed first in the step's tools stays, and every tool whose kind it names
+    steps aside; cycles that can't satisfy every rule are resolved best-effort.
     See [Superseding a tool by kind](../tools-advanced.md#unless-tool-kind).
     """
 
