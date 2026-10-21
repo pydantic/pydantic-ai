@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
 
 
+_DEFAULT_PORTS = {'http': 80, 'https': 443}
+
+
 @dataclass(init=False)
 class MCP(NativeOrLocalTool[AgentDepsT]):
     """MCP server capability.
@@ -134,7 +137,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         # is kept: it can select a tenant, so two URLs that differ only there may be two servers, and
         # telling them apart takes an explicit `id`.
         parsed = urlparse(self.url)
-        return f'{parsed.scheme.lower()}://{parsed.hostname}:{parsed.port}{parsed.path.rstrip("/")}?{parsed.query}'
+        scheme = parsed.scheme.lower()
+        try:
+            port = parsed.port or _DEFAULT_PORTS.get(scheme)
+        except ValueError:
+            # A malformed port can't be normalized, so it's compared as written.
+            host = parsed.netloc.rpartition('@')[2].lower()
+        else:
+            host = f'{parsed.hostname}:{port}'
+        return f'{scheme}://{host}{parsed.path.rstrip("/")}?{parsed.query}'
 
     def _derive_id(self, url: str | None) -> str | None:
         """Derive a stable id for this capability from `url`.
