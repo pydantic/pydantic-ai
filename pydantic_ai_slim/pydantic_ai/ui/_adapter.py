@@ -345,9 +345,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     requests), and the agent's own system prompt is reinjected at the head of the
     first request via the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+    Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
+    frontend messages are reset to `None` as well.
 
     `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
-    are preserved as-is, and the agent's configured `system_prompt` is not injected
+    and request-level `instructions` are preserved as-is, and the agent's configured `system_prompt` is not injected
     — the caller is fully responsible for sending it on every turn if desired. To
     opt into the same fallback-to-configured behavior as server mode, add the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability
@@ -560,7 +562,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] — see its
         docstring for the full list of what's stripped — with these adapter-specific settings:
 
-        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s are stripped only when
+        - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and request-level
+          [`instructions`][pydantic_ai.messages.ModelRequest.instructions] are stripped only when
           [`manage_system_prompt`][pydantic_ai.ui.UIAdapter.manage_system_prompt] is `'server'`,
           and the agent's configured `system_prompt` is reinjected by
           [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] on the next model
@@ -583,6 +586,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         return sanitize_messages(
             messages,
             strip_system_prompts=self.manage_system_prompt == 'server',
+            strip_instructions=self.manage_system_prompt == 'server',
             allowed_file_url_schemes=self.allowed_file_url_schemes,
             allowed_file_url_force_download=self.allowed_file_url_force_download,
             allow_uploaded_files=self.allow_uploaded_files,

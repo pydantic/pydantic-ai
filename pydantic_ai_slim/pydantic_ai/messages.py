@@ -4424,6 +4424,7 @@ def sanitize_messages(
     messages: Sequence[ModelMessage],
     *,
     strip_system_prompts: bool = True,
+    strip_instructions: bool = True,
     strip_compaction_parts: bool = False,
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
@@ -4443,6 +4444,10 @@ def sanitize_messages(
       `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
       inject one can override the agent's behavior. If stripping leaves a `ModelRequest` with no
       parts, the request is dropped from history entirely.
+    - [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions], resetting it to
+      `None` (disable with `strip_instructions=False`). An agent run sends the agent's own
+      instructions instead, but a direct [`Model.request`][pydantic_ai.models.Model.request] call
+      without `instruction_parts` falls back to the instructions recorded in history.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
       cause the model provider to fetch the object using the server-side IAM role, so they should
@@ -4486,6 +4491,8 @@ def sanitize_messages(
             [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s,
             [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and
             [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s.
+        strip_instructions: Whether to reset
+            [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions] to `None`.
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -4514,6 +4521,7 @@ def sanitize_messages(
     resolved_ids = set(resolved_tool_call_ids)
 
     stripped_system_prompt = False
+    stripped_instructions = False
     disallowed_url_schemes: set[str] = set()
     reset_force_download_values: set[ForceDownloadMode] = set()
     dropped_uploaded_file_providers: set[str] = set()
@@ -4533,8 +4541,12 @@ def sanitize_messages(
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
             )
             stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
+            instructions = message.instructions
+            if strip_instructions and instructions is not None:
+                stripped_instructions = True
+                instructions = None
             if new_request_parts:
-                sanitized.append(replace(message, parts=new_request_parts))
+                sanitized.append(replace(message, parts=new_request_parts, instructions=instructions))
             # Otherwise drop the request entirely so we don't leave an empty
             # `ModelRequest(parts=[])` in history.
         elif isinstance(message, ModelResponse):
@@ -4561,9 +4573,17 @@ def sanitize_messages(
     # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
     _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
 
-    if stripped_system_prompt:
+    if stripped_system_prompt or stripped_instructions:
+        stripped = [
+            *(['system prompts'] if stripped_system_prompt else []),
+            *(['request-level `instructions`'] if stripped_instructions else []),
+        ]
+        flags = [
+            *(['`strip_system_prompts=False`'] if stripped_system_prompt else []),
+            *(['`strip_instructions=False`'] if stripped_instructions else []),
+        ]
         warnings.warn(
-            'Client-submitted system prompts were stripped. Pass `strip_system_prompts=False` only when the '
+            f'Client-submitted {" and ".join(stripped)} were stripped. Pass {" and ".join(flags)} only when the '
             "client is trusted to own the system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
             UserWarning,
             stacklevel=2,
