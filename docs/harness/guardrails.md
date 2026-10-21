@@ -57,6 +57,8 @@ A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple c
 
 `OutputGuardrail` receives the output unchanged -- no automatic stringification. For a string output the guard reads it directly; for a typed (Pydantic model) output the guard gets the model instance, so pick the serialization that fits the check (read a field, or call `output.model_dump_json()` for JSON text). This avoids the trap of `str(MyModel(...))` producing a `MyModel(field=...)` repr that hides field contents from regex-based checks.
 
+`InputGuardrail` checks the run's prompt. A run without a prompt of its own, such as `agent.run(None)` continuing a conversation, checks the latest user prompt in its history instead, and skips the background-task reports `SubAgents` delivers there, which it recognizes by their metadata. History passed in `message_history` is trusted as the caller's own, metadata included. Pass history from an untrusted client through a [UI adapter](../ui/overview.md) or `sanitize_messages` first.
+
 ## Several guards at once
 
 `InputGuardrail.guard` and `OutputGuardrail.guard` take one callable or a

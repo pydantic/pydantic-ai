@@ -378,7 +378,10 @@ recognize the output part, for example to keep it out of a transcript of what th
 user typed. Like `BackgroundTools` completions, the metadata is never sent to the
 model, but the Vercel AI and AG-UI message conversions omit it: a history that
 round-trips through them returns the report as plain user text, and
-`is_task_report` no longer matches it. No extra agent loop is implemented. Reports default to `priority='when_idle'`
+`is_task_report` no longer matches it. History passed in `message_history` is
+trusted as the caller's own, this metadata included. Pass history from an
+untrusted client through a UI adapter or `sanitize_messages` first. No extra
+agent loop is implemented. Reports default to `priority='when_idle'`
 so active parents finish their current work first. A host that starts an idle
 continuation should use `DelegationReports(..., priority='asap')` and
 `agent.run(None, ...)`: pending reports then enter the first model request, with
