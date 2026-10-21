@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import logfire
-from logfire.variables import ResolvedVariable, Variable
+from logfire.variables import Variable
 from pydantic_handlebars import HandlebarsError
 
 from pydantic_ai import TemplateStr
@@ -19,6 +19,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 
 if TYPE_CHECKING:
     from logfire import Logfire
+    from logfire.variables import ResolvedVariable
 
     from pydantic_ai.capabilities.abstract import WrapRunHandler
     from pydantic_ai.run import AgentRunResult
@@ -262,16 +263,16 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
         try:
             return resolved, TemplateStr[object](resolved.value)
         except HandlebarsError as e:
-            if resolved.reason == 'code_default':
+            # Resolve the code default through Logfire, so a callable default sees the same merged
+            # targeting context (resource attributes, baggage, targeting key fallback) it would in `get()`.
+            with self._variable.override(self._variable.default):
+                fallback = self._variable.get(targeting_key=targeting_key, attributes=attributes)
+            if fallback.value == resolved.value:
                 raise
             warnings.warn(
                 f'Managed prompt {self._variable.name!r} (label {resolved.label!r}, version {resolved.version!r}) '
                 f'is not a valid template, so the code default is used: {e}',
                 RuntimeWarning,
             )
-            # Resolve the code default through Logfire, so a callable default sees the same merged
-            # targeting context (resource attributes, baggage, targeting key fallback) it would in `get()`.
-            with self._variable.override(self._variable.default):
-                default = self._variable.get(targeting_key=targeting_key, attributes=attributes).value
-            fallback = ResolvedVariable(name=resolved.name, value=default, exception=e, reason='other_error')
-            return fallback, TemplateStr[object](default)
+            fallback.exception = e
+            return fallback, TemplateStr[object](fallback.value)

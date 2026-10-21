@@ -149,8 +149,8 @@ The template can reference any field of `deps`, so anyone who can edit the promp
 rendering off.
 
 The template is compiled once per run. If a remote prompt is not a valid template, the run uses the code
-default and emits a `RuntimeWarning`; the run's baggage and `resolved` then report the code default
-(`reason='other_error'`). An invalid code default raises.
+default and emits a `RuntimeWarning`; the run's baggage and `resolved` then report the code default,
+with the template error in `resolved.exception`. An invalid code default raises.
 
 ### Prompt-cache trade-off
 
