@@ -1,0 +1,61 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-opus-5/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 97f61690-d087-4162-b773-123df63927e4
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "367"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Return the number 42.
+        system: []
+        inferenceConfig: {}
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: int
+                schema: "{\"properties\":{\"response\":{\"type\":\"integer\"}},\"required\":[\"response\"],\"type\":\"object\",\"additionalProperties\":false}"
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "360"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1188
+        output:
+          message:
+            content:
+            - text: "{\"response\": 42}"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 198
+          outputTokens: 9
+          serverToolUsage: {}
+          totalTokens: 207
+  recorded_at: 2026-10-21T16:06:45.175242+00:00

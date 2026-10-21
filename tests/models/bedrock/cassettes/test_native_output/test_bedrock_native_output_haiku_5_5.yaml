@@ -1,0 +1,62 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-5-5/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 304099cc-d99b-4185-bce0-e59471b4b6a0
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "563"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: What is the capital of France? Give me the city name, country, and population.
+        system: []
+        inferenceConfig: {}
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: CityInfo
+                schema: "{\"additionalProperties\":false,\"properties\":{\"city\":{\"type\":\"string\"},\"country\":{\"type\":\"string\"},\"population\":{\"type\":\"integer\"}},\"required\":[\"city\",\"country\",\"population\"],\"type\":\"object\"}"
+                description: Information about a city.
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "414"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1870
+        output:
+          message:
+            content:
+            - text: "{\"city\": \"Paris\", \"country\": \"France\", \"population\": 2102650}"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 258
+          outputTokens: 25
+          serverToolUsage: {}
+          totalTokens: 283
+  recorded_at: 2026-10-21T16:03:53.403192+00:00
