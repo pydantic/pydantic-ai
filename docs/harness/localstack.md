@@ -87,7 +87,10 @@ AWS-emulator access and AWS CLI access to the process's filesystem.
 `allowed_services` and `denied_services` are mutually exclusive: set one, not
 both. The service is the first token that is neither a global option nor its
 value (`s3` in `--output text s3 ls`). Global options are recognized by any
-prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
+prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too. Commands that
+pass `--endpoint-url`, `--profile`, `--region`, or `--no-sign-request`, or any
+prefix of them, are rejected, since the capability injects the target and
+credentials.
 
 !!! warning "Best-effort, not a security boundary"
     These checks gate which commands the agent issues, not what it can reach.
@@ -125,15 +128,12 @@ Managed containers bind to `127.0.0.1` by default, reached through
 address; any value other than `127.0.0.1` or `0.0.0.0` is then also the host of
 the tool endpoint and of the endpoint the instructions name.
 
-Since LocalStack 2026.03.0 the default `localstack/localstack` image is a single
-image that requires an auth token to start (a free Hobby/OSS token covers
-community usage). When `LOCALSTACK_AUTH_TOKEN` is set in the current process it
-is forwarded to the container automatically; a legacy `LOCALSTACK_API_KEY` value
-is forwarded when no auth token is set. Auth values are forwarded through the
-Docker CLI environment rather than embedded in the `docker run` arguments. The
-default `localstack/localstack` image requires a token to start, so a managed run
-needs one configured. To run tokenless, set `image` to a tag from before the
-account requirement, such as a `localstack/localstack:4.x` release.
+Since LocalStack 2026.03.0, `localstack/localstack` needs an auth token to start
+(a free Hobby token covers community usage). `LOCALSTACK_AUTH_TOKEN`, or the
+legacy `LOCALSTACK_API_KEY` when no token is set, is forwarded from the current
+process through the Docker CLI environment, never the `docker run` arguments,
+unless `container_env` already sets one of them. To run without a token, pin
+`image` to a `localstack/localstack:4.x` tag.
 
 Docker-backed services such as Lambda need the Docker socket mounted, and some
 services expose ports outside the gateway (LocalStack reserves `4510-4559`).
