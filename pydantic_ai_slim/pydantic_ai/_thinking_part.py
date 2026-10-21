@@ -64,8 +64,8 @@ def render_replayed_thinking(content: str, profile: ModelProfile) -> tuple[str, 
     carry_in_user_turn = profile.get('mimics_assistant_message_formatting', False)
     if carry_in_user_turn:
         # Reasoning that talks about the wrapper would otherwise close it early and spill the rest into
-        # the message as if the user had written it. `wrap` escapes only the `<` of a closing tag, so the
-        # rest of the reasoning goes in exactly as written.
+        # the message as if the user had written it, or open a `<system>` block of its own. `wrap` escapes
+        # only the `<` of each opening or closing framing tag, so the rest goes in exactly as written.
         text = wrap(ASSISTANT_THINKING_TAG, f'\n{content}\n')
     else:
         start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
