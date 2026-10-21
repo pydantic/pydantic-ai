@@ -595,7 +595,8 @@ class Checker:
             """Whether a failure the session parked ended an exchange begun at `since` before the wait returned.
 
             A tool that raised, a usage limit a tool's result would pass, or a tool result that failed to send ends the
-            exchange in progress, though the session goes on receiving.
+            exchange in progress, though the session goes on receiving. (Not a tool failure whose result went out
+            anyway, as on GPT-Live: the model answers it, so the exchange goes on.)
             """
             return any(since < at <= returned for at in sim.failures_parked_at)
 

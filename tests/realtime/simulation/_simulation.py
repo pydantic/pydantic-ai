@@ -307,9 +307,10 @@ class Simulation(ABC):
     def _record_parked_failures(self, session: RealtimeSession) -> None:
         park = session._park_error  # pyright: ignore[reportPrivateUsage]
 
-        def park_and_record(error: BaseException) -> None:
-            self.failures_parked_at.append(self._now())
-            park(error)
+        def park_and_record(error: BaseException, *, abandons_exchange: bool = True) -> None:
+            if abandons_exchange:
+                self.failures_parked_at.append(self._now())
+            park(error, abandons_exchange=abandons_exchange)
 
         session._park_error = park_and_record  # pyright: ignore[reportPrivateUsage]
 

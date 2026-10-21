@@ -1322,6 +1322,29 @@ def test_live_call_that_raises_is_answered_with_its_failure() -> None:
     assert len(sim.server.truth.usage_read) == 2
 
 
+def test_live_wait_for_reply_waits_for_the_answer_to_a_failed_call() -> None:
+    """A tool that raised still gets its failure sent on GPT-Live, so the exchange goes on to the answer.
+
+    `wait_for_reply()` waits for the reply that answers the failure, as it does for a result that succeeded, rather
+    than returning as the tool raises, with the answer then coming as a reply nobody asked for.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_text()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        waiter = sim.wait_for_reply()
+        sim.finish_tool(outcome='error')
+        assert waiter.returned is None
+        sim.settle()
+        assert waiter.returned is not None
+
+    sim = LiveSimulation()
+    run_clean(sim, scenario)
+    assert sim.failures_parked_at == []
+
+
 def test_live_call_that_raises_after_its_siblings_answered_is_answered_with_its_failure() -> None:
     """The backend response has ended and the other results are out, waited for, when the last call raises (SIM-43)."""
 
