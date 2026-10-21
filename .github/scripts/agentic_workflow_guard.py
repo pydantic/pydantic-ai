@@ -667,7 +667,7 @@ def check_daily_aic_guardrail(lock: Path) -> list[Violation]:
             'daily-aic-guardrail',
             "the lock compiles gh-aw's daily AI-credits guardrail. With a threshold set, every activation "
             "lists each recent run's artifacts and exhausts the `GITHUB_TOKEN` rate limit. With `-1` only "
-            'in an import, that scan is skipped but its conclusion-job cache steps still run on every run. '
+            'in an import, that scan is skipped but its conclusion-job cache steps still run whenever the conclusion job runs. '
             "Set `max-daily-ai-credits: -1` in the source's own frontmatter and recompile.",
         )
     ]
