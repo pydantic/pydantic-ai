@@ -766,6 +766,7 @@ class TestCreate:
             with anyio.fail_after(5):
                 while backend.ref is None:
                     await anyio.sleep(0)
+        assert [record.levelno for record in caplog.records] == [logging.WARNING]
         assert [record.getMessage() for record in caplog.records] == [
             'Created Modal sandbox sb-owned after every caller waiting for it was cancelled; it keeps running '
             "until its `sandbox_timeout` ends it unless you terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`"
@@ -1028,6 +1029,17 @@ class TestFilesystem:
             await backend.read_bytes(str(tmp_path / 'missing'))
         with pytest.raises(IsADirectoryError):
             await backend.read_bytes(str(tmp_path))
+        # The check carries a deadline, so a wedged sandbox fails it instead of hanging the read.
+        probes = [call for call in fake_modal.sandboxes[0].exec_calls if call.argv[3:4] == ['modal-probe']]
+        assert len(probes) == 5
+        assert {call.timeout for call in probes} == {10}
+
+    async def test_the_write_link_loop_check_carries_a_deadline(self, fake_modal: FakeModal) -> None:
+        backend = await started()
+        await backend.write_bytes('/tmp/a.txt', b'body')
+        checks = [call for call in fake_modal.sandboxes[0].exec_calls if call.argv[-3:-1] == ['test', '-L']]
+        assert len(checks) == 1
+        assert checks[0].timeout == 10
 
     @pytest.mark.parametrize('code', [-1, 2, 137])
     async def test_a_read_whose_file_check_fails_is_refused(self, fake_modal: FakeModal, code: int) -> None:
