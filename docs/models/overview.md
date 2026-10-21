@@ -747,6 +747,54 @@ Pydantic AI is a Python agent framework for building production-grade LLM applic
 
 Response handlers receive the [`ModelResponse`][pydantic_ai.messages.ModelResponse] returned by the model and should return `True` to trigger fallback to the next model, or `False` to accept the response.
 
+#### Rejecting Responses Without Actionable Output
+
+Without a handler, an empty or thinking-only response is re-prompted on the same model, up to the output retry limit (see the note above). A response handler can send it to the backup model instead, by rejecting a successful response that contains no text or tool call. This predicate is for a text-output agent; if your output type accepts other response parts, include those parts in the predicate. Include [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] in the handler list so API errors still fall back; see [Combining Handlers](#combining-handlers).
+
+```python {title="fallback_on_empty_response.py"}
+from pydantic_ai import (
+    Agent,
+    ModelAPIError,
+    ModelMessage,
+    ModelResponse,
+    NativeToolCallPart,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def empty(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('')])
+
+
+def answer(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('The capital of France is Paris.')])
+
+
+def has_no_actionable_output(response: ModelResponse) -> bool:
+    return not any(
+        (isinstance(part, TextPart) and part.has_content())
+        or isinstance(part, (ToolCallPart, NativeToolCallPart))
+        for part in response.parts
+    )
+
+
+agent = Agent(
+    # These deterministic models simulate an empty primary response and a backup answer.
+    FallbackModel(
+        FunctionModel(empty, model_name='primary'),
+        FunctionModel(answer, model_name='backup'),
+        fallback_on=[ModelAPIError, has_no_actionable_output],
+    ),
+    output_type=str,
+)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
 #### Combining Handlers
 
 You can combine exception types, exception handlers, and response handlers in a single list:
