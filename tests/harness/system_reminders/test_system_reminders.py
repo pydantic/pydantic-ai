@@ -1360,6 +1360,50 @@ class TestEndToEnd:
                 assert notes >= 1
                 assert prompt.count('<generated_reminder model=') == notes
 
+    async def test_kept_user_messages_leave_out_generated_reminders(self) -> None:
+        """`keep_user_messages` keeps what the user said, never generated text whose note it would drop."""
+        calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls < 4:
+                return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{calls}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            deps_type=type(None),
+            capabilities=[
+                SystemReminders[None](
+                    dynamic_reminders=[LLMReminder(model=_capture_model({}, output='refocus'))], cache_ttl=None
+                ),
+                SummarizingCompaction[None](
+                    model=FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('summary')])),
+                    max_messages=3,
+                    keep_messages=1,
+                    keep_user_messages=True,
+                    preserve_first_user_message=False,
+                ),
+            ],
+        )
+
+        @agent.tool_plain
+        def step() -> str:
+            return 'ok'
+
+        result = await agent.run('go')
+
+        kept = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            and message.metadata
+            and message.metadata.get('pydantic-ai-harness.compaction.kept-user-message.v1')
+            for part in message.parts
+        ]
+        assert kept == ['go']
+
     async def test_reminder_is_never_taken_for_a_previous_summary(self) -> None:
         """A reminder that looks like a compaction summary isn't fed back as the previous summary."""
         summary_prompts: list[str] = []
