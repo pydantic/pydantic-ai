@@ -820,7 +820,7 @@ class TestSteering:
         # The steer reaches the second request; the third, later one resends everything before it unchanged.
         assert len(sent) == 3
         steering = [(kind, text) for kind, text in sent[1] if 'judge_feedback' in text]
-        match = re.search(r'ref="([0-9a-f]+)"', next(text for kind, text in steering if 'judge="' in text))
+        match = re.search(r'ref="([0-9a-f]+)"', next(text for _, text in steering if 'judge="' in text))
         assert match is not None
         ref = match.group(1)
         assert any(f'whose `ref` attribute is `{ref}`' in text for _, text in steering)
