@@ -209,7 +209,7 @@ Use the affected component's current documented boundary when evaluating a repor
 
 Answer a report of a dependency or CPython vulnerability with the release that fixes it; see [Scope and deployment profiles](#scope-and-deployment-profiles).
 
-A configuration-dependent report needs explicit deployment assumptions. For library scoring, use [FIRST's guidance for reasonable embedding scenarios](https://www.first.org/cvss/v3.1/user-guide#3-7-scoring-vulnerabilities-in-software-libraries-and-similar). Severity scoring and the decision to publish an advisory require separate maintainer judgment.
+A configuration-dependent report needs explicit deployment assumptions. For library scoring, use [FIRST's guidance for reasonable embedding scenarios](https://www.first.org/cvss/v3.1/user-guide#3-7-Scoring-Vulnerabilities-in-Software-Libraries-and-Similar). Severity scoring and the decision to publish an advisory require separate maintainer judgment.
 
 ## Keeping this model current
 
