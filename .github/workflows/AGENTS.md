@@ -29,7 +29,8 @@ that only audits the UI-adapter trust boundary and never owns the merge-gate ver
 
 `eligibility` skips a request made before `CI` has passed on the head. An approval is
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
-`final-review` label: to request another review, remove and reapply it.
+`final-review` label: to retry a skipped request, remove and reapply it. A head that
+already has a `CI Review` is not reviewed again.
 
 `CI Review` starts on `workflow_run`, `pull_request_review`, `pull_request` (the
 `final-review` label) and `workflow_dispatch`. `workflow_run` and `workflow_dispatch`
@@ -43,17 +44,19 @@ without error and evaluates to the empty string, silently discarding the review.
 
 The `CI Review` agent job queues in the engine concurrency group its own
 `engine.concurrency` sets (`queue: max`), so one review runs at a time across all PRs.
-gh-aw drops its default group for a workflow with `pull_request*` triggers, and allows
-one `engine` across a workflow and its imports, so `CI Review` inlines the
-`shared/engine-zai.md` engine instead of importing it. `eligibility` can
-therefore decide hours before the model starts. The pre-agent step `Skip a PR that
-closed or moved on while queued` writes a `noop` to safe outputs when the PR has
-closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
+`eligibility` can therefore decide hours before the model starts. The pre-agent step
+`Skip a PR that closed or moved on while queued` writes a `noop` to safe outputs when the
+PR has closed or moved to a new head. The engine's gh-aw harness must exit on a pre-written
 `noop` before it starts the model. gh-aw's `claude_harness.cjs` does this
 (`hasNoopInSafeOutputs`). Any other engine harness, including
 `src/pydantic_ai_harness/gh-aw/pydantic.md`, must do the same, or every stale run
 spends a full review. The `noop` does not skip the `detection` job, which still runs
 one threat-detection pass outside the agent slot.
+
+gh-aw drops its default agent group for a workflow with `pull_request*` triggers, and
+allows one `engine` across a workflow and its imports. `CI Review` therefore inlines the
+`shared/engine-zai.md` engine instead of importing it, to set `engine.concurrency`. Keep
+the two in step.
 
 ## What confines `CI Review` to same-repo PRs
 

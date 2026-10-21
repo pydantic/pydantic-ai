@@ -12,13 +12,14 @@ on:
   # - `CI` passing on a head that already has such an approval (`workflow_run`),
   #   for an approval submitted before `CI` finished;
   # - adding the `final-review` label (`pull_request: labeled`). Nothing removes
-  #   it; to ask again, remove and reapply it;
+  #   it; to retry a skipped request, remove and reapply it;
   # - a manual dispatch.
   #
   # `eligibility` skips every other event before inference. Every request requires
   # the required `check` to have passed on the head: an approval is checked again
-  # when `CI` passes, and a label or dispatch must be repeated. A merge group's `CI`
-  # run is not a `pull_request` run, so the merge queue never starts a review.
+  # when `CI` passes, and a label or dispatch must be repeated. A head that already
+  # has a `CI Review` is not reviewed again. A merge group's `CI` run is not a
+  # `pull_request` run, so the merge queue never starts a review.
   #
   # Not gh-aw's `label_command`: v0.86.2 adds `types: []` to `workflow_dispatch`
   # when it merges `label_command` with other triggers, which GitHub rejects.
@@ -75,7 +76,10 @@ concurrency:
   # approval from someone who is not a collaborator are not requests: each gets a
   # group of its own, so it cannot cancel a review queued for the same head.
   # `author_association` can misreport a collaborator as `CONTRIBUTOR`; that
-  # approval then runs alongside a queued review instead of replacing it.
+  # approval then runs alongside a queued review instead of replacing it. An org
+  # member with only read access approves as `MEMBER` and still replaces a queued
+  # review, which `roles:` then stops before the model: accepted, because such
+  # members rarely review here.
   group: >-
     ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && (github.event.review.state != 'approved' || (github.event.review.author_association != 'OWNER' && github.event.review.author_association != 'MEMBER' && github.event.review.author_association != 'COLLABORATOR')))) && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
@@ -349,9 +353,10 @@ jobs:
             TRIGGER_SHA=''
             EXPLICIT_REQUEST=true
           elif [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
-            # `pull_request` is the `labeled` event, which fires for every label. Neither event's head is checked here: the approval gate below
-            # requires an approval of the current head, and a label asks for a review
-            # of whatever is on the PR now.
+            # `pull_request` is the `labeled` event, which fires for every label.
+            # Neither event's head is checked here: the approval gate below requires
+            # an approval of the current head, and a label asks for a review of
+            # whatever is on the PR now.
             if [ "$EVENT_NAME" = 'pull_request_review' ]; then
               [ "$REVIEW_STATE" = 'approved' ] || skip "a ${REVIEW_STATE} review is not a review request"
             else
