@@ -713,9 +713,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh api rate_limit --jq .resources.core || true
 
+      # The script's hash keeps a change to `fetch` from restoring what the old code fetched, so
+      # the pull request that makes it runs it.
       - name: pick this hour's baseline cache key
-        id: hour
-        run: echo "key=test-durations-baseline-$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
+        id: key
+        env:
+          PREFIX: test-durations-baseline-${{ hashFiles('.github/scripts/shard_durations.py') }}-
+        run: |
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+          echo "key=$PREFIX$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
 
       # A cache that fails to restore is a miss, so the step below fetches instead.
       - name: restore the cached test durations
@@ -723,10 +729,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: test-durations
-          key: ${{ steps.hour.outputs.key }}
+          key: ${{ steps.key.outputs.key }}
           # A `main` push run takes only this hour's baseline, so it refreshes a stale one.
           restore-keys: >-
-            ${{ (github.event_name != 'push' || github.ref != 'refs/heads/main') && 'test-durations-baseline-' || '' }}
+            ${{ (github.event_name != 'push' || github.ref != 'refs/heads/main') && steps.key.outputs.prefix || '' }}
 
       - name: fetch the latest main run's test durations
         id: fetch
@@ -750,13 +756,16 @@ jobs:
           done
           python3 .github/scripts/shard_durations.py fetch "${baselines[@]}"
 
-      # Only a baseline no API failure emptied, so a failure never outlives the run that hit it.
+      # Only a baseline no API failure emptied, so a failure never outlives the run that hit it. A
+      # re-run keeps its original `created_at`, so it would select, and cache, an older baseline.
       - name: cache the test durations for later runs
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.fetch.outputs.errors == '0'
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1'
+          && steps.fetch.outputs.errors == '0'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: test-durations
-          key: ${{ steps.hour.outputs.key }}
+          key: ${{ steps.key.outputs.key }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

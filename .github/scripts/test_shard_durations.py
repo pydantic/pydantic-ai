@@ -313,20 +313,30 @@ def test_baseline_workflow_invocation_and_dependencies(
     assert upload['if-no-files-found'] == 'error'
 
     # A restored baseline skips the REST fetch; `main` saves what it fetched under the same key and path.
-    hour_output = tmp_path / 'hour-output'
-    subprocess.run(
-        ['bash', '-e', '-c', steps['hour']['run']], env={**os.environ, 'GITHUB_OUTPUT': str(hour_output)}, check=True
+    key_step = steps['key']
+    assert (
+        key_step['env']['PREFIX'] == "test-durations-baseline-${{ hashFiles('.github/scripts/shard_durations.py') }}-"
     )
-    assert re.fullmatch(r'key=test-durations-baseline-\d{10}\n', hour_output.read_text())
+    key_output = tmp_path / 'key-output'
+    subprocess.run(
+        ['bash', '-e', '-c', key_step['run']],
+        env={**os.environ, 'PREFIX': 'test-durations-baseline-abc-', 'GITHUB_OUTPUT': str(key_output)},
+        check=True,
+    )
+    assert re.fullmatch(
+        r'prefix=test-durations-baseline-abc-\nkey=test-durations-baseline-abc-\d{10}\n',
+        key_output.read_text(encoding='utf-8'),
+    )
     restore = steps['restore']
     save = next(step for step in job['steps'] if step.get('uses', '').startswith('actions/cache/save@'))
     assert restore['uses'].replace('/restore@', '/save@') == save['uses']
-    assert restore['with']['key'] == save['with']['key'] == '${{ steps.hour.outputs.key }}'
+    assert restore['with']['key'] == save['with']['key'] == '${{ steps.key.outputs.key }}'
     assert restore['with']['path'] == save['with']['path'] == upload['path']
-    assert "&& 'test-durations-baseline-' ||" in restore['with']['restore-keys']
+    assert '&& steps.key.outputs.prefix ||' in restore['with']['restore-keys']
     assert steps['fetch']['if'] == "steps.restore.outputs.cache-matched-key == ''"
     assert save['if'] == (
-        "github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.fetch.outputs.errors == '0'"
+        "github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' "
+        "&& steps.fetch.outputs.errors == '0'"
     )
 
     monkeypatch.chdir(tmp_path)
