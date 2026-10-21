@@ -3432,7 +3432,7 @@ async def test_temporal_run_context_carries_tool_names_by_kind():
     (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
     reconstructed = TemporalRunContext.deserialize_run_context(decoded.serialized_run_context, deps=None)
 
-    assert reconstructed.tool_name_for_kind(_LOOKUP_KIND) == 'ws_lookup'
+    assert reconstructed.tool_name_for_kind(_LOOKUP_KIND) == 'ws__lookup'
     assert reconstructed.tool_name_for_kind('test_temporal_run_context.missing') is None
 
 
