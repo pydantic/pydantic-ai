@@ -8,12 +8,12 @@ There are two kinds. `<system>` is the one voice tag: it means the application i
 person the model is talking to. The rest are data tags: they say where content came from, so the
 model can treat it as data rather than as instructions.
 
-Either way, text inside a tag must not be able to end it, or speak in the framework's voice: on a
-model with no mid-conversation system role, the framework's own `<system>` block is user text, so a
-`<system>` written into a tool result would read exactly like it. [`wrap`][pydantic_ai._framing.wrap]
-neutralizes the tag's own closing tag and every opening or closing `<system>` tag in the body, escapes
-attribute values, and changes nothing else, so content that mentions neither goes out exactly as
-written.
+Either way, text inside a tag must not be able to end it, open another, or speak in the framework's
+voice: on a model with no mid-conversation system role, the framework's own `<system>` block is user
+text, so a `<system>` written into a tool result would read exactly like it.
+[`wrap`][pydantic_ai._framing.wrap] neutralizes every opening and closing spelling of every framing
+tag in a data tag's body, and of `<system>` in the voice tag's own, escapes attribute values, and
+changes nothing else, so content that mentions none of them goes out exactly as written.
 """
 
 from __future__ import annotations as _annotations
@@ -40,34 +40,30 @@ CONTEXT_TAG: Final = 'context'
 CONTEXT_DIFF_TAG: Final = 'context_diff'
 """Frames a unified diff from an instruction block's previous text to its new text."""
 
-_CLOSING_TAG_OPENERS: Final = {
-    tag: re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]|$))', re.IGNORECASE) for tag in get_args(FramingTag)
-}
-"""Per tag, a pattern matching only the `<` of its closing tag, in every spelling a model might reach for.
 
-That covers any case, whitespace around the `/`, a closing tag that carries attributes or ends in
-`/>`, and one cut off at the end of the text, which the wrapper's own closing tag or newline would
-otherwise complete, but not a longer tag name that merely starts with this one.
-"""
+def _tag_openers(*tags: str) -> re.Pattern[str]:
+    """A pattern matching only the `<` of an opening or closing tag among `tags`, in every spelling a model might reach for.
 
-
-_VOICE_TAG_OPENERS: Final = re.compile(rf'<(?=\s*(?:/\s*)?{SYSTEM_TAG}(?=[\s/>]|$))', re.IGNORECASE)
-"""Matches only the `<` of an opening or closing `<system>` tag, in the same spellings as `_CLOSING_TAG_OPENERS`.
-
-The whitespace after the `/` is only tried when there is one, so a `<` followed by a long run of
-whitespace costs linear time rather than quadratic.
-"""
-
-
-def neutralize_closing_tag(text: str, *tags: FramingTag) -> str:
-    """Escape the `<` of every closing tag among `tags` in `text` as `&lt;`, and leave everything else as written.
-
-    For text that will sit inside those tags without being wrapped here, such as an element that a
-    later step wraps in another.
+    That covers any case, whitespace around the `/`, a tag that carries attributes or ends in `/>`, and
+    one cut off at the end of the text, which the wrapper's own closing tag or newline would otherwise
+    complete, but not a longer tag name that merely starts with one of `tags`. The whitespace after the
+    `/` is only tried when there is one, so a `<` followed by a long run of whitespace costs linear time.
     """
-    for tag in tags:
-        text = _CLOSING_TAG_OPENERS[tag].sub('&lt;', text)
-    return text
+    names = '|'.join(re.escape(tag) for tag in tags)
+    return re.compile(rf'<(?=\s*(?:/\s*)?(?:{names})(?=[\s/>]|$))', re.IGNORECASE)
+
+
+_FRAMING_TAG_OPENERS: Final = _tag_openers(*get_args(FramingTag))
+_VOICE_TAG_OPENERS: Final = _tag_openers(SYSTEM_TAG)
+
+
+def neutralize_tags(text: str) -> str:
+    """Escape the `<` of every opening or closing framing tag in `text` as `&lt;`, and leave everything else as written.
+
+    For untrusted text that will sit inside a framing tag without being wrapped here, such as a value
+    interpolated into a statement that a later step wraps.
+    """
+    return _FRAMING_TAG_OPENERS.sub('&lt;', text)
 
 
 def open_tag(tag: FramingTag, /, **attrs: str | None) -> str:
@@ -85,11 +81,14 @@ def close_tag(tag: FramingTag) -> str:
 
 
 def wrap(tag: FramingTag, body: str, /, **attrs: str | None) -> str:
-    """Wrap `body` in `tag` so that nothing in it can end the tag early.
+    """Wrap `body` in `tag` so that nothing in it can end the tag early, open another, or speak in the framework's voice.
 
-    Only the `<` of a closing `tag`, and of any opening or closing `<system>` tag, inside `body` is
-    escaped, so the rest of the body goes in exactly as written. Attribute values are escaped as by
-    [`open_tag`][pydantic_ai._framing.open_tag].
+    In a data tag's body, the `<` of every opening or closing framing tag is escaped, as by
+    [`neutralize_tags`][pydantic_ai._framing.neutralize_tags]. The `<system>` voice tag's body is
+    framework or operator text, which can carry data tags the framework built itself, such as a
+    `<context>` element on a model without mid-conversation system messages, so only `<system>` tags
+    are escaped there. Either way the rest of the body goes in exactly as written. Attribute values are
+    escaped as by [`open_tag`][pydantic_ai._framing.open_tag].
     """
-    body = _VOICE_TAG_OPENERS.sub('&lt;', neutralize_closing_tag(body, tag))
-    return f'{open_tag(tag, **attrs)}{body}{close_tag(tag)}'
+    openers = _VOICE_TAG_OPENERS if tag == SYSTEM_TAG else _FRAMING_TAG_OPENERS
+    return f'{open_tag(tag, **attrs)}{openers.sub("&lt;", body)}{close_tag(tag)}'

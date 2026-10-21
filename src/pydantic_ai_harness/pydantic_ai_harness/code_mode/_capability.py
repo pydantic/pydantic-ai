@@ -51,7 +51,7 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
 )
 _DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
 """`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
-# TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
+# TODO: switch to `pydantic_ai._framing.neutralize_tags` once it lands
 # (https://github.com/pydantic/pydantic-ai/pull/10547); this matches its escaping.
 _CLOSING_SYSTEM_TAG_OPENER = re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE)
 

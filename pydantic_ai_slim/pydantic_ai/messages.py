@@ -60,10 +60,8 @@ from ._event_registry import (
 from ._framing import (
     CONTEXT_DIFF_TAG,
     CONTEXT_TAG,
-    SYSTEM_TAG,
     TOOL_RESULT_TAG,
     close_tag,
-    neutralize_closing_tag,
     open_tag,
     wrap,
 )
@@ -2558,14 +2556,10 @@ def _instruction_text_hash(text: str) -> str:
 def _context_element(instruction_id: InstructionId | None, content: str) -> str:
     """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
 
-    Every framing closer in the text is neutralized, not only `</context>`: the element is itself
+    `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
     `<system>`-wrapped on a model without mid-conversation system messages.
     """
-    return wrap(CONTEXT_TAG, f'\n{_neutralize_framing_closers(content)}\n', id=_id_attribute(instruction_id))
-
-
-def _neutralize_framing_closers(text: str) -> str:
-    return neutralize_closing_tag(text, SYSTEM_TAG, CONTEXT_TAG, CONTEXT_DIFF_TAG)
+    return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
 
 
 def _id_attribute(instruction_id: InstructionId | None) -> str | None:
@@ -2578,7 +2572,7 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return wrap(CONTEXT_DIFF_TAG, f'\n{_neutralize_framing_closers(diff)}\n', id=_id_attribute(instruction_id))
+    return wrap(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
