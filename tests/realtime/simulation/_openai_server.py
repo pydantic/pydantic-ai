@@ -116,6 +116,9 @@ class ServerSession:
     stopped_uncommitted: str | None = None
     """xAI: the user turn its VAD heard stop and hasn't committed yet. Speech heard before it does re-opens that
     same turn (recorded in a live xAI probe, October 2026: SIM-41)."""
+    stopped_reply: _ActiveResponse | None = None
+    """xAI: the reply it started for that turn at the stop, before committing it. A re-opened turn drops it
+    without ending it: no `response.done` ever comes (recorded in the same probe)."""
     pending_transcripts: list[str] = field(default_factory=list[str])
     pending_vad_responses: list[str] = field(default_factory=list[str])
     """Spoken turns committed while a response was active, each answered in turn once the one before ends (VAD asks
@@ -175,6 +178,10 @@ class OpenAIServer:
         # The turn each `input_audio_buffer.cleared` cut off (if any), until the client reads the frame, by the
         # connection it comes back on.
         self._clears_unread: dict[int, list[str | None]] = {}
+        # Each turn's `speech_started` frames not read yet, by item id, with the reply each dropped (only an xAI turn
+        # re-opened after its stop drops one): that reply ends as the client reads the frame, as no `response.done`
+        # ever comes for it.
+        self._reopens_unread: dict[str, list[TruthResponse | None]] = {}
         self._next_item = 1
         # Server event id of an `error` frame -> the inputs it refused, resolved when the client reads it.
         self._refusals: dict[str, list[str]] = {}
@@ -254,6 +261,11 @@ class OpenAIServer:
         ):
             if (cleared := clears.pop(0)) is not None:
                 self.truth.speech_cleared_read.add(cleared)
+        if frame_type == 'input_audio_buffer.speech_started' and (
+            reopens := self._reopens_unread.get(frame['item_id'])
+        ):
+            if (dropped := reopens.pop(0)) is not None:
+                dropped.terminal_read = now
         if frame_type == 'conversation.item.input_audio_transcription.completed':
             self.truth.transcripts_read.setdefault(str(frame.get('transcript')), now)
         if frame_type == 'response.function_call_arguments.done' and (
@@ -915,14 +927,22 @@ class OpenAIServer:
             # xAI takes back its own stop: the user goes on in the same turn, under the same item (SIM-41).
             session.stopped_uncommitted = None
             session.speaking = key
-            self.truth.speech_reopened.add(key)
             self._emit(
                 session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
             )
+            reply, session.stopped_reply = session.stopped_reply, None
+            dropped = None
+            if reply is not None and session.active is reply:
+                # The reply it started at the stop is dropped, with no frame to say so.
+                session.active = None
+                self._end_truth(reply.truth, 'cancelled')
+                dropped = reply.truth
+            self._reopens_unread.setdefault(f'item_{key}', []).append(dropped)
             return key
         key = self.truth.new_user_turn()
         session.speaking = key
         self.truth.speech_started[key] = self.truth.tick()
+        self._reopens_unread[f'item_{key}'] = [None]
         self._emit(
             session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
         )
@@ -951,6 +971,10 @@ class OpenAIServer:
         if not commit:
             if self.dialect == 'xai':
                 session.stopped_uncommitted = key
+                if session.create_response and session.active is None:
+                    # xAI starts the reply at the stop, a few hundred milliseconds before it commits the turn.
+                    self._start_response(session, trigger='vad', answers=[key], user_turn=key)
+                    session.stopped_reply = session.active
             else:
                 self.truth.speech_stopped_uncommitted.add(key)
             return key
@@ -963,10 +987,11 @@ class OpenAIServer:
         assert session is not None
         key, session.stopped_uncommitted = session.stopped_uncommitted, None
         assert key is not None
-        self._vad_commit(session, key)
+        reply, session.stopped_reply = session.stopped_reply, None
+        self._vad_commit(session, key, answered=reply is not None)
         return key
 
-    def _vad_commit(self, session: ServerSession, key: str) -> None:
+    def _vad_commit(self, session: ServerSession, key: str, *, answered: bool = False) -> None:
         item_id = f'item_{key}'
         session.audio_ms = 0
         self.truth.speech_committed.add(key)
@@ -977,6 +1002,9 @@ class OpenAIServer:
             self._audio_item_added(session, item_id)
         if session.transcription:
             session.pending_transcripts.append(key)
+        if answered:
+            # xAI started the reply at the stop already.
+            return
         if not session.create_response:
             # The turn is committed as it is under push-to-talk: the app asks for the reply itself.
             session.uncommitted_answers.append(key)
