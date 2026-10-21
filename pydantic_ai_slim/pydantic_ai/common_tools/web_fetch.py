@@ -37,8 +37,9 @@ except ImportError as _import_error:
 __all__ = ('WebFetchResult', 'web_fetch_tool')
 
 _EXCESSIVE_NEWLINES_RE = re.compile(r'\n{3,}')
-# `HTMLParser`'s tag grammar (`tagfind_tolerant`, `attrfind_tolerant`), with each separator run
-# matched by one character class so the match takes constant memory.
+# `HTMLParser`'s tag grammar in current CPython patch releases, with each separator run matched by
+# one character class so the match takes constant memory. Attribute names skip the parser's
+# lookbehind, so these never count fewer attributes or separators than the parser does.
 _HTML_TAG_NAME_RE = re.compile(r'[a-zA-Z][^\t\n\r\f />]*')
 _HTML_TAG_SEPARATORS_RE = re.compile(r'[\t\n\r\f /]*')
 _HTML_TAG_ATTRIBUTE_RE = re.compile(
