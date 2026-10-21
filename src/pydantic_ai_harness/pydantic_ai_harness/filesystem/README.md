@@ -119,6 +119,8 @@ working directory but inside `root_dir` use `..` components. Containment,
 access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
 
+`include_glob` is matched with `fnmatch`, where `*` also spans `/`, so `src/*.py` covers subdirectories of `src` too. With `rg`, a glob without a `/` matches file names at any depth, and a glob using syntax only `rg` has (`**`, `{a,b}`, `!`, a leading `/`) is passed to `rg --glob`.
+
 ### Tool kinds
 
 Each tool declares a [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts) in the `file_system`

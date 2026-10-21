@@ -1154,7 +1154,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             ctx: The current agent run context.
             pattern: Regex pattern to search for.
             path: Directory to search in, relative to the working directory.
-            include_glob: If provided, match this glob against root-relative paths (e.g. '*.py').
+            include_glob: If provided, only search files whose path from the root matches this glob, where `*`
+                also spans `/`: '*.py' for every Python file, 'src/*.py' for those anywhere under `src`.
 
         Returns:
             str: Matching lines formatted as file:line_number:text, with paths relative to the working directory.
