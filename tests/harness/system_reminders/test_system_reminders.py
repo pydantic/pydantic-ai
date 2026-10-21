@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -37,6 +37,7 @@ from pydantic_ai_harness.system_reminders import (
     GoalReanchor,
     LLMReminder,
     Reminder,
+    ReminderFiredEvent,
     SystemReminders,
 )
 from tests.conftest import IsDatetime, try_import
@@ -79,10 +80,16 @@ def _ctx(
 
     def enqueue(*content: Any) -> None:
         # What the agent graph does with content enqueued from `before_model_request`: request parts as
-        # they are, and user content gathered into one user prompt after them.
-        parts = [item for item in content if not isinstance(item, TextContent)]
-        data = [item for item in content if isinstance(item, TextContent)]
-        ctx.enqueued.append(ModelRequest(parts=[*parts, *([UserPromptPart(data)] if data else [])]))
+        # they are, in order, and each run of adjacent user content gathered into one user prompt.
+        parts: list[Any] = []
+        for item in content:
+            if not isinstance(item, TextContent):
+                parts.append(item)
+            elif parts and isinstance(parts[-1], UserPromptPart):
+                parts[-1] = UserPromptPart([*parts[-1].content, item])
+            else:
+                parts.append(UserPromptPart([item]))
+        ctx.enqueued.append(ModelRequest(parts=parts))
 
     ctx.emit = emit
     ctx.enqueue = enqueue
@@ -458,6 +465,41 @@ class TestInjectionMechanics:
             ModelRequest(parts=[SystemPromptPart('r', scope='request', metadata=_ORIGIN, timestamp=IsDatetime())])
         ]
         assert request_context.messages == messages
+
+    @pytest.mark.parametrize('generated_first', [False, True])
+    async def test_mixed_reminders_keep_their_configured_order(self, generated_first: bool) -> None:
+        # The parts follow the order the reminders are listed in, the same order `ReminderFiredEvent`s report.
+        generated = LLMReminder[None](model=_capture_model({}, output='refocus'))
+
+        def plain(ctx: RunContext[None]) -> str:
+            return 'Be terse.'
+
+        dynamic: list[DynamicReminder[None] | LLMReminder[None]] = (
+            [generated, plain] if generated_first else [plain, generated]
+        )
+        fired: list[str] = []
+        hooks = Hooks[None]()
+
+        @hooks.on.event(ReminderFiredEvent)
+        async def record(ctx: RunContext[None], event: ReminderFiredEvent) -> None:
+            fired.append(event.text)
+
+        agent: Agent[None, str] = Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[SystemReminders[None](dynamic_reminders=dynamic, cache_ttl=None), hooks],
+        )
+        result = await agent.run('go')
+
+        reminder = result.all_messages()[1]
+        note = SystemPromptPart(_LLM_NOTE, metadata=_ORIGIN, timestamp=IsDatetime())
+        data = UserPromptPart([TextContent(_llm_data('refocus'), metadata=_ORIGIN)], timestamp=IsDatetime())
+        terse = SystemPromptPart('Be terse.', scope='request', metadata=_ORIGIN, timestamp=IsDatetime())
+        assert isinstance(reminder, ModelRequest)
+        assert reminder.parts == ([note, data, terse] if generated_first else [terse, note, data])
+        assert fired == (
+            [_llm_reminder('refocus'), 'Be terse.'] if generated_first else ['Be terse.', _llm_reminder('refocus')]
+        )
 
     async def test_original_request_not_mutated_in_place(self) -> None:
         cap = SystemReminders[None](reminders=[Reminder('r', tag=None)])
@@ -911,8 +953,9 @@ class TestLLMReminder:
         """The generated text is a user block and its note a lasting system entry; later requests send both.
 
         Anthropic puts a request's mid-conversation system entry after its user content, so the note says
-        "accompanying", not "below". Neither is request-scoped, so every request repeats the earlier ones
-        block for block, and the cached prefix holds.
+        "accompanying", not "below". Neither is request-scoped, so everything the first request sent is sent
+        again byte for byte, cache breakpoints included, except the breakpoint on the last message, which
+        moves to the new last message by design.
         """
         client = MockAnthropic.create_mock(
             [
@@ -930,7 +973,12 @@ class TestLLMReminder:
             AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=client)),
             deps_type=type(None),
             capabilities=[SystemReminders[None](dynamic_reminders=[reminder], cache_ttl=None)],
-            model_settings=AnthropicModelSettings(anthropic_cache_messages=True),
+            instructions='Fix the bug.',
+            model_settings=AnthropicModelSettings(
+                anthropic_cache_instructions=True,
+                anthropic_cache_tool_definitions=True,
+                anthropic_cache_messages=True,
+            ),
         )
 
         @agent.tool_plain
@@ -939,7 +987,13 @@ class TestLLMReminder:
 
         await agent.run('ship it')
 
-        first, second = (body['messages'] for body in get_mock_chat_completion_kwargs(client))
+        first_body, second_body = get_mock_chat_completion_kwargs(client)
+        # System and tool breakpoints are fixed, so they and their markers are identical.
+        assert second_body['system'] == first_body['system']
+        assert second_body['tools'] == first_body['tools']
+        assert any('cache_control' in block for block in first_body['system'])
+        assert any('cache_control' in tool for tool in first_body['tools'])
+        first, second = first_body['messages'], second_body['messages']
         user_turn, system_entry = second[-2:]
         assert user_turn['role'] == 'user'
         assert [block['type'] for block in user_turn['content']] == ['tool_result', 'text']
@@ -949,13 +1003,20 @@ class TestLLMReminder:
         assert [block['text'] for block in system_entry['content']] == [_LLM_NOTE]
 
         def blocks(messages: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
-            return [
-                (message['role'], {key: value for key, value in block.items() if key != 'cache_control'})
-                for message in messages
-                for block in message['content']
-            ]
+            return [(message['role'], block) for message in messages for block in message['content']]
 
-        assert blocks(second)[: len(blocks(first))] == blocks(first)
+        def without_breakpoint(block: dict[str, Any]) -> dict[str, Any]:
+            return {key: value for key, value in block.items() if key != 'cache_control'}
+
+        sent, resent = blocks(first), blocks(second)
+        moving = max(index for index, (_, block) in enumerate(sent) if 'cache_control' in block)
+        # Every block before the moving breakpoint is resent exactly, markers included.
+        assert resent[:moving] == sent[:moving]
+        # The moving breakpoint's block is resent with the same content; its marker moved to the new last block.
+        (role, block), (resent_role, resent_block) = sent[moving], resent[moving]
+        assert (resent_role, without_breakpoint(resent_block)) == (role, without_breakpoint(block))
+        assert 'cache_control' in resent[-1][1]
+        assert [index for index, (_, block) in enumerate(resent) if 'cache_control' in block] == [len(resent) - 1]
 
     @pytest.mark.parametrize('source', ['goal', 'generated'])
     async def test_tool_loop_never_sends_quoted_text_without_its_note(self, source: str) -> None:

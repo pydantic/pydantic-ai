@@ -510,23 +510,30 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
 
 
 def _reminder_parts(texts: Sequence[str]) -> list[SystemPromptPart | TextContent]:
-    """The parts a firing enqueues, every one carrying the same origin metadata.
+    """The parts a firing enqueues, in the reminders' configured order, each carrying the same origin metadata.
 
-    Reminders in the framework's or the operator's own wording are one request-scoped system prompt.
-    A reminder that quotes content it didn't write, such as a model's generated reminder, is a record
-    of two parts kept together in the history: the framework's note in system voice and the quoted
-    content on the user channel. Neither is request-scoped, so no later request, compaction or summary
-    sees the quoted content without the note that says what it is.
+    Reminders in the framework's or the operator's own wording are request-scoped system prompts, consecutive
+    ones sharing one. A reminder that quotes content it didn't write, such as a model's generated reminder,
+    is a record of two parts kept together in the history: the framework's note in system voice and the
+    quoted content on the user channel. Neither is request-scoped, so no later request, compaction or
+    summary sees the quoted content without the note that says what it is.
     """
-    metadata = {'origin': _REMINDER_ORIGIN}
-    plain = [text for text in texts if not isinstance(text, _QuotedReminder)]
     parts: list[SystemPromptPart | TextContent] = []
-    if plain:
-        parts.append(SystemPromptPart('\n\n'.join(plain), scope='request', metadata=metadata))
+    plain: list[str] = []
+
+    def flush_plain() -> None:
+        if plain:
+            parts.append(SystemPromptPart('\n\n'.join(plain), scope='request', metadata={'origin': _REMINDER_ORIGIN}))
+            plain.clear()
+
     for text in texts:
         if isinstance(text, _QuotedReminder):
-            parts.append(SystemPromptPart(text.note, metadata=dict(metadata)))
-            parts.append(TextContent(text.data, metadata=dict(metadata)))
+            flush_plain()
+            parts.append(SystemPromptPart(text.note, metadata={'origin': _REMINDER_ORIGIN}))
+            parts.append(TextContent(text.data, metadata={'origin': _REMINDER_ORIGIN}))
+        else:
+            plain.append(text)
+    flush_plain()
     return parts
 
 
