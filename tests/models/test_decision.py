@@ -1169,6 +1169,16 @@ async def test_text_output_is_refused(allow_model_requests: None):
     assert model.requests == []
 
 
+def test_decision_models_take_images_only_when_the_class_reads_them():
+    """A decision model reads no documents, audio or video, and images only when the class says so."""
+    text_only = InMemoryDecisionModel()
+    assert text_only.profile.get('supports_image_input') is False
+    assert text_only.profile.get('supports_document_input') is False
+    assert text_only.profile.get('supports_audio_file_input') is False
+    assert text_only.profile.get('supports_video_input') is False
+    assert ImageEnabledDecisionModel().profile.get('supports_image_input') is True
+
+
 class Escalation(BaseModel):
     """Hand the ticket to a person."""
 

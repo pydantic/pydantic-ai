@@ -11,6 +11,7 @@ from typing import Literal, assert_never, overload
 
 import anyio
 
+from .._framing import SYSTEM_TAG, wrap
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -32,7 +33,6 @@ from ..messages import (
 )
 from ..models import (
     ModelRequestParameters,
-    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -147,7 +147,7 @@ def seed_retry_feedback_text(part: RetryFeedbackPart) -> str:
     model from reading it as something a person said (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
     text = part.model_response()
-    return _wrap_in_system_tags(text) if _retry_feedback_speaks_for_the_harness(part) else text
+    return wrap(SYSTEM_TAG, text) if _retry_feedback_speaks_for_the_harness(part) else text
 
 
 @overload
