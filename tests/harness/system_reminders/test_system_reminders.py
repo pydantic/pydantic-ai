@@ -80,15 +80,8 @@ def _ctx(
 
     def enqueue(*content: Any) -> None:
         # What the agent graph does with content enqueued from `before_model_request`: request parts as
-        # they are, in order, and each run of adjacent user content gathered into one user prompt.
-        parts: list[Any] = []
-        for item in content:
-            if not isinstance(item, TextContent):
-                parts.append(item)
-            elif parts and isinstance(parts[-1], UserPromptPart):
-                parts[-1] = UserPromptPart([*parts[-1].content, item])
-            else:
-                parts.append(UserPromptPart([item]))
+        # they are, in order, and user content in a user prompt. A firing never enqueues two quotes in a row.
+        parts = [UserPromptPart([item]) if isinstance(item, TextContent) else item for item in content]
         ctx.enqueued.append(ModelRequest(parts=parts))
 
     ctx.emit = emit
