@@ -39,7 +39,7 @@ Transport retries live below the model client: a failed HTTP request is re-sent 
 
 This is the right layer for rate limits, connection resets, and 5xx responses. The transports are built on [tenacity](https://github.com/jd/tenacity) and plug into [`httpx2`](https://httpx2.pydantic.dev/) clients, so they work with any provider whose SDK accepts a custom `httpx2` client. [AWS Bedrock](#aws-bedrock) is the exception: it retries through boto3 instead.
 
-When you build your own backoff outside a transport, [`ModelHTTPError.retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] gives you the provider's `Retry-After` header already parsed into seconds.
+When you build your own backoff outside a transport, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] gives you the wait the provider asked for, already parsed into seconds.
 
 ### Installation
 
@@ -466,7 +466,7 @@ Not every SDK can take the setting per request:
 | xAI | ❌ | gRPC retries per channel; see [SDK retries](models/xai.md#sdk-retries) |
 | Hugging Face | ❌ | The client makes no retries |
 
-The model classes that honor it are listed under [`ModelSettings.max_retries`][pydantic_ai.settings.ModelSettings.max_retries]; the others accept it and don't change their retries.
+The model classes that honor it are listed under [`ModelSettings.max_retries`][pydantic_ai.settings.ModelSettings.max_retries]; the others don't change their retries, and warn with [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] that they ignore it. On a `FallbackModel` with such a candidate, set `max_retries` on the other candidates' own settings, as above, rather than on the agent or run.
 
 ## Model fallback is not a retry
 

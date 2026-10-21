@@ -43,6 +43,7 @@ The workspace the agent acts in: the files it edits and the commands it runs, lo
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 | [E2B Sandbox](https://pydantic.dev/docs/ai/harness/e2b-sandbox/) | Harness | Commands and files in an isolated [E2B](https://e2b.dev) cloud sandbox |
 | [Sprites Sandbox](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
+| [Daytona Sandbox](https://pydantic.dev/docs/ai/harness/daytona-sandbox/) | Harness | Commands and files in an isolated [Daytona](https://www.daytona.io) cloud sandbox |
 | [Smol Sandbox](https://pydantic.dev/docs/ai/harness/smol-sandbox/) | Harness | Commands and files in a [smolvm](https://github.com/smol-machines/smolvm) microVM on your own machine; no cloud account |
 | [Docker Sandbox](https://pydantic.dev/docs/ai/harness/docker-sandbox/) | Harness | Commands and files in a local [Docker](https://www.docker.com/) or Podman container |
 | [SSH Workspace](https://pydantic.dev/docs/ai/harness/ssh-workspace/) | Harness | Commands and files on a remote host over your `ssh` client; no isolation |
@@ -161,7 +162,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations |
+| [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md) and [Airflow](../durable_execution/airflow.md) integrations |
 | [AWS Lambda durability](https://pydantic.dev/docs/ai/harness/aws-lambda/) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
 | [Absurd durability](https://pydantic.dev/docs/ai/harness/absurd/) | Harness | Checkpoint model requests, MCP calls, and tool calls into Absurd steps on PostgreSQL |
 | [pgtask durability](https://pydantic.dev/docs/ai/harness/pgtask/) | Harness | Checkpoint model requests, MCP calls, and tool calls into pgtask steps on PostgreSQL |

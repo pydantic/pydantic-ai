@@ -787,6 +787,26 @@ An exception a tool raises reaches workflow code as Temporal's `ActivityError`, 
 
 A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] a model request raises, such as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], reaches workflow code as itself, with its fields, rather than as an `ActivityError`. A field value that isn't JSON-serializable, like an unusual response body, crosses as its string form. This applies to Pydantic AI's own error classes: a subclass you define still arrives as an `ActivityError`. That's what lets `on_model_request_error` hooks and other workflow-side code that handles model errors work the same with and without Temporal. Temporal still retries the failed activity according to its retry policy before the error reaches the workflow, and the original `ActivityError` is the rebuilt error's `__cause__`.
 
+A retry policy and workflow code see a model error differently. Workflow code and capabilities get the [error category](../models/overview.md#handling-model-api-errors) class, so `except ModelTimeoutError` or `except ModelRateLimitError` works in a workflow. A retry policy's `non_retryable_error_types` only sees the error's `ApplicationError` type, which is `ModelHTTPError` for an error that has an HTTP status and `ModelAPIError` for any other category, the class it's raised as apart from its category. So a policy that names a category, like `'ModelRateLimitError'`, matches nothing. A policy that names `'ModelHTTPError'` or `'ModelAPIError'` matches what it did before the categories existed, except for errors that now get the HTTP status the provider uses for the same error, and so are now also raised as a `ModelHTTPError`: Bedrock `ConverseStream` exception events (e.g. a throttling event as a 429), error objects inside an OpenAI-compatible or OpenAI Responses stream, Hugging Face Text Generation Inference's in-stream `OverloadedError`, and xAI's `INVALID_ARGUMENT` (as a 400). These now report `ModelHTTPError` instead of `ModelAPIError`.
+
+To stop Temporal from retrying an error category that a retry can't fix, like [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], list its class in `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class. Because classes match with `isinstance`, listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]. The `ApplicationError` type the retry policy sees doesn't change.
+
+```python {title="temporal_non_retryable_model_errors.py"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelQuotaExceededError
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='assistant',
+    capabilities=[
+        TemporalDurability(
+            non_retryable_model_errors=[ModelContextWindowExceededError, ModelQuotaExceededError],
+        ),
+    ],
+)
+```
+
 ## Observability with Logfire
 
 Temporal generates telemetry events and metrics for each workflow and activity execution, and Pydantic AI generates events for each agent run, model request and tool call. These can be sent to [Pydantic Logfire](../logfire.md) to get a complete picture of what's happening in your application.

@@ -21,6 +21,8 @@ See [UI adapters](docs/ui/overview.md), [realtime deployment](docs/realtime/depl
 
 Examples and documentation snippets show how to use an API; they are not hardened deployments. A flaw in one is a documentation bug for a public issue or pull request, unless the library code it calls breaks a documented boundary.
 
+A vulnerability in a third-party dependency or in CPython belongs to that project. When a dependency publishes a fix, the repository lock raises that dependency's floor, and the published requirements keep admitting the patched release; applications install that release themselves. Pydantic AI code does not work around the vulnerability. A CPython vulnerability fixed only in a later Python release does not change the [supported Python versions](docs/version-policy.md#support-for-python-versions); an application running an affected version carries that vulnerability until it upgrades Python. A Pydantic AI check that relies on dependency or CPython behavior is still a library control, so a bypass of that check is a Pydantic AI vulnerability.
+
 ## Assets and adversaries
 
 Review these assets:
@@ -151,7 +153,7 @@ Canonical guidance: [agent usage limits](docs/agent.md), [timeouts](docs/timeout
 
 | Surface | Existing control | Responsibility and limitation |
 |---|---|---|
-| File tools | Resolved-path checks and configured allow, deny, and read-only patterns. | These are tool-specific guardrails. The backend's path-resolution support and check/use races matter. Shell commands and Code Mode mounts can reach resources outside these checks. |
+| File tools | Resolved-path containment checks and configured allow, deny, and read-only patterns. | These functional guardrails depend on the backend's path-resolution support and are subject to check/use races. Shell commands and Code Mode mounts can reach resources outside these checks. |
 | Shell tools | Workspace selection, command filters, timeouts, and output limits. | Command filters are not process isolation. Local execution uses the OS user's authority; detached jobs have a separate lifetime. |
 | Code Mode | A Monty sandbox with no host file, environment, or clock access by default, and per-snippet limits. | Nested calls run host tools with their authority. Mounts, and OS-access handlers that expose host resources, reach the agent's machine outside file-tool checks, even with a remote workspace. Eager and speculative execution start calls before `run_code` finishes streaming, so a control on `run_code` itself runs too late to stop them. |
 | Bubblewrap | Configured mounts, user namespace, temporary directory, and network restrictions. | By default, commands can read files and credentials available to the host user and signal other processes owned by that user. Files written in the working directory run unsandboxed when later used outside the sandbox. Over SSH, each connection's login runs on the host before the sandbox starts; with the home directory as the working directory, only the files a command connection runs are protected. Give the sandbox a project working directory, hide sensitive directories, and use a separate OS user or cloud sandbox for untrusted agents. Mount and network configuration change exposure. |
@@ -162,7 +164,9 @@ Canonical guidance: [agent usage limits](docs/agent.md), [timeouts](docs/timeout
 | Capability creation | Runs require a writable local workspace. | Model-written Python is imported into the agent process. The host decides whether later runs load authored capabilities. |
 | Delegation and persistence | Child histories, tool selection, state snapshots, and effect records. | Separate histories do not isolate shared dependencies or workspaces. Recovery requires application decisions about unfinished external effects. |
 
-Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [plugins](src/pydantic_clai2/PLUGINS.md), [CLAI 2 updates](src/pydantic_clai2/README.md#updating), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), and [step persistence](docs/harness/step-persistence.md).
+`LocalWorkspace` does not establish a security isolation boundary. Bypasses of file-tool containment or allow, deny, and read-only patterns that remain within the workspace process's existing OS authority are correctness bugs rather than security vulnerabilities, including when command execution is disabled. Evaluate security reports against documented security boundaries and the configured backend's guarantees. A sandbox protects only its configured boundary; selecting one does not make every file inside it confidential from the agent.
+
+Canonical guidance: [filesystem security model](docs/harness/filesystem.md#security-model), [shell command controls](docs/harness/shell.md), [Code Mode](docs/harness/code-mode.md), [Bubblewrap](docs/harness/bubblewrap-sandbox.md), [SmolSandbox](docs/harness/smol-sandbox.md#security-model), [SSH](docs/harness/ssh-workspace.md), [E2B](docs/harness/e2b-sandbox.md), [Modal](docs/harness/modal-sandbox.md), [Sprites](docs/harness/sprites-sandbox.md), [Daytona](docs/harness/daytona-sandbox.md), [plugins](src/pydantic_clai2/PLUGINS.md), [CLAI 2 updates](src/pydantic_clai2/README.md#updating), [capability creation](docs/harness/capability-creation.md#trust-boundary), [subagents](docs/harness/subagents.md), and [step persistence](docs/harness/step-persistence.md).
 
 On non-Windows platforms, stock CLAI 2 is a broad local-execution profile: its default Coder has unrestricted file access and uses a local workspace unless configured otherwise. Stock CLAI 2 does not provide an agent workspace on Windows. Launching from a directory does not contain its commands or file access. Stock defaults that matter for review:
 
@@ -202,6 +206,8 @@ Use the affected component's current documented boundary when evaluating a repor
 6. Does the reproduction use a reasonable configuration consistent with documentation?
 7. Does the proposed fix repair that boundary, or introduce a new guarantee?
 8. Which regression test proves the boundary and the relevant completion/error paths?
+
+Answer a report of a dependency or CPython vulnerability with the release that fixes it; see [Scope and deployment profiles](#scope-and-deployment-profiles).
 
 A configuration-dependent report needs explicit deployment assumptions. For library scoring, use [FIRST's guidance for reasonable embedding scenarios](https://www.first.org/cvss/v3.1/user-guide#3-7-scoring-vulnerabilities-in-software-libraries-and-similar). Severity scoring and the decision to publish an advisory require separate maintainer judgment.
 

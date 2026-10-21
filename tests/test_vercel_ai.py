@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import uuid
@@ -12,16 +13,17 @@ from typing import Any, Literal, cast
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import Agent, CancellationToken, RunCancelled, ToolOutput, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, ToolOutput, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -34,6 +36,8 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionDeltaPart,
+    InstructionId,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -67,6 +71,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -4532,6 +4537,103 @@ async def test_adapter_dispatch_request_cancellation_token():
                 parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                 metadata={'__pydantic_ai__': {'ui_message_id': 'bar'}},
             )
+        ]
+    )
+
+
+async def _stream_then_time_out(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+    yield 'partial'
+    ctx = get_current_run_context()
+    assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+    ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+    await asyncio.Event().wait()
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def test_run_stream_native_timeout():
+    adapter = VercelAIAdapter(
+        Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
+        SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+        ),
+    )
+
+    with pytest.raises(RunTimedOut):
+        async for _ in adapter.run_stream_native(timeout=60):
+            pass
+
+
+async def test_adapter_dispatch_request_timeout():
+    """A run that outlives `timeout=` ends like a first-party cancellation: an `abort` chunk, and `on_cancel` gets the `RunTimedOut`."""
+    run_input = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+    cancelled: list[RunCancelled] = []
+
+    response = await VercelAIAdapter.dispatch_request(
+        request,
+        agent=Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
+        timeout=60,
+        on_cancel=cancelled.append,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[str | dict[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        body = cast(bytes, data.get('body', b'')).decode('utf-8').strip().removeprefix('data: ')
+        if body:
+            chunks.append('[DONE]' if body == '[DONE]' else json.loads(body))
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'partial', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'abort', 'reason': 'The agent run timed out.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert len(cancelled) == 1
+    assert isinstance(cancelled[0], RunTimedOut)
+    assert cancelled[0].all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='foo',
+                metadata={'__pydantic_ai__': {'ui_message_id': 'bar'}},
+            ),
+            ModelResponse(
+                parts=[TextPart(content='partial')],
+                usage=RequestUsage(output_tokens=1, input_tokens=50),
+                model_name='function::_stream_then_time_out',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='foo',
+                state='interrupted',
+            ),
         ]
     )
 
@@ -11937,7 +12039,9 @@ async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt:
             expected = sanitize_messages(server_history)
     else:
         expected = sanitize_messages(server_history, strip_system_prompts=False)
-    assert _model_visible(loaded) == _model_visible(expected)
+    # Server history has the enqueued parts in the tool's request, right after its return. The client loads
+    # them back as their own request after it, which renders the same once the two are merged for the model.
+    assert _model_visible(_clean_message_history(loaded)) == _model_visible(_clean_message_history(expected))
     assert _model_visible(loaded) == [
         ('request', [('user-prompt', 'Go')]),
         ('response', [('tool-call', {})]),
@@ -11961,6 +12065,7 @@ async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> 
         messages=(
             ModelResponse(parts=[TextPart('synthetic')]),
             ModelRequest(parts=[SystemPromptPart(content='hidden'), UserPromptPart(content='visible')]),
+            ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='hidden')]),
         ),
     )
     event_stream = VercelAIEventStream()
