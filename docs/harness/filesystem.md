@@ -65,7 +65,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Numbered lines and a content hash, paged by `offset`/`limit`, at most `max_read_lines` per call. Images (PNG, JPEG, GIF, WebP) and PDFs up to 5 MB are returned as files; other binary files as size, media type, and a 64-byte hex preview. A file over 64 MiB is described, not read. With `max_read_chars`, the result ends on the last complete line that fits and the continuation hint names the first line not shown. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -80,14 +80,7 @@ An explicitly unavailable run workspace fails at run start with its configured r
 
 Missing paths (including directories passed to `read_file`) return `Path not found: <path>` as a tool result, so repeated lookups do not exhaust the model's tool retry budget. Invalid arguments still request a retry.
 
-For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) rather than `cat` through a shell. How a search runs depends on the workspace:
-
-- In a remote workspace, install `rg` and `git` in the image for fast searches. The agent host's `rg` is not used there.
-- Without `rg`, a command-capable POSIX workspace runs one git/grep/find command for `grep`, `list_files`, and `search_files`, after an initial `rg` probe, and logs one debug message the first time. With git it reads nested `.gitignore` files but only the search root's `.ignore`, and also searches files git tracks even though `.gitignore` lists them, which `rg` skips. Without git it applies no ignore files. Regex features specific to `rg` need `rg`.
-- A filesystem-only or read-only workspace walks its files in Python, bounded. Python's regex engine has no time limit, so a regex that repeats a repeating group, such as `(a+)+`, is refused: that shape can take exponential time. The check is a heuristic for that shape, not a time limit.
-- An explicitly named file is always searched, even when ignored. A file a search cannot read (with `rg`, a directory too) is skipped, and a note at the end of the result names it and the reason. Output and result caps are reported, so a partial result never reads as complete.
-
-For large or generated trees, use Shell with `rg -n 'pattern' path` and cap its output.
+For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) rather than `cat` through a shell. Install `rg` and `git` in the sandbox image for fast searches; installing `rg` on the agent host does not install it in a remote workspace. For large or generated trees, use Shell with `rg -n 'pattern' path` and cap its output. Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe). Filesystem-only and read-only workspaces use slower, bounded file walks in Python, whose regex engine has no time limit, so they refuse a regex that repeats a repeating group, such as `(a+)+`: that shape can take exponential time. The check is a heuristic for that shape, not a time limit. The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. With git, it also searches files git tracks even though `.gitignore` lists them, which `rg` skips. The first search that falls back in a workspace logs one debug message saying so. An explicitly named file is searched even when ignored. Searches report output and result caps rather than presenting partial results as complete. A file a search cannot read (with `rg`, a directory too) is skipped, and a note at the end of the result names it and the reason.
 
 Recursive file walks visit each real directory once, so aliases to a directory do not duplicate its contents.
 
@@ -197,26 +190,38 @@ lands, without parsing tool arguments:
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
 | `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
 
-`FileChangeRequestEvent` is a decision; the other events are notifications. It
-fires only for a change that passed the access and conflict checks, so a
-listener cannot approve what the policy or the filesystem refuses. Call
-`event.cancel(reason)` to refuse the change; the model gets `reason` as the
-tool result. A listener that raises aborts the run, and the change is not
-applied.
-
-A listener may take a while (a human approving the diff, say), so after it
-returns the path is checked again and the file re-read: a file that changed
-meanwhile fails instead of being overwritten, and an edit does not recreate a
-file deleted meanwhile. A target the workspace cannot read has no content to
-guard; pass `expected_hash` to refuse such a write before it is announced.
-
-`diff` is the unified diff from the current content to the proposed content. A
-new file diffs from empty; an unreadable file is announced with the file
-headers alone and `truncated` set; `create_directory` has no diff, and on a
-directory that already exists it emits nothing.
+`FileChangeRequestEvent` is a decision. It fires after the path has passed the
+access checks and, for `write_file` and `edit_file`, after the conflict check,
+so a listener only sees changes that would otherwise go ahead: a denied path,
+a missing parent for `write_file`, a parent that is not a directory, a stale
+`expected_hash` for a file that exists, or a directory that collides with a
+file emits no request, so a listener cannot approve what the policy or the
+filesystem refuses. A
+listener may take a while (a human approving the diff, say), so once the
+request returns the path is resolved and checked again, and a write or edit
+re-reads the file just before writing and checks that it still holds what the
+listener was shown: a file changed in the meantime fails after it was
+announced instead of being overwritten, and an edit does not recreate a file
+deleted in the meantime. This holds the window between the check and the write
+(see [Security model](#security-model)) to what it is without a listener for
+readable targets. For a target the workspace cannot read, an approved write has
+no content guard; passing `expected_hash` instead refuses the write before
+announcement. A listener that calls `cancel(reason)`
+stops the change before it touches the disk, and the model gets the reason as the tool
+result. A listener that raises instead aborts the run, as any raising event
+listener does, and the change is not applied. `diff` is the unified diff from
+the current content to the proposed content: a new file diffs from empty, a
+file the workspace cannot read is announced with the file headers alone and
+`truncated` set, since what it holds cannot be shown, and a `create_directory`
+has no diff. A `create_directory` on a directory that already exists changes
+nothing and emits nothing. The other events are notifications.
 
 `FileEditedEvent` subclasses `FileWrittenEvent`, so a listener for writes
-receives edits too; its serialized kind is `file_system.file_edited`. Diffs are cut at
+receives edits too and can read the `diff` when it has one. Before this
+release `edit_file` emitted a plain `FileWrittenEvent`, so a serialized edit
+had the kind `file_system.file_written`; it is now `file_system.file_edited`.
+A listener registered for `FileWrittenEvent` still receives it; code that
+matches on the serialized kind needs to accept both. Diffs are cut at
 `MAX_EVENT_DIFF_CHARS` (8192) with a `truncated` flag, so a persisted or
 forwarded event stream cannot be flooded by one large write, and a change
 whose text is longer than `MAX_DIFF_SOURCE_CHARS` (32768) on either side is
