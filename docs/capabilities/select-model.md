@@ -70,12 +70,11 @@ backup = FunctionModel(backup_response, model_name='backup')
 # These deterministic responses stand in for calls to the primary and backup models.
 
 
-def select_model(ctx: ModelSelectionContext[object]) -> FunctionModel:
+def select_model(ctx: ModelSelectionContext[None]) -> FunctionModel:
     return backup if ctx.retry >= 1 else primary
 
 
 agent = Agent(
-    None,
     output_type=str,
     retries={'output': 1},
     capabilities=[SelectModel(select_model)],
@@ -91,7 +90,7 @@ retry_states: list[tuple[int, int]] = []
 
 
 @agent.output_validator
-def validate_output(ctx: RunContext[object], value: str) -> str:
+def validate_output(ctx: RunContext[None], value: str) -> str:
     retry_states.append((ctx.retry, ctx.max_retries))
     if value == 'draft':
         raise ModelRetry('This is still a draft.')
