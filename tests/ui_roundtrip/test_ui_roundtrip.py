@@ -60,7 +60,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    StreamedResponse,
+    _order_tool_results_by_call,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models.function import (
     AgentInfo,
     DeltaThinkingCalls,
@@ -109,7 +115,7 @@ pytestmark = [
 
 Protocol = Literal['vercel', 'agui']
 Path = Literal['dump', 'stream']
-Property = Literal['load', 'wire']
+Property = Literal['load', 'wire', 'ids']
 PROTOCOLS: tuple[Protocol, ...] = ('vercel', 'agui')
 PATHS: tuple[Path, ...] = ('dump', 'stream')
 
@@ -132,25 +138,13 @@ def _project_part(part: ModelRequestPart | ModelResponsePart) -> dict[str, Any]:
 def project(messages: Sequence[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
     """Message boundaries and the model-visible fields of each part.
 
-    Two differences that never reach the model are normalized away first, as the agent and the models do:
-    consecutive requests are merged, as the agent does to any history it continues, and tool results are put
-    in the order of the calls they answer, as every model sends them (a streaming AG-UI client keeps them in
-    the order the tools finished).
+    Two differences that never reach the model are normalized away first, the same way the agent and the
+    models do: consecutive requests are merged, as the agent does to any history it continues, and the slots
+    holding tool results are refilled in the order of the calls they answer, as every model sends them (a
+    streaming AG-UI client keeps them in the order the tools finished). Every other part keeps its place.
     """
-    projected: list[tuple[str, list[dict[str, Any]]]] = []
-    call_order: dict[str, int] = {}
-    for message in _merge_consecutive_messages(list(messages)):
-        parts = list(message.parts)
-        if isinstance(message, ModelResponse):
-            call_order = {part.tool_call_id: i for i, part in enumerate(parts) if isinstance(part, ToolCallPart)}
-        else:
-            parts.sort(
-                key=lambda part: call_order.get(
-                    part.tool_call_id if isinstance(part, ToolReturnPart) else '', len(call_order)
-                )
-            )
-        projected.append((message.kind, [_project_part(part) for part in parts]))
-    return projected
+    normalized = _order_tool_results_by_call(_merge_consecutive_messages(list(messages)))
+    return [(message.kind, [_project_part(part) for part in message.parts]) for message in normalized]
 
 
 # --- Scripted conversations ---------------------------------------------------------------------------------------
@@ -531,6 +525,11 @@ _AGUI_EMPTY_RESPONSE = (
     'AG-UI `dump_messages()` drops an empty response, so the feedback after it loads into the question '
     'before it; no issue yet'
 )
+_DUPLICATE_IDS = (
+    "Vercel AI `dump_messages()` gives a request's system and user messages the same id once the request "
+    'carries the `ui_message_id` it was loaded with, so a hydrated client holds two messages with one id; '
+    'no issue yet'
+)
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
@@ -550,6 +549,7 @@ SCENARIOS = [
         id='system_prompt_and_text_deltas',
         script=_text_script,
         agent_kwargs={'system_prompt': 'You are terse.', 'instructions': 'Answer in English.'},
+        gaps=_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
     ),
     Scenario(
         id='client_owned_system_prompt',
@@ -558,7 +558,8 @@ SCENARIOS = [
         adapter_kwargs={'manage_system_prompt': 'client'},
         gaps={
             **_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
-            **_gaps(_AGUI_SYSTEM_ORDER, ('wire', 'dump', 'agui')),
+            **_gaps(_AGUI_SYSTEM_ORDER, ('load', 'dump', 'agui'), ('wire', 'dump', 'agui')),
+            **_gaps(_DUPLICATE_IDS, ('ids', 'dump', 'vercel')),
         },
         # The frontend owns the system prompt, so it's the one sending it.
         seed=[
@@ -636,12 +637,41 @@ SCENARIOS = [
         id='compaction_boundary',
         script=_reveal_script,
         setup=_reveal_tools,
+        gaps=_gaps(
+            _AGUI_ACTIVITY,
+            ('load', 'dump', 'agui'),
+            ('load', 'stream', 'agui'),
+            ('wire', 'dump', 'agui'),
+            ('wire', 'stream', 'agui'),
+        ),
+        # A reveal before the compaction, and new reveals after it.
+        seed=[
+            ModelRequest(parts=[UserPromptPart('Question 0')]),
+            ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='unlock-0')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart('unlock', 'unlocked', tool_call_id='unlock-0'),
+                    ToolAvailabilityDeltaPart(tools_added=['secret'], tool_call_id='unlock-0'),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    CompactionPart(content='Summary so far: the secret tool is unlocked.', provider_name='anthropic'),
+                    TextPart('Continuing from the summary.'),
+                ]
+            ),
+        ],
+    ),
+    Scenario(
+        id='compaction_boundary_appended_instructions',
+        script=_reveal_script,
+        setup=_reveal_tools,
         agent_kwargs={'capabilities': [_progress]},
         gaps={
             **_gaps(_AGUI_ACTIVITY, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
             **_gaps(_APPEND_INSTRUCTIONS, *_ALL_WIRE),
         },
-        # A reveal before the compaction, and new reveals and instruction changes after it.
+        # As `compaction_boundary`, with an instruction change on every turn after the compaction.
         seed=[
             ModelRequest(parts=[UserPromptPart('Question 0')]),
             ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='unlock-0')]),
@@ -723,6 +753,8 @@ class Client(ABC):
         self.driver = driver
         self.session = session
         self.adapter_kwargs = adapter_kwargs
+        self.sent_ids: list[list[str]] = []
+        """The ids of the messages in each request the client sent."""
 
     def submit(self, prompt: str, hydrate: list[ModelMessage] | None) -> bytes:
         """Send `prompt` from the client, first hydrating it with `dump_messages(hydrate)` if given."""
@@ -731,6 +763,7 @@ class Client(ABC):
             dumped = self.adapter_type.dump_messages(hydrate)
             params['messages'] = to_jsonable_python(dumped, by_alias=True, exclude_none=True)
         body = self.driver.request(f'{self.protocol}.submit', session=self.session, **params)
+        self.sent_ids.append([message['id'] for message in body['messages']])
         return json.dumps(body).encode()
 
     def receive(self, encoded: list[str]) -> None:
@@ -876,7 +909,7 @@ def _params(prop: Property) -> list[Any]:
                         pytest.param(
                             *values,
                             id='-'.join([scenario.id, path, protocol, *([provider] if provider else [])]),
-                            marks=[pytest.mark.xfail(reason=gap, strict=True)] if gap else [],
+                            marks=[pytest.mark.xfail(reason=gap, raises=AssertionError, strict=True)] if gap else [],
                         )
                     )
     return params
@@ -894,6 +927,15 @@ async def test_load(scenario: Scenario, path: Path, protocol: Protocol, js_drive
     client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}', scenario.adapter_kwargs)
     for turn in await run_client(scenario, client, path):
         assert project(turn.sent) == project(turn.expected)
+
+
+@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('ids'))
+async def test_message_ids(scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver) -> None:
+    """Every request the client sends has one id per message, as the frontend frameworks key messages on it."""
+    client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}-ids', scenario.adapter_kwargs)
+    await run_client(scenario, client, path)
+    for ids in client.sent_ids:
+        assert len(set(ids)) == len(ids), ids
 
 
 @pytest.mark.parametrize(('scenario', 'path', 'protocol', 'provider'), _params('wire'))

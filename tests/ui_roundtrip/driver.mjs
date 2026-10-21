@@ -68,16 +68,17 @@ async function sentOrFailed(sent, done) {
 class VercelSession {
   constructor(chatId) {
     this.chatId = chatId;
+    // One counter per session, not per chat, so a client hydrated again keeps minting fresh ids.
+    this.counter = 0;
     this.chat = this.newChat([]);
   }
 
   newChat(messages) {
-    let counter = 0;
     return new Chat({
       id: this.chatId,
       messages,
       // Deterministic ids, so failures reproduce.
-      generateId: () => `${this.chatId}-client-${++counter}`,
+      generateId: () => `${this.chatId}-client-${++this.counter}`,
       transport: {
         sendMessages: async ({ trigger, chatId, messageId, messages }) => {
           let controller;
