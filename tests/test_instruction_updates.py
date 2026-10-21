@@ -1098,6 +1098,46 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         assert captured_parts == [expected_parts, expected_parts or None]
 
 
+async def test_hook_cleared_instruction_parts_reach_function_model_as_no_instructions():
+    """Empty `instruction_parts` mean no instructions, even when an earlier request recorded some.
+
+    `FunctionModel` resolves `AgentInfo.instructions` through `get_instructions`, which used to fall back to
+    the previous request's `ModelRequest.instructions` when the current request held only tool returns,
+    unlike every other model.
+    """
+    seen: list[tuple[list[InstructionPart] | None, str | None]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append((info.model_request_parameters.instruction_parts, info.instructions))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    async def clear_after_first_step(ctx: RunContext[None], request: ModelRequestContext) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            return request
+        return replace(
+            request, model_request_parameters=replace(request.model_request_parameters, instruction_parts=[])
+        )
+
+    agent = Agent(
+        FunctionModel(respond),
+        instructions='Be concise.',
+        capabilities=[Hooks(before_model_request=clear_after_first_step)],
+    )
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    result = await agent.run('Hi')
+    assert result.output == 'done'
+    assert seen == [
+        ([InstructionPart(content='Be concise.', id=InstructionId(AgentInstructionSource()))], 'Be concise.'),
+        ([], None),
+    ]
+
+
 async def test_instruction_updates_suspended_resume_merges_projected_tool_search():
     agent = Agent(TestModel(custom_output_text='ok'), deps_type=State)
 
