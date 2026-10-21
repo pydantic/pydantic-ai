@@ -98,6 +98,92 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
                 )
 
 
+def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[str, ToolsetTool[AgentDepsT]]:
+    """Leave out each tool whose `unless_tool_kind` names the kind of another tool that stays.
+
+    Every collected tool counts, including deferred ones not yet revealed, so revealing a tool doesn't
+    change the answer mid-run. A tool is only left out in favor of a tool that stays, so in a chain
+    (A unless B's kind, B unless C's kind) C drops B and A stays. Tools that can only be resolved in
+    favor of each other form a cycle; there the first tool in toolset order that is on the cycle stays,
+    every tool whose kind it names steps aside, and the rest follows from that. Some cycles can't satisfy
+    every rule at once (A unless B, B unless C, C unless A). There a tool is never left out without a tool
+    it names staying, so the rule given up is the other one: a tool can stay beside a tool it names. The
+    result is deterministic from toolset order.
+    """
+    names_by_kind: dict[str, list[str]] = {}
+    for name, tool in tools.items():
+        if (kind := tool.tool_def.tool_kind) is not None:
+            names_by_kind.setdefault(kind, []).append(name)
+
+    suppliers: dict[str, list[str]] = {}
+    for name, tool in tools.items():
+        if (unless_kind := tool.tool_def.unless_tool_kind) is not None:
+            if others := [other for other in names_by_kind.get(unless_kind, ()) if other != name]:
+                suppliers[name] = others
+    if not suppliers:
+        return tools
+
+    stays: dict[str, bool] = {name: True for name in tools if name not in suppliers}
+    undecided = [name for name in tools if name in suppliers]
+    while undecided:
+        progressed = False
+        for name in undecided:
+            if any(stays.get(other) is True for other in suppliers[name]):
+                stays[name] = False
+                progressed = True
+            elif all(stays.get(other) is False for other in suppliers[name]):
+                stays[name] = True
+                progressed = True
+        if not progressed:
+            pinned = _first_on_a_cycle(undecided, suppliers)
+            stays[pinned] = True
+            # The pinned tool wins against every tool whose kind it names, so none can be kept beside it later,
+            # for instance by a separate cycle that would otherwise pin one of them.
+            for other in suppliers[pinned]:
+                stays.setdefault(other, False)
+        undecided = [name for name in undecided if name not in stays]
+    _restore_tools_without_a_replacement(stays, suppliers)
+    return {name: tool for name, tool in tools.items() if stays[name]}
+
+
+def _restore_tools_without_a_replacement(stays: dict[str, bool], suppliers: Mapping[str, list[str]]) -> None:
+    """Bring back each left-out tool none of whose suppliers stays.
+
+    Keeping a tool beside one it names is only redundant, but dropping one with nothing to replace it
+    loses what it does. A cycle that can't meet both rules (A unless B, B unless C, C unless A) can leave
+    a tool out whose suppliers all went too. Restoring a tool only adds replacements for others, so this
+    never brings back a tool that was left out for good reason.
+    """
+    restored = True
+    while restored:
+        restored = False
+        for name, others in suppliers.items():
+            if not stays[name] and not any(stays[other] for other in others):
+                stays[name] = True
+                restored = True
+
+
+def _first_on_a_cycle(undecided: list[str], suppliers: Mapping[str, list[str]]) -> str:
+    """The first tool in `undecided` that can reach itself through undecided suppliers.
+
+    The loop stalls only when every undecided tool has an undecided supplier, so following them always ends
+    in a cycle. Pinning a tool that merely leads into one would keep it beside the cycle member that stays,
+    whose kind it names.
+    """
+    pending = set(undecided)
+    for name in undecided:
+        seen: set[str] = set()
+        stack = [other for other in suppliers[name] if other in pending]
+        while stack:
+            other = stack.pop()
+            if other == name:
+                return name
+            if other not in seen:
+                seen.add(other)
+                stack.extend(supplier for supplier in suppliers[other] if supplier in pending)
+    raise AssertionError('a stalled resolution always contains a cycle')  # pragma: no cover
+
+
 @lru_cache(maxsize=256)
 def _shape_mismatch(shape: Any, json_schema: bytes, payload: Literal['args', 'content']) -> tuple[str, ...]:
     """How a tool's parameters or return JSON schema fails to fit the shape its kind declares.
@@ -316,6 +402,7 @@ class ToolManager(Generic[AgentDepsT]):
         still gets its `prepare_tools` say over its own tools.
         """
         resolved_capability_ids = frozenset(ctx._dispatch_active_capability_ids)  # pyright: ignore[reportPrivateUsage]
+        caller_ctx = ctx
         same_step = False
         if self.ctx is not None:
             if ctx.run_step == self.ctx.run_step:
@@ -349,6 +436,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         tools = await toolset.get_tools(ctx)
         _check_tool_kinds(tools)
+        tools = _drop_superseded_tools(tools)
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
@@ -364,8 +452,10 @@ class ToolManager(Generic[AgentDepsT]):
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
-        # through the standard validation/execution path.
+        # through the standard validation/execution path. The caller's context gets it too: it is
+        # the one the step's instructions are rendered with, and `ctx` is a copy from the second step on.
         ctx.tool_manager = new_tm
+        caller_ctx.tool_manager = new_tm
         return new_tm
 
     @property

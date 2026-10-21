@@ -1117,6 +1117,70 @@ A tool declares its kind with the `tool_kind` argument of [`Tool`][pydantic_ai.t
 
 A typed subclass may only add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't define (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is defined.
 
+### Superseding a tool by kind {#unless-tool-kind}
+
+A capability sometimes offers its own tool for something a more general tool on the agent can also do, such as a tool that reads the notes it keeps in the workspace when the agent can read files anyway. Setting [`ToolDefinition.unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] to a kind makes the tool step aside whenever another tool in the run step has that kind, whatever that tool is called. It's the counterpart of [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native], which does the same for a native tool the model supports.
+
+Instructions and tool results that mention such a tool shouldn't hard-code its name either. [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] returns the name of the tool with a kind in the current step, including any prefix, or `None` when there is none:
+
+```python {title="unless_tool_kind.py"}
+from dataclasses import replace
+
+from pydantic_ai import Agent, AgentRunResult, ModelRequest, RunContext, Tool, ToolKind
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
+
+file_read = ToolKind('workspace', 'file_read')
+
+
+def read_file(path: str) -> str:
+    """Read a file in the workspace."""
+    return f'contents of {path}'
+
+
+def read_notes() -> str:
+    """Read the notes kept in `notes.md`."""
+    return 'notes'
+
+
+def unless_file_reader(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, unless_tool_kind=file_read)
+
+
+agent = Agent('test', tools=[Tool(read_notes, prepare=unless_file_reader)])
+
+
+@agent.instructions
+def notes_instructions(ctx: RunContext) -> str:
+    if reader := ctx.tool_name_for_kind(file_read):
+        return f'Your notes are in `notes.md`. Read them with `{reader}`.'
+    return 'Read your notes with `read_notes`.'
+
+
+def sent_instructions(result: AgentRunResult[str]) -> str | None:
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    return request.instructions
+
+
+result = agent.run_sync('What do my notes say?')
+print(sent_instructions(result))
+#> Read your notes with `read_notes`.
+print(result.output)
+#> {"read_notes":"notes"}
+
+file_tools = FunctionToolset([Tool(read_file, tool_kind=file_read)])
+result = agent.run_sync('What do my notes say?', toolsets=[file_tools])
+print(sent_instructions(result))
+#> Your notes are in `notes.md`. Read them with `read_file`.
+print(result.output)
+#> {"read_file":"contents of a"}
+```
+
+The decision is made when the run step's tools are collected, after any [`prepare_tools`](#prepare-tools) function, so a tool left out is neither sent to the model nor callable, and `tool_name_for_kind` doesn't return it. A tool hidden by [deferred loading](#tool-search) counts as present: the answer, and instructions built from it, stay the same when that tool is revealed, which keeps the prompt cacheable. A tool is only left out in favor of a tool that stays, so if a third tool supersedes the general one, the capability's tool comes back. When tools would each be left out in favor of the other, the one of them listed first in the step's tools stays and every tool whose kind it names steps aside. Some cycles can't meet every rule at once (A unless B, B unless C, C unless A). A tool is still never left out unless a tool it names stays, so in such a cycle a tool can stay beside one whose kind it names; the result is the same for the same tools in the same order. Unlike `tool_kind`, `unless_tool_kind` doesn't need the kind to be defined: only ids are compared, so a capability can step aside for another package's tool by its kind id without importing that package, and a kind no tool has means there is nothing to step aside for.
+
+When several tools have the kind, `tool_name_for_kind` returns the first in the order of [`RunContext.tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list them in, and which you can iterate to see them all. Instruction functions, model request hooks and tools see the current step's tools, including a tool running in a Temporal activity, which answers from a snapshot of the step's tools taken when the activity was dispatched. A toolset's `get_tools` and `prepare_tools` functions run while those are still being collected, so there it answers from the previous step.
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration

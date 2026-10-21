@@ -46,8 +46,10 @@ from pydantic_ai import (
     RunUsage,
     TextPart,
     TextPartDelta,
+    Tool,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -89,8 +91,9 @@ from pydantic_ai.realtime import (
     WebRTCSession,
 )
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import DynamicToolset
+from pydantic_ai.toolsets import DynamicToolset, PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
@@ -3402,6 +3405,37 @@ class LegacyFieldsRunContext(TemporalRunContext[Any]):
         }
 
 
+_LOOKUP_KIND = ToolKind('test_temporal_run_context', 'lookup')
+
+
+def _lookup(query: str) -> str:
+    # Only listed, never called.
+    return query  # pragma: no cover
+
+
+async def test_temporal_run_context_carries_tool_names_by_kind():
+    """`tool_name_for_kind` answers inside an activity from the snapshot taken at dispatch.
+
+    The tool manager can't cross the activity boundary, so without the snapshot a tool result built
+    in the activity couldn't name another tool by kind; the name carries the prefix it was offered under.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    toolset = PrefixedToolset(FunctionToolset([Tool(_lookup, tool_kind=_LOOKUP_KIND)]), prefix='ws')
+    ctx.tool_manager = await ToolManager(toolset=toolset).for_run_step(ctx)
+    params = CallToolParams(
+        name='tool',
+        tool_args={},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        tool_def=None,
+    )
+    payloads = await pydantic_data_converter.encode([params])
+    (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
+    reconstructed = TemporalRunContext.deserialize_run_context(decoded.serialized_run_context, deps=None)
+
+    assert reconstructed.tool_name_for_kind(_LOOKUP_KIND) == 'ws__lookup'
+    assert reconstructed.tool_name_for_kind('test_temporal_run_context.missing') is None
+
+
 async def test_temporal_run_context_subclass_with_its_own_field_set():
     """A subclass that overrides `serialize_run_context` keeps working, errors and all.
 
@@ -3432,6 +3466,8 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # Nor a kind snapshot, so the base method answers, and without a tool manager it has nothing to name.
+    assert reconstructed.tool_name_for_kind(_LOOKUP_KIND) is None
     # No capability snapshot in this subclass's field set, so the property falls back to the base
     # one, which reads the registry — and that is guarded, so it raises rather than quietly
     # reporting no capabilities are active.
