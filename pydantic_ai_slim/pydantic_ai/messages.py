@@ -2508,7 +2508,7 @@ class InstructionDeltaPart:
     def render(self, *, inline_system: bool = True, previous: str | None = None) -> str:
         """Render this change as a `<context>` element that replaces the block's earlier one.
 
-        A replacement is rendered as a `<context-diff>` element instead, holding a unified diff against
+        A replacement is rendered as a `<context_diff>` element instead, holding a unified diff against
         `previous`, when `previous` is the text this change replaces (per `base_hash`) and the diff is
         shorter than the full replacement.
 
@@ -2548,7 +2548,7 @@ def _instruction_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-_CLOSING_FRAMING_TAG = re.compile(r'</(context-diff|context|system)\s*>', re.IGNORECASE)
+_CLOSING_FRAMING_TAG = re.compile(r'</(context_diff|context|system)\s*>', re.IGNORECASE)
 
 
 def _neutralize_closing_tags(content: str) -> str:
@@ -2571,7 +2571,7 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return f'<context-diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context-diff>'
+    return f'<context_diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context_diff>'
 
 
 _SUPERSESSION_SENTENCE = (
