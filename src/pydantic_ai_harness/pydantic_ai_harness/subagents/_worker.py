@@ -194,13 +194,14 @@ class SubAgentWorker(Generic[AgentDepsT]):
         context_token = otel_context.attach(propagate.extract(start.trace_context))
         try:
             await self._run_task(agent, start)
-        except UserError as e:
-            # A misconfigured sub-agent fails its task rather than the worker, which serves other tasks too.
-            await self.transport.send(TaskFailedEvent(task_id=start.task_id, agent_name=start.agent_name, error=str(e)))
         except Exception as e:
-            # So does a task the transport failed for; its delegating run is told if the transport still can.
-            _logger.exception('Sub-agent task %s failed on its worker.', start.task_id)
-            error = f'{type(e).__name__}: {e}'
+            # One task's failure, from a misconfigured sub-agent or the transport, doesn't stop the worker,
+            # which serves other tasks too. The delegating run is told if the transport still can.
+            if isinstance(e, UserError):
+                error = str(e)
+            else:
+                _logger.exception('Sub-agent task %s failed on its worker.', start.task_id)
+                error = f'{type(e).__name__}: {e}'
             try:
                 await self.transport.send(
                     TaskFailedEvent(task_id=start.task_id, agent_name=start.agent_name, error=error)

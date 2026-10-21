@@ -9,6 +9,7 @@ workers for agents in other processes, and agents the model creates -- is a port
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Callable, Sequence
@@ -46,6 +47,8 @@ from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER, DelegationTas
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._transport import SubAgentTransport
+
+_logger = logging.getLogger(__name__)
 
 _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
 
@@ -283,11 +286,15 @@ async def run_remote(
         return await _settle_remote(owner, record, settled, usage)
     finally:
         with anyio.CancelScope(shield=True):
-            if settled is None:
-                # The task is ending without its worker's report, so stop it rather than leave it running there.
-                # This is teardown, not a decision listeners could veto.
-                await transport.send(TaskForceCancelEvent(task_id=record.id, agent_name=record.agent_name))
-            await transport.release(mailbox)
+            try:
+                if settled is None:
+                    # The task is ending without its worker's report, so stop it rather than leave it running there.
+                    # This is teardown, not a decision listeners could veto.
+                    await transport.send(TaskForceCancelEvent(task_id=record.id, agent_name=record.agent_name))
+                await transport.release(mailbox)
+            except Exception:
+                # What ended the task matters more to the delegating run than a failed cleanup.
+                _logger.exception('Could not clean up remote sub-agent task %s.', record.id)
 
 
 async def _relay(

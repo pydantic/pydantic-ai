@@ -605,11 +605,27 @@ class DelegationTasks:
     def publishing(self, *, conversation_id: str, parent_id: str | None, emit: Emitter) -> Generator[None]:
         """Send the task events of a run's children into that run's event stream, while it lasts."""
         key = (conversation_id, parent_id)
+        previous = self._emitters.get(key)
         self._emitters[key] = emit
         try:
             yield
         finally:
-            self._emitters.pop(key, None)
+            if previous is None:
+                del self._emitters[key]
+            else:
+                # Another capability of the same run registered first, and still publishes.
+                self._emitters[key] = previous
+
+    def delegation_of(self, run_id: str | None) -> DelegationTask | None:
+        """The child that the run `run_id` runs, or `None` for a run that isn't one of this owner's delegations.
+
+        A run that a child's tool starts sees the child's ID too, but runs under an ID of its own.
+        """
+        child = _CHILD.get()
+        if child is None:
+            return None
+        record = self.records[child]
+        return record if record.run_id == run_id else None
 
     async def publish(
         self, record: DelegationTask, event: CapabilityEventT, *, observe: bool = True
@@ -667,6 +683,17 @@ class DelegationTasks:
     def stop_requested(self, task_id: str) -> bool:
         """Whether `request_stop` asked this child to stop."""
         return task_id in self._stops
+
+
+@contextmanager
+def isolated(owner: DelegationTasks | None) -> Generator[None]:
+    """Bind `owner`, or no owner, for a run that isn't a delegation of the bound owner, with no current child."""
+    current, child = _CURRENT.set(owner), _CHILD.set(None)
+    try:
+        yield
+    finally:
+        _CHILD.reset(child)
+        _CURRENT.reset(current)
 
 
 class DelegationReports(AbstractCapability[object]):

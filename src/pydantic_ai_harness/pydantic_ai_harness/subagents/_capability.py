@@ -27,7 +27,7 @@ from pydantic_ai_harness._workspace import require_workspace, secondary_workspac
 from pydantic_ai_harness.subagents._control import RUN_OWNER, DynamicAgents, RemoteSubAgent, run_owned
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
-from pydantic_ai_harness.subagents._tasks import DelegationTasks
+from pydantic_ai_harness.subagents._tasks import DelegationTask, DelegationTasks, isolated
 from pydantic_ai_harness.subagents._toolset import (
     CONTROL_TOOL_NAMES,
     CREATE_AGENT_TOOL_NAME,
@@ -41,8 +41,6 @@ from pydantic_ai_harness.subagents._toolset import (
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai_harness.subagents._transport import SubAgentTransport
-
-"""The owner `SubAgents(task_control=True)` opened for the top-level run it wraps, when no application owner is bound."""
 
 _TASK_CONTROL_INSTRUCTIONS = (
     'Manage the tasks you started with `list_tasks`, `message_task` (steer a running task), `answer_task` '
@@ -585,24 +583,42 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                 raise UserError(
                     '`SubAgents` `task_control` and `dynamic_agents` are not supported under durable execution.'
                 )
-            if not self.task_control or self._delegation_off:
-                return await handler()
-            self._require_single(ctx)
             owner = DelegationTasks.current()
-            parent_id = DelegationTasks.child_id()
-            # A run that a tool of a run with its own owner starts, rather than a delegation, gets an owner of its own.
-            if owner is not None and (parent_id is not None or not run_owned(owner)):
-                conversation_id = (
-                    owner.records[parent_id].conversation_id
-                    if parent_id is not None
-                    else ctx.conversation_id or ctx.run_id or ''
-                )
-                with owner.publishing(conversation_id=conversation_id, parent_id=parent_id, emit=ctx.emit):
+            task = owner.delegation_of(ctx.run_id) if owner is not None else None
+            if not self.task_control or self._delegation_off:
+                return await self._run_plain(ctx, handler, owner, task)
+            self._require_single(ctx)
+            if owner is not None and task is not None:
+                with owner.publishing(conversation_id=task.conversation_id, parent_id=task.id, emit=ctx.emit):
                     return await handler()
+            if owner is not None and DelegationTasks.child_id() is None and not run_owned(owner):
+                # A run of the application that bound the owner.
+                conversation_id = ctx.conversation_id or ctx.run_id or ''
+                with owner.publishing(conversation_id=conversation_id, parent_id=None, emit=ctx.emit):
+                    return await handler()
+            # Any other run, including one that a tool starts, gets an owner of its own.
             return await self._run_owned(ctx, handler)
         finally:
             self._call_counts.pop(ctx.run_id or '', None)
             self._created.pop(ctx.run_id or '', None)
+
+    async def _run_plain(
+        self,
+        ctx: RunContext[AgentDepsT],
+        handler: WrapRunHandler,
+        owner: DelegationTasks | None,
+        task: DelegationTask | None,
+    ) -> AgentRunResult[Any]:
+        """Run without task control, as without an owner unless the application bound one or the run is a task."""
+        if owner is None or not run_owned(owner):
+            return await handler()
+        if task is None:
+            # A run that a tool of a task-control run started is none of that run's business.
+            with isolated(None):
+                return await handler()
+        # A task of a task-control run: its delegations' start and end events go to its event stream.
+        with owner.publishing(conversation_id=task.conversation_id, parent_id=task.id, emit=ctx.emit):
+            return await handler()
 
     async def _run_owned(self, ctx: RunContext[AgentDepsT], handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Run with an owner of the run's own, which stops every task still running when the run ends."""
@@ -610,7 +626,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         conversation_id = ctx.conversation_id or ctx.run_id or ''
         async with owner.opened():
             with (
-                owner.bind(),
+                isolated(owner),
                 owner.receiving(
                     conversation_id=conversation_id,
                     parent_id=None,

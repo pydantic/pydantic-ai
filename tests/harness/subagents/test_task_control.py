@@ -1712,3 +1712,47 @@ class TestTaskControlBoundaries:
                 failed = await transport.receive('task:t1:parent')
         assert isinstance(failed, TaskFailedEvent)
         assert failed.error == 'ConnectionError: cannot send sub_agents.task_started'
+
+    async def test_a_plain_sub_agents_run_a_tool_starts_has_no_owner(self) -> None:
+        inner = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Inner.', background=True), echo_last_return),
+            capabilities=[SubAgents(agents=[researcher()])],
+        )
+
+        async def consult() -> str:
+            """Ask the inner agent."""
+            return (await inner.run('Inner go.')).output
+
+        outer = Agent(scripted(call('consult'), echo_last_return), capabilities=[controlled()], tools=[consult])
+        with anyio.fail_after(WAIT):
+            result = await outer.run('Go.')
+        assert 'Background execution and resume require an open `DelegationTasks` owner' in result.output
+
+    async def test_a_task_with_plain_sub_agents_reports_its_delegations_to_its_own_run(self) -> None:
+        inner_recorder = Recorder()
+        delegating = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Deeper.'), echo_last_return),
+            name='middle',
+            capabilities=[
+                SubAgents(agents=[researcher()]),
+                # A second plain `SubAgents` on the same run publishes alongside the first.
+                SubAgents(agents=[SubAgent(child(), name='other')], tool_name='delegate_other', id='other'),
+                inner_recorder,
+            ],
+        )
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='middle', task='Go deeper.'), echo_last_return),
+            capabilities=[controlled(SubAgent(delegating))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(ok):\nchild output')
+        assert sorted(inner_recorder.kinds()) == ['sub_agents.delegation_end', 'sub_agents.delegation_start']
+
+    async def test_a_remote_task_keeps_its_error_when_cleanup_fails(self, caplog: pytest.LogCaptureFixture) -> None:
+        transport = FailingTransport('sub_agents.task_assigned', 'sub_agents.task_force_cancel')
+        parent, _ = remote_parent(transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return)
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        assert result.output.endswith('(failed):\nConnectionError: cannot send sub_agents.task_assigned')
+        assert 'Could not clean up remote sub-agent task' in caplog.text
