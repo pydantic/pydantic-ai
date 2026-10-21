@@ -100,8 +100,10 @@ class Question(BaseModel):
 
 
 def _require_unique(values: list[str], *, what: str) -> None:
-    # NFKC folds compatibility forms (wide spaces, full-width letters, ligatures), so look-alikes count as duplicates.
-    folded = [unicodedata.normalize('NFKC', value).casefold() for value in values]
+    # NFKC folds compatibility forms (full-width letters, ligatures), so look-alikes count as duplicates.
+    # It leaves the Ogham space mark (U+1680) alone, so every space separator is made a plain space first.
+    spaced = [''.join(' ' if unicodedata.category(char) == 'Zs' else char for char in value) for value in values]
+    folded = [unicodedata.normalize('NFKC', value).casefold() for value in spaced]
     if len(folded) != len(set(folded)):
         raise ValueError(f'{what} must be unique')
 

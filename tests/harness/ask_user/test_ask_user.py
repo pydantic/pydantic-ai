@@ -471,12 +471,14 @@ class TestSchema:
         with pytest.raises(ValidationError, match='invisible formatting'):
             QuestionOption(label=label)
 
-    def test_labels_that_only_differ_in_space_width_are_duplicates(self) -> None:
+    # U+1680 (Ogham space mark) is the one space separator NFKC leaves as it is.
+    @pytest.mark.parametrize('space', ['\u00a0', '\u3000', '\u1680'])
+    def test_labels_that_only_differ_in_space_width_are_duplicates(self, space: str) -> None:
         with pytest.raises(ValidationError, match='option labels must be unique'):
             Question(
                 header='Cleanup',
                 question='What now?',
-                options=(QuestionOption(label='Delete all'), QuestionOption(label='Delete\u00a0all')),
+                options=(QuestionOption(label='Delete all'), QuestionOption(label=f'Delete{space}all')),
             )
 
     def test_whitespace_is_stripped(self) -> None:
