@@ -149,22 +149,22 @@ def _latest_memory_context(messages: list[ModelMessage]) -> str:
 
 
 def _user_text(messages: list[ModelMessage]) -> str:
-    items: list[str] = []
-    for message in messages:
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in message.parts:
-            if not isinstance(part, UserPromptPart):
-                continue
-            if isinstance(part.content, str):
-                items.append(part.content)
-            else:
-                items.extend(
-                    content if isinstance(content, str) else content.content
-                    for content in part.content
-                    if isinstance(content, str | TextContent)
-                )
-    return '\n'.join(items)
+    return '\n'.join(
+        text
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+        for text in (
+            [part.content]
+            if isinstance(part.content, str)
+            else [
+                item if isinstance(item, str) else item.content
+                for item in part.content
+                if isinstance(item, str | TextContent)
+            ]
+        )
+    )
 
 
 async def _seed(store: MemoryStore, path: str, content: str) -> MemoryMutation:
