@@ -161,6 +161,11 @@ _REALTIME_MODE_MANAGED_OVERRIDES = {('agent', 'prompt', 'llm'), ('tts', 'model_i
 
 Verified live: the server accepts them, then answers with the agent's Realtime model and TTS model all the same."""
 
+_TEXT_ID_PREFIX = 'pydantic_ai_input_'
+"""What the `id` a text input goes out under starts with, ahead of the input's id."""
+_TEXT_ID = re.compile(rf'{_TEXT_ID_PREFIX}(\d+)')
+"""The `id` a text input went out under, naming the input; an echoed id that doesn't parse names none."""
+
 _MCP_APPROVAL_DENIED = (
     'The ElevenLabs agent asked to approve a call to one of its MCP server tools, which a Pydantic AI session cannot '
     'do, so the call was denied. Give the agent the tools through a Pydantic AI MCP toolset instead, or turn approval '
@@ -1539,6 +1544,8 @@ class _CascadeLifecycle(InferredLifecycle):
         """The text inputs sent, which a reply names by the `id` they went out with."""
         self._named: tuple[InputId, ...] | None = None
         """The text inputs the reply whose text is being mapped names, for its revision."""
+        self._named_others = False
+        """Whether that reply also names an input that isn't one of the text inputs sent (what the user said)."""
 
     def text_sent(self, input_id: InputId) -> str:
         """A text input is going out: the `id` to send it under, which the reply answering it names."""
@@ -1547,8 +1554,10 @@ class _CascadeLifecycle(InferredLifecycle):
 
     def reply_named(self, ids: Sequence[str]) -> None:
         """The text of a reply came, naming (by their `id`s) the text inputs it answers; ids of others are ignored."""
-        named = (int(match[1]) for text_id in ids if (match := _TEXT_ID.fullmatch(text_id)) is not None)
-        self._named = tuple(input_id for input_id in named if input_id in self._text)
+        matches = [_TEXT_ID.fullmatch(text_id) for text_id in ids]
+        named = tuple(int(match[1]) for match in matches if match is not None and int(match[1]) in self._text)
+        self._named = named
+        self._named_others = len(named) < len(ids)
 
     def revise_open(self) -> list[LifecycleEvent]:
         """Revise the response under way by the inputs its text named, ahead of the frame with that text.
@@ -1576,10 +1585,13 @@ class _CascadeLifecycle(InferredLifecycle):
         live, two texts sent back to back while the agent spoke got one reply, to both, naming only the second. No
         reply would ever name the first, so it would be owed a reply forever (and `wait_for_reply()` would hang): a
         reply also answers the text sent before one it names. Text sent after any it names reached the agent after the
-        reply started, and is the next reply's.
+        reply started, and is the next reply's. Unless the reply also names something else (what the user said, by an
+        id the server made up): that may well be what came after the text, folded in with it, so it releases nothing.
         """
         latest = max(named, default=-1)
         claimed = tuple(input_id for input_id in self._unanswered if input_id in self._text and input_id <= latest)
+        if self._named_others:
+            return claimed, ()
         released = tuple(input_id for input_id in answers if input_id in self._text and input_id > latest)
         return claimed, released
 
@@ -1600,12 +1612,6 @@ class _CascadeLifecycle(InferredLifecycle):
         if (named := self._named) is not None:
             self._named = None
             before.extend(self._revise_open(named))
-
-
-_TEXT_ID_PREFIX = 'pydantic_ai_input_'
-"""What the `id` a text input goes out under starts with, ahead of the input's id."""
-_TEXT_ID = re.compile(rf'{_TEXT_ID_PREFIX}(\d+)')
-"""The `id` a text input went out under, naming the input; an echoed id that doesn't parse names none."""
 
 
 class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):

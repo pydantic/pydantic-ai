@@ -3048,6 +3048,20 @@ async def test_an_echoed_id_that_does_not_parse_is_ignored() -> None:
     assert frames[-1] == [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')]
 
 
+async def test_a_reply_naming_what_the_user_said_releases_no_text() -> None:
+    """A reply that names something besides text (speech, by an id the server made up) may have folded that in after
+    the text, naming only it: the text it was taken to answer stays answered, rather than wait for a reply naming it.
+    """
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [_AUDIO, _reply('Hello!', event_id=1, response_id='resp_1', answers=['3ed477e9-19e0-4d5a-a746-e21315b1c646'])],
+    )
+    assert frames[-1] == [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')]
+
+
 class _PacedWebSocket(FakeWebSocket):
     """A connection held open that hands out its scripted frames a batch at a time, as the test releases them."""
 
