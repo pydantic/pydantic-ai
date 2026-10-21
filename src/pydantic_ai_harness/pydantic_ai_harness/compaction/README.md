@@ -188,8 +188,8 @@ by the implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
 and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart`
-content, `RetryPromptPart` content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most
-recent `ModelRequest.instructions` are now counted too, so the same history measures higher and an
+content, retry content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most recent
+`ModelRequest.instructions` are now counted too, so the same history measures higher and an
 unchanged `max_tokens` compacts earlier. How much earlier depends on how much of the history is
 thinking blocks, retries, and instructions; on a thinking-heavy tool-calling history it can be
 several times the old count. What each strategy clears is unchanged -- only when it runs.
@@ -374,7 +374,10 @@ turn even when it falls outside the window, so the agent does not lose the origi
 arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
-rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
+rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
+`read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless
+their `metadata` is something other than `None` or a `dict`: a cleared result is marked in its
+`metadata`, so one whose metadata can't hold the mark is left uncleared.
 
 With `max_messages`, the count starts after the last cleared result, because clearing blanks content
 but removes no messages. Clearing then happens in batches: after a clear, the next one waits until

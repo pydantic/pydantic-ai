@@ -115,6 +115,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `LOGFIRE_TOKEN` | A Logfire write token for the `observability` plugin; see [Telemetry](#telemetry-and-references) |
 | `GITHUB_COPILOT_API_KEY`, `GITHUB_COPILOT_API_TOKEN`, `COPILOT_GITHUB_TOKEN` | A Copilot token when you have not run `/login github-copilot` |
 | `GITHUB_COPILOT_CLIENT_ID` | Your own OAuth app for Copilot sign-in |
+| `GITHUB_COPILOT_INTEGRATION_ID` | The `Copilot-Integration-Id` Copilot requests carry, `vscode-chat` by default; see [Integration id](../../../docs/models/github-copilot.md#integration-id) |
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME` | Where Claude Code and Codex sessions are read from for `/resume` |
 | `PYTHONWARNINGS` | `default` shows library warnings, which CLAI hides |
 

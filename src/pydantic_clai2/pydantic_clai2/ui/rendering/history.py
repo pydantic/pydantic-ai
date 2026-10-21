@@ -8,7 +8,7 @@ from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartEndE
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -34,7 +34,7 @@ def turn_starts(messages: Sequence[ModelMessage]) -> list[int]:
         if message.run_id is not None:
             seen_runs.add(message.run_id)
         if any(isinstance(part, UserPromptPart) and not is_task_report(part) for part in message.parts) and not any(
-            isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts
+            isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts
         ):
             starts.append(index)
     return starts
@@ -74,7 +74,7 @@ async def render_history(
                     await renderer.finish()
                     console.print(f'> {terminal_text(prompt_text(part))}', markup=False, highlight=False)
                     console.print()
-                elif isinstance(part, ToolReturnPart) or isinstance(part, RetryPromptPart) and part.tool_name:
+                elif isinstance(part, ToolReturnPart):
                     await renderer.on_stream_event(FunctionToolResultEvent(part))
             continue
         for index, part in enumerate(message.parts):

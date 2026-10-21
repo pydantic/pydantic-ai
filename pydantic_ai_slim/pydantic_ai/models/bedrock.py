@@ -55,13 +55,11 @@ from pydantic_ai import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -76,16 +74,11 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
-    ModelContextWindowExceededError,
     ModelHTTPError,
-    ModelOverloadedError,
-    ModelQuotaExceededError,
-    ModelRateLimitError,
-    ModelServerError,
-    ModelUnavailableError,
     UserError,
 )
 from pydantic_ai.messages import (
+    ERROR_OUTCOMES,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
 )
@@ -95,10 +88,12 @@ from pydantic_ai.models import (
     StreamedResponse,
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -196,7 +191,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         error = e.response.get('Error', {})
         code, message = error.get('Code'), error.get('Message')
         provider_error_code = code if isinstance(code, str) else None
-        category = _error_category(provider_error_code, message)
+        category = _model_errors.bedrock_code_category(provider_error_code, message)
         # An exception event inside a `ConverseStream` response carries no status code; it gets the status the same
         # exception has before the stream opens.
         in_stream = not isinstance(status_code, int)
@@ -243,10 +238,6 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
-_CONTEXT_WINDOW_ERROR_MESSAGES = ('input is too long', 'input tokens exceeded', 'prompt is too long')
-"""Bedrock reports a context window overflow as a `ValidationException`, identifiable only by its message."""
-
-
 _STREAM_EXCEPTION_STATUS_CODES: dict[str, int] = {
     'throttlingexception': 429,
     'serviceunavailableexception': 503,
@@ -261,26 +252,6 @@ See https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse
 https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ResponseStream.html. A
 `modelStreamErrorException` also has an `originalStatusCode`, but botocore leaves it out of the error it raises.
 """
-
-
-def _error_category(code: str | None, message: object) -> _model_errors.HTTPErrorCategory | None:
-    """The error category for a Bedrock error code, which is capitalized in an HTTP error and not in a stream."""
-    match code and code.lower():
-        case 'throttlingexception':
-            return ModelRateLimitError
-        case 'servicequotaexceededexception':
-            return ModelQuotaExceededError
-        case 'modelstreamerrorexception':
-            # The model failed while streaming its response; Bedrock says to retry the request.
-            return ModelServerError
-        case 'serviceunavailableexception' | 'modelnotreadyexception':
-            return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
-        case 'validationexception' if isinstance(message, str) and any(
-            m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
-        ):
-            return ModelContextWindowExceededError
-        case _:
-            return None
 
 
 class _BotocoreRequestParams(TypedDict):
@@ -1027,9 +998,16 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
-        response = await self._messages_create(messages, False, settings, model_request_parameters)
-        model_response = await self._process_response(response)
-        return model_response
+        if self._default_max_tokens(settings) is None:
+            response = await self._messages_create(messages, False, settings, model_request_parameters)
+            return await self._process_response(response)
+        # The default `maxTokens` is the model's maximum output, which can take longer to generate than the client's read
+        # timeout, and botocore retries a timed-out `Converse` request, generating the response again each time. So the
+        # request is streamed behind the scenes, and the read timeout then limits the wait between chunks.
+        async with self._open_stream(messages, settings, model_request_parameters) as streamed_response:
+            async for _ in streamed_response:
+                pass
+        return streamed_response.get()
 
     async def count_tokens(
         self,
@@ -1088,8 +1066,19 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
+        async with self._open_stream(messages, settings, model_request_parameters) as streamed_response:
+            yield streamed_response
+
+    @asynccontextmanager
+    async def _open_stream(
+        self,
+        messages: list[ModelMessage],
+        settings: BedrockModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[BedrockStreamedResponse]:
+        """Send a `ConverseStream` request, and close its event stream on exit."""
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(
+        streamed_response = BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),
@@ -1099,6 +1088,23 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        try:
+            yield streamed_response
+        finally:
+            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
+            with anyio.CancelScope(shield=True):
+                await streamed_response.close_stream()
+
+    def _default_max_tokens(self, model_settings: BedrockModelSettings) -> int | None:
+        """The `maxTokens` to send when the request doesn't set `max_tokens`.
+
+        That's the model's maximum output for Claude models whose maximum is known, so responses are only cut off at the
+        model's limit, like on `AnthropicModel`. Bedrock's own default for Claude Opus 5.5 is 4096, which thinking
+        counts toward. Other models get Bedrock's default.
+        """
+        if model_settings.get('max_tokens'):
+            return None
+        return self.profile.get('anthropic_max_output_tokens')
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
@@ -1271,6 +1277,8 @@ class BedrockConverseModel(Model[BaseClient]):
         settings = model_settings or BedrockModelSettings()
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         inference_config = self._map_inference_config(settings)
+        if (default_max_tokens := self._default_max_tokens(settings)) is not None:
+            inference_config['maxTokens'] = default_max_tokens
 
         params: ConverseRequestTypeDef = {
             'modelId': settings.get('bedrock_inference_profile') or self.model_name,
@@ -1453,7 +1461,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         for message in messages:
             if isinstance(message, ModelRequest):
-                for part in message.parts:
+                for part in _sendable_request_parts(message.parts):
                     if isinstance(part, SystemPromptPart):
                         if part.content:  # pragma: no branch
                             system_prompt.append({'text': part.content})
@@ -1476,15 +1484,15 @@ class BedrockConverseModel(Model[BaseClient]):
                             'str' if profile.get('bedrock_tool_result_format', 'text') == 'text' else 'jsonable'
                         )
 
-                        # Two mutually exclusive ways to render a failed return, picked here so the loop
+                        # Two mutually exclusive ways to render an errored return, picked here so the loop
                         # below stays free of per-item failure guards:
                         # - No native error status: fold the failure into one wrapped `{'error': ...}` text
                         #   block, then iterate only the files. Each file still gets its "See file X."
                         #   reference below so the model can cross-reference the media with the result.
-                        # - Otherwise (success, or failed with `status='error'` set below): send every
+                        # - Otherwise (success, or errored with `status='error'` set below): send every
                         #   content item verbatim; the status field carries the failure signal unwrapped.
                         items: Sequence[Any]
-                        if part.outcome == 'failed' and not supports_tool_result_status:
+                        if part.outcome in ERROR_OUTCOMES and not supports_tool_result_status:
                             tool_result_content.append({'text': part.model_response_str()})
                             items = part.files
                         else:
@@ -1553,30 +1561,17 @@ class BedrockConverseModel(Model[BaseClient]):
                             'content': tool_result_content,
                         }
                         if supports_tool_result_status:
-                            success_result['status'] = 'error' if part.outcome == 'failed' else 'success'
+                            success_result['status'] = 'error' if part.outcome in ERROR_OUTCOMES else 'success'
                         bedrock_messages.append(
                             {
                                 'role': 'user',
                                 'content': [{'toolResult': success_result}, *colocated_media_content],
                             }
                         )
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            flush_deferred_media()
-                            bedrock_messages.append({'role': 'user', 'content': [{'text': part.model_response()}]})
-                        else:
-                            assert part.tool_call_id is not None
-                            error_result: ToolResultBlockOutputTypeDef = {
-                                'toolUseId': part.tool_call_id,
-                                'content': [{'text': part.model_response()}],
-                            }
-                            if supports_tool_result_status:
-                                error_result['status'] = 'error'
-                            bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
                     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                         raise _unprojected_instruction_delta_error()
-                    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()

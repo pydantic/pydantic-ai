@@ -95,6 +95,14 @@ class InferredLifecycle:
       its [`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone]; a response that makes tool calls ends with them,
       or, when they are reported with `response_usage_follows`, at the usage report that follows them. Its id is
       made up, so it is recorded as no provider's (`ResponseStarted.provider_id=False`).
+    - A response whose calls are reported with
+      [`response_continues`][pydantic_ai.realtime.codec.ToolCall.response_continues] goes on past them, as the model
+      keeps talking, until its `ResponseDone`, until the result of one of them goes out (a result directly follows the
+      response that made its call), or until a spoken turn joins the conversation, which follows it too. What the model
+      says after that, before the `ResponseDone` that ends its turn, is a response of its own. If the model was
+      mid-sentence when the result went out, that is the rest of the sentence, which answers nothing; otherwise it
+      answers the result. Cut off while one of those calls still runs, the response ends `completed`: its tool round
+      goes on.
     - A response answers every input that asked for one (a `str` turn, a tool result, a `CreateResponse`) and wasn't
       answered when it started (`ResponseStarted.basis='inferred'`).
     - A spoken turn starts with its first input transcript, joins the conversation as the reply to it starts, and
@@ -177,6 +185,17 @@ class InferredLifecycle:
         """Whether the response under way said (or called) anything yet."""
         self._open_calls: list[str] = []
         """The tool calls the response under way made."""
+        self._continued_calls: list[str] = []
+        """The tool calls the response under way went on past (`ToolCall.response_continues`) that are still running,
+        with no result out: it goes on until its terminal, or until one of their results goes out."""
+        self._said_since_call = False
+        """Whether the response under way said anything since its latest tool call."""
+        self._split_turn = False
+        """A response ended as the result of one of the calls it went on past went out, with the provider's turn still
+        open: that turn's terminal ends only what started since."""
+        self._tail = False
+        """The model was mid-sentence when that result went out: the next output is the rest of it, a response that
+        answers nothing."""
         self._calling: dict[str, tuple[str, tuple[InputId, ...]]] = {}
         """The response that ended at each tool call (until the next response starts), and the inputs it answers: its
         reply goes on in the answer to the calls."""
@@ -249,6 +268,12 @@ class InferredLifecycle:
             )
             self._commit_turn()
             return input_id
+        if isinstance(content, ToolResult) and content.tool_call_id in self._continued_calls:
+            # A result directly follows the response that made its call: what the model says from here is after it.
+            self._split(self._pending)
+        if isinstance(content, (str, CreateResponse)):
+            # What the model says next may be the reply to this, rather than the rest of a sentence a result cut into.
+            self._tail = False
         if isinstance(content, CreateResponse):
             # A request for a reply, with nothing of its own to join the conversation.
             self._unanswered.append(input_id)
@@ -484,9 +509,13 @@ class InferredLifecycle:
             self._end(before, status='completed')
         self._ensure_response(before, named=named)
         self._open_said = True
+        self._said_since_call = not isinstance(event, ToolCall)
         if isinstance(event, ToolCall):
             self._open_calls.append(event.tool_call_id)
-            if event.response_usage_follows:
+            if event.response_continues:
+                # The model goes on talking while it runs: the response goes on too.
+                self._continued_calls.append(event.tool_call_id)
+            elif event.response_usage_follows:
                 self._calls_awaiting_usage = True
             elif not self._calls_awaiting_usage:
                 # No usage report closes its response: the call does, as the answer comes once its result is in. (A
@@ -537,6 +566,12 @@ class InferredLifecycle:
             # The terminal of the response its usage report already ended (when it made tool calls).
             self._ended_by_usage = None
             return
+        split_turn, self._split_turn = self._split_turn, False
+        if self._open is None and split_turn:
+            # The terminal of the turn whose response a tool result ended, with nothing said since: it ends nothing
+            # more, and its usage is the next response's. (Gemini's `INTERRUPT` scheduling cuts that turn off.)
+            self._tail = False
+            return
         if self._open is None and not (
             event.interrupted or event.finish_reason or event.provider_details or self._unanswered
         ):
@@ -570,6 +605,12 @@ class InferredLifecycle:
 
     def _join(self, turn: _Turn, events: list[LifecycleEvent]) -> None:
         """`turn` joins the conversation here, ahead of the reply to it."""
+        if self._continued_calls:
+            # The model was talking on past calls it made, which this turn follows, as their results
+            # will: neither the turn nor the reply to it goes ahead of them, or into their response.
+            self._split(events, tail=False)
+        # What the model says next may be the reply to this turn, rather than the rest of a sentence a result cut into.
+        self._tail = False
         turn.joined = True
         self._spoken_unanswered = turn.id
         events.append(UserTurnEnded(turn_id=turn.id))
@@ -678,14 +719,19 @@ class InferredLifecycle:
         if self._open is not None:
             return
         self._announce_committed(events)
-        answers = tuple(self._unanswered)
-        self._unanswered.clear()
-        self._held = [input_id for input_id in self._held if input_id not in answers]
-        turn_id = self._join_turn(events, replying=not answers)
-        if turn_id is None and not answers:
-            # A spoken turn that joined the conversation before (at its speech end, say) and had no reply yet.
-            turn_id = self._spoken_unanswered
-        self._spoken_unanswered = None
+        tail, self._tail = self._tail, False
+        answers: tuple[InputId, ...] = ()
+        turn_id: str | None = None
+        # (The rest of what the model was saying when a tool result went out replies to nothing.)
+        if not tail:
+            answers = tuple(self._unanswered)
+            self._unanswered.clear()
+            self._held = [input_id for input_id in self._held if input_id not in answers]
+            turn_id = self._join_turn(events, replying=not answers)
+            if turn_id is None and not answers:
+                # A spoken turn that joined the conversation before (at its speech end, say) and had no reply yet.
+                turn_id = self._spoken_unanswered
+            self._spoken_unanswered = None
         self._responses += 1
         self._open = named or f'pydantic_ai_response_{self._responses}'
         self._open_named = named is not None
@@ -694,7 +740,7 @@ class InferredLifecycle:
         self._calling = {}
         if turn_id is not None:
             self._turn_reply = (turn_id, self._open)
-        elif not answers and self._transcribes and self.transcripts_lag_replies:
+        elif not answers and not tail and self._transcribes and self.transcripts_lag_replies:
             self._unprompted_reply = self._open
         continues, self._continues = self._continues, None
         events.append(
@@ -750,6 +796,12 @@ class InferredLifecycle:
         """End the response under way; what was held back for it joins the conversation after it."""
         response_id = self._open
         assert response_id is not None
+        if status == 'cancelled' and self._continued_calls:
+            # Cut off while calls it went on past still run: what it said was cut short, but its tool round goes
+            # on, as the round of a response that ended at its calls does.
+            status, finish_reason = 'completed', 'tool_call'
+        self._continued_calls = []
+        self._said_since_call = False
         self._open = None
         answers, self._open_answers = self._open_answers, ()
         said, self._open_said = self._open_said, False
@@ -796,11 +848,22 @@ class InferredLifecycle:
         That turn's reply would have gone on in the answer to the calls, so the response that made them answers
         only what started it, and the next response, which the provider starts for the input that cut in, the rest.
         """
+        self._continued_calls = [call_id for call_id in self._continued_calls if call_id not in event.tool_call_ids]
         cancelled = next((self._calling[call_id] for call_id in event.tool_call_ids if call_id in self._calling), None)
         if cancelled is not None:
             self._calling = {call_id: calling for call_id, calling in self._calling.items() if calling != cancelled}
             response_id, answers = cancelled
             self._release(events, response_id, answers[1:])
+
+    def _split(self, events: list[LifecycleEvent], *, tail: bool | None = None) -> None:
+        """End the response under way, which went on past calls it made, while the provider's turn goes on.
+
+        What the model says next is a response of its own: the rest of the sentence it was in the middle of (`tail`,
+        by default whether it was speaking), which answers nothing, or what it says to what joined the conversation.
+        """
+        self._tail = self._said_since_call if tail is None else tail
+        self._end(events, status='completed', finish_reason='tool_call')
+        self._split_turn = True
 
     def _end_deferred(self, events: list[LifecycleEvent]) -> None:
         """End the held filler as the model carries the exchange on in a response of its own, starting now."""
@@ -845,6 +908,7 @@ class InferredLifecycle:
         events = self.take_pending()
         self._announce_committed(events)
         self._deferred = self._continues = None
+        self._split_turn = self._tail = False
         if self._open is not None:
             self._end(events, status='lost')
         if lost := tuple(self._unanswered):
