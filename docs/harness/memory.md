@@ -65,6 +65,8 @@ The snapshot is added to the conversation's message history, so every later requ
 
 A snapshot is never added after tool results, where a model could read it as a new message from the user. Memory that changes during a run, through `write_memory` or an external update, reaches the model with the next user prompt; the model's own writes are already in the conversation as its tool calls. A run that resumes without a prompt, such as after a deferred tool approval, adds no snapshot unless the history has none, and then adds it to the last request.
 
+Snapshots are part of the conversation history and reach UI clients: UI adapters stream each new one as it is added and include it in the history they send. Keep that in mind when memory holds anything the user of the UI should not see.
+
 Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`, never by their text. A history that loses that metadata on the way through a UI client gets a fresh snapshot on every run. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
 
 When combining it with compaction, list compaction before `Memory`: if compaction drops the latest snapshot, `Memory` then sees that and records the current memory again on the run's first request.
