@@ -174,8 +174,14 @@ the user declines.
 
 ## Two of them
 
-`AskUser` declares no default `id`. Two on one agent collide on the `ask_user_question` tool
-name: two answerers is a conflict, not one configuration stated twice.
+`AskUser` declares the default `id` `'ask_user'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `AskUser`s on one agent that
+share it are one answerer stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since both register `ask_user_question`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Tracing
 
