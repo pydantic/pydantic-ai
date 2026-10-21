@@ -20,6 +20,7 @@ For any code change:
 - Spawning tasks or subprocesses, task groups or cancel scopes, locks, events,
   streams, async context managers or generators, thread or event-loop
   boundaries, or testing any of those: `concurrency.md`
+- New or changed sandbox provider (a workspace backend): `workspace-backends.md`
 - Unsure whether behavior belongs in harness or Pydantic AI core: `core-boundary.md`
 - Adding a retry, fallback or error-handling field to a capability that takes a
   pluggable dependency: `capability-authoring.md` "Policy Lives In The Pluggable

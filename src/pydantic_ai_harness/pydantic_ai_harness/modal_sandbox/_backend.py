@@ -46,6 +46,9 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
+    MAX_OUTPUT_BYTES,
+    OUTPUT_DRAIN_GRACE,
+    OUTPUT_PREVIEW,
     absolute_path,
     command_argv,
     command_deadline,
@@ -89,10 +92,9 @@ _SIGKILL_EXIT = 137
 # What Modal's exec reports when it cannot start the command, such as for a missing workdir.
 _EXEC_FAILED_EXIT = 128
 
+# The end of each stream kept as it arrives, which is what a timeout reports: Modal can interrupt a read
+# before it returns what it has collected.
 _PARTIAL_OUTPUT_LIMIT = 65_536
-# Like the local backend: a runaway command (`yes`, `cat` on a huge log) must not exhaust this
-# process's memory, so reading stops once combined stdout and stderr pass this.
-_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 logger = logging.getLogger(__name__)
 
 
@@ -701,7 +703,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             else:
                 # Once the process exits, output gets a short grace past its command deadline to drain.
                 remaining = None if timeout is None else timeout - (time.monotonic() - started_at)
-                with anyio.move_on_after(None if remaining is None else max(2, remaining)) as drain_scope:
+                with anyio.move_on_after(
+                    None if remaining is None else max(OUTPUT_DRAIN_GRACE, remaining)
+                ) as drain_scope:
                     await done_event.wait()
                 if drain_scope.cancelled_caught:
                     group.cancel_scope.cancel()
@@ -776,13 +780,13 @@ async def _collect_output(
             # Keep a bounded snapshot even when Modal interrupts a streaming read.
             snapshots[index] = (snapshots[index] + text)[-_PARTIAL_OUTPUT_LIMIT:]
             received += len(chunk)
-            if received > _MAX_OUTPUT_BYTES:
+            if received > MAX_OUTPUT_BYTES:
                 raise WorkspaceOutputLimitError(
                     "Modal command output exceeded the 10 MiB limit; redirect the command's output to a "
                     'file and read part of it instead',
-                    limit=_MAX_OUTPUT_BYTES,
-                    stdout=''.join(pieces[0])[:_PARTIAL_OUTPUT_LIMIT],
-                    stderr=''.join(pieces[1])[:_PARTIAL_OUTPUT_LIMIT],
+                    limit=MAX_OUTPUT_BYTES,
+                    stdout=''.join(pieces[0])[:OUTPUT_PREVIEW],
+                    stderr=''.join(pieces[1])[:OUTPUT_PREVIEW],
                 )
         tail = decoder.decode(b'', final=True)
         pieces[index].append(tail)

@@ -7,17 +7,32 @@ import math
 import posixpath
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from typing import TypeVar
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
+from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceOutputLimitError, WorkspaceTimeoutError
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
     import sniffio as _sniffio
 except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
     _sniffio = None
+
+_T = TypeVar('_T')
+
+MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+"""Most output a command may produce across both streams, as core's local backend allows: it is held in memory
+until the command ends."""
+
+OUTPUT_PREVIEW = 64 * 1024
+"""How much of each stream a `WorkspaceOutputLimitError` keeps: characters for a backend that reads text, bytes
+for one that reads bytes."""
+
+OUTPUT_DRAIN_GRACE = 2.0
+"""Seconds output is still read after the command exits, as core's local backend does. Only for a backend that
+learns of the exit apart from the output: a background job the command started can hold the output open."""
 
 
 def safe_credential_reason(error: Exception) -> str:
@@ -192,3 +207,78 @@ def check_timeout(timeout: float | None) -> None:
     """Raise `ValueError` unless a command `timeout` is a positive finite number or `None`, as core's backends do."""
     if timeout is not None and (not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0):
         raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
+
+
+class CommandOutput:
+    """A command's text output so far, bounded by `MAX_OUTPUT_BYTES` across both streams."""
+
+    def __init__(self, provider: str) -> None:
+        self.stdout: list[str] = []
+        self.stderr: list[str] = []
+        self.size = 0
+        self._provider = provider
+
+    def add(self, stream: list[str], data: str) -> None:
+        """Append `data` to `stream`, one of `stdout` and `stderr`; raise `WorkspaceOutputLimitError` past the cap."""
+        # A character is at least one byte, so data longer than what is left is over the cap without
+        # encoding a copy of it.
+        self.size += len(data) if len(data) > MAX_OUTPUT_BYTES - self.size else len(data.encode())
+        if self.size > MAX_OUTPUT_BYTES:
+            # Only the preview of the data that crosses the cap is kept, so a single huge chunk can't grow
+            # what is retained past the cap.
+            stream.append(data[:OUTPUT_PREVIEW])
+            stdout, stderr = self.text(OUTPUT_PREVIEW)
+            raise WorkspaceOutputLimitError(
+                f'{self._provider} command output exceeded the 10 MiB limit; redirect it to a file and read part of '
+                'it instead',
+                limit=MAX_OUTPUT_BYTES,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        stream.append(data)
+
+    def text(self, chars: int | None = None) -> tuple[str, str]:
+        return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
+
+
+class Lifecycles:
+    """This process's latest unfinished creation, attachment or deletion of each of a provider's sandboxes, by name.
+
+    For a provider whose SDK operations don't stop when their caller is cancelled. Each operation waits for
+    the one started before it, so the latest finishing means they all have, and none stops when its callers
+    are cancelled: a deletion that overtook a creation would find nothing, and the creation would then leave
+    its sandbox behind.
+    """
+
+    def __init__(self, label: str) -> None:
+        self._label = label
+        self._latest: dict[str, asyncio.Task[object]] = {}
+
+    def latest(self, name: str) -> asyncio.Task[object] | None:
+        """The unfinished operation on sandbox `name` started last, if any."""
+        return self._latest.get(name)
+
+    def start(self, name: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
+        """Run `work` on sandbox `name` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
+        previous = self._latest.get(name)
+
+        async def run() -> _T:
+            if previous is not None:
+                await asyncio.wait([previous])
+            return await work()
+
+        task = asyncio.create_task(run(), name=f'{self._label}-{name}')
+        # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
+        # when every caller was cancelled first.
+        task.add_done_callback(lambda done: done.cancelled() or done.exception())
+        self._latest[name] = task
+        task.add_done_callback(lambda done: self._latest.pop(name) if self._latest.get(name) is done else None)
+        return task
+
+
+async def settled(task: asyncio.Task[_T]) -> _T:
+    """The result of `task`, waited for without cancelling it when the caller is cancelled."""
+    # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails reports
+    # that failure to the loop exception handler even though it is retrieved here.
+    await asyncio.wait([task])
+    return task.result()
