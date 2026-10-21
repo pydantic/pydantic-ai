@@ -222,7 +222,7 @@ def _format_messages(
                     and not (skip_previous_summary and part.content.startswith(_SUMMARY_PREFIX))
                 ):
                     elements.append(_message_element('system', part.content))
-                elif isinstance(part, ToolReturnPart):
+                elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                     elements.append(
                         _message_element(
                             'tool_return', tool_return_text(part), name=part.tool_name, max_chars=tool_return_max_chars

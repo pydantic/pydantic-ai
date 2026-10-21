@@ -20,7 +20,20 @@ from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Self,
+    TypeAlias,
+    TypeVar,
+    cast,
+    get_args,
+    overload,
+)
 
 import httpx2
 from pydantic import Field
@@ -74,7 +87,8 @@ from ..messages import (
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextPart,
@@ -91,7 +105,10 @@ from ..messages import (
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
+    _wrap_in_tag,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -520,6 +537,24 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
 
+    retry: int = 0
+    """The number of output retries the run has used before this request step.
+
+    This is what output validators see as [`RunContext.retry`][pydantic_ai.tools.RunContext.retry]. It goes up
+    each time the run asks the model to try again for its output: an output tool's arguments failed validation,
+    an output function or validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], the response had
+    no usable output, or a capability's model request hook raised `ModelRetry`. Steps in between, such as
+    function tool calls, don't reset it, and function tool retries don't count towards it.
+    """
+
+    max_retries: int = 0
+    """The run's output retry budget, as output validators see it in [`RunContext.max_retries`][pydantic_ai.tools.RunContext.max_retries].
+
+    An output tool with its own budget, set with [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput],
+    is limited by that budget instead, while [`retry`][pydantic_ai.models.ModelSelectionContext.retry] still
+    counts the retries of every output.
+    """
+
     usage_limits: UsageLimits | None = None
     """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run, as
     [`RunContext.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] holds them.
@@ -587,6 +622,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     default), the standing prompt travels in a per-request channel rebuilt from those items, so the
     trim has to re-insert them or it is silently dropped from every subsequent request. See
     `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
+    _renders_retry_feedback: ClassVar[bool] = False
+    """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
+
+    Set by a model that judges the conversation rather than answering it: translated, the feedback would
+    read as the user's request or as a system prompt, where the model has to see it as a step the agent took.
+    """
     unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
 
@@ -1137,6 +1178,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Translates each retry part into the part that carries it on the wire, by its `retry.cause`: a
+        `RetryFeedbackPart` for a `'validation_error'` or `'model_retry'` becomes a `UserPromptPart`
+        fenced in `<validation_errors>` or `<retry_feedback>` behind an application attribution line,
+        since either can quote the model's own output, and only `'no_output'`, whose text is the
+        framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
+        when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction.
@@ -1177,6 +1225,9 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        # Translated before every later step — the tool-availability announcement and the `<system>`
+        # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
+        messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -1439,8 +1490,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Fallback: synthesize from message history for direct model.request() callers.
         # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
-        # if the most recent request only has tool-return/retry-prompt parts (a "mock" request
-        # for result tools), use the instructions from the second-to-most-recent request.
+        # if the most recent request only has tool-return/retry-prompt/retry-feedback parts (a "mock"
+        # request for result tools), use the instructions from the second-to-most-recent request.
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -1454,7 +1505,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             most_recent = last_two_requests[0]
             second = last_two_requests[1]
             if (
-                all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts)
+                all(
+                    # TODO(v3): remove `RetryPromptPart`
+                    isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    for p in most_recent.parts
+                )
                 and second.instructions is not None
             ):
                 return [InstructionPart(content=second.instructions)]
@@ -2809,6 +2864,16 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
+def _wrap_in_system_tags(content: str) -> str:
+    """Tag text as the harness speaking, for a channel with no system role of its own.
+
+    A closing `</system>` inside `content` is neutralized as it is wrapped, so the statement can't be
+    ended early by text that reached here from a model — through a validation error's `loc` or `msg`,
+    or through an MCP-chosen tool name in a tool-availability announcement.
+    """
+    return _wrap_in_tag(content, tag='system')
+
+
 _REQUEST_SCOPED_TAIL_KEY = 'request_scoped_tail'
 """Key in a prepared request's `__pydantic_ai__` metadata: how many of its trailing parts render request-scoped prompts."""
 
@@ -2964,7 +3029,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                UserPromptPart(content=_wrap_in_system_tags(part.content), timestamp=part.timestamp)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)
@@ -3063,7 +3128,7 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
     The order results are stored in depends on how they were produced: `end_strategy='early'` stores output
     tool results first, and a UI client such as AG-UI rebuilds them in the order the tools completed. The
     provider's prompt cache is keyed on the bytes sent, so the same exchange has to render the same way
-    whichever path built the history. Only the positions holding a `ToolReturnPart` or `RetryPromptPart` that
+    whichever path built the history. Only the positions holding a `ToolReturnPart` that
     answers a call in the immediately preceding `ModelResponse` are refilled, in call order; every other part
     keeps its position, and results answering the same call keep their relative order.
 
@@ -3082,7 +3147,7 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
             answers = [
                 (index, part)
                 for index, part in enumerate(message.parts)
-                if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_call_id in call_order
+                if isinstance(part, ToolReturnPart) and part.tool_call_id in call_order
             ]
             slots = [index for index, _ in answers]
             results = sorted((part for _, part in answers), key=lambda part: call_order[part.tool_call_id])
@@ -3117,7 +3182,7 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
     Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
     replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
     provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
-    so a call, its result or retry prompt, and the `<tool_result>` tags rendered from the result's ID keep
+    so a call, its result (a retried one included), and the `<tool_result>` tags rendered from the result's ID keep
     pairing up.
 
     IDs are assigned in history order, and an ID whose replacement is already taken by an earlier,
@@ -3154,8 +3219,9 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
     def fit_request_part(part: ModelRequestPart) -> ModelRequestPart:
         if (
-            isinstance(part, ToolReturnPart | RetryPromptPart)
-            and (replacement := fit(part.tool_call_id)) != part.tool_call_id
+            # `prepare_messages` has already translated a legacy `RetryPromptPart` that answers a call
+            # into the retried `ToolReturnPart` it always meant, so this covers both.
+            isinstance(part, ToolReturnPart) and (replacement := fit(part.tool_call_id)) != part.tool_call_id
         ):
             return replace(part, tool_call_id=replacement)
         return part
@@ -3178,24 +3244,73 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
     return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
 
 
-def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
+# TODO(v3): remove `RetryPromptPart`
+_UnpreparedPart: TypeAlias = (
+    ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+)
+"""The request parts `prepare_messages` translates away before any adapter sees them.
 
-    `prepare_messages` projects every delta to the local tool-search exchange unless the profile
-    advertises native support, so an adapter that doesn't support the part natively only sees one
-    when that projection didn't run. Running a model through an agent always runs it, but
+Each of these carries something no provider API has a field for — a mid-conversation change to the
+tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
+adapter already knows how to map. So an adapter meeting one has been handed a history that step never
+ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
+on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+A deprecated `RetryPromptPart` never reaches this branch either: adapters map their parts through
+`_sendable_request_parts`, which renders it the way it rendered before it was deprecated.
+"""
+
+
+# TODO(v3): remove `_legacy_retry_as_sendable` and `_sendable_request_parts` along with `RetryPromptPart`
+def _legacy_retry_as_sendable(
+    part: RetryPromptPart,  # pyright: ignore[reportDeprecated]
+) -> ToolReturnPart | UserPromptPart:
+    """A deprecated `RetryPromptPart` an adapter was handed directly, as the part it maps instead.
+
+    `prepare_messages` translates the deprecated part before any adapter sees it, but
+    [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't run it, and
+    deprecated functionality keeps working until v3. A tool-bound one is that call's result again,
+    as a `ToolReturnPart` with `outcome='retried'`; a tool-less one goes out as the user text it
+    always rendered as.
+    """
+    translated = _translate_legacy_retry_part(part)
+    if isinstance(translated, ToolReturnPart):
+        return translated
+    return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+
+
+def _sendable_request_parts(parts: Sequence[ModelRequestPart]) -> Generator[ModelRequestPart]:  # pyright: ignore[reportUnusedFunction]
+    """A request's parts as an adapter maps them, with any deprecated `RetryPromptPart` rendered.
+
+    See `_legacy_retry_as_sendable`. Every other part comes through unchanged, so an index into the
+    request still lines up.
+    """
+    for part in parts:
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            yield _legacy_retry_as_sendable(part)
+        else:
+            yield part
+
+
+def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a request part that reached an adapter with no way to render it.
+
+    Running a model through an agent always runs `prepare_messages`, but
     [`Model.request`][pydantic_ai.models.Model.request] and
     [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
-    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
-    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence a
+    `UserError` naming the missing step, rather than an assertion about an internal invariant.
 
-    Raising beats dropping the part: silently discarding it would tell the model nothing about the
-    tools that appeared, and it would then fail to call a tool it was supposed to have gained.
+    Raising beats rendering something: a silently dropped availability delta tells the model nothing
+    about the tools that appeared, so it then fails to call one it was supposed to have gained, and a
+    retry the model reads as something a person wrote is the exact confusion
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] was introduced to end
+    (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
     return UserError(
-        '`ToolAvailabilityDeltaPart` cannot be rendered by this model. '
-        'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
-        'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
+        f'`{type(part).__name__}` cannot be rendered by this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that translates the part '
+        'into the shape every model understands. `Agent` does this for you; a direct '
         '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
     )
 
@@ -3231,6 +3346,65 @@ leaves it unable to explain a list that grew mid-conversation. Naming them is en
 more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
 for, on a turn the user didn't write.
 """
+
+
+def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool) -> list[ModelMessage]:
+    """Replace every retry part with the part that carries it on the wire.
+
+    Runs in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] ahead of the tool-search
+    synthesis, the tool-availability announcement and the `<system>` wrap, so they all see plain
+    parts: feedback bound for the system voice is degraded by the same
+    `_wrap_non_leading_system_prompts` that degrades an operator's own mid-conversation prompt.
+
+    Replaced in place, so a request that also holds a user prompt keeps the order it was authored in,
+    and the original list comes back when nothing changed, so the identity check in `_make_request`
+    can skip the redundant `_clean_message_history` pass.
+
+    The one exception is feedback that would extend the first request's opening run of system
+    prompts. Every adapter lifts that run into the provider's system field as the run's standing
+    prompt, inline-capable profiles included, and feedback is never part of it, so there it is
+    `<system>`-tagged user text on every profile. A run's own feedback reaches that position when a
+    model-request hook retries the first request of a run with no user prompt.
+
+    With `keep_feedback`, for a model that sets `Model._renders_retry_feedback`, a `RetryFeedbackPart`
+    stays as it is, and so does the one a tool-less legacy `RetryPromptPart` becomes.
+    """
+
+    def translate(part: ModelRequestPart, *, in_standing_run: bool) -> ModelRequestPart:
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            translated = _translate_legacy_retry_part(part)
+            if isinstance(translated, ToolReturnPart) or keep_feedback:
+                return translated
+            part = translated
+        elif not isinstance(part, RetryFeedbackPart) or keep_feedback:
+            return part
+        if not _retry_feedback_speaks_for_the_harness(part):
+            return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+        if in_standing_run:
+            return UserPromptPart(content=_wrap_in_system_tags(part.model_response()), timestamp=part.timestamp)
+        return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
+
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+    transformed: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+            or (isinstance(part, RetryFeedbackPart) and not keep_feedback)
+            for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+        changed = True
+        in_standing_run = message is first_request
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            translated = translate(part, in_standing_run=in_standing_run)
+            in_standing_run = in_standing_run and isinstance(translated, SystemPromptPart)
+            parts.append(translated)
+        transformed.append(replace(message, parts=parts))
+    return transformed if changed else messages
 
 
 def _legacy_fabricated_tool_search_reveals(
@@ -3468,12 +3642,13 @@ def _synthesize_tool_availability_delta_messages(
         part.tool_call_id
         for message in messages
         for part in message.parts
-        if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
+        if isinstance(part, BaseToolCallPart | BaseToolReturnPart)
     }
 
     def is_tool_result(part: ModelRequestPart) -> bool:
-        # A retry without a tool name is output-validation feedback, not a tool result.
-        return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+        # A retry that answers a call is that call's own `ToolReturnPart`, and `_translate_retry_parts`
+        # has already made that true of a legacy `RetryPromptPart` too, so one branch covers both.
+        return isinstance(part, ToolReturnPart)
 
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(

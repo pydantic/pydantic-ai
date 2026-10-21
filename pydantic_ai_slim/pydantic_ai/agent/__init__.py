@@ -1598,6 +1598,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_output_retries = override_output_retries.value
         effective_tool_retries_resolved = self._resolve_tool_retries(effective_tool_retries)
 
+        # Resolve the effective per-output-tool default: override > run arg > spec > agent init default
+        effective_output_toolset_max_retries = self._resolve_output_retries(effective_output_retries)
+
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
 
@@ -1692,6 +1695,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 prompt=selection_prompt,
                 messages=selection_messages,
                 usage=usage,
+                max_retries=effective_output_toolset_max_retries,
                 usage_limits=usage_limits,
                 deadline=deadline,
                 run_id=state.run_id,
@@ -1716,11 +1720,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # may change the result type from the restricted type to something else. Therefore, we consider the following
         # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
         output_validators = self._output_validators
-
-        # Resolve the effective per-output-tool default: run arg > spec > agent init default
-        effective_output_toolset_max_retries = (
-            effective_output_retries if effective_output_retries is not None else self._max_output_retries
-        )
 
         output_toolset = self._output_toolset
         if output_schema != self._output_schema or output_validators:
@@ -2572,6 +2571,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     prompt=selection_prompt,
                     messages=selection_messages,
                     usage=usage,
+                    max_retries=self._resolve_output_retries(),
                 )
                 selected_model, _ = await self._evaluate_model_contribution(
                     contribution, capability=capability, ctx=selection_ctx
@@ -3260,6 +3260,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if override is not None:
             return override.value
         return retries if retries is not None else self._max_tool_retries
+
+    def _resolve_output_retries(self, retries: int | None = None) -> int:
+        """Resolve the effective output-retry budget: override > run/spec > agent default."""
+        override = self._override_output_retries.get()
+        if override is not None:
+            return override.value
+        return retries if retries is not None else self._max_output_retries
 
     def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
         """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
@@ -4077,8 +4084,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     stacklevel=2,
                 )
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
-            instruction_parts = [part for part in instruction_parts if part.content]
-            resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
+            instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
+            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             request_messages = [
                 *(message_history or ()),
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
@@ -4086,6 +4093,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
+                # Set even when empty: unset parts make providers read `ModelRequest.instructions` from
+                # `message_history`, which a client may have supplied.
+                instruction_parts=instruction_parts,
                 _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), tool_manager.toolset),
                 _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(tool_manager.tools),
                 _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(tool_manager.toolset),

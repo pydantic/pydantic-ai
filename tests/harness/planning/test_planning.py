@@ -19,7 +19,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1170,10 +1171,10 @@ class TestReminder:
         'tool_result',
         [
             ToolReturnPart('lookup', 'result', tool_call_id='c1'),
-            RetryPromptPart('try again', tool_name='lookup', tool_call_id='c1'),
+            ToolReturnPart('lookup', 'try again', tool_call_id='c1', outcome='retried'),
         ],
     )
-    async def test_breakpoint_follows_tool_results(self, tool_result: ToolReturnPart | RetryPromptPart) -> None:
+    async def test_breakpoint_follows_tool_results(self, tool_result: ToolReturnPart) -> None:
         """In a tool loop the breakpoint marks the tool results, the last content the next request keeps."""
         store = InMemoryPlanStore()
         await store.add_item(PlanItem(content='Do X'))
@@ -1185,6 +1186,15 @@ class TestReminder:
         seen, _ = await self._run_hook(Planning[None](store=store), [*history])
         assert seen[:2] == history[:2]  # the user prompt carries no breakpoint
         assert seen[-1].parts[0] is tool_result
+        reminder = cast(UserPromptPart, seen[-1].parts[-1])
+        assert reminder.content[0] == CachePoint(ttl='5m')
+
+    async def test_breakpoint_follows_retry_feedback(self) -> None:
+        """Feedback that answers no call still reaches Anthropic and Bedrock as content a breakpoint can mark."""
+        store = InMemoryPlanStore()
+        await store.add_item(PlanItem(content='Do X'))
+        feedback = RetryFeedbackPart('try again', retry=RetryInfo(cause='model_retry'))
+        seen, _ = await self._run_hook(Planning[None](store=store), [ModelRequest(parts=[feedback])])
         reminder = cast(UserPromptPart, seen[-1].parts[-1])
         assert reminder.content[0] == CachePoint(ttl='5m')
 
