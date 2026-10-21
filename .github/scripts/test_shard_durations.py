@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
 import sys
 import zipfile
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 
 import pytest
+import yaml
+from typing_extensions import TypedDict
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -16,6 +20,20 @@ import shard_durations
 
 REPO = 'pydantic/pydantic-ai'
 PREFIX = 'test-durations-3.12-all-extras-'
+CREATED_AT = '2026-10-09T12:00:00Z'
+CURRENT_RUN_PATH = f'repos/{REPO}/actions/runs/999'
+HISTORY_PATH = f'repos/{REPO}/actions/workflows/ci.yml/runs?branch=main&event=push&created=%3C{CREATED_AT}&per_page=20'
+BASELINES: list[tuple[str, int]] = [
+    ('3.11-all-extras', 3),
+    ('3.11-lowest-versions', 2),
+    ('3.12-all-extras', 2),
+    ('3.12-lowest-versions', 2),
+    ('3.13-all-extras', 2),
+    ('3.13-lowest-versions', 2),
+    ('3.14-all-extras', 2),
+    ('3.14-lowest-versions', 2),
+    ('3.15-all-extras', 2),
+]
 
 
 def _zip(durations: dict[str, float]) -> bytes:
@@ -25,24 +43,258 @@ def _zip(durations: dict[str, float]) -> bytes:
     return buffer.getvalue()
 
 
-def _artifact(artifact_id: int, name: str) -> dict[str, Any]:
+class Artifact(TypedDict):
+    id: int
+    name: str
+    expired: bool
+
+
+def _artifact(artifact_id: int, name: str) -> Artifact:
     return {'id': artifact_id, 'name': name, 'expired': False}
 
 
 class FakeApi:
-    def __init__(self, runs: dict[int, list[dict[str, Any]]], zips: dict[int, bytes]) -> None:
+    def __init__(self, runs: dict[int, list[Artifact]], zips: dict[int, bytes]) -> None:
         self.runs = runs
         self.zips = zips
         self.paths: list[str] = []
+        self.failures: dict[str, Exception] = {}
 
     def __call__(self, path: str) -> bytes:
         self.paths.append(path)
+        if path in self.failures:
+            raise self.failures[path]
+        if path == CURRENT_RUN_PATH:
+            # Reruns keep created_at; neither updated_at nor the current clock is the cutoff.
+            return json.dumps({'created_at': CREATED_AT, 'updated_at': '2026-10-20T12:00:00Z'}).encode()
         parts = path.split('?')[0].split('/')
         if parts[3:5] == ['actions', 'workflows']:
             return json.dumps({'workflow_runs': [{'id': run_id} for run_id in self.runs]}).encode()
         if parts[3:5] == ['actions', 'runs']:
             return json.dumps({'artifacts': self.runs[int(parts[5])]}).encode()
         return self.zips[int(parts[5])]
+
+
+def _fetch_args(directory: Path, baselines: Sequence[tuple[str, int]]) -> list[str]:
+    args = ['fetch']
+    for name, shards in baselines:
+        args += [
+            '--prefix',
+            f'test-durations-{name}-',
+            '--shards',
+            str(shards),
+            '--output',
+            str(directory / f'{name}.json'),
+        ]
+    return args
+
+
+@pytest.fixture
+def fetch_environment(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
+    monkeypatch.setenv('GITHUB_RUN_ID', '999')
+
+
+@pytest.mark.usefixtures('fetch_environment')
+def test_batch_fetch_shares_reads_and_preserves_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    artifacts: list[Artifact] = []
+    zips: dict[int, bytes] = {}
+    for name, shards in BASELINES:
+        for shard in range(1, shards + 1):
+            artifact_id = len(artifacts) + 1
+            artifacts.append(_artifact(artifact_id, f'test-durations-{name}-{shard}'))
+            zips[artifact_id] = _zip({f'z::{shard}': float(shard), f'a::{shard}': 0.5})
+    api = FakeApi(runs={200: artifacts}, zips=zips)
+    monkeypatch.setattr(shard_durations, 'gh_api', api)
+    single = tmp_path / 'single'
+    single.mkdir()
+    for baseline in BASELINES:
+        assert shard_durations.main(_fetch_args(single, [baseline])) == 0
+    single_paths = Counter(api.paths)
+    assert single_paths[CURRENT_RUN_PATH] == single_paths[HISTORY_PATH] == 9
+    assert single_paths[f'repos/{REPO}/actions/runs/200/artifacts?per_page=100'] == 9
+    assert sum(path.endswith('/zip') for path in api.paths) == 19
+    assert len(api.paths) == 46
+
+    api.paths.clear()
+    batch = tmp_path / 'batch'
+    batch.mkdir()
+    assert shard_durations.main(_fetch_args(batch, BASELINES)) == 0
+    batch_paths = Counter(api.paths)
+    assert batch_paths[CURRENT_RUN_PATH] == batch_paths[HISTORY_PATH] == 1
+    assert batch_paths[f'repos/{REPO}/actions/runs/200/artifacts?per_page=100'] == 1
+    assert sum(path.endswith('/zip') for path in api.paths) == 19
+    assert len(api.paths) == 22
+    assert {path.name for path in batch.iterdir()} == {f'{name}.json' for name, _ in BASELINES}
+    for name, shards in BASELINES:
+        expected: dict[str, float] = {
+            f'{key}::{shard}': value
+            for shard in range(1, shards + 1)
+            for key, value in [('z', float(shard)), ('a', 0.5)]
+        }
+        assert (
+            (batch / f'{name}.json').read_text()
+            == (single / f'{name}.json').read_text()
+            == json.dumps(expected, sort_keys=True)
+        )
+
+
+@pytest.mark.usefixtures('fetch_environment')
+def test_batch_fetch_selects_each_prefix_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    api = FakeApi(
+        runs={
+            300: [
+                _artifact(30, 'test-durations-a-1'),
+                {**_artifact(31, 'test-durations-a-2'), 'expired': True},
+                _artifact(32, 'test-durations-b-1'),
+            ],
+            200: [_artifact(20, 'test-durations-a-2'), _artifact(21, 'test-durations-a-1')],
+            100: [_artifact(10, 'test-durations-a-1'), _artifact(11, 'test-durations-a-2')],
+        },
+        zips={20: _zip({'a': 2.0, 'shared': 2.0}), 21: _zip({'z': 1.0, 'shared': 1.0}), 32: _zip({'b': 3.0})},
+    )
+    monkeypatch.setattr(shard_durations, 'gh_api', api)
+    assert shard_durations.main(_fetch_args(tmp_path, [('a', 2), ('b', 1), ('missing', 1)])) == 0
+    assert (tmp_path / 'a.json').read_text() == '{"a": 2.0, "shared": 2.0, "z": 1.0}'
+    assert (tmp_path / 'b.json').read_text() == '{"b": 3.0}'
+    assert (tmp_path / 'missing.json').read_text() == '{}'
+    out = capsys.readouterr().out
+    assert 'from run 200' in out and 'from run 300' in out
+    assert 'No `main` run has `test-durations-missing-*`' in out
+    assert api.paths.count(HISTORY_PATH) == 1
+    assert all(count == 1 for count in Counter(api.paths).values())
+    assert not any(path.endswith('/31/zip') or path.endswith('/10/zip') for path in api.paths)
+
+
+@pytest.mark.usefixtures('fetch_environment')
+@pytest.mark.parametrize('failure', [OSError('offline'), subprocess.CalledProcessError(1, ['gh'])])
+@pytest.mark.parametrize(
+    'failed_path',
+    [
+        CURRENT_RUN_PATH,
+        HISTORY_PATH,
+        f'repos/{REPO}/actions/runs/200/artifacts?per_page=100',
+        f'repos/{REPO}/actions/artifacts/20/zip',
+    ],
+)
+def test_batch_fetch_failures_are_cached_and_scoped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failed_path: str,
+    failure: Exception,
+):
+    api = FakeApi(
+        runs={
+            200: [
+                _artifact(20, 'test-durations-a-1'),
+                _artifact(21, 'test-durations-b-1'),
+                _artifact(22, 'test-durations-c-1'),
+            ]
+        },
+        zips={20: _zip({'a': 1.0}), 21: _zip({'b': 2.0}), 22: _zip({'c': 3.0})},
+    )
+    api.failures[failed_path] = failure
+    monkeypatch.setattr(shard_durations, 'gh_api', api)
+    assert shard_durations.main(_fetch_args(tmp_path, [('b', 1), ('a', 1), ('c', 1)])) == 0
+    isolated = failed_path.endswith('/zip')
+    assert json.loads((tmp_path / 'a.json').read_text()) == {}
+    assert json.loads((tmp_path / 'b.json').read_text()) == ({'b': 2.0} if isolated else {})
+    assert json.loads((tmp_path / 'c.json').read_text()) == ({'c': 3.0} if isolated else {})
+    assert api.paths.count(failed_path) == 1
+    assert capsys.readouterr().out.count('::warning::') == (1 if isolated else 3)
+
+
+@pytest.mark.usefixtures('fetch_environment')
+def test_batch_fetch_manifest_failure_preserves_other_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    api = FakeApi(
+        runs={
+            300: [_artifact(30, 'test-durations-b-1'), _artifact(31, 'test-durations-c-1')],
+            200: [],
+        },
+        zips={30: _zip({'b': 2.0}), 31: _zip({'c': 3.0})},
+    )
+    failed_path = f'repos/{REPO}/actions/runs/200/artifacts?per_page=100'
+    api.failures[failed_path] = OSError('offline')
+    monkeypatch.setattr(shard_durations, 'gh_api', api)
+    assert shard_durations.main(_fetch_args(tmp_path, [('b', 1), ('a', 1), ('missing', 1), ('c', 1)])) == 0
+    assert (tmp_path / 'a.json').read_text() == (tmp_path / 'missing.json').read_text() == '{}'
+    assert json.loads((tmp_path / 'b.json').read_text()) == {'b': 2.0}
+    assert json.loads((tmp_path / 'c.json').read_text()) == {'c': 3.0}
+    assert api.paths.count(failed_path) == 1
+    assert capsys.readouterr().out.count('::warning::') == 2
+
+
+@pytest.mark.usefixtures('fetch_environment')
+@pytest.mark.parametrize(
+    'failed_path',
+    [
+        CURRENT_RUN_PATH,
+        HISTORY_PATH,
+        f'repos/{REPO}/actions/runs/200/artifacts?per_page=100',
+        f'repos/{REPO}/actions/artifacts/20/zip',
+    ],
+)
+def test_batch_fetch_invalid_responses_remain_nonfatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failed_path: str
+):
+    api = FakeApi(
+        runs={200: [_artifact(20, 'test-durations-a-1'), _artifact(21, 'test-durations-b-1')]},
+        zips={20: b'invalid ZIP', 21: _zip({'b': 2.0})},
+    )
+
+    def invalid_response(path: str) -> bytes:
+        content = api(path)
+        return b'invalid JSON' if path == failed_path and not path.endswith('/zip') else content
+
+    monkeypatch.setattr(shard_durations, 'gh_api', invalid_response)
+    assert shard_durations.main(_fetch_args(tmp_path, [('a', 1), ('b', 1)])) == 0
+    assert (tmp_path / 'a.json').read_text() == '{}'
+    assert json.loads((tmp_path / 'b.json').read_text()) == ({'b': 2.0} if failed_path.endswith('/zip') else {})
+    assert api.paths.count(failed_path) == 1
+    assert '::warning::' in capsys.readouterr().out
+
+
+def test_batch_fetch_rejects_unmatched_options(tmp_path: Path):
+    args = _fetch_args(tmp_path, [('a', 1)]) + ['--prefix', 'test-durations-b-']
+    with pytest.raises(SystemExit, match='2'):
+        shard_durations.main(args)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_baseline_workflow_invocation_and_dependencies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    workflow = yaml.safe_load((Path(__file__).parents[1] / 'workflows' / 'ci.yml').read_text())
+    jobs = workflow['jobs']
+    job = jobs['test-durations-baseline']
+    assert not job.get('needs')
+    assert 'test-durations-baseline' not in jobs['classify'].get('needs', [])
+    for consumer in ['test-all-extras', 'test-lowest-versions']:
+        assert jobs[consumer]['needs'] == ['classify', 'test-durations-baseline']
+    step = next(step for step in job['steps'] if 'run' in step)
+    # Capture the shell's actual argv without starting a Python interpreter.
+    capture = tmp_path / 'args'
+    subprocess.run(
+        ['bash', '-e', '-c', 'python3() { printf "%s\\0" "$@" >> "$FETCH_ARGS"; }\n' + step['run']],
+        cwd=tmp_path,
+        env={**os.environ, 'FETCH_ARGS': str(capture)},
+        check=True,
+    )
+    args = capture.read_text().split('\0')[:-1]
+    assert args == ['.github/scripts/shard_durations.py', *_fetch_args(Path('test-durations'), BASELINES)]
+    upload = job['steps'][-1]['with']
+    assert upload['name'] == 'test-durations-baseline'
+    assert upload['path'] == 'test-durations'
+    assert upload['if-no-files-found'] == 'error'
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('GITHUB_REPOSITORY', raising=False)
+    assert shard_durations.main(args[1:]) == 0
+    assert {path.name: path.read_text() for path in Path('test-durations').iterdir()} == {
+        f'{name}.json': '{}' for name, _ in BASELINES
+    }
 
 
 def test_fetch_merges_shards_of_newest_complete_main_run():
