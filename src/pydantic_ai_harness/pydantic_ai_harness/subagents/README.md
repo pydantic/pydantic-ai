@@ -225,18 +225,18 @@ orchestrator = Agent(
 - **Questions.** Each sub-agent gets an `ask_parent(question)` tool. A question moves its task to the background, because the delegating model can only answer once `delegate_task` returns, and reaches that model as a message. Turn it off per delegate with `SubAgent(can_ask_questions=False)`. A task that can't run in the background (a run-owned workspace that isn't local) gets no `ask_parent`.
 - **Limits.** `auto_background_after` moves a task still running after that many seconds to the background. `max_running_tasks` caps how many tasks a conversation runs at once, across its whole delegation tree. `SubAgent(resumable=False)` makes a delegate one-shot. All are off by default.
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
-- **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Bind your own to keep tasks across runs, persist them, and observe them (see [Managed delegation sessions](#managed-delegation-sessions)).
-- Only one `SubAgents` on an agent can set `task_control`. Task control is not supported under durable execution.
+- **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Bind your own owner to keep tasks across runs, persist them, and observe them.
+- Only one `SubAgents` on an agent can set `task_control`. Task control and `dynamic_agents` are not supported under durable execution, where a run that uses them raises a `UserError`.
 
 ### Task events
 
-With task control, every step of a task is a typed capability event in the `sub_agents` namespace. A task's events go into the event stream of the run that started it, so a nested task's events reach its own parent's run. A bound `DelegationTasks` observer also receives each of them as `DelegationTaskEvent(event=...)`, including those of a task that settles after its delegating run ended.
+With task control, every step of a task is a typed capability event in the `sub_agents` namespace. A task's events go into the event stream of the run that started it, so a nested task's events reach its own parent's run. A bound `DelegationTasks` observer also receives them as `DelegationTaskEvent(event=...)`, including those of a task that settles after its delegating run ended. In place of `TaskProgressEvent`, it receives the task run's own events, as it always did.
 
 | Event | When | A listener can |
 |---|---|---|
 | `TaskAssignedEvent`, `TaskFollowUpEvent` | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
 | `TaskStartedEvent` | the task's run is starting, locally or on a worker | |
-| `TaskBackgroundedEvent` | the task moved to the background; `reason` is `requested`, `auto`, `question`, or `released` | |
+| `TaskBackgroundedEvent` | the task moved to the background; `reason` is `requested`, `auto`, or `question` | |
 | `TaskProgressEvent` | an event of the task's own run, with `forward_events=True` | |
 | `TaskQuestionEvent` | the task asked a question | set `answer`, so the model is not asked |
 | `TaskAnswerEvent` | an answer is about to reach the task | rewrite `answer`, or `veto()` it |
@@ -245,7 +245,7 @@ With task control, every step of a task is a typed capability event in the `sub_
 | `TaskRetryEvent` | a worker is running a failed remote task again | |
 | `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
 
-Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. `DelegationStartEvent` and `DelegationEndEvent` still go to an owner's observer only, as in [Managed delegation sessions](#managed-delegation-sessions).
+Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartEvent` and `DelegationEndEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
 
 ```python
 from pydantic_ai.capabilities import AbstractCapability, on_event

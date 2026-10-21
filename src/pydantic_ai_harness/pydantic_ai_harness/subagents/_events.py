@@ -298,13 +298,12 @@ class TaskCancelledEvent(TaskSettledEvent, name='task_cancelled'):
     """Whether the task was stopped immediately rather than before its next model request."""
 
 
-BackgroundReason: TypeAlias = Literal['requested', 'auto', 'question', 'released']
+BackgroundReason: TypeAlias = Literal['requested', 'auto', 'question']
 """Why a task moved to the background.
 
 - `requested`: the model delegated with `background=True`.
 - `auto`: the task ran longer than `SubAgents.auto_background_after`.
 - `question`: the task asked a question, which the delegating model can only answer once the delegation tool returns.
-- `released`: the application released it with `DelegationTasks.background`.
 """
 
 

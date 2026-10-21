@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 _CURRENT: ContextVar[DelegationTasks | None] = ContextVar('delegation_tasks', default=None)
 _CHILD: ContextVar[str | None] = ContextVar('delegation_child', default=None)
 
+NOT_BACKGROUNDABLE = 'This workspace is owned by the parent run and cannot run background children'
+"""Why a delegation can't run in the background."""
+
 
 def _dump_messages(messages: list[ModelMessage], handler: SerializerFunctionWrapHandler) -> object:
     try:
@@ -291,7 +294,7 @@ class DelegationTasks:
         if not self._open:
             raise RuntimeError('Delegation task owner is closed')
         if background and not backgroundable:
-            raise ModelRetry('This workspace is owned by the parent run and cannot run background children')
+            raise ModelRetry(NOT_BACKGROUNDABLE)
         parent_id = _CHILD.get()
         if parent_id is not None:
             conversation_id = self.records[parent_id].conversation_id
@@ -575,19 +578,14 @@ class DelegationTasks:
             running = [r.id for r in self.records.values() if r.parent_id == task_id and r.status == 'running']
             if not running or any(child in self._questions for child in running):
                 return
-            joined = asyncio.gather(*(asyncio.shield(self._workers[child]) for child in running))
             asked = asyncio.ensure_future(self._asked.wait())
             try:
-                await asyncio.wait((joined, asked), return_when=asyncio.FIRST_COMPLETED)
+                # Waits on the workers without cancelling them when this wait is cancelled.
+                workers = (self._workers[child] for child in running)
+                await asyncio.wait((asked, *workers), return_when=asyncio.FIRST_COMPLETED)
             finally:
                 asked.cancel()
-                if not joined.done():
-                    joined.cancel()
-                await asyncio.gather(asked, joined, return_exceptions=True)
-            if not asked.cancelled():
-                continue
-            await joined
-            return
+                await asyncio.gather(asked, return_exceptions=True)
 
     def running_count(self, conversation_id: str) -> int:
         """How many children of a conversation are running, or being started by `starting`."""

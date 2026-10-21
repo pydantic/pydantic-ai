@@ -6,6 +6,7 @@ Every scenario runs real agent runs on `FunctionModel`/`TestModel`, in process.
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness.subagents import (
     AgentCreatedEvent,
     DelegationTask,
@@ -65,6 +67,8 @@ from pydantic_ai_harness.subagents import (
     deserialize_message,
     serialize_message,
 )
+
+from .._recording_durability import RecordingDurability
 
 WAIT = 10
 
@@ -201,8 +205,15 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         [assigned] = recorder.of(TaskAssignedEvent)
         assert result.output == f'Task {assigned.task_id} (ok):\nchild output'
-        # The delegation start and end events go to a `DelegationTasks` owner's observer, as they always did.
-        assert recorder.kinds() == ['sub_agents.task_assigned', 'sub_agents.task_started', 'sub_agents.task_completed']
+        # The run's own owner has no observer, so the delegation start and end events reach the run, as without one.
+        # Stream events reach listeners as the stream is read, so only the immediate ones keep a fixed order.
+        assert sorted(recorder.kinds()) == [
+            'sub_agents.delegation_end',
+            'sub_agents.delegation_start',
+            'sub_agents.task_assigned',
+            'sub_agents.task_completed',
+            'sub_agents.task_started',
+        ]
         assert assigned.prompt == 'Find x.'
         assert assigned.depth == 2
         assert assigned.parent_task_id is None
@@ -858,7 +869,7 @@ class TestRemoteSubAgents:
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert not cancelled.forced
 
-        forced, _ = remote_parent(
+        forced, forced_recorder = remote_parent(
             transport,
             call('delegate_task', agent_name='remote', task='Hard.', background=True),
             cancel(True),
@@ -869,6 +880,9 @@ class TestRemoteSubAgents:
             async with serving(worker):
                 result = await forced.run('Go.')
         assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
+        # The worker's own report can't arrive once the task stopped, so the delegating side reports it.
+        [cancelled] = forced_recorder.of(TaskCancelledEvent)
+        assert cancelled.forced
 
     async def test_a_remote_task_nobody_picks_up_fails(self) -> None:
         transport = InMemoryTransport()
@@ -1554,3 +1568,147 @@ class TestDynamicAgentLimits:
         assert tool_returns(result.all_messages())[0] == 'The sub-agent was not created: not on my watch.'
         assert [spec.instructions for spec in built] == ['Be careful. Count.']
         assert result.output == 'Be careful. Count.'
+
+
+class FailingTransport(InMemoryTransport):
+    """An in-memory transport that can't send the messages of `kinds`, of any task or only of `task_id`."""
+
+    def __init__(self, *kinds: str, task_id: str | None = None) -> None:
+        super().__init__()
+        self.kinds = set(kinds)
+        self.task_id = task_id
+
+    async def send(self, message: SubAgentMessage) -> None:
+        if message.kind in self.kinds and self.task_id in (None, message.task_id):
+            raise ConnectionError(f'cannot send {message.kind}')
+        await super().send(message)
+
+
+class SandboxWorkspace(WorkspaceBackend):
+    """A workspace like a sandbox the run owns, which a background task can't outlive."""
+
+    @property
+    def ref(self) -> None:
+        return None
+
+    async def working_dir(self) -> str:
+        raise AssertionError('the workspace was touched')  # pragma: no cover
+
+
+class TestTaskControlBoundaries:
+    async def test_task_control_and_dynamic_agents_refuse_durable_execution(self) -> None:
+        for capability in (controlled(), SubAgents(agents=[researcher()], dynamic_agents=DynamicAgents())):
+            agent = Agent(TestModel(), name='durable', capabilities=[capability, RecordingDurability()])
+            with pytest.raises(UserError, match='not supported under durable execution'):
+                await agent.run('Go.')
+
+    async def test_a_run_a_tool_starts_gets_an_owner_of_its_own(self) -> None:
+        inner = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Inner.', background=True),
+                text('Waiting.'),
+                text('Reported.'),
+            ),
+            capabilities=[controlled()],
+        )
+
+        async def consult() -> str:
+            """Ask the inner agent."""
+            return (await inner.run('Inner go.')).output
+
+        outer = Agent(scripted(call('consult'), echo_last_return), capabilities=[controlled()], tools=[consult])
+        with anyio.fail_after(WAIT):
+            result = await outer.run('Go.')
+        # The inner run waited for its own task, whose report started its next request.
+        assert result.output == 'Reported.'
+
+    async def test_a_background_task_the_workspace_cannot_outlive_is_refused_before_it_is_announced(self) -> None:
+        recorder = Recorder()
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Find x.', background=True), echo_last_return),
+            capabilities=[controlled(), recorder],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.', workspace=SandboxWorkspace())
+        assert 'cannot run background children' in result.output
+        assert not recorder.of(TaskAssignedEvent)
+
+    async def test_a_one_shot_delegate_is_one_shot_with_an_application_owner(self) -> None:
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            task_id = task_id_in(tool_returns(messages)[-1])
+            return call('delegate_task', agent_name='researcher', task='And then?', resume=task_id)
+
+        owner = DelegationTasks()
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[SubAgents(agents=[researcher(resumable=False)])],
+        )
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    result = await parent.run('Go.', conversation_id='session')
+        assert 'cannot resume; it is one-shot' in result.output
+
+    async def test_an_application_owner_gets_a_follow_up_once(self) -> None:
+        observed: list[DelegationTaskEvent] = []
+
+        async def observe(event: DelegationTaskEvent) -> None:
+            observed.append(event)
+
+        def follow_up(messages: list[ModelMessage]) -> ModelResponse:
+            task_id = task_id_in(tool_returns(messages)[-1])
+            return call('delegate_task', agent_name='researcher', task='And then?', resume=task_id)
+
+        owner = DelegationTasks(observer=observe)
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='First.'), follow_up, echo_last_return),
+            capabilities=[controlled()],
+        )
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.', conversation_id='session')
+        assert sum(isinstance(event.event, TaskFollowUpEvent) for event in observed) == 1
+
+    async def test_a_remote_task_the_transport_cannot_send_fails(self) -> None:
+        transport = FailingTransport('sub_agents.task_assigned')
+        parent, recorder = remote_parent(
+            transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        [failed] = recorder.of(TaskFailedEvent)
+        assert failed.error == 'ConnectionError: cannot send sub_agents.task_assigned'
+        assert result.output.endswith('(failed):\nConnectionError: cannot send sub_agents.task_assigned')
+
+    async def test_a_worker_outlives_stray_messages_and_failing_tasks(self, caplog: pytest.LogCaptureFixture) -> None:
+        class Stray(FailingTransport):
+            strayed = False
+
+            async def receive(self, mailbox: str) -> SubAgentMessage:
+                if mailbox == 'agent:remote' and not self.strayed:
+                    self.strayed = True
+                    return TaskMessageEvent(task_id='t0', agent_name='remote', message='stray')
+                return await super().receive(mailbox)
+
+        transport = Stray('sub_agents.task_started', 'sub_agents.task_failed', task_id='t1')
+        worker = SubAgentWorker(agents=[SubAgent(child(), name='remote')], transport=transport, deps=None)
+        await transport.send(TaskAssignedEvent(task_id='t1', agent_name='remote', prompt='Work.'))
+        await transport.send(TaskAssignedEvent(task_id='t2', agent_name='remote', prompt='Work.'))
+        with caplog.at_level(logging.WARNING), anyio.fail_after(WAIT):
+            async with serving(worker):
+                assert isinstance(await transport.receive('task:t2:parent'), TaskStartedEvent)
+                assert isinstance(await transport.receive('task:t2:parent'), TaskCompletedEvent)
+                while 'Could not report the failure of sub-agent task t1.' not in caplog.text:
+                    await anyio.sleep(0)
+        assert "skipped a 'sub_agents.task_message' message" in caplog.text
+
+    async def test_a_worker_reports_a_task_the_transport_failed(self) -> None:
+        transport = FailingTransport('sub_agents.task_started')
+        worker = SubAgentWorker(agents=[SubAgent(child(), name='remote')], transport=transport, deps=None)
+        await transport.send(TaskAssignedEvent(task_id='t1', agent_name='remote', prompt='Work.'))
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                failed = await transport.receive('task:t1:parent')
+        assert isinstance(failed, TaskFailedEvent)
+        assert failed.error == 'ConnectionError: cannot send sub_agents.task_started'

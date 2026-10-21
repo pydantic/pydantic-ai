@@ -44,6 +44,10 @@ class SubAgentTransport(ABC):
         """Discard `mailbox` and any messages left in it, once no one will receive from it again.
 
         Called when a task settles, for its two task mailboxes. The default does nothing.
+
+        A message sent after the release, such as the late reply of a worker to a task that timed out,
+        starts the mailbox again, and nobody may receive it. A transport that serves many tasks should
+        expire such messages, for example with a time to live.
         """
 
 

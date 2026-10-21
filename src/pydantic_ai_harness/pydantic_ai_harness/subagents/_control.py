@@ -8,10 +8,12 @@ workers for agents in other processes, and agents the model creates -- is a port
 
 from __future__ import annotations
 
+import asyncio
 import re
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias
 from uuid import uuid4
@@ -51,6 +53,17 @@ STEERING_PREFIX = 'Message from the agent that delegated this task to you:'
 """Starts a steering message the delegating model sent with `message_task`."""
 
 STOPPED_OUTPUT = 'Task stopped; no successful result is available.'
+
+RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
+    'pydantic_ai_harness.subagents.run_owner', default=None
+)
+"""The run ID and owner of the run that opened a `DelegationTasks` of its own, for its task-control `SubAgents`."""
+
+
+def run_owned(owner: DelegationTasks) -> bool:
+    """Whether `owner` was opened by a run for itself, rather than bound by the application."""
+    entry = RUN_OWNER.get()
+    return entry is not None and entry[1] is owner
 
 
 def validate_agent_name(name: str) -> str | None:
@@ -244,14 +257,22 @@ async def run_remote(
 ) -> str:
     """Send a task to the worker serving its agent, and relay what it sends back until it settles."""
     mailbox = f'task:{record.id}:parent'
-    settled = False
+    settled: TaskSettledEvent | None = None
     try:
-        propagate.inject(start.trace_context)
-        await transport.send(start)
         try:
-            with anyio.fail_after(accept_timeout):
-                message = await transport.receive(mailbox)
-        except TimeoutError:
+            settled = await _relay(owner, record, start, transport, mailbox, accept_timeout)
+        except asyncio.CancelledError:
+            forced = not owner.stop_requested(record.id)
+            with anyio.move_on_after(5, shield=True):
+                await owner.publish(
+                    record, TaskCancelledEvent(task_id=record.id, agent_name=record.agent_name, forced=forced)
+                )
+            raise
+        except Exception as exc:
+            error = f'{type(exc).__name__}: {exc}'
+            await owner.publish(record, TaskFailedEvent(task_id=record.id, agent_name=record.agent_name, error=error))
+            raise
+        if settled is None:
             error = (
                 f'No worker picked up the task within {accept_timeout}s, so sub-agent {record.agent_name!r} '
                 'is unavailable. Do the task another way.'
@@ -259,26 +280,44 @@ async def run_remote(
             await owner.publish(record, TaskFailedEvent(task_id=record.id, agent_name=record.agent_name, error=error))
             record.outcome = 'failed'
             return error
-        async with task_group() as group:
-            while not isinstance(message, TaskSettledEvent):
-                if isinstance(message, TaskQuestionEvent):
-                    group.start_soon(_answer_remote, owner, record, message, transport)
-                elif isinstance(message, TaskProgressEvent):
-                    await owner.publish(record, message, observe=False)
-                    await owner.notify(record, message.event)
-                else:
-                    await owner.publish(record, message)
-                message = await transport.receive(mailbox)
-            settled = True
-            group.cancel_scope.cancel()
-        return await _settle_remote(owner, record, message, usage)
+        return await _settle_remote(owner, record, settled, usage)
     finally:
         with anyio.CancelScope(shield=True):
-            if not settled:
+            if settled is None:
                 # The task is ending without its worker's report, so stop it rather than leave it running there.
                 # This is teardown, not a decision listeners could veto.
                 await transport.send(TaskForceCancelEvent(task_id=record.id, agent_name=record.agent_name))
             await transport.release(mailbox)
+
+
+async def _relay(
+    owner: DelegationTasks,
+    record: DelegationTask,
+    start: TaskStartEvent,
+    transport: SubAgentTransport,
+    mailbox: str,
+    accept_timeout: float | None,
+) -> TaskSettledEvent | None:
+    """Send the task, then pass on what its worker sends until its report, or `None` if no worker picks it up."""
+    propagate.inject(start.trace_context)
+    await transport.send(start)
+    try:
+        with anyio.fail_after(accept_timeout):
+            message = await transport.receive(mailbox)
+    except TimeoutError:
+        return None
+    async with task_group() as group:
+        while not isinstance(message, TaskSettledEvent):
+            if isinstance(message, TaskQuestionEvent):
+                group.start_soon(_answer_remote, owner, record, message, transport)
+            elif isinstance(message, TaskProgressEvent):
+                await owner.publish(record, message, observe=False)
+                await owner.notify(record, message.event)
+            else:
+                await owner.publish(record, message)
+            message = await transport.receive(mailbox)
+        group.cancel_scope.cancel()
+    return message
 
 
 async def _answer_remote(

@@ -50,6 +50,7 @@ from pydantic_ai_harness.subagents._control import (
     LocalTaskLink,
     RemoteSubAgent,
     default_factory,
+    run_owned,
     run_remote,
     started,
     validate_agent_name,
@@ -74,7 +75,7 @@ from pydantic_ai_harness.subagents._events import (
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
-from pydantic_ai_harness.subagents._tasks import DelegationReports, DelegationTask, DelegationTasks
+from pydantic_ai_harness.subagents._tasks import NOT_BACKGROUNDABLE, DelegationReports, DelegationTask, DelegationTasks
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.subagents._transport import SubAgentTransport
@@ -114,14 +115,14 @@ def at_max_depth(max_depth: int) -> bool:
 
 
 _MODEL_ARG = 'model'
+"""Name of the delegate tool's model-selection argument, shared by the function
+signature and the schema rewrite that shapes it to the configured menu."""
 _MAX_LISTED_TASKS = 50
 _PREVIEW_CHARS = 80
 CONTROL_TOOL_NAMES = frozenset({'list_tasks', 'message_task', 'answer_task', 'cancel_task'})
 """The tools `SubAgents(task_control=True)` adds next to the delegate tool."""
 CREATE_AGENT_TOOL_NAME = 'create_agent'
 _EventT = TypeVar('_EventT', bound=CapabilityEvent)
-"""Name of the delegate tool's model-selection argument, shared by the function
-signature and the schema rewrite that shapes it to the configured menu."""
 
 
 def _is_request_response_model(model: object) -> TypeIs[Model]:
@@ -247,6 +248,19 @@ class _Ended:
     """What the parent model receives: the child's output, or a steering or retry message."""
     cause: Exception | None = None
     """Set when `output` is raised to the parent as a `ModelRetry` rather than returned."""
+
+
+async def _send_to_owner(
+    owner: DelegationTasks, record: DelegationTask, event: DelegationStartEvent | DelegationEndEvent
+) -> None:
+    """Send a managed delegation's start or end to the application's observer.
+
+    An owner the run opened for itself has no observer, so the event goes to the delegating run instead.
+    """
+    if run_owned(owner):
+        await owner.publish(record, event)
+    else:
+        await owner.notify(record, event)
 
 
 def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
@@ -557,6 +571,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 resume=resume,
                 run=run,
                 backgroundable=not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend),
+                resumable=sub_agent.resumable,
             )
         return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key)
 
@@ -574,7 +589,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         owner = DelegationTasks.current()
         if owner is not None and agent_name in owner.agents:
             return owner.agents[agent_name]
-        # Read only when agents can be created: a durable activity's context has no `run_id`.
+        # Read only when agents can be created: a durable activity's context may not carry `run_id`.
         created = self._created.get(ctx.run_id or '', {}) if self._dynamic_agents is not None else {}
         sub_agent = self._agents.get(agent_name) or created.get(agent_name)
         if sub_agent is None:
@@ -607,6 +622,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 )
             if model is None:
                 model = previous.model
+        backgroundable = not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend)
+        if background and not backgroundable:
+            raise ModelRetry(NOT_BACKGROUNDABLE)
         remote = self._remote.get(agent_name)
         sub_agent: SubAgent[AgentDepsT] | None = None
         key: str | None = None
@@ -625,7 +643,6 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     f'choose the next action; do not delegate to {agent_name!r} again.',
                 )
             resumable, can_ask = sub_agent.resumable, sub_agent.can_ask_questions
-        backgroundable = not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend)
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
             raise ModelRetry(
@@ -636,10 +653,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         start_type = TaskAssignedEvent if previous is None else TaskFollowUpEvent
         # The task counts as running while listeners see it, so concurrent delegations can't overrun the limit.
         with owner.starting(conversation_id):
+            # The observer gets the start once the task runs, so a vetoed start reaches only listeners.
             start = await self._announce(
                 ctx,
                 owner,
-                previous,
+                None,
                 start_type(
                     task_id=task_id,
                     agent_name=agent_name,
@@ -936,7 +954,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         async def emit(event: DelegationStartEvent | DelegationEndEvent) -> None:
             if owner is not None and record is not None:
                 event.task_id, event.parent_id = record.id, record.parent_id
-                await owner.notify(record, event)
+                await _send_to_owner(owner, record, event)
             # Only called when `emits` holds or an owner exists, and an owner always comes with a record.
             elif emits:  # pragma: no branch
                 await ctx.emit(event)

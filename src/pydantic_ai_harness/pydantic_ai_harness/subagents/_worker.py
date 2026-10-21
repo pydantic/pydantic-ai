@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Generic
@@ -38,6 +39,8 @@ from pydantic_ai_harness.subagents._events import (
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER
 from pydantic_ai_harness.subagents._toolset import SubAgent, delegation_level
 from pydantic_ai_harness.subagents._transport import SubAgentTransport
+
+_logger = logging.getLogger(__name__)
 
 
 class _WorkerLink(TaskLink):
@@ -180,8 +183,12 @@ class SubAgentWorker(Generic[AgentDepsT]):
     async def _serve_agent(self, group: anyio.abc.TaskGroup, name: str, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         while True:
             start = await self.transport.receive(f'agent:{name}')
-            assert isinstance(start, TaskStartEvent), f'Expected a task start message, got {start.kind!r}.'
-            group.start_soon(self._run, agent, start)
+            if isinstance(start, TaskStartEvent):
+                group.start_soon(self._run, agent, start)
+            else:
+                _logger.warning(
+                    'Sub-agent worker for %r skipped a %r message, which does not start a task.', name, start.kind
+                )
 
     async def _run(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskStartEvent) -> None:
         context_token = otel_context.attach(propagate.extract(start.trace_context))
@@ -190,6 +197,16 @@ class SubAgentWorker(Generic[AgentDepsT]):
         except UserError as e:
             # A misconfigured sub-agent fails its task rather than the worker, which serves other tasks too.
             await self.transport.send(TaskFailedEvent(task_id=start.task_id, agent_name=start.agent_name, error=str(e)))
+        except Exception as e:
+            # So does a task the transport failed for; its delegating run is told if the transport still can.
+            _logger.exception('Sub-agent task %s failed on its worker.', start.task_id)
+            error = f'{type(e).__name__}: {e}'
+            try:
+                await self.transport.send(
+                    TaskFailedEvent(task_id=start.task_id, agent_name=start.agent_name, error=error)
+                )
+            except Exception:
+                _logger.exception('Could not report the failure of sub-agent task %s.', start.task_id)
         finally:
             otel_context.detach(context_token)
             while len(self._histories) > self.max_conversations:

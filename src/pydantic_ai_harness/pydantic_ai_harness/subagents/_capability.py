@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -25,7 +24,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
-from pydantic_ai_harness.subagents._control import DynamicAgents, RemoteSubAgent
+from pydantic_ai_harness.subagents._control import RUN_OWNER, DynamicAgents, RemoteSubAgent, run_owned
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.subagents._tasks import DelegationTasks
@@ -43,7 +42,6 @@ if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
-_RUN_OWNER: ContextVar[DelegationTasks | None] = ContextVar('pydantic_ai_harness.subagents.run_owner', default=None)
 """The owner `SubAgents(task_control=True)` opened for the top-level run it wraps, when no application owner is bound."""
 
 _TASK_CONTROL_INSTRUCTIONS = (
@@ -339,7 +337,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     background tasks arrive as messages: a top-level run that would end while its own background tasks
     work waits for them. Only one `SubAgents` on an agent can turn it on.
 
-    Not supported under durable execution.
+    Not supported under durable execution, where a run raises a `UserError`.
     """
 
     remote_agents: Sequence[RemoteSubAgent] = field(default=(), kw_only=True)
@@ -365,7 +363,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     dynamic_agents: DynamicAgents[AgentDepsT] | None = field(default=None, kw_only=True)
     """Let the model create sub-agents during a run, with a `create_agent` tool. Off by default.
-    Only one `SubAgents` on an agent can set it."""
+    Only one `SubAgents` on an agent can set it. Not supported under durable execution, where a run raises a `UserError`."""
 
     _call_counts: dict[str, dict[str, int]] = field(
         default_factory=dict[str, 'dict[str, int]'], init=False, repr=False, compare=False
@@ -583,12 +581,17 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self.include_self:
             self._require_bound_to(ctx.agent)
         try:
+            if (self.task_control or self.dynamic_agents is not None) and ctx.in_durable_context:
+                raise UserError(
+                    '`SubAgents` `task_control` and `dynamic_agents` are not supported under durable execution.'
+                )
             if not self.task_control or self._delegation_off:
                 return await handler()
             self._require_single(ctx)
             owner = DelegationTasks.current()
-            if owner is not None:
-                parent_id = DelegationTasks.child_id()
+            parent_id = DelegationTasks.child_id()
+            # A run that a tool of a run with its own owner starts, rather than a delegation, gets an owner of its own.
+            if owner is not None and (parent_id is not None or not run_owned(owner)):
                 conversation_id = (
                     owner.records[parent_id].conversation_id
                     if parent_id is not None
@@ -616,11 +619,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
                 ),
                 owner.publishing(conversation_id=conversation_id, parent_id=None, emit=ctx.emit),
             ):
-                token = _RUN_OWNER.set(owner)
+                token = RUN_OWNER.set((ctx.run_id or '', owner))
                 try:
                     return await handler()
                 finally:
-                    _RUN_OWNER.reset(token)
+                    RUN_OWNER.reset(token)
 
     def _require_single(self, ctx: RunContext[AgentDepsT]) -> None:
         """Refuse an agent where two `SubAgents` would register the same task-control tools."""
@@ -645,14 +648,17 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
         The run waits until they settle, or one asks a question, and their reports become its next request.
         """
-        owner = _RUN_OWNER.get()
+        entry = RUN_OWNER.get()
+        # Only the run that opened the owner waits: not its delegations, nor runs its tools start.
         if (
-            owner is None
-            or DelegationTasks.child_id() is not None
+            not self.task_control
+            or entry is None
+            or entry[0] != (ctx.run_id or '')
             or ctx.partial_output
             or isinstance(output, DeferredToolRequests)
         ):
             return output
+        owner = entry[1]
         await owner.wait_children(None)
         owner.queue_reports(conversation_id=ctx.conversation_id or ctx.run_id or '', parent_id=None)
         return output
