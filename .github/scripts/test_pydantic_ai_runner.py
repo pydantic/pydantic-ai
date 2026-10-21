@@ -2934,6 +2934,55 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert shim._run_seconds_left() is None  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize(
+    ('cut_off', 'num_turns'),
+    [
+        # 2 root requests and the sub-agent's 2.
+        pytest.param(False, 4, id='finished'),
+        # The root request in flight at the cutoff never completes.
+        pytest.param(True, 3, id='cut-off'),
+    ],
+)
+def test_num_turns_counts_every_model_request_on_every_outcome(
+    cut_off: bool, num_turns: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    # A 6-minute run budget, so the run starts outside the parent's time reserve with `Task` offered.
+    budget_secs = 360
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        returned = any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        if shim.SUBAGENT_INSTRUCTIONS in (info.instructions or ''):
+            if returned:
+                yield 'sub done'
+            else:
+                yield {0: DeltaToolCall(name='Glob', json_args='{"pattern": "*"}')}
+        elif not returned:
+            yield {0: DeltaToolCall(name='Task', json_args='{"description": "probe", "prompt": "look"}')}
+        elif cut_off:
+            await _skip_clock_and_hang(budget_secs)
+        else:
+            yield 'done'
+
+    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
+    monkeypatch.setenv('PYDANTIC_AI_JOB_TIMEOUT_MINUTES', str(budget_secs // 60 + shim.JOB_TIMEOUT_HEADROOM_MINS))
+    monkeypatch.setattr(shim, 'log_safe_outputs_state', lambda: None)
+    buf = io.StringIO()
+    with redirect_stdout(buf), asyncio.Runner(loop_factory=_ClockSkippingLoop) as runner:
+        rc = runner.run(
+            shim._run_with_timeout(  # pyright: ignore[reportPrivateUsage]
+                'p',
+                FunctionModel(stream_function=_stream),
+                'lbl',
+                shim.select_claude_code_toolset(None, None, task=shim.task),
+                [],
+                'num-turns',
+            )
+        )
+    result = json.loads(buf.getvalue().splitlines()[-1])
+    assert (rc, result['type'], result['is_error']) == (int(cut_off), 'result', cut_off)
+    assert result['num_turns'] == num_turns
+
+
 @pytest.mark.parametrize('outcome', ['success', 'error', 'timeout'])
 def test_run_with_timeout_closes_anthropic_client(outcome: str, monkeypatch: pytest.MonkeyPatch):
     client = AsyncAnthropic(api_key='test')
