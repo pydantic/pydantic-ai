@@ -11,7 +11,7 @@ from typing import Literal
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart, post_compaction_window
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
@@ -40,12 +40,12 @@ _DEFAULT_GUIDANCE = (
     'file with `read_memory` when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
-    'in this turn. A later `<memory>` block in the conversation supersedes earlier ones.'
+    'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
 )
 
 _MEMORY_DATA_PREFIX = '<memory>\n'
 _MEMORY_DATA_SUFFIX = '\n</memory>'
-_EMPTY_SNAPSHOT = f'{_MEMORY_DATA_PREFIX}[memory is empty]{_MEMORY_DATA_SUFFIX}'
+_EMPTY_MEMORY = '[memory is empty]'
 _MEMORY_ORIGIN = 'pydantic-ai-harness.memory.v1'
 """The `origin` in a snapshot's `TextContent.metadata`, next to the hash of its scope under `scope`."""
 
@@ -237,7 +237,8 @@ class Memory(AbstractCapability[AgentDepsT]):
             return request_context
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
-        latest = _latest_snapshot(ctx.messages, scope_hash)
+        # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.
+        latest = _latest_snapshot(post_compaction_window(ctx.messages), scope_hash)
         # A run without a prompt of its own (resuming after a deferred tool approval) is sent tool results:
         # the snapshot already in history stays current until the next prompt.
         if latest is not None and not _has_user_prompt(ctx.messages[-1]):
@@ -274,7 +275,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             main_content = '' if main is None else main.content
             rendered = self._render_snapshot(main, subfiles, files_truncated)
             # An empty snapshot is only worth recording when it replaces one the model would still read as current.
-            if rendered == _EMPTY_SNAPSHOT and latest is None:
+            if rendered == self._empty_snapshot() and latest is None:
                 rendered = None
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
@@ -293,6 +294,11 @@ class Memory(AbstractCapability[AgentDepsT]):
                 )
         return request_context
 
+    def _empty_snapshot(self) -> str:
+        """The snapshot that says this memory is empty, under its heading so several memories stay apart."""
+        heading = f'## {self.heading}\n\n' if self.heading else ''
+        return f'{_MEMORY_DATA_PREFIX}{heading}{_EMPTY_MEMORY}{_MEMORY_DATA_SUFFIX}'
+
     def _render_snapshot(self, main: MemoryFile | None, subfiles: list[str], files_truncated: bool) -> str | None:
         """The framed snapshot, or `None` when the guidance leaves no budget for one."""
         main_content = '' if main is None else main.content
@@ -301,7 +307,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         if content_budget <= 0:
             return None
         if not (main_content or subfiles or files_truncated):
-            return _EMPTY_SNAPSHOT
+            return self._empty_snapshot()
         rendered = render_memory_prompt(
             main_content,
             subfiles,

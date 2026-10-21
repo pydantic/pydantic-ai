@@ -492,7 +492,7 @@ characters using the same explicit truncation marker as kept user turns. Raise i
 render each return whole, when the summarizer's context window is large enough to absorb the payloads.
 Content a harness capability added on the user channel and tagged with an `origin` in its
 `TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a
-`BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot. Tagged content is
+`BackgroundTools` result, `TrajectoryJudge` feedback and a `Memory` snapshot, including one an older release marked with a plain string. Tagged content is
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
 treat it as the user's requests or standing constraints; other summary requests are unchanged.

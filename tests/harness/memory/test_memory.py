@@ -18,6 +18,7 @@ from pydantic_ai import Agent, AgentSpec, DeferredToolRequests, DeferredToolResu
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -1185,6 +1186,50 @@ class TestInjection:
         assert len(captured) == 2
         assert _memory_request_indexes(captured[1]) == [0]
         assert 'what do I like?' in _user_text(captured[1][:1])
+
+    async def test_snapshot_before_a_compaction_boundary_is_recorded_again(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- a fact')
+        agent = Agent(TestModel(call_tools=[]), capabilities=[Memory(store=store)])
+        first = await agent.run('first')
+        history: list[ModelMessage] = [
+            *first.all_messages(),
+            ModelRequest(parts=[UserPromptPart('compact')]),
+            ModelResponse(parts=[CompactionPart(content='A summary without the memory.')]),
+        ]
+
+        result = await agent.run('next', message_history=history)
+
+        # Memory didn't change, but the model no longer sees the snapshot before the boundary.
+        contexts = _memory_contexts(result.all_messages())
+        assert len(contexts) == 2
+        assert contexts[0] == contexts[1]
+        assert _user_text(result.all_messages()[-3:-2]) == 'next'
+        assert _memory_contexts(result.all_messages()[-2:-1]) == [contexts[0]]
+
+    async def test_each_memory_appends_and_empties_under_its_own_heading(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- personal fact')
+        org = await _seed(store, 'org/MEMORY.md', '- org fact')
+        agent = Agent(
+            TestModel(call_tools=[]),
+            capabilities=[
+                Memory(store=store, heading='Personal notes'),
+                Memory(store=store, agent_name='org', heading='Org notes', id='org_memory').prefix_tools('org'),
+            ],
+        )
+        first = await agent.run('first')
+        assert len(_memory_contexts(first.all_messages())) == 2
+
+        org = await _seed(store, 'org/MEMORY.md', '- new org fact')
+        second = await agent.run('second', message_history=first.all_messages())
+        [changed] = _memory_contexts(second.all_messages())[2:]
+        assert '## Org notes' in changed
+        assert '- new org fact' in changed
+
+        await store.delete('org/MEMORY.md', expected_version=org.version)
+        third = await agent.run('third', message_history=second.all_messages())
+        assert _memory_contexts(third.all_messages())[3:] == ['<memory>\n## Org notes\n\n[memory is empty]\n</memory>']
 
     async def test_resumed_run_appends_no_snapshot_after_tool_results(self) -> None:
         store = InMemoryStore()

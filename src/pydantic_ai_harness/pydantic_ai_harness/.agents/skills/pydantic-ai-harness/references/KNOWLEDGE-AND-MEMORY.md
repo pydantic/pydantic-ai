@@ -20,7 +20,8 @@ replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMOR
 protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
 of other files is recorded in message history as a delimited user-role `<memory>` part, with the
 user's prompt on a run's first request, and only when memory changed since the latest snapshot in
-history. History stays append-only: earlier snapshots are kept, a later one supersedes them, and a
+history (after the latest compaction boundary). History stays append-only: earlier snapshots are kept,
+a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 never after tool results. Snapshots carry `TextContent.metadata`
 `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`; list compaction before `Memory`.

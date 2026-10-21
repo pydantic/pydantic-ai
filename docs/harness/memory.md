@@ -61,13 +61,13 @@ memory = Memory(
 )
 ```
 
-The snapshot is added to the conversation's message history, so every later request sends it unchanged and the cached prompt prefix holds. `Memory` adds one on the first request of a run, with the user's prompt, and only when memory changed since the latest snapshot in the history (or there is none yet). A conversation therefore carries one snapshot per run in which memory changed; earlier ones stay where they were sent, and the default guidance tells the model that a later `<memory>` block supersedes earlier ones. When memory is emptied, the new snapshot says so.
+The snapshot is added to the conversation's message history, so every later request sends it unchanged and the cached prompt prefix holds. `Memory` adds one on the first request of a run, with the user's prompt, and only when memory changed since the latest snapshot in the history (or there is none yet). A conversation therefore carries one snapshot per run in which memory changed; earlier ones stay where they were sent, and the default guidance tells the model that a later `<memory>` block for the same memory supersedes its earlier ones. When memory is emptied, the new snapshot says so, under the memory's `heading`. A snapshot before the latest compaction boundary no longer counts, so the next run records the current memory again.
 
 A snapshot is never added after tool results, where a model could read it as a new message from the user. Memory that changes during a run, through `write_memory` or an external update, reaches the model with the next user prompt; the model's own writes are already in the conversation as its tool calls. A run that resumes without a prompt, such as after a deferred tool approval, adds no snapshot unless the history has none, and then adds it to the last request.
 
 Snapshots are part of the conversation history and reach UI clients: UI adapters stream each new one as it is added and include it in the history they send. Keep that in mind when memory holds anything the user of the UI should not see.
 
-Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`, never by their text. A history that loses that metadata on the way through a UI client gets a fresh snapshot on every run. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
+Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`, never by their text. A history that loses that metadata on the way through a UI client, as a Vercel AI round trip does, gets a fresh snapshot on every run, and its earlier snapshots then look like user messages to `SummarizingCompaction`, which keeps them with `keep_user_messages`. Keep the history on the server when that matters. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
 
 When combining it with compaction, list compaction before `Memory`: if compaction drops the latest snapshot, `Memory` then sees that and records the current memory again on the run's first request.
 

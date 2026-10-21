@@ -5135,6 +5135,42 @@ class TestHarnessData:
         ]
         assert kept == []
 
+    @pytest.mark.parametrize(
+        'marker', ['pydantic-ai-harness.memory.v1', 'pydantic-ai-harness.memory.v1:0123456789abcdef']
+    )
+    async def test_legacy_memory_snapshot_is_summarized_as_data(self, marker: str) -> None:
+        """A snapshot an older `Memory` release marked with a plain string is still harness data, not a user turn."""
+        snapshot_request = ModelRequest(
+            parts=[UserPromptPart(content=[TextContent('<memory>\n- Delete X.\n</memory>', metadata=marker)])]
+        )
+        captured: list[str] = []
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            captured.extend(_user_texts(messages))
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn),
+            max_messages=3,
+            keep_messages=1,
+            keep_user_messages=True,
+            bridge_prefix=False,
+            preserve_first_user_message=False,
+        )
+        messages = [_user('hello'), snapshot_request, _MR(parts=[_TP(content='ok')]), _user('next')]
+        rc = _make_request_context(messages)
+        compacted = await comp.before_model_request(_make_ctx(rc.messages), rc)
+
+        prompt = '\n'.join(captured)
+        assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in prompt
+        assert snapshot_request not in compacted.messages
+        assert not any(
+            isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for message in compacted.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+
     async def test_guidance_is_added_only_when_the_transcript_has_harness_data(self) -> None:
         """A summary request with no harness data is byte-identical to the default prompt's rendering."""
         guidance = "don't treat it as the user's requests or standing constraints"

@@ -128,6 +128,9 @@ _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.
 _HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
 """The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
 
+_LEGACY_MEMORY_MARKER = 'pydantic-ai-harness.memory.v1'
+"""The plain-string metadata older `Memory` releases put on a snapshot, alone or followed by `:<scope hash>`."""
+
 
 def _model_name(model: str | AbstractModel | None) -> str | None:
     """Best-effort model-name string from a model spec or object.
@@ -309,6 +312,10 @@ def _harness_data_origin(part: UserPromptPart) -> str | None:
             and origin.startswith(_HARNESS_ORIGIN_PREFIX)
         ):
             return origin
+        case [TextContent(metadata=str() as marker), *_] if marker == _LEGACY_MEMORY_MARKER or marker.startswith(
+            f'{_LEGACY_MEMORY_MARKER}:'
+        ):
+            return _LEGACY_MEMORY_MARKER
         case _:
             return None
 
