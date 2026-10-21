@@ -381,7 +381,7 @@ def _web_citation_agent(
         model = AnthropicModel(
             'claude-sonnet-4-5',
             provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=ModelSettings(**ANTHROPIC_SETTINGS, citations=True),
+            settings=ModelSettings(max_tokens=4096, citations=True),
         )
         tool = WebFetchTool(max_uses=1)
         # A plain-text page with no trailing whitespace or smart characters, which recording would rewrite and so move
