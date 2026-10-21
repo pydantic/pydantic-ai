@@ -157,20 +157,33 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     anthropic_profile = provider.model_profile('us.anthropic.claude-opus-4-7-20260115-v1:0')
     anthropic_model_profile_mock.assert_called_with('claude-opus-4-7-20260115')
     assert isinstance(anthropic_profile, dict)
-    assert anthropic_profile.get('supports_json_schema_output', False) is False
-    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+    assert anthropic_profile.get('supports_json_schema_output', False) is True
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
     assert anthropic_profile.get('bedrock_supports_adaptive_thinking', False) is True
     assert anthropic_profile.get('bedrock_supports_effort', False) is True
     # The downstream Anthropic flag survives the merge, so `thinking='xhigh'` passes through on Bedrock too.
     assert anthropic_profile.get('anthropic_supports_xhigh_effort', False) is True
 
-    # These models support structured output directly, but not through Bedrock Converse.
-    for model_name in ('claude-sonnet-5', 'claude-haiku-5-5', 'claude-fable-5'):
+    for model_name in (
+        'claude-opus-4-8',
+        'claude-opus-5',
+        'claude-opus-5-5',
+        'claude-sonnet-5',
+        'claude-sonnet-5-5',
+        'claude-haiku-5-5',
+    ):
         anthropic_profile = provider.model_profile(f'global.anthropic.{model_name}')
         anthropic_model_profile_mock.assert_called_with(model_name)
         assert isinstance(anthropic_profile, dict)
-        assert anthropic_profile.get('supports_json_schema_output', False) is False
-        assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
+        assert anthropic_profile.get('supports_json_schema_output', False) is True
+        assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is True
+
+    # Claude Fable 5 supports structured output directly, but not through Bedrock Converse.
+    anthropic_profile = provider.model_profile('global.anthropic.claude-fable-5')
+    anthropic_model_profile_mock.assert_called_with('claude-fable-5')
+    assert isinstance(anthropic_profile, dict)
+    assert anthropic_profile.get('supports_json_schema_output', False) is False
+    assert anthropic_profile.get('bedrock_supports_strict_tool_definition', False) is False
 
     anthropic_profile = provider.model_profile('us.anthropic.claude-haiku-5-5')
     anthropic_model_profile_mock.assert_called_with('claude-haiku-5-5')

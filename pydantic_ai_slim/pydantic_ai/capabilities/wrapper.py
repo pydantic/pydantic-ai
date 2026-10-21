@@ -71,6 +71,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     wrapped: AbstractCapability[AgentDepsT]
 
+    _adopted_wrapped_id = False
+    """Whether the `id` came from `wrapped` rather than being given to this wrapper.
+
+    Not a dataclass field, so it isn't part of the constructor, comparison or spec; set when the
+    identity is adopted and carried over verbatim on a rebind.
+    """
+
     def __post_init__(self) -> None:
         self.__adopt_wrapped_identity()
 
@@ -84,8 +91,15 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # against the new wrapped instance — e.g. one a `DynamicCapability` produced at run
         # time, whose `id` only becomes known once the factory has run.
         if self.id is None:
+            self._adopted_wrapped_id = True
             self.id = self.wrapped.id
             self.defer_loading = self.wrapped.defer_loading
+
+    def _derived_id_source(self) -> str | None:
+        # A wrapper that adopted the wrapped capability's `id` is that capability under the same
+        # name, so it derived the id from the same source. One given an `id` chose it, even an id
+        # that happens to equal the wrapped capability's.
+        return self.wrapped._derived_id_source() if self._adopted_wrapped_id else None
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)

@@ -38,7 +38,8 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -63,8 +64,11 @@ from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
+    ModelServerError,
     SuspendedResponseExpired,
 )
 from pydantic_ai.messages import (
@@ -99,6 +103,7 @@ from ..conftest import (
     IsStr,
     RequestCapture,
     TestEnv,
+    legacy_retry_prompt_part,
     message,
     try_import,
 )
@@ -1180,11 +1185,13 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -5146,11 +5153,13 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content=IsStr(),
                         tool_name='get_weather',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=3),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -10552,9 +10561,9 @@ async def test_openai_responses_image_generation_tool_without_image_output(
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10716,9 +10725,9 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text or include your response in a tool call.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -14699,7 +14708,7 @@ _ERROR_EVENT: dict[str, Any] = {
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize(
-    ('stream', 'content', 'message'),
+    ('stream', 'content', 'status_code', 'message'),
     [
         pytest.param(
             True,
@@ -14707,13 +14716,25 @@ _ERROR_EVENT: dict[str, Any] = {
                 _CREATED_EVENT,
                 {'type': 'error', 'code': 'server_error', 'message': 'The server had an error', 'sequence_number': 1},
             ),
-            'server_error: The server had an error',
+            500,
+            None,
             id='stream-error-event',
         ),
         pytest.param(
             True,
+            _sse(
+                _CREATED_EVENT,
+                {'type': 'error', 'code': 'invalid_prompt', 'message': 'Invalid prompt', 'sequence_number': 1},
+            ),
+            None,
+            'invalid_prompt: Invalid prompt',
+            id='stream-error-event-unmapped',
+        ),
+        pytest.param(
+            True,
             _sse(_ERROR_EVENT),
-            'insufficient_quota: You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-first',
         ),
         pytest.param(
@@ -14730,7 +14751,8 @@ _ERROR_EVENT: dict[str, Any] = {
                     },
                 }
             ),
-            'You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-nested',
         ),
         pytest.param(
@@ -14746,22 +14768,27 @@ _ERROR_EVENT: dict[str, Any] = {
                     'sequence_number': 1,
                 },
             ),
-            'rate_limit_exceeded: Rate limit reached',
+            429,
+            None,
             id='stream-response-failed-background',
         ),
         pytest.param(
             False,
             json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            None,
             'server_error: The model failed',
             id='response-failed',
         ),
     ],
 )
 async def test_response_error_raises_model_api_error(
-    allow_model_requests: None, stream: bool, content: bytes, message: str
+    allow_model_requests: None, stream: bool, content: bytes, status_code: int | None, message: str | None
 ):
-    """A failure the Responses API reports in a 200 body or stream raises `ModelAPIError` with no status code,
-    instead of ending the response with `finish_reason='error'` and sending the model an output retry.
+    """A failure the Responses API reports in a 200 body or stream raises instead of ending the response with
+    `finish_reason='error'` and sending the model an output retry.
+
+    In a stream, it gets the status the same error has before a stream opens, with `in_stream` set. A failed
+    response body has no status to report.
 
     A mock transport stands in for a cassette because no real provider returns such a response on demand.
     """
@@ -14787,10 +14814,48 @@ async def test_response_error_raises_model_api_error(
             else:
                 await agent.run('Hello')
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == message
+    if status_code is not None:
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == status_code
+        assert exc_info.value.in_stream is True
+    else:
+        # A failed response body has no status, but a `server_error` still has a category.
+        assert type(exc_info.value) is (
+            ModelServerError if message == 'server_error: The model failed' else ModelAPIError
+        )
+        assert exc_info.value.message == message
+        assert exc_info.value.in_stream is stream
     # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
     assert requests_made == 1
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('code', 'category'),
+    [
+        pytest.param('rate_limit_exceeded', ModelRateLimitError, id='rate-limit'),
+        pytest.param('context_length_exceeded', ModelContextWindowExceededError, id='context-window'),
+    ],
+)
+async def test_failed_response_body_gets_category(allow_model_requests: None, code: str, category: type[ModelAPIError]):
+    """A failed response body gets the same category as the same error in a stream, though no status code."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        body = _failed_response_json({'code': code, 'message': 'Failed'})
+        return httpx2.Response(200, content=json.dumps(body).encode(), headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+        with pytest.raises(category) as exc_info:
+            await agent.run('Hello')
+
+    assert not isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.provider_error_code == code
+    assert exc_info.value.in_stream is False
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
@@ -17941,10 +18006,11 @@ async def _replay_input(
         provider=OpenAIProvider(api_key='not-used'),
         profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=not group_function_calls),
     )
+    parameters = model_request_parameters or ModelRequestParameters()
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history,
+        model.prepare_messages(history, parameters),
         model_settings or OpenAIResponsesModelSettings(),
-        model_request_parameters or ModelRequestParameters(),
+        parameters,
     )
     return [dict(item) for item in items]
 
@@ -17962,7 +18028,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                legacy_retry_prompt_part('read failed', tool_name='read', tool_call_id='call-a'),
                 ToolReturnPart('view', 'contents', tool_call_id='call-b'),
             ]
         ),
@@ -17980,7 +18046,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]
@@ -17994,7 +18060,7 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
             {
                 'type': 'function_call_output',
                 'call_id': 'call-a',
-                'output': 'read failed\n\nFix the errors and try again.',
+                'output': '{"error":"read failed"}',
             },
             {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
         ]
@@ -18100,7 +18166,7 @@ async def test_openai_responses_function_call_grouping_ignores_active_tool_searc
         ModelRequest(
             parts=[
                 ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='shared-id'),
-                RetryPromptPart('search again', tool_name='search_tools', tool_call_id='shared-id'),
+                legacy_retry_prompt_part('search again', tool_name='search_tools', tool_call_id='shared-id'),
             ]
         ),
     ]
@@ -18541,7 +18607,7 @@ async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_m
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         tool_name='search_knowledge',
                         tool_call_id='call_123',
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',

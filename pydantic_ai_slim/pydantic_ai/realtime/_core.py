@@ -57,7 +57,7 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    RetryPromptPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -67,6 +67,7 @@ from ..messages import (
 )
 from ..usage import RequestUsage, RunUsage
 from ._lifecycle import (
+    AnswersRevised,
     InputAdded,
     InputId,
     InputLost,
@@ -77,6 +78,7 @@ from ._lifecycle import (
     ResponseRequestRefused,
     ResponseStarted,
     ResponseStatus,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -508,7 +510,9 @@ class SessionCore:
         self._unanswered_responses: set[str] = set()
         """Responses whose tool results get no reply: one of their calls settled without its result going out."""
         self._settled_calls: set[str] = set()
-        """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
+        """Calls that settled: their result is recorded (sent or not), or the provider cancelled or abandoned them."""
+        self._abandoned_calls: set[str] = set()
+        """Calls the provider abandoned: they run on, but no response answers their results (see `ToolCallsAbandoned`)."""
         self._input_audio = bytearray()
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
@@ -603,6 +607,8 @@ class SessionCore:
             self._speech_ended(item.item_id)
         elif isinstance(item, InputAdded):
             self._place_input(item.input_id)
+        elif isinstance(item, AnswersRevised):
+            self._revise_answers(item)
         elif isinstance(item, (ResponseRequestRefused, InputLost)):
             self._settle(item.input_ids, 'refused' if isinstance(item, ResponseRequestRefused) else 'lost')
         elif isinstance(item, InputRejected):
@@ -614,6 +620,8 @@ class SessionCore:
             # (One the session hasn't taken yet still runs, to be stopped as the session reaches the cancellation.)
             for call_id in item.tool_call_ids:
                 self._call_unanswered(call_id)
+        elif isinstance(item, ToolCallsAbandoned):
+            self._abandon_calls(item.tool_call_ids)
         elif isinstance(
             item,
             (
@@ -730,6 +738,24 @@ class SessionCore:
                 self._obligations[input_id] = 'answered'
                 self._answered_by[input_id] = event.response_id
         self._effects.append(ResponseOpened(event.response_id))
+
+    def _revise_answers(self, event: AnswersRevised) -> None:
+        """The connection learned better which inputs a response under way answers (see `AnswersRevised`).
+
+        Where the inputs are in history doesn't change: only which response settles their reply obligations.
+        """
+        response = self._responses[event.response_id]
+        assert response.status is None or not event.claimed, f'{response.id!r} ended: it claims nothing more'
+        for input_id in event.claimed:
+            if self._obligations.get(input_id) == 'pending':
+                self._obligations[input_id] = 'answered'
+                self._answered_by[input_id] = response.id
+                response.answers = (*response.answers, input_id)
+        for input_id in event.released:
+            if self._answered_by.get(input_id) == response.id and self._obligations.get(input_id) == 'answered':
+                self._obligations[input_id] = 'pending'
+                del self._answered_by[input_id]
+                response.answers = tuple(answer for answer in response.answers if answer != input_id)
 
     def _response_content(self, event: AudioDelta | OutputTranscript) -> None:
         response = self._open_response(event.response_id)
@@ -924,7 +950,17 @@ class SessionCore:
         self._settle([self._result_input[call] for call in response.tool_calls if call in self._result_input], 'void')
 
     def _result_unanswered(self, call_id: str) -> bool:
-        return (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        return call_id in self._abandoned_calls or (
+            (response := self._call_response.get(call_id)) is not None and response.id in self._unanswered_responses
+        )
+
+    def _abandon_calls(self, call_ids: Sequence[str]) -> None:
+        """The provider answers none of these calls' results: they run on, and nothing waits for them any more."""
+        self._abandoned_calls.update(call_ids)
+        self._settled_calls.update(call_ids)
+        for call_id in call_ids:
+            self._call_unanswered(call_id)
+        self._settle([self._result_input[call_id] for call_id in call_ids if call_id in self._result_input], 'void')
 
     def _native_part(self, event: PartStartEvent | PartEndEvent) -> None:
         """A native tool part (grounding, code execution) the connection streamed, numbered by its own counter.
@@ -1504,7 +1540,11 @@ class SessionCore:
         pruned = self._pruned_calls
 
         def is_pruned(part: ModelRequestPart | ModelResponsePart) -> bool:
-            return isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) and part.tool_call_id in pruned
+            # TODO(v3): remove `RetryPromptPart`; a history a caller passed can still hold one
+            return (
+                isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart))  # pyright: ignore[reportDeprecated]
+                and part.tool_call_id in pruned
+            )
 
         if not any(is_pruned(part) for part in message.parts):
             return message
@@ -1640,9 +1680,10 @@ class SessionCore:
         response = self._speaking_response()
         return response.open_part_index if response is not None and response.open_part is not None else None
 
-    def response_under_way(self) -> bool:
-        """Whether a response is under way that the session didn't refuse."""
-        return any(not response.refused for response in self._open_responses.values())
+    def response_under_way(self, *, besides_caller_of: str | None = None) -> bool:
+        """Whether a response is under way that the session didn't refuse, other than the one that made `besides_caller_of`."""
+        caller = self._call_response.get(besides_caller_of) if besides_caller_of is not None else None
+        return any(not response.refused and response is not caller for response in self._open_responses.values())
 
     def call_waiting(self, call_id: str) -> bool:
         """Whether a tool call is waiting for the session to take it to run (see `take_call`)."""
@@ -1677,10 +1718,10 @@ class SessionCore:
 
     def result_asks_reply(self, call_id: str) -> bool:
         """Whether sending this call's result asks for a reply `requests_ahead()` doesn't count yet."""
+        if self._result_unanswered(call_id):
+            return False
         if not self._answers_per_response or (response := self._call_response.get(call_id)) is None:
             return True
-        if response.id in self._unanswered_responses:
-            return False
         return not any(
             outcome == 'pending' and self._reply_for(input_id) == response.id
             for input_id, outcome in self._obligations.items()
@@ -1714,7 +1755,24 @@ class SessionCore:
             for call_id, response in self._call_response.items()
             if call_id not in self._settled_calls and response.status in (None, 'completed')
         }
-        return self.still_owed(frozenset(tokens))
+        owed = self.still_owed(frozenset(tokens))
+        # An input a response under way (or the tool round it started, while a call or the input carrying its result
+        # is owed) answers is followed from the input itself, so a waiter still waits for it if the response turns out
+        # not to answer it after all (`AnswersRevised`).
+        calls = [token.key for token in owed if token.kind == 'call'] + [
+            call_id
+            for token in owed
+            if token.kind == 'input' and (call_id := self._result_call.get(int(token.key))) is not None
+        ]
+        revisable = {token.key for token in owed if token.kind == 'response'} | {
+            response.id for call_id in calls if (response := self._call_response.get(call_id)) is not None
+        }
+        return owed | {
+            Owed('input', str(input_id), epoch)
+            for response_id in revisable
+            for input_id in self._responses[response_id].answers
+            if self._answered_by.get(input_id) == response_id
+        }
 
     def still_owed(self, tokens: frozenset[Owed]) -> frozenset[Owed]:
         """Follow each token to what it led to, keeping only what is still to come.

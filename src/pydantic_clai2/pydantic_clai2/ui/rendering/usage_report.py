@@ -14,7 +14,7 @@ from decimal import Decimal
 from rich.console import Console
 from rich.table import Table
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, RetryFeedbackPart, ToolReturnPart
 from pydantic_ai.usage import RunUsage
 from pydantic_clai2.ui.rendering import theme
 
@@ -39,7 +39,7 @@ def session_usage(messages: Sequence[ModelMessage]) -> SessionUsage:
     unpriced: dict[str, None] = {}
     for message in messages:
         if isinstance(message, ModelRequest):
-            if not any(isinstance(part, (ToolReturnPart, RetryPromptPart)) for part in message.parts):
+            if not any(isinstance(part, (ToolReturnPart, RetryFeedbackPart)) for part in message.parts):
                 turns.append(RunUsage())
             continue
         if not turns:

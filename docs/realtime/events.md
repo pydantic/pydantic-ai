@@ -25,7 +25,7 @@ never discarded.
 | [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | Incremental speech audio/transcript or text content. |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A finalized part; retained speech audio appears here, not at part start. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | A local function tool began executing. |
-| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool completed or returned a retry prompt. |
+| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool produced a result — a return, a failure, or a retry. |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A tool call was deferred (e.g. needs approval); emitted before any inline capability handler runs. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | An inline capability handler resolved the deferred requests; the results go through normal tool processing. |
 | [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
@@ -65,10 +65,16 @@ does not imply that the turn is done.
 
 The event marks the end of what [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
 waits for. When a response ends, the session emits it if the model owes nothing more: no reply to anything
-sent, no answer to a tool's result, and no response still under way. Text sent while the model is answering
-asks for a reply of its own, so the event comes once that reply ends too. A response the user cuts off ends
-the exchange, as does a response the provider started on its own (server-side voice activity detection).
-The user's transcript can still finish after it.
+sent, no answer to a tool's result, and no response still under way.
+
+Only the response that answers an input settles its reply: a response already under way when the input reached
+the provider never saw it, so it doesn't. Text sent while the model is answering therefore usually gets a reply of
+its own, and the event comes once that reply ends too. How a provider answers such text varies: GPT-Live speaks to
+it in the reply it is giving (see [OpenAI](openai.md#text-is-context-not-a-user-turn)), and some Gemini Live models
+cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
+
+A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
+(server-side voice activity detection). The user's transcript can still finish after it.
 
 ## Reading raw audio events
 
