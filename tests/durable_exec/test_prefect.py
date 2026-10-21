@@ -1167,7 +1167,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id, so its durable Prefect wrapper is built
     # under a stable id; the `billing` function toolset carries the capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
