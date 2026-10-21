@@ -380,6 +380,10 @@ _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
     '`outcome="failed"` instead of `"retried"`; #8185'
 )
+_AGUI_SYSTEM_ORDER = (
+    "AG-UI `dump_messages()` writes a request's system prompts before its tool results, so an enqueued "
+    'system prompt reloads ahead of the tool result it followed; no issue yet'
+)
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
@@ -405,7 +409,10 @@ SCENARIOS = [
         script=_enqueue_script,
         setup=_enqueue_system_prompt,
         adapter_kwargs={'manage_system_prompt': 'client'},
-        gaps=_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
+        gaps={
+            **_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
+            **_gaps(_AGUI_SYSTEM_ORDER, ('wire', 'dump', 'agui')),
+        },
         # The frontend owns the system prompt, so it's the one sending it.
         seed=[
             ModelRequest(parts=[SystemPromptPart('You are terse.'), UserPromptPart('Question 0')]),
