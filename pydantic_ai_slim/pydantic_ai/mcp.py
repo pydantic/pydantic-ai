@@ -93,6 +93,7 @@ else:
 from . import _mcp, _utils, exceptions, messages, models
 from ._mcp_apps import MCP_APP_METADATA_KEY, MCPAppToolResult
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2()
@@ -883,6 +884,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _user_message_handler: MessageHandlerT | None
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
+    _telemetry_url_derived_id: str | None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -997,6 +999,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # optional task package here, rather than at module import time, so only an MCPToolset opts
         # the process into that extension and a pre-built but not-yet-entered Client still sees it.
         self._call_tool_task = _load_call_tool_task() if _MCP_SDK_V2 else None
+        self._telemetry_url_derived_id = None
 
         # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
@@ -1909,7 +1912,9 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         if stop_sequences is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
-        model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
+        # The server chose these `stop_sequences`, not the user, so a sampling model that ignores them doesn't warn.
+        with suppress_unsupported_setting_warnings(['stop_sequences'] if stop_sequences is not None else []):
+            model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),

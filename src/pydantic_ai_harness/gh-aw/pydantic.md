@@ -22,7 +22,7 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.56.0"
+  version: "0.58.0"
   display-name: Pydantic AI
   description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
   mcp: true
@@ -243,7 +243,8 @@ engine:
                   if native:
                       _partial.pop(event.index, None)
                   part = event.part
-                  if isinstance(part, RetryPromptPart):
+                  # TODO(v3): remove RetryPromptPart; releases before 2.57 emit it for a tool retry
+                  if isinstance(part, RetryPromptPart) or part.outcome == 'retried':
                       success = False
                       status = 'retry'
                       output = None
@@ -261,7 +262,7 @@ engine:
                       'success': success,
                       'status': status,
                   }
-                  if not isinstance(part, RetryPromptPart):
+                  if status != 'retry':
                       data['output'] = output
                   if error is not None:
                       data['error'] = error

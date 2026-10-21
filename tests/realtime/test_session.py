@@ -6,8 +6,7 @@ import asyncio
 import gc
 import io
 import wave
-from collections import OrderedDict
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from decimal import Decimal
@@ -19,6 +18,7 @@ import anyio
 import pytest
 from inline_snapshot import snapshot
 from opentelemetry.context import Context
+from pydantic import ValidationError
 from pydantic_core import SchemaValidator, core_schema
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -56,7 +56,6 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -126,7 +125,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionTools
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsStr
+from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part
 from ..realtime_connections import InferredConnection
 from .conversation import assert_conversation_invariants
 
@@ -312,15 +311,6 @@ def _reply_under_way(session: _RealtimeSession) -> bool:
     return any(response.status is None for response in session._core._responses.values())  # pyright: ignore[reportPrivateUsage]
 
 
-def _own_record(session: _RealtimeSession) -> list[ModelMessage]:
-    """The session's own record of the conversation, as it streams it: what a tool sees as `RunContext.messages`.
-
-    History (`all_messages()`) is the session core's, from the connection's lifecycle; this one is built from the
-    events the session streams, which is what tests driving those directly (`_translate_event`) can observe.
-    """
-    return session._own_messages()  # pyright: ignore[reportPrivateUsage]
-
-
 class FakeRealtimeConnection(InferredConnection):
     """A connection that replays a fixed list of events and records what is sent."""
 
@@ -443,7 +433,8 @@ class FakeRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
-        self.last_instructions = get_instructions(messages) or ''
+        # The same call every provider's `connect` makes.
+        self.last_instructions = get_instructions(messages, model_request_parameters) or ''
         self.last_tools = model_request_parameters.function_tools
         self.last_native_tools = model_request_parameters.native_tools
         self.last_model_settings = model_settings
@@ -612,7 +603,19 @@ async def test_audio_view_drops_oldest_chunk_on_overflow_without_instrumentation
 
     async with session:
         assert [chunk async for chunk in session.stream_audio()] == chunks[-5:]
-        assert len(await drain_events(session)) == 8
+        assert [type(event).__name__ for event in await drain_events(session)] == snapshot(
+            [
+                'PartStartEvent',
+                'PartDeltaEvent',
+                'PartDeltaEvent',
+                'PartDeltaEvent',
+                'PartDeltaEvent',
+                'PartDeltaEvent',
+                'PartDeltaEvent',
+                'PartDeltaEvent',
+                'PartEndEvent',
+            ]
+        )
         assert session._audio_tap_drops == 2  # pyright: ignore[reportPrivateUsage]
 
 
@@ -1260,15 +1263,16 @@ async def test_input_transcription_failure_passes_through_and_session_continues(
     session = RealtimeSession(conn, _noop_runner)
 
     events = await collect_events(session)
-    assert [type(event).__name__ for event in events] == [
-        'PartStartEvent',
-        'PartEndEvent',
-        'RealtimeInputTranscriptionErrorEvent',
-        'PartStartEvent',
-        'PartEndEvent',
-        'RealtimeInputTranscriptionErrorEvent',
-        'RealtimeTurnCompleteEvent',
-    ]
+    assert [type(event).__name__ for event in events] == snapshot(
+        [
+            'PartStartEvent',
+            'PartEndEvent',
+            'RealtimeInputTranscriptionErrorEvent',
+            'PartStartEvent',
+            'PartEndEvent',
+            'RealtimeInputTranscriptionErrorEvent',
+        ]
+    )
     assert session.new_messages() == snapshot(
         [
             ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime()),
@@ -1338,10 +1342,8 @@ async def test_input_transcription_failure_after_partial_does_not_block_later_tu
 async def test_input_transcription_failure_ends_the_part_it_opened() -> None:
     """A failed transcription closes the failed turn's own part index and keeps overlapping turns active.
 
-    Regression: `_finalize_failed_user_item` hardcoded `PartEndEvent(index=0, ...)` — with any earlier
-    part in the session, a live caption UI saw the failed turn left open and part 0 closed again — and
-    cleared `_user_turn_active` outright, marking the whole user side idle while another overlapping
-    item was still streaming.
+    Regression: the failed turn's end hardcoded `PartEndEvent(index=0, ...)` — with any earlier part in the
+    session, a live caption UI saw the failed turn left open and part 0 closed again.
     """
     conn = FakeRealtimeConnection(
         [
@@ -1365,9 +1367,6 @@ async def test_input_transcription_failure_ends_the_part_it_opened() -> None:
                 and event.delta.transcript == 'partial B'
             ):
                 failed_index = event.index
-            if isinstance(event, PartEndEvent) and event.index == failed_index:
-                # C is still streaming: B's failure must not mark the whole user side idle.
-                assert session._user_turn_active  # pyright: ignore[reportPrivateUsage]
 
     assert failed_index is not None and failed_index != 0
     assert any(isinstance(event, PartStartEvent) and event.index == failed_index for event in events)
@@ -3027,7 +3026,6 @@ async def test_idless_speech_start_reanchors_the_turn_local_audio_opened() -> No
         await session.send_audio(b'first')
         await drain_events(session)
 
-    assert not session._user_turn_active  # pyright: ignore[reportPrivateUsage]
     assert session.all_messages() == snapshot(
         [
             ModelRequest(parts=[SpeechPart(speaker='user', transcript='question one')], timestamp=IsDatetime()),
@@ -3555,7 +3553,7 @@ async def test_held_barge_in_user_turn_is_recorded_after_its_response_on_close()
     async with session:
         events_task = asyncio.create_task(drain_events(session))
         with anyio.fail_after(_LIVENESS_TIMEOUT):
-            while not session._held_user_turns:  # pyright: ignore[reportPrivateUsage]
+            while session._core.response_holding_turns() is None:  # pyright: ignore[reportPrivateUsage]
                 await asyncio.sleep(0)
         await session.close()
         await events_task
@@ -3710,10 +3708,10 @@ async def test_invalid_json_args_reported_without_calling_tool() -> None:
     call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
     assert 'Invalid JSON' in str(result.part.content)
     assert isinstance(conn.sent[0], ToolResult)
-    assert conn.sent[0].output == result.part.model_response()
+    assert conn.sent[0].output == result.part.model_response_str()
 
 
 async def test_non_object_json_args_reported() -> None:
@@ -3721,7 +3719,7 @@ async def test_non_object_json_args_reported() -> None:
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
     assert 'Input should be an object' in str(result.part.content)
 
 
@@ -3757,6 +3755,80 @@ async def test_tool_runner_exception_ends_session() -> None:
     with pytest.raises(RuntimeError, match='kaboom'):
         await collect_events(session)
     assert conn.sent == []
+
+
+class _SendsFailedResults(FakeRealtimeConnection):
+    """A connection whose model can't move on without a result for every call (GPT-Live's delegated backend)."""
+
+    def __init__(self, events: list[RealtimeCodecEvent]) -> None:
+        super().__init__(events)
+        self.unanswered: list[str] = []
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        return True
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        self.unanswered.append(tool_call_id)
+
+
+async def test_tool_exception_is_sent_as_a_failure_where_the_connection_needs_it() -> None:
+    """The failure history records goes out as the call's result, and the exception is still raised."""
+    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise RuntimeError('kaboom')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(RuntimeError, match='kaboom'):
+        await collect_events(session)
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
+    assert conn.unanswered == []
+    returned = [
+        part for message in session.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.content, part.outcome) for part in returned] == snapshot(
+        [('The tool raised an unhandled error.', 'failed')]
+    )
+
+
+async def test_tool_failure_stopped_by_a_usage_limit_sends_nothing() -> None:
+    """A usage limit stops the exchange, so its result must not ask for another request: nothing goes out.
+
+    The connection is told no result will follow.
+    """
+    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(UsageLimitExceeded):
+        await collect_events(session)
+    assert conn.sent == []
+    assert conn.unanswered == ['tc']
+
+
+async def test_tool_failure_that_cannot_be_sent_tells_the_connection() -> None:
+    """The link drops as the failure goes out: the connection is told no result will follow, as for a limit."""
+
+    class _Dropped(_SendsFailedResults):
+        transport_errors = (ConnectionResetError,)
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('link dropped')
+
+    conn = _Dropped([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise RuntimeError('kaboom')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(RuntimeError, match='kaboom'):
+        await collect_events(session)
+    assert conn.unanswered == ['tc']
 
 
 async def test_tool_runner_base_exception_ends_session() -> None:
@@ -3988,37 +4060,6 @@ async def test_parallel_tool_returns_stay_grouped_after_calling_response() -> No
     ] == ['one', 'two']
 
 
-def test_parallel_tool_returns_are_inserted_in_call_order() -> None:
-    session = RealtimeSession(FakeRealtimeConnection([]))
-    call_one = ToolCallPart(tool_name='one', args={}, tool_call_id='one')
-    call_two = ToolCallPart(tool_name='two', args={}, tool_call_id='two')
-    response = ModelResponse(parts=[call_one, call_two])
-    first_return = ModelRequest(parts=[ToolReturnPart(tool_name='one', content='1', tool_call_id='one')])
-    second_return = ModelRequest(parts=[ToolReturnPart(tool_name='two', content='2', tool_call_id='two')])
-    session._history.append(response)  # pyright: ignore[reportPrivateUsage]
-
-    session._insert_tool_return(call_two, second_return)  # pyright: ignore[reportPrivateUsage]
-    session._insert_tool_return(call_one, first_return)  # pyright: ignore[reportPrivateUsage]
-
-    # The session's own record, which a tool sees as `RunContext.messages`.
-    assert _own_record(session) == [response, first_return, second_return]
-
-
-def test_insert_tool_return_skips_existing_parallel_returns() -> None:
-    session = RealtimeSession(FakeRealtimeConnection([]))
-    call_one = ToolCallPart(tool_name='one', args={}, tool_call_id='one')
-    call_two = ToolCallPart(tool_name='two', args={}, tool_call_id='two')
-    first_return = ModelRequest(parts=[ToolReturnPart(tool_name='one', content='1', tool_call_id='one')])
-    second_return = ModelRequest(parts=[ToolReturnPart(tool_name='two', content='2', tool_call_id='two')])
-    response = ModelResponse(parts=[call_one, call_two])
-    session._history.extend([response, first_return])  # pyright: ignore[reportPrivateUsage]
-
-    session._insert_tool_return(call_two, second_return)  # pyright: ignore[reportPrivateUsage]
-
-    # The session's own record, which a tool sees as `RunContext.messages`.
-    assert _own_record(session) == [response, first_return, second_return]
-
-
 class AwaitBetweenConnection(InferredConnection):
     """A connection that yields control between events so tool tasks can progress."""
 
@@ -4058,6 +4099,7 @@ async def test_tool_completion_drained_between_events() -> None:
             'PartDeltaEvent',
             'FunctionToolResultEvent',
             'PartDeltaEvent',
+            'PartEndEvent',
         ]
     )
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
@@ -4406,7 +4448,7 @@ async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
         [
             ToolReturnPart(
                 tool_name='noop',
-                content='The tool raised an unhandled error and the session ended.',
+                content='The tool raised an unhandled error.',
                 tool_call_id='tc1',
                 timestamp=IsDatetime(),
                 outcome='failed',
@@ -5634,71 +5676,6 @@ async def test_audio_retention_budget_turn_longer_than_the_budget_keeps_only_its
     ]
 
 
-class _CountingSegments(OrderedDict[str, bytes]):
-    """Counts every walk over the waiting segments, which checking the budget on each chunk must not need."""
-
-    walks = 0
-
-    def __iter__(self) -> Iterator[str]:
-        type(self).walks += 1
-        return super().__iter__()
-
-    def values(self) -> Any:
-        type(self).walks += 1
-        return super().values()
-
-    def items(self) -> Any:
-        type(self).walks += 1
-        return super().items()
-
-
-async def test_audio_retention_budget_check_does_not_walk_waiting_segments() -> None:
-    """Each chunk checks the budget without walking the segments waiting for a transcript, and evicted ones are let go.
-
-    A unit test of the bookkeeping: a slower check returns the same history, so only counting can catch it.
-    """
-
-    async def count_walks(session: _RealtimeSession) -> None:
-        segments = session._input_segments  # pyright: ignore[reportPrivateUsage]
-        segments._segments = _CountingSegments()  # pyright: ignore[reportPrivateUsage]
-
-    async def stream_chunks(session: _RealtimeSession) -> None:
-        for index in range(10):
-            await session.send_audio(bytes([index]) * 480)
-        # The oldest waiting segment made room for those 0.1 s, and is let go rather than kept empty.
-        assert len(session._input_segments._segments) == 9  # pyright: ignore[reportPrivateUsage]
-
-    turns = range(20)
-    conn = _ContinuousMicrophoneConnection(
-        [
-            _UserAction(count_walks),
-            *(
-                event
-                for turn in turns
-                for event in (_speak(_tenths_of_a_second(turn)), RealtimeInputSpeechEndEvent(item_id=f'user-{turn}'))
-            ),
-            _UserAction(stream_chunks),
-            *(InputTranscript(text=f'Question {turn}.', is_final=True, item_id=f'user-{turn}') for turn in turns),
-        ]
-    )
-    session = RealtimeSession(conn, audio_retention='input_audio', retain_audio_max_seconds=1)
-    conn.session = session
-    async with session:
-        await drain_events(session)
-
-    assert _CountingSegments.walks == 0
-    counting = session._input_segments._segments  # pyright: ignore[reportPrivateUsage]
-    _ = (list(counting), list(counting.values()), list(counting.items()))
-    assert _CountingSegments.walks == 3, 'the counter sees a walk'
-    # A second holds the last nine waiting segments beside the 0.1 s streamed after them.
-    assert [
-        (part.transcript, part.audio is not None)
-        for message in session.all_messages()
-        for part in message.parts
-        if isinstance(part, SpeechPart)
-    ] == [(f'Question {turn}.', turn >= 11) for turn in turns]
-
-
 async def test_audio_retention_budget_skips_history_while_nothing_there_can_be_evicted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5969,7 +5946,10 @@ async def test_send_during_response_is_recorded_after_response() -> None:
         remaining_events = [event async for event in stream]
 
     assert isinstance(first_event, PartStartEvent)
-    assert isinstance(remaining_events[-1], RealtimeTurnCompleteEvent)
+    # The response ended, but the text sent meanwhile asked for a reply this connection never gives: the exchange
+    # `wait_for_reply()` would wait for isn't over.
+    assert isinstance(remaining_events[-1], PartEndEvent)
+    assert not any(isinstance(event, RealtimeTurnCompleteEvent) for event in remaining_events)
     assert session.new_messages() == snapshot(
         [
             ModelResponse(
@@ -5990,113 +5970,6 @@ async def test_manual_turn_control_helpers_forward_to_connection() -> None:
     await session.create_response()
     await session.clear_audio()
     assert conn.sent == [CommitAudio(), CreateResponse(), ClearAudio()]
-
-
-async def test_text_request_reserved_before_response_finishes_during_send() -> None:
-    class _FinishingSend(FakeRealtimeConnection):
-        async def send_input(self, content: RealtimeInput) -> None:
-            self.sent.append(content)
-            session._translate_event(OutputTranscript(text='done', is_final=True))  # pyright: ignore[reportPrivateUsage]
-            session._translate_event(ResponseDone())  # pyright: ignore[reportPrivateUsage]
-
-    conn = _FinishingSend([])
-    session = RealtimeSession(conn)
-    await session.send('question')
-    assert _own_record(session) == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='question', timestamp=IsDatetime())], timestamp=IsDatetime()),
-            ModelResponse(
-                parts=[SpeechPart(speaker='assistant', transcript='done')],
-                timestamp=IsDatetime(),
-                finish_reason='stop',
-            ),
-        ]
-    )
-
-
-async def test_send_audio_reserved_before_speech_boundary_during_send() -> None:
-    """The turn audio opens is reserved before the chunk goes out, so a boundary handled meanwhile still records it.
-
-    The chunk itself isn't in that turn: the provider drew the boundary before it had the chunk, so the chunk
-    is retained for the next turn instead.
-    """
-
-    class _BoundarySend(FakeRealtimeConnection):
-        async def send_input(self, content: RealtimeInput) -> None:
-            self.sent.append(content)
-            session._translate_event(RealtimeInputSpeechEndEvent())  # pyright: ignore[reportPrivateUsage]
-
-    conn = _BoundarySend([], input_transcription_enabled=False)
-    session = RealtimeSession(conn, audio_retention='input_audio')
-    await session.send_audio(b'\xaa\xbb')
-    assert _own_record(session) == snapshot([ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())])
-    assert bytes(session._input_audio) == b'\xaa\xbb'  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
-    class _FailingSend(FakeRealtimeConnection):
-        fail = True
-
-        async def send_input(self, content: RealtimeInput) -> None:
-            if self.fail:
-                raise RuntimeError('send failed')
-            self.sent.append(content)
-
-    conn = _FailingSend([])
-    session = RealtimeSession(conn, audio_retention='input_audio')
-    with pytest.raises(RuntimeError, match='send failed'):
-        await session.send('question')
-    with pytest.raises(RuntimeError, match='send failed'):
-        await session.send('typed question')
-    with pytest.raises(RuntimeError, match='send failed'):
-        await session.send_audio(b'\xaa\xbb')
-    conn.fail = False
-    await session.send_audio(b'\xcc')
-    session._translate_event(InputTranscript(text='successful', is_final=True))  # pyright: ignore[reportPrivateUsage]
-    assert _own_record(session) == snapshot(
-        [
-            ModelRequest(
-                parts=[SpeechPart(speaker='user', transcript='successful', audio=_wav_content(b'\xcc'))],
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-
-    # Without input-audio retention there is no buffered audio to roll back; the failure still
-    # propagates and leaves no history.
-    unretained = RealtimeSession(_FailingSend([]))
-    with pytest.raises(RuntimeError, match='send failed'):
-        await unretained.send_audio(b'\xaa')
-    assert _own_record(unretained) == []
-
-
-async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_that_turn() -> None:
-    """A turn recorded while a chunk is still going out doesn't keep that chunk when its send then fails."""
-
-    class _TurnEndsDuringFailingSend(FakeRealtimeConnection):
-        fail = False
-
-        async def send_input(self, content: RealtimeInput) -> None:
-            if self.fail:
-                session._translate_event(InputTranscript(text='Hi.', is_final=True))  # pyright: ignore[reportPrivateUsage]
-                raise RuntimeError('send failed')
-            self.sent.append(content)
-
-    conn = _TurnEndsDuringFailingSend([])
-    session = RealtimeSession(conn, audio_retention='input_audio')
-    await session.send_audio(b'\xaa\xbb')
-    conn.fail = True
-    with pytest.raises(RuntimeError, match='send failed'):
-        await session.send_audio(b'\xcc\xdd')
-    assert _own_record(session) == snapshot(
-        [
-            ModelRequest(
-                parts=[SpeechPart(speaker='user', transcript='Hi.', audio=_wav_content(b'\xaa\xbb'))],
-                timestamp=IsDatetime(),
-            )
-        ]
-    )
-    assert not session._input_audio  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_transport_failure_while_sending_becomes_a_realtime_error() -> None:
@@ -6133,7 +6006,6 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     with pytest.raises(RealtimeError, match='failed while sending'):
         await session.interrupt(played_ms=120)
     assert interrupted.sent == [TruncateOutput(audio_end_ms=120)]
-    assert session._pending_interrupted_at_ms is None  # pyright: ignore[reportPrivateUsage]
 
     # A session built straight from a connection may not know any model id to attribute this to.
     anonymous = RealtimeSession(_DisconnectedConnection([]))
@@ -6182,8 +6054,6 @@ async def test_audio_chunk_that_hits_a_reconnecting_link_is_dropped() -> None:
         b'\x01\x01',
         b'\x03\x03',
     ]
-    # The dropped chunk isn't retained as audio the user said to the model either.
-    assert bytes(session._input_audio) == b'\x01\x01\x03\x03'  # pyright: ignore[reportPrivateUsage]
 
     conn.dropped = True
     with pytest.raises(RealtimeError, match='failed while sending'):
@@ -6258,15 +6128,6 @@ async def test_failed_create_response_releases_its_reservation() -> None:
     with pytest.raises(ValueError, match='bug in the connection'):
         await session.create_response()
     assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
-
-
-def test_remove_sent_request_ignores_unknown_request() -> None:
-    # Unit test: the rollback helper is only ever called with the request the failing send just
-    # reserved, so the not-found fall-through can't be reached through the public API — pin directly
-    # that it stays tolerant of a request that is in neither pending nor history.
-    session = RealtimeSession(FakeRealtimeConnection([]))
-    session._remove_sent_request(ModelRequest(parts=[]))  # pyright: ignore[reportPrivateUsage]
-    assert session.new_messages() == []
 
 
 async def test_session_accumulates_usage_and_requests() -> None:
@@ -6573,17 +6434,19 @@ async def test_unconsumed_session_queue_keeps_structural_events_and_latest_delta
 
         queued = _queued_realtime_events(session)
         assert sum(isinstance(event, PartDeltaEvent) for event in queued) == 512
-        # The pair after the speech end is the user placeholder this PR adds: a VAD segment whose
-        # transcript never arrives is finalized as a content-less `SpeechPart` rather than vanishing.
-        assert [type(event) for event in queued if not isinstance(event, PartDeltaEvent)] == [
-            RealtimeInputSpeechStartEvent,
-            PartStartEvent,
-            RealtimeInputSpeechEndEvent,
-            PartStartEvent,
-            PartEndEvent,
-            PartEndEvent,
-            RealtimeTurnCompleteEvent,
-        ]
+        # The pair after the turn boundary is the user's turn: a VAD segment whose transcript never arrives is
+        # recorded as a content-less `SpeechPart` rather than vanishing, once nothing more of it can come.
+        assert [type(event).__name__ for event in queued if not isinstance(event, PartDeltaEvent)] == snapshot(
+            [
+                'RealtimeInputSpeechStartEvent',
+                'PartStartEvent',
+                'RealtimeInputSpeechEndEvent',
+                'PartEndEvent',
+                'RealtimeTurnCompleteEvent',
+                'PartStartEvent',
+                'PartEndEvent',
+            ]
+        )
 
         late_events = [event async for event in session]
         late_chunks = [
@@ -6636,12 +6499,23 @@ async def test_unconsumed_session_queue_bounds_structural_events() -> None:
 
         queued = _queued_realtime_events(session)
         structural = [event for event in queued if not isinstance(event, PartDeltaEvent)]
-        assert len(structural) == 512
-        # Seven structural events per turn, not five: the untranscribed-segment placeholder this PR
-        # adds contributes a part start and end of its own.
-        assert session._queue_dropped_structural == turns * 7 - 512  # pyright: ignore[reportPrivateUsage]
-        # The window that survives is the most recent one, and it still ends on a turn boundary.
-        assert isinstance(structural[-1], RealtimeTurnCompleteEvent)
+        # Seven structural events per turn: the untranscribed segment's part starts and ends too. The cap evicts a
+        # part's start with the rest of the part, so it can keep one fewer than it allows.
+        assert len(structural) == snapshot(511)
+        assert session._queue_dropped_structural == snapshot(889)  # pyright: ignore[reportPrivateUsage]
+        # The window that survives is the most recent one.
+        assert [type(event).__name__ for event in structural[-8:]] == snapshot(
+            [
+                'PartEndEvent',
+                'RealtimeInputSpeechStartEvent',
+                'PartStartEvent',
+                'RealtimeInputSpeechEndEvent',
+                'PartEndEvent',
+                'RealtimeTurnCompleteEvent',
+                'PartStartEvent',
+                'PartEndEvent',
+            ]
+        )
         # No delta is orphaned; `test_unconsumed_session_queue_never_orphans_a_delta` covers the
         # densities where that takes evicting a part whole.
         started = {event.index for event in structural if isinstance(event, PartStartEvent)}
@@ -6965,9 +6839,9 @@ async def test_audio_only_user_turn_finalized_on_speech_stopped() -> None:
     events = await collect_events(session)
     user_part = SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))
     assert events[:3] == [
+        RealtimeInputSpeechEndEvent(),
         PartStartEvent(index=0, part=user_part),
         PartEndEvent(index=0, part=user_part),
-        RealtimeInputSpeechEndEvent(),
     ]
     assert session.new_messages() == snapshot(
         [
@@ -6997,50 +6871,6 @@ async def test_audio_only_user_turn_finalized_on_turn_complete() -> None:
             ModelRequest(parts=[SpeechPart(speaker='user', audio=_wav_content(b'\xaa\xbb'))], timestamp=IsDatetime()),
             ModelResponse(
                 parts=[SpeechPart(speaker='assistant', transcript='Hi')],
-                model_name='m',
-                timestamp=IsDatetime(),
-                finish_reason='stop',
-            ),
-        ]
-    )
-
-
-async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
-    conn = FakeRealtimeConnection([], input_transcription_enabled=False)
-    session = RealtimeSession(conn, model_name='m', audio_retention='input_audio')
-
-    await session.send_audio(b'\xaa')
-    await session.commit_audio()
-    session._translate_event(OutputTranscript(text='first', is_final=True))  # pyright: ignore[reportPrivateUsage]
-    session._translate_event(ResponseDone())  # pyright: ignore[reportPrivateUsage]
-    await session.send_audio(b'\xbb')
-    await session.commit_audio()
-    session._translate_event(OutputTranscript(text='second', is_final=True))  # pyright: ignore[reportPrivateUsage]
-    session._translate_event(ResponseDone())  # pyright: ignore[reportPrivateUsage]
-    events = await collect_events(session)
-
-    first_user = SpeechPart(speaker='user', audio=_wav_content(b'\xaa'))
-    second_user = SpeechPart(speaker='user', audio=_wav_content(b'\xbb'))
-    # Each turn's part gets its own session-unique index, so a consumer can tell the second user turn
-    # from the first (and from the assistant response that took index 1 in between).
-    assert events == [
-        PartStartEvent(index=0, part=first_user),
-        PartEndEvent(index=0, part=first_user),
-        PartStartEvent(index=2, part=second_user),
-        PartEndEvent(index=2, part=second_user),
-    ]
-    assert _own_record(session) == snapshot(
-        [
-            ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime()),
-            ModelResponse(
-                parts=[SpeechPart(speaker='assistant', transcript='first')],
-                model_name='m',
-                timestamp=IsDatetime(),
-                finish_reason='stop',
-            ),
-            ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime()),
-            ModelResponse(
-                parts=[SpeechPart(speaker='assistant', transcript='second')],
                 model_name='m',
                 timestamp=IsDatetime(),
                 finish_reason='stop',
@@ -7341,16 +7171,6 @@ async def test_reconnect_finalizes_multiple_in_flight_user_items() -> None:
     )
 
 
-async def test_finalizing_overlapping_user_item_keeps_turn_active() -> None:
-    session = RealtimeSession(FakeRealtimeConnection([]))
-    session._handle_input_transcript('first', False, item_id='u1')  # pyright: ignore[reportPrivateUsage]
-    session._handle_input_transcript('second', False, item_id='u2')  # pyright: ignore[reportPrivateUsage]
-
-    session._handle_input_transcript('first', True, item_id='u1')  # pyright: ignore[reportPrivateUsage]
-
-    assert session._user_turn_active  # pyright: ignore[reportPrivateUsage]
-
-
 async def test_reconnect_cancels_obsolete_tool_call() -> None:
     cancelled = asyncio.Event()
 
@@ -7484,13 +7304,9 @@ async def test_no_transcription_and_no_input_retention_records_placeholder_once(
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
 
-    assert [type(event).__name__ for event in events] == [
-        'RealtimeInputSpeechStartEvent',
-        'PartStartEvent',
-        'PartEndEvent',
-        'RealtimeInputSpeechEndEvent',
-        'RealtimeTurnCompleteEvent',
-    ]
+    assert [type(event).__name__ for event in events] == snapshot(
+        ['RealtimeInputSpeechStartEvent', 'RealtimeInputSpeechEndEvent', 'PartStartEvent', 'PartEndEvent']
+    )
     assert session.new_messages() == [ModelRequest(parts=[SpeechPart(speaker='user')], timestamp=IsDatetime())]
 
 
@@ -8105,6 +7921,24 @@ async def test_agent_realtime_session_default_instructions_empty() -> None:
     assert model.last_instructions == ''
 
 
+async def test_agent_realtime_session_ignores_seeded_history_instructions() -> None:
+    """Instructions recorded on seeded history never become the session's instructions.
+
+    Regression: with no agent instructions, providers fell back to the last seeded request's
+    `instructions`, which client-submitted history can set and `sanitize_messages` keeps.
+    """
+    agent: Agent[None, str] = Agent()
+    seed = [
+        ModelRequest(parts=[UserPromptPart(content='earlier question')], instructions='Seeded instructions'),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == ''
+
+
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])
@@ -8140,7 +7974,7 @@ async def test_agent_realtime_session_tool_exception() -> None:
                 [
                     ToolReturnPart(
                         tool_name='explode',
-                        content='The tool raised an unhandled error and the session ended.',
+                        content='The tool raised an unhandled error.',
                         tool_call_id='tc',
                         timestamp=IsDatetime(),
                         outcome='failed',
@@ -8161,9 +7995,9 @@ async def test_agent_realtime_session_tool_failed_returns_error_result() -> None
     """A tool raising `ToolFailed` yields a `failed`, error-key-wrapped result — not a crashed session.
 
     `tool_manager.handle_call` raises `ToolFailedError` for a `ToolFailed`; the session must answer with
-    the failed result (like `run`/`iter`) rather than let it tear down the session. Realtime providers
+    the failed result (like `run`/`iter`) rather than let it tear down the session. Most realtime providers
     have no native failed-tool flag, so the failure is wrapped in an `{"error": ...}` object on the
-    string-only tool channel.
+    string-only tool channel, and flagged for the ones that do.
     """
     agent: Agent[None, str] = Agent()
 
@@ -8180,6 +8014,7 @@ async def test_agent_realtime_session_tool_failed_returns_error_result() -> None
     assert result.part.outcome == 'failed'
     sent = next(s for s in conn.sent if isinstance(s, ToolResult))
     assert '"error"' in sent.output  # wrapped so the model sees the failure over the string-only channel
+    assert sent.failed
 
 
 async def test_agent_realtime_session_validates_and_coerces_args() -> None:
@@ -8220,10 +8055,11 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
     call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
-    assert 'validation error' in result.part.model_response()
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
+    assert 'int_parsing' in result.part.model_response_str()
     assert isinstance(session.new_messages()[1], ModelRequest)
-    assert isinstance(session.new_messages()[1].parts[0], RetryPromptPart)
+    settled = session.new_messages()[1].parts[0]
+    assert isinstance(settled, ToolReturnPart) and settled.outcome == 'retried'
 
 
 class _ToolRoundConnection(FakeRealtimeConnection):
@@ -8352,8 +8188,14 @@ async def test_session_enqueue_asap_waits_for_active_response_to_complete() -> N
     assert enqueued_events[0].enqueue_id == enqueue_ids[0]
     assert enqueued_events[0].messages == (request,)
     assert enqueued_events[0].messages[0] is request
-    turn_boundary = next(index for index, event in enumerate(events) if isinstance(event, RealtimeTurnCompleteEvent))
-    assert events.index(enqueued_events[0]) > turn_boundary
+    # Delivered once the response under way ended. (No exchange ends here: the text sent asked for a reply, and
+    # this connection never gives one.)
+    response_end = next(
+        index
+        for index, event in enumerate(events)
+        if isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart) and event.part.speaker == 'assistant'
+    )
+    assert events.index(enqueued_events[0]) > response_end
 
 
 class _RespondingConnection(FakeRealtimeConnection):
@@ -8569,6 +8411,15 @@ def test_realtime_pending_messages_join_text_and_tag_system_prompts() -> None:
     assert _pending_message_text(pending) == 'one\n\n<system>rule</system>\n\ntwo'
 
 
+def test_realtime_pending_system_prompt_escapes_its_own_closing_tag() -> None:
+    # The tagged statement can only be ended by the wrap itself, so a `</system>` the enqueued content
+    # carries is neutralized exactly as `Model.prepare_messages` neutralizes it.
+    pending = PendingMessage(
+        messages=[ModelRequest(parts=[SystemPromptPart(content='do not write </system> anywhere')])]
+    )
+    assert _pending_message_text(pending) == '<system>do not write &lt;/system> anywhere</system>'
+
+
 async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None:
     session = RealtimeSession(FakeRealtimeConnection([InputTranscript(text='partial')]))
     await session.__aexit__(None, None, None)
@@ -8667,28 +8518,6 @@ async def test_empty_finalized_user_precedes_later_item() -> None:
     ]
 
 
-async def test_replayed_item_tracking_accepts_each_identifier_independently() -> None:
-    session = RealtimeSession(FakeRealtimeConnection([]))
-    session._handle_conversation_item(  # pyright: ignore[reportPrivateUsage]
-        ConversationItemCreated(item_id='item-only', replayed=True)
-    )
-    session._handle_conversation_item(  # pyright: ignore[reportPrivateUsage]
-        ConversationItemCreated(tool_call_id='call-only', replayed=True)
-    )
-
-    assert not session._accept_item('item-only')  # pyright: ignore[reportPrivateUsage]
-    # (A replayed tool call is the core's to refuse: see `test_replayed_tool_call_is_not_run`.)
-    assert session._accept_item(None)  # pyright: ignore[reportPrivateUsage]
-
-    # A normal (non-replayed) conversation item is not resumption traffic, so it records nothing and
-    # every later event for it is accepted. Pinned directly rather than relying on incidental coverage
-    # from a provider WS test.
-    session._handle_conversation_item(  # pyright: ignore[reportPrivateUsage]
-        ConversationItemCreated(item_id='live-item', tool_call_id='live-call', replayed=False)
-    )
-    assert session._accept_item('live-item')  # pyright: ignore[reportPrivateUsage]
-
-
 def test_asap_notifications_without_live_loop_and_after_close_are_ignored() -> None:
     session = RealtimeSession(FakeRealtimeConnection([]))
     session._notify_pending_messages('asap')  # pyright: ignore[reportPrivateUsage]
@@ -8731,15 +8560,14 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
-        session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
-    session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
     completion = asyncio.Event()
     await session._run_tool(  # pyright: ignore[reportPrivateUsage]
@@ -8748,6 +8576,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         execution_prerequisites=(),
         completion=completion,
         response_usage_follows=True,
+        response_continues=False,
         run_step=0,
         reserved_budget=True,
         order_index=0,
@@ -8789,15 +8618,14 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
-        session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
-    session._tool_calls_awaiting_usage.add('call')  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(session, '_execute_tool', complete_after_usage)
 
     task = asyncio.create_task(
@@ -8807,6 +8635,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
             execution_prerequisites=(),
             completion=asyncio.Event(),
             response_usage_follows=True,
+            response_continues=False,
             run_step=0,
             reserved_budget=True,
             order_index=0,
@@ -8934,9 +8763,9 @@ async def test_tool_call_limit_counts_in_flight_calls() -> None:
 
 
 async def test_iterator_reuses_receive_pump_started_by_session_owner() -> None:
-    session = RealtimeSession(FakeRealtimeConnection([ResponseDone()]))
+    session = RealtimeSession(FakeRealtimeConnection([OutputTranscript(text='Hi.', is_final=True), ResponseDone()]))
     async with session:
-        assert [event async for event in session] == [RealtimeTurnCompleteEvent()]
+        assert [event async for event in session][-1] == RealtimeTurnCompleteEvent()
 
 
 async def test_receive_pump_stops_when_event_handler_trips_limit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -8991,9 +8820,11 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
                 events.append(event)
 
     results = [e.part for e in events if isinstance(e, FunctionToolResultEvent)]
-    assert len(results) == 1 and isinstance(results[0], RetryPromptPart)
-    assert str(results[0].content).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=results[0].model_response())]
+    assert len(results) == 1
+    retried = results[0]
+    assert isinstance(retried, ToolReturnPart) and retried.outcome == 'retried'
+    assert str(retried.content).startswith('1 is not allowed')
+    assert conn.sent == [ToolResult(tool_call_id='tc1', output=retried.model_response_str(), failed=True)]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -9091,6 +8922,40 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.outcome == 'denied'
     assert 'denied' in str(result.part.content).lower()
+
+
+async def test_agent_realtime_session_deferred_call_answered_with_a_legacy_retry_prompt() -> None:
+    """A handler can still answer a deferred call with a `RetryPromptPart` of its own.
+
+    It settles the way the `ModelRetry` beside it in `DeferredToolResults` does: the retry answers
+    this call, so the session records and sends the call's own retried result — the feedback alone,
+    without the `'Fix the errors and try again.'` tail the old rendering appended.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def buy(fruit: str) -> str:
+        raise CallDeferred
+
+    def out_of_stock(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={
+                call.tool_call_id: legacy_retry_prompt_part(content='pears are out of stock') for call in requests.calls
+            }
+        )
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='buy', args='{"fruit": "pear"}'), ResponseDone()]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=out_of_stock)]).session() as session:
+        events = [e async for e in session]
+
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert (result.part.tool_name, result.part.outcome) == ('buy', 'retried')
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"pears are out of stock"}', failed=True)]
+    )
 
 
 # --- declarative `requires_approval=True` gating ------------------------------------------------
@@ -9280,9 +9145,16 @@ async def test_executed_call_still_consumes_the_tool_call_limit() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='ordinary', args='{}'), ResponseDone()])
     model = FakeRealtimeModel(conn)
+    events: list[RealtimeEvent] = []
     with pytest.raises(UsageLimitExceeded):
         async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
-            _ = [e async for e in session]
+            async for event in session:
+                # Nothing streams ahead of the refused call.
+                events.append(event)  # pragma: no cover
+
+    # Refused before anything of it streams. (The response that made it ended in the same frame, so it is
+    # recorded, and the call gets the interrupted return a call that never ran gets.)
+    assert events == []
 
 
 async def test_tools_from_one_response_share_a_run_step() -> None:
@@ -9871,6 +9743,22 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
     assert model.last_instructions == 'Base\n\nDynamic'
 
 
+async def test_agent_realtime_session_append_instructions_warn() -> None:
+    agent: Agent[None, str] = Agent(instructions='Base')
+
+    @agent.instructions(name='state', on_change='append')
+    def state() -> str:
+        return 'Current state'
+
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(
+        UserWarning, match="realtime sessions, so instruction blocks 'agent:state' are sent as session instructions"
+    ):
+        async with agent.realtime(model).session() as session:
+            _ = [event async for event in session]
+    assert model.last_instructions == 'Base\n\nCurrent state'
+
+
 async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:
     """A static toolset `InstructionPart` sorts before dynamic agent instructions, like `run`/`iter`.
 
@@ -10100,21 +9988,6 @@ async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
             await asyncio.sleep(0)
 
     assert conn.sent == ['late idle message']
-
-
-def test_finalized_response_terminal_does_not_begin_another_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = RealtimeSession(FakeRealtimeConnection([]))
-    session._response_finalized_before_terminal = True  # pyright: ignore[reportPrivateUsage]
-    begins = 0
-
-    def begin() -> None:  # pragma: no cover — the test asserts this is never called
-        nonlocal begins
-        begins += 1
-
-    monkeypatch.setattr(session, '_begin_response', begin)
-    session._translate_event(ResponseDone())  # pyright: ignore[reportPrivateUsage]
-
-    assert begins == 0
 
 
 async def test_agent_realtime_session_per_request_input_token_limit_raises() -> None:
@@ -10640,10 +10513,8 @@ async def test_agent_realtime_session_drops_auto_injected_tool_search() -> None:
 
 
 async def test_send_audio_first_chunk_bad_rolls_back_turn_state() -> None:
-    """Regression: a non-bytes chunk from an async iterable raised inside the
-    retention-buffer extend, which sat OUTSIDE the rollback try — leaving
-    `_user_turn_active` set (and a pending turn anchor) with nothing buffered
-    or sent, producing a phantom empty user turn at the next boundary."""
+    """Regression: a non-bytes chunk from an async iterable must fail before it goes out, leaving no phantom
+    empty user turn at the next boundary."""
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, audio_retention='input_audio')
 
@@ -10651,11 +10522,9 @@ async def test_send_audio_first_chunk_bad_rolls_back_turn_state() -> None:
         yield 123  # type: ignore[misc]
 
     async with session:
-        with pytest.raises(TypeError):
+        with pytest.raises(ValidationError):
             await session.send_audio(first_chunk_bad())
 
-        assert session._user_turn_active is False, 'bad chunk must roll the turn state back'  # pyright: ignore[reportPrivateUsage]
-        assert len(session._input_audio) == 0  # pyright: ignore[reportPrivateUsage]
         assert conn.sent == [], 'nothing should have reached the connection'
 
         # With the state clean, a later (empty) turn boundary must not record
@@ -10667,9 +10536,8 @@ async def test_send_audio_first_chunk_bad_rolls_back_turn_state() -> None:
 
 
 async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
-    """The chunk that fails rolls back to its own entry snapshot: the turn it
-    found still active stays active, and the chunks that already succeeded
-    remain sent and buffered (nothing is duplicated or dropped)."""
+    """The chunk that fails goes nowhere, and the chunks that already succeeded remain sent (nothing is duplicated
+    or dropped)."""
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, audio_retention='input_audio')
 
@@ -10678,11 +10546,9 @@ async def test_send_audio_bad_later_chunk_keeps_earlier_chunks() -> None:
         yield 'not-bytes'  # type: ignore[misc]
 
     async with session:
-        with pytest.raises(TypeError):
+        with pytest.raises(ValidationError):
             await session.send_audio(chunks())
 
-        assert session._user_turn_active is True, 'the first chunk legitimately opened the turn'  # pyright: ignore[reportPrivateUsage]
-        assert bytes(session._input_audio) == b'good-bytes'  # pyright: ignore[reportPrivateUsage]
         assert len(conn.sent) == 1
 
 
@@ -11981,7 +11847,7 @@ async def test_reconnect_with_tools_running_leaves_no_reply_to_count() -> None:
     session = RealtimeSession(conn, _slow_until(asyncio.Event()))
     async with session:
         events = asyncio.create_task(drain_events(session))
-        await _until(lambda: not session._pending_tool_calls and session._history != [])  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: not session._pending_tool_calls and session.all_messages() != [])  # pyright: ignore[reportPrivateUsage]
         assert not session._core.result_asks_reply('c1')  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
@@ -12421,60 +12287,9 @@ async def test_a_response_whose_first_frame_trips_a_token_limit_is_recorded() ->
     assert [type(message).__name__ for message in session.all_messages()] == ['ModelResponse']
 
 
-@pytest.mark.parametrize(
-    ('item_id', 'ended'),
-    [
-        pytest.param('u1', False, id='named-turn-started'),
-        pytest.param('u1', True, id='named-turn-ended'),
-        pytest.param(None, False, id='unnamed-turn-started'),
-    ],
-)
-async def test_own_record_keeps_a_turn_anchored_to_a_response_whose_retained_audio_it_drops(
-    item_id: str | None, ended: bool
-) -> None:
-    """A turn started while a response was spoken is anchored to it, and stays so once its audio leaves the record."""
-    speech_end: list[RealtimeCodecEvent] = [RealtimeInputSpeechEndEvent(item_id=item_id)]
-    conn = FakeRealtimeConnection(
-        [
-            AudioDelta(data=b'\x01\x00'),
-            OutputTranscript(text='Hello.', is_final=True),
-            RealtimeInputSpeechStartEvent(item_id=item_id),
-            *(speech_end if ended else []),
-            ResponseDone(),
-            *([] if ended else speech_end),
-            InputTranscript(text='Hi.', is_final=True, item_id=item_id),
-        ]
-    )
-    session = RealtimeSession(conn, audio_retention='all')
-    await collect_events(session)
-    assert [
-        (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
-        for message in _own_record(session)
-    ] == [('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])]
-
-
-class _DeferredCommitConnection(_ContinuousMicrophoneConnection):
-    """Sends a commit as it gets it, but reports it through the listener, as a connection that holds it would."""
-
-    _listener: Callable[[], None] | None = None
-
-    @property
-    def _defers_audio_commit(self) -> bool:
-        return True
-
-    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
-        self._listener = listener
-
-    async def send_input(self, content: RealtimeInput) -> None:
-        if isinstance(content, CommitAudio):
-            assert self._listener is not None
-            self._listener()
-        await super().send_input(content)
-
-
-async def test_own_record_keeps_a_commit_anchored_to_a_response_whose_retained_audio_it_drops() -> None:
-    """A turn committed while a response was spoken follows it in the record, once its audio leaves the record too."""
-    conn = _DeferredCommitConnection(
+async def test_a_turn_committed_while_a_response_is_spoken_follows_it() -> None:
+    """A turn the user commits while a response is spoken follows that response in history."""
+    conn = _ContinuousMicrophoneConnection(
         [
             AudioDelta(data=b'\x01\x00'),
             OutputTranscript(text='Hello.', is_final=True),
@@ -12490,7 +12305,7 @@ async def test_own_record_keeps_a_commit_anchored_to_a_response_whose_retained_a
         await drain_events(session)
     assert [
         (type(message).__name__, [part.transcript for part in message.parts if isinstance(part, SpeechPart)])
-        for message in _own_record(session)
+        for message in session.all_messages()
     ] == snapshot([('ModelResponse', ['Hello.']), ('ModelRequest', ['Hi.'])])
 
 
@@ -12552,3 +12367,94 @@ async def test_a_stale_usage_report_still_moves_the_context_window_used() -> Non
     session = RealtimeSession(_StaleReport([]))
     await collect_events(session)
     assert (session.usage.input_tokens, session.context_window_used) == (0, 0.3)
+
+
+class _PrunesToolItems(FakeRealtimeConnection):
+    """Answers a tool's result, and deletes the tool rounds the session says are over.
+
+    With `link_drops`, the first attempt hits a dead link; another frame comes once `more` is set.
+    """
+
+    transport_errors = (ConnectionResetError,)
+
+    def __init__(self, *, link_drops: bool = False, keeps: bool = False) -> None:
+        super().__init__([])
+        self.link_drops = link_drops
+        self.keeps = keeps
+        self.attempts = 0
+        self.pruned: list[str] = []
+        self.result_sent = asyncio.Event()
+        self.more = asyncio.Event()
+
+    @property
+    def _prunes_tool_calls(self) -> bool:
+        return True
+
+    async def send_input(self, content: RealtimeInput) -> None:
+        await super().send_input(content)
+        # (The tool's result is all the session sends.)
+        self.result_sent.set()
+
+    async def codec_events(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield ToolCall(tool_call_id='c1', tool_name='noop', args='{}')
+        await self.result_sent.wait()
+        yield OutputTranscript(text='Done.', is_final=True)
+        yield ResponseDone()
+        await self.more.wait()
+        yield SessionUsage(RequestUsage(input_tokens=1), response_scoped=False)
+        await asyncio.Event().wait()
+
+    async def _prune_tool_calls(self, calls: Sequence[ToolCallPart]) -> Sequence[str]:
+        self.attempts += 1
+        if self.link_drops and self.attempts == 1:
+            raise ConnectionResetError('connection reset by peer')
+        if self.keeps:
+            return []
+        self.pruned.extend(call.tool_call_id for call in calls)
+        return [call.tool_call_id for call in calls]
+
+
+@pytest.mark.parametrize('link_drops', [False, True])
+async def test_tool_rounds_the_connection_prunes_leave_the_replay(link_drops: bool) -> None:
+    """Once the answer completes, the connection is asked to prune the round: what it deleted, a replay leaves out.
+
+    A link that drops as it deletes prunes nothing: the round stays in the replay, and is pruned once the next frame
+    is handled (from the conversation the reconnect replayed it into).
+    """
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    def calls(messages: list[ModelMessage]) -> list[str]:
+        return [part.tool_call_id for message in messages for part in message.parts if isinstance(part, ToolCallPart)]
+
+    conn = _PrunesToolItems(link_drops=link_drops)
+    session = RealtimeSession(conn, runner)
+    async with session:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await _until(lambda: conn.attempts == 1)
+        assert calls(session._core.replayable_messages()) == ([] if not link_drops else ['c1'])  # pyright: ignore[reportPrivateUsage]
+        conn.more.set()
+        await _until(lambda: conn.pruned == ['c1'])
+        assert calls(session._core.replayable_messages()) == []  # pyright: ignore[reportPrivateUsage]
+
+    assert calls(session.all_messages()) == ['c1']
+
+
+async def test_tool_rounds_the_connection_keeps_stay_in_the_replay() -> None:
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'done'
+
+    conn = _PrunesToolItems(keeps=True)
+    session = RealtimeSession(conn, runner)
+    async with session:
+        with anyio.fail_after(_LIVENESS_TIMEOUT):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+            await _until(lambda: conn.attempts == 1)
+        replayed = session._core.replayable_messages()  # pyright: ignore[reportPrivateUsage]
+        assert any(isinstance(part, ToolCallPart) for message in replayed for part in message.parts)

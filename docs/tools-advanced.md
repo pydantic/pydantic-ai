@@ -574,7 +574,7 @@ If preserving cache hits matters, prefer providers/cases marked "Never", or use 
 
 ## Tool Execution, Retries, and Failures {#tool-retries}
 
-When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
+When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically answers the call with a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying the validation details and `outcome='retried'`. That result is sent back to the LLM on the provider's error channel, informing it of the error and allowing it to correct the parameters and retry the tool call.
 
 If a tool's own logic cannot produce a normal result, choose the exception based on what you want the model to do next:
 
@@ -585,7 +585,7 @@ Any other exception propagates out of the agent run and is not sent back to the 
 
 ### Requesting a Tool Retry
 
-Raising `ModelRetry` generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the exception message. That prompt is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
+Raising `ModelRetry` answers the call with a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying the exception message and `outcome='retried'`. That result is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
 
 ```python
 from pydantic_ai import ModelRetry
@@ -648,7 +648,7 @@ You can also raise `ModelRetry` or `ToolFailed` from tool validation and executi
 
 ### Tool Timeout
 
-You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and a retry prompt is sent to the model (counting towards the retry limit).
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and the call is answered with a retried tool result (counting towards the retry limit).
 
 ```python
 import asyncio
@@ -676,7 +676,7 @@ async def fast_tool() -> str:
 - **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to the tools registered on it.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
-When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+When a timeout occurs, the tool is treated as a retryable failure and the model receives a retried tool result with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
 Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], which is what backs the agent's own tools. Tools served by an [MCP server](mcp/client.md), an [external toolset](deferred-tools.md), or a custom [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] do not read them — bind those deadlines at the server or transport level instead. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for how tool timeouts relate to the other deadlines in a run.
 
@@ -721,7 +721,7 @@ print(result.output.approvals[0].args)
 
 _(This example is complete, it can be run "as is")_
 
-When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
+When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retried tool result and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
 
 A validator can defer the call itself, just like the tool function can — and it's the better place to make that decision, since bad arguments are rejected before a human is asked to approve them. A validator that raises `ApprovalRequired` or `CallDeferred` doesn't consume the retry budget either: the arguments were valid, so the deferral is a deliberate decision rather than a failure. The tool function is not executed, and the call joins the run's other [deferred tool calls](deferred-tools.md): it's resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler if you have one, or surfaced in the run's `DeferredToolRequests` output. Once the call is [approved](deferred-tools.md#human-in-the-loop-tool-approval), the validator runs again — this time with [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] set to `True` — and the tool executes.
 
@@ -1054,6 +1054,132 @@ Change a single tool definition, and the whole prefix is re-created instead — 
 - Restricting the *active* tools with [`tool_choice`](#tool-choice) can also invalidate the cache when Pydantic AI has to trim the array client-side — see [Prompt caching implications](#tool-choice-caching) for the per-provider breakdown and the cache-preserving alternatives (`allowed_tools`, `allowed_function_names`, `ToolOrOutput`).
 - To place explicit cache breakpoints on messages, use [`CachePoint`][pydantic_ai.messages.CachePoint] (honored by Anthropic, Bedrock, and OpenRouter). Anthropic's tool, system, and instruction caching settings are documented under [Anthropic prompt caching](models/anthropic.md#prompt-caching).
 - On providers that cache tool definitions at the front of the prefix — Anthropic, OpenAI, and xAI — editing a single tool's description invalidates the cached prefix. Google's *implicit* cache is prefix-based on a different layout (its `system_instruction` is a separate field ahead of the tool block), so a large stable system instruction can keep cache hits even when the tool list changes; an explicit [`CachedContent`](models/google.md) instead fixes the tools as an immutable part of the cache by construction.
+
+## Typed Tool Parts {#typed-tool-parts}
+
+A tool's name is chosen by whoever wrote or configured it, and can be renamed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]), so code that needs to recognize a particular tool should not compare names. Instead, a tool can declare what it is with a [`ToolKind`][pydantic_ai.messages.ToolKind]. Its call and return parts carry the kind's [`id`][pydantic_ai.messages.ToolKind.id] as their [`tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind] and are promoted to typed subclasses of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. A hook or history processor can then match the tool with `isinstance`, whatever it is called. Core's tool search and deferred-capability tools work this way: [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] and [`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart] are examples.
+
+A kind has a namespace and a name, and optionally the shapes of the tool's arguments (`args`) and result (`content`), typically `TypedDict`s. Its id is `'{namespace}.{name}'`: the namespace keeps kinds from different packages apart, which matters because the id is stored in every message history. Typed parts are registered for a kind with the `kind` class argument, the way [capability events](capabilities/overview.md#capability-events) are defined, and need no `@dataclass` decorator. Their base class is parameterized with the kind's shape, which types their `typed_args` and `typed_content`. A tool then declares its kind with `tool_kind`, here on [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]:
+
+```python {title="typed_tool_part.py"}
+from typing_extensions import TypedDict
+
+from pydantic_ai import Agent, ToolKind
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+
+
+class LookupArgs(TypedDict):
+    sku: str
+
+
+class LookupResult(TypedDict):
+    in_stock: bool
+
+
+lookup = ToolKind('inventory', 'lookup', args=LookupArgs, content=LookupResult)
+
+
+class LookupCallPart(ToolCallPart[LookupArgs], kind=lookup):
+    pass
+
+
+class LookupReturnPart(ToolReturnPart[LookupResult], kind=lookup):
+    pass
+
+
+agent = Agent('test')
+
+
+@agent.tool_plain(tool_kind=lookup)
+def check_stock(args: LookupArgs) -> LookupResult:
+    return {'in_stock': args['sku'].startswith('A')}
+
+
+result = agent.run_sync('Is A-1 in stock?')
+call = result.all_messages()[1].parts[0]
+tool_return = result.all_messages()[2].parts[0]
+assert isinstance(call, LookupCallPart) and isinstance(tool_return, LookupReturnPart)
+print(call.tool_kind)
+#> inventory.lookup
+print(call.typed_args)
+#> {'sku': 'a'}
+print(tool_return.typed_content)
+#> {'in_stock': False}
+```
+
+A tool function can take the kind's arguments as its one parameter, as `check_stock` does: the model still sees the shape's fields (here `sku`) as the tool's parameters, and the function receives them validated as one `LookupArgs`. It can also take them as separate parameters, as in `def check_stock(sku: str) -> LookupResult`. Given a `ToolKind`, the tool decorators make type checkers check the function's return type against the kind's `content`. Type checkers can't tell a single parameter of the wrong shape from a function with separate parameters, so the parameters are checked when the agent collects its tools (see below).
+
+`typed_args` returns the arguments validated against the kind's `args`, or `None` while they are still streaming in or if they don't validate. `args` itself keeps the base type, as it may still hold the raw JSON string. Likewise, `typed_content` returns the content validated against the kind's `content`, or `None` if it doesn't fit. `content` itself is kept as it was sent, even when it's a JSON string, so a stored history and what's sent back to the model don't change. A part is only promoted when its arguments, once they are a dictionary, fit the shape; a return part only when its [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] is `'success'` and its content fits, as the content of any other return is an error rather than the typed result. A kind doesn't have to declare a shape: without one, any arguments or content are promoted, and the typed part's base class is left unparameterized. A base class parameterized with a different shape than the kind's is an error, both for type checkers and when the class is defined.
+
+Any part whose kind has a typed part is promoted as soon as its [`ModelResponse`][pydantic_ai.messages.ModelResponse] or [`ModelRequest`][pydantic_ai.messages.ModelRequest] is built, whether by a model, by loading a stored history, or by hand, so `ModelResponse(parts=[ToolCallPart('lookup_v2', {'sku': 'A-1'}, tool_kind='inventory.lookup')]).parts[0]` is a `LookupCallPart` too. This applies to core's own kinds (`'tool-search'`, `'capability-load'`) as well. Under [Temporal](durable_execution/temporal.md), whose workflow sandbox re-imports your modules, a part promoted in workflow code is an instance of the class workflow code imported, so the same `isinstance` checks work there too.
+
+A tool declares its kind with the `tool_kind` argument of [`Tool`][pydantic_ai.tools.Tool] and the tool decorators, or by setting [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind], for example in a toolset's `get_tools` or a [`prepare`](#tool-prepare) function. Either takes the `ToolKind` or its id. When a run collects its tools, it raises [`UserError`][pydantic_ai.exceptions.UserError] for a kind that isn't defined, so the module defining it must be imported; a stored `ToolDefinition` with such a kind (for example in durable execution history) still loads. It also raises `UserError` when the tool's parameters don't fit the kind's `args`, or its return type doesn't fit the kind's `content`: every field the shape requires must be a required field of the tool's, and where both give a field a JSON type, those types must overlap. A return type that can't be compared field by field, such as a union, is accepted. This is a sanity check rather than full JSON Schema comparison.
+
+A typed subclass may only add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't define (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is defined.
+
+### Superseding a tool by kind {#unless-tool-kind}
+
+A capability sometimes offers its own tool for something a more general tool on the agent can also do, such as a tool that reads the notes it keeps in the workspace when the agent can read files anyway. Setting [`ToolDefinition.unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] to a kind makes the tool step aside whenever another tool in the run step has that kind, whatever that tool is called. It's the counterpart of [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native], which does the same for a native tool the model supports.
+
+Instructions and tool results that mention such a tool shouldn't hard-code its name either. [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] returns the name of the tool with a kind in the current step, including any prefix, or `None` when there is none:
+
+```python {title="unless_tool_kind.py"}
+from dataclasses import replace
+
+from pydantic_ai import Agent, AgentRunResult, ModelRequest, RunContext, Tool, ToolKind
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
+
+file_read = ToolKind('workspace', 'file_read')
+
+
+def read_file(path: str) -> str:
+    """Read a file in the workspace."""
+    return f'contents of {path}'
+
+
+def read_notes() -> str:
+    """Read the notes kept in `notes.md`."""
+    return 'notes'
+
+
+def unless_file_reader(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, unless_tool_kind=file_read)
+
+
+agent = Agent('test', tools=[Tool(read_notes, prepare=unless_file_reader)])
+
+
+@agent.instructions
+def notes_instructions(ctx: RunContext) -> str:
+    if reader := ctx.tool_name_for_kind(file_read):
+        return f'Your notes are in `notes.md`. Read them with `{reader}`.'
+    return 'Read your notes with `read_notes`.'
+
+
+def sent_instructions(result: AgentRunResult[str]) -> str | None:
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    return request.instructions
+
+
+result = agent.run_sync('What do my notes say?')
+print(sent_instructions(result))
+#> Read your notes with `read_notes`.
+print(result.output)
+#> {"read_notes":"notes"}
+
+file_tools = FunctionToolset([Tool(read_file, tool_kind=file_read)])
+result = agent.run_sync('What do my notes say?', toolsets=[file_tools])
+print(sent_instructions(result))
+#> Your notes are in `notes.md`. Read them with `read_file`.
+print(result.output)
+#> {"read_file":"contents of a"}
+```
+
+The decision is made when the run step's tools are collected, after any [`prepare_tools`](#prepare-tools) function, so a tool left out is neither sent to the model nor callable, and `tool_name_for_kind` doesn't return it. A tool hidden by [deferred loading](#tool-search) counts as present: the answer, and instructions built from it, stay the same when that tool is revealed, which keeps the prompt cacheable. A tool is only left out in favor of a tool that stays, so if a third tool supersedes the general one, the capability's tool comes back. When tools would each be left out in favor of the other, the one of them listed first in the step's tools stays and every tool whose kind it names steps aside. Some cycles can't meet every rule at once (A unless B, B unless C, C unless A). A tool is still never left out unless a tool it names stays, so in such a cycle a tool can stay beside one whose kind it names; the result is the same for the same tools in the same order. Unlike `tool_kind`, `unless_tool_kind` doesn't need the kind to be defined: only ids are compared, so a capability can step aside for another package's tool by its kind id without importing that package, and a kind no tool has means there is nothing to step aside for.
+
+When several tools have the kind, `tool_name_for_kind` returns the first in the order of [`RunContext.tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list them in, and which you can iterate to see them all. Instruction functions, model request hooks and tools see the current step's tools, including a tool running in a Temporal activity, which answers from a snapshot of the step's tools taken when the activity was dispatched. A toolset's `get_tools` and `prepare_tools` functions run while those are still being collected, so there it answers from the previous step.
 
 ## See Also
 

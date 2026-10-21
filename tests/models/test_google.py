@@ -49,7 +49,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -69,6 +70,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -90,7 +92,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
 from ..cassette_utils import request_json, single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, legacy_retry_prompt_part, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -437,11 +439,13 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The country is not supported. Use "La France" instead.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                     )
                 ],
                 timestamp=IsNow(tz=datetime.UTC),
@@ -1062,6 +1066,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'workspace_ref': None,
             }
@@ -3482,15 +3487,12 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
 
 
 def test_map_usage():
-    assert (
-        _metadata_as_usage(
-            GenerateContentResponse(),
-            # Test the 'google' provider fallback
-            provider='',
-            provider_url='',
-        )
-        == RequestUsage()
-    )
+    assert _metadata_as_usage(
+        GenerateContentResponse(),
+        # Test the 'google' provider fallback
+        provider='',
+        provider_url='',
+    ) == RequestUsage(unmeasured_requests=1)
 
     response = GenerateContentResponse(
         usage_metadata=GenerateContentResponseUsageMetadata(
@@ -4174,6 +4176,7 @@ def test_google_process_response_empty_candidates(google_provider: GoogleProvide
     assert result == snapshot(
         ModelResponse(
             parts=[],
+            usage=RequestUsage(unmeasured_requests=1),
             model_name='gemini-2.5-pro',
             timestamp=IsDatetime(),
             provider_name='google',
@@ -4243,7 +4246,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _provider_url='',
     )
 
-    async for _ in streamed_response._get_event_iterator():  # pyright: ignore[reportPrivateUsage]
+    async for _ in streamed_response:
         pass
 
     return streamed_response.usage
@@ -4260,6 +4263,14 @@ class _UsageRetentionCase:
 
 
 _USAGE_RETENTION_CASES = [
+    _UsageRetentionCase(
+        id='usage_absent_on_every_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(candidates=0, text='hel', with_metadata=False),
+            _usage_chunk(candidates=0, text='lo', with_metadata=False),
+        ],
+        expected=snapshot(RequestUsage(unmeasured_requests=1)),
+    ),
     _UsageRetentionCase(
         id='cached_tokens_dropped_by_later_chunk',
         make_chunks=lambda: [
@@ -5407,7 +5418,8 @@ async def test_google_connect_error_is_wrapped(allow_model_requests: None, strea
             else:
                 await Agent(model).run('test')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'connect'
     assert exc_info.value.message == 'connection refused'
     assert isinstance(exc_info.value.__cause__, HTTPX2ConnectError)
 
@@ -5434,7 +5446,8 @@ async def test_google_stream_read_error_mid_stream_is_wrapped(allow_model_reques
             async with Agent(model).run_stream('test') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'connection reset'
     assert isinstance(exc_info.value.__cause__, HTTPX2ReadError)
 
@@ -5479,9 +5492,9 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6033,7 +6046,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [
@@ -6065,14 +6080,18 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='final_result', content='Final result processed.', tool_call_id='test_id_1'),
-                RetryPromptPart(content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'),
+                legacy_retry_prompt_part(
+                    content='Tool error occurred', tool_name='another_tool', tool_call_id='test_id_2'
+                ),
                 UserPromptPart(content="What's 2 + 2?"),
                 UserPromptPart(content="What's 3 + 3?"),
             ]
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [
@@ -6089,7 +6108,7 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
                     {
                         'function_response': {
                             'name': 'another_tool',
-                            'response': {'error': 'Tool error occurred\n\nFix the errors and try again.'},
+                            'response': {'error': 'Tool error occurred'},
                             'id': 'test_id_2',
                         }
                     },
@@ -6118,7 +6137,9 @@ async def test_google_splits_tool_return_from_user_prompt(google_provider: Googl
         )
     ]
 
-    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    _, contents = await m._map_messages(  # pyright: ignore[reportPrivateUsage]
+        m.prepare_messages(messages, ModelRequestParameters()), ModelRequestParameters()
+    )
 
     assert contents == snapshot(
         [
