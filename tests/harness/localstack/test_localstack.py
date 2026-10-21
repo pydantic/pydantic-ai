@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 import sniffio
+from pydantic import ValidationError
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
@@ -92,11 +93,11 @@ def _docker_stub(tmp_path: Path) -> tuple[str, Path]:
 
 class TestConstruction:
     def test_allow_and_deny_mutually_exclusive(self) -> None:
-        with pytest.raises(ValueError, match=r'Specify allowed_services or denied_services, not both.'):
+        with pytest.raises(ValueError, match=r'Specify `allowed_services` or `denied_services`, not both.'):
             _toolset(allowed_services=['s3'], denied_services=['dynamodb'])
 
     def test_non_positive_max_output_chars_rejected(self) -> None:
-        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
+        with pytest.raises(ValueError, match=r'`max_output_chars` must be a positive integer.'):
             _toolset(max_output_chars=0)
 
 
@@ -347,14 +348,17 @@ class TestAwsCli:
 
     @pytest.mark.parametrize('timeout_seconds', [0.0, -5.0, math.inf, math.nan])
     async def test_rejects_timeout_that_is_not_positive_and_finite(self, timeout_seconds: float) -> None:
-        with pytest.raises(ModelRetry, match='`timeout_seconds` must be a finite number of seconds greater than zero'):
-            await _toolset().aws_cli('s3 ls', timeout_seconds=timeout_seconds)
+        """Argument validation turns a bad model-supplied timeout into a retry before the command or a durable operation runs."""
+        tools = await _toolset().get_tools(_run_context())
+        with pytest.raises(ValidationError, match='timeout_seconds'):
+            tools['aws_cli'].args_validator.validate_python({'command': 's3 ls', 'timeout_seconds': timeout_seconds})
 
-    async def test_rejects_invalid_timeout_before_a_durable_operation(self) -> None:
-        toolset = LocalStack().get_toolset()
-        assert isinstance(toolset, LocalStackToolset)
-        with pytest.raises(ModelRetry, match='`timeout_seconds` must be'):
-            await toolset.aws_cli('s3 ls', timeout_seconds=math.inf)
+    async def test_timeout_constraint_is_in_the_tool_schema(self) -> None:
+        tools = await _toolset().get_tools(_run_context())
+        assert tools['aws_cli'].tool_def.parameters_json_schema['properties']['timeout_seconds']['anyOf'] == [
+            {'exclusiveMinimum': 0, 'type': 'number'},
+            {'type': 'null'},
+        ]
 
     async def test_per_call_timeout_overrides_default(self, tmp_path: Path) -> None:
         stub = _make_stub(tmp_path, 'echo "$@"')
@@ -501,9 +505,9 @@ class TestLocalStackCapability:
         assert 'secret-token' not in repr(cap)
 
     def test_invalid_settings_raise_at_construction(self) -> None:
-        with pytest.raises(ValueError, match=r'Specify allowed_services or denied_services, not both.'):
+        with pytest.raises(ValueError, match=r'Specify `allowed_services` or `denied_services`, not both.'):
             LocalStack(allowed_services=['s3'], denied_services=['sqs'])
-        with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
+        with pytest.raises(ValueError, match=r'`max_output_chars` must be a positive integer.'):
             LocalStack(max_output_chars=0)
 
     def test_invalid_managed_endpoint_port_raises_at_construction(self) -> None:
