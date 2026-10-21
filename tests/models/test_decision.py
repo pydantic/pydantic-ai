@@ -1170,7 +1170,12 @@ async def test_text_output_is_refused(allow_model_requests: None):
 
 
 async def test_file_understanding_describes_what_a_decision_model_cannot_read(allow_model_requests: None):
-    """A document is described for a decision model, and an image is too unless the class reads images."""
+    """A document is described for a decision model, and an image is too unless the class reads images.
+
+    Documents, audio and video are always described here: `DecisionModel.profile` hard-codes them `False` and
+    `DecisionRequest` carries images only, so the accepting side is unreachable for this adapter (it is covered
+    on a plain model in `tests/test_capability_file_understanding.py`).
+    """
 
     def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('A description of the file.')])
