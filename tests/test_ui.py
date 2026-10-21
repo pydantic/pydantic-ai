@@ -1259,7 +1259,7 @@ class RaisingDeferredResultsAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
 
 
 async def test_run_stream_surfaces_deferred_tool_results_error_on_the_stream():
-    """`run_stream_native` promises subclass authors that an exception from `deferred_tool_results`
+    """`run_stream_native` promises subclass authors that a `UserError` from `deferred_tool_results`
     reaches the client as a stream error rather than escaping at the call site.
 
     Pinned here rather than only through a protocol adapter: the promise is on the base class, so a

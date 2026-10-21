@@ -8956,7 +8956,7 @@ async def test_resume_invalid_payload_is_a_protocol_error(payload: Any, expected
         _ = adapter.deferred_tool_results
 
     assert str(exc_info.value) == (
-        "ResumeEntry payload for interrupt 'int-tc-001' does not match the `responseSchema` "
+        "`ResumeEntry` payload for interrupt 'int-tc-001' does not match the `responseSchema` "
         f'advertised on the interrupt ({expected_detail}).'
     )
     # Not a snapshot, so `--inline-snapshot=fix` can't re-bless it: rendering from pydantic's `msg`
@@ -9222,7 +9222,7 @@ async def test_resume_invalid_payload_surfaces_run_error_event() -> None:
     # The detail names the offending field and pydantic's stable error code, and deliberately
     # carries neither the client's own payload nor the private model name behind the schema.
     assert events[-1]['message'] == snapshot(
-        "ResumeEntry payload for interrupt 'int-tc-001' does not match the `responseSchema` "
+        "`ResumeEntry` payload for interrupt 'int-tc-001' does not match the `responseSchema` "
         'advertised on the interrupt (editedArgs: dict_type).'
     )
 

@@ -198,7 +198,7 @@ def resume_entry_to_approval(entry: ResumeEntry) -> DeferredToolApprovalResult:
             for error in e.errors(include_url=False, include_input=False, include_context=False)
         )
         raise UserError(
-            f'ResumeEntry payload for interrupt {entry.interrupt_id!r} does not match the '
+            f'`ResumeEntry` payload for interrupt {entry.interrupt_id!r} does not match the '
             f'`responseSchema` advertised on the interrupt ({details}).'
         ) from e
 
