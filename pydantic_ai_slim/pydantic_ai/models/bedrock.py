@@ -76,13 +76,7 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import (
     ModelAPIError,
-    ModelContextWindowExceededError,
     ModelHTTPError,
-    ModelOverloadedError,
-    ModelQuotaExceededError,
-    ModelRateLimitError,
-    ModelServerError,
-    ModelUnavailableError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -196,7 +190,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         error = e.response.get('Error', {})
         code, message = error.get('Code'), error.get('Message')
         provider_error_code = code if isinstance(code, str) else None
-        category = _error_category(provider_error_code, message)
+        category = _model_errors.bedrock_code_category(provider_error_code, message)
         # An exception event inside a `ConverseStream` response carries no status code; it gets the status the same
         # exception has before the stream opens.
         in_stream = not isinstance(status_code, int)
@@ -243,10 +237,6 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
-_CONTEXT_WINDOW_ERROR_MESSAGES = ('input is too long', 'input tokens exceeded', 'prompt is too long')
-"""Bedrock reports a context window overflow as a `ValidationException`, identifiable only by its message."""
-
-
 _STREAM_EXCEPTION_STATUS_CODES: dict[str, int] = {
     'throttlingexception': 429,
     'serviceunavailableexception': 503,
@@ -261,26 +251,6 @@ See https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse
 https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ResponseStream.html. A
 `modelStreamErrorException` also has an `originalStatusCode`, but botocore leaves it out of the error it raises.
 """
-
-
-def _error_category(code: str | None, message: object) -> _model_errors.HTTPErrorCategory | None:
-    """The error category for a Bedrock error code, which is capitalized in an HTTP error and not in a stream."""
-    match code and code.lower():
-        case 'throttlingexception':
-            return ModelRateLimitError
-        case 'servicequotaexceededexception':
-            return ModelQuotaExceededError
-        case 'modelstreamerrorexception':
-            # The model failed while streaming its response; Bedrock says to retry the request.
-            return ModelServerError
-        case 'serviceunavailableexception' | 'modelnotreadyexception':
-            return ModelOverloadedError if _model_errors.says_overloaded(message) else ModelUnavailableError
-        case 'validationexception' if isinstance(message, str) and any(
-            m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
-        ):
-            return ModelContextWindowExceededError
-        case _:
-            return None
 
 
 class _BotocoreRequestParams(TypedDict):

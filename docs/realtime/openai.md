@@ -550,6 +550,13 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   Pydantic AI treats the delegated work in flight as the work that failed, with code
   `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
   result is recorded in history, but goes nowhere: the turn doesn't wait for it.
+- The backend continues a delegated round only once it has every call's output, and Live has no
+  command to cancel a delegation, so a tool that raises leaves its round unfinished. Pydantic AI gives
+  the round up, so the exchange [ends as on every other provider](tools.md#function-tools): the rest of
+  its results ask for no reply, and turn boundaries are inferred again. Live itself keeps the round
+  open, and in our testing went on answering text but delegated no more work for the rest of the
+  session. To let the model recover, turn the exception into a result with
+  [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error].
 
 ### gpt-realtime {#gpt-realtime-provider-specific-quirks}
 

@@ -1646,6 +1646,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
                 run_built_models=run_built_models,
             )
+
+        # Build the initial state before the step-one model selector runs (but after the default model is
+        # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
+        # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
+        # default ids, so a re-execution of this code gets the same ones.
+        resolved_run_id = _agent_graph.resolve_run_id(
+            run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
+            message_history,
+        )
+        state = _agent_graph.GraphAgentState(
+            message_history=list(message_history) if message_history else [],
+            usage=usage,
+            output_retries_used=0,
+            run_step=0,
+            run_id=resolved_run_id,
+            conversation_id=_agent_graph.resolve_conversation_id(
+                conversation_id,
+                message_history,
+                default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
+            ),
+        )
+
+        # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
+        # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
+        # the deadline it started with. A run started inside another run can only shorten its deadline, and
+        # without a clock of its own measures it against the clock the outer run set it with.
+        run_clock = bootstrap_capability._run_clock() or current_run_clock()  # pyright: ignore[reportPrivateUsage]
+        deadline = inherited_run_deadline()
+        if timeout is not None:
+            start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]
+            own_deadline = start + timedelta(seconds=timeout)
+            deadline = own_deadline if deadline is None else min(own_deadline, deadline)
+        usage_limits = usage_limits or _usage.UsageLimits()
+
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
                 message_history, user_prompt, has_deferred_tool_results=deferred_tool_results is not None
@@ -1658,6 +1692,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 prompt=selection_prompt,
                 messages=selection_messages,
                 usage=usage,
+                usage_limits=usage_limits,
+                deadline=deadline,
+                run_id=state.run_id,
+                conversation_id=state.conversation_id,
             )
             model_used, model_id = await self._evaluate_model_contribution(
                 model_contribution,
@@ -1705,35 +1743,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
-        # Build the initial state. Inside a durable workflow or flow, the durability capability supplies
-        # the default ids, so a re-execution of this code gets the same ones.
-        resolved_run_id = _agent_graph.resolve_run_id(
-            run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
-            message_history,
-        )
-        state = _agent_graph.GraphAgentState(
-            message_history=list(message_history) if message_history else [],
-            usage=usage,
-            output_retries_used=0,
-            run_step=0,
-            run_id=resolved_run_id,
-            conversation_id=_agent_graph.resolve_conversation_id(
-                conversation_id,
-                message_history,
-                default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
-            ),
-        )
-
-        # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
-        # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
-        # the deadline it started with. A run started inside another run can only shorten its deadline, and
-        # without a clock of its own measures it against the clock the outer run set it with.
-        run_clock = bootstrap_capability._run_clock() or current_run_clock()  # pyright: ignore[reportPrivateUsage]
-        deadline = inherited_run_deadline()
-        if timeout is not None:
-            start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]
-            own_deadline = start + timedelta(seconds=timeout)
-            deadline = own_deadline if deadline is None else min(own_deadline, deadline)
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
             None,
@@ -1776,8 +1785,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         f"return a callable from a capability's `get_model_settings()` to vary `tool_choice` per "
                         f'step, or use `pydantic_ai.direct.model_request` for single-shot model calls.'
                     )
-
-        usage_limits = usage_limits or _usage.UsageLimits()
 
         # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
         # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
@@ -2500,6 +2507,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             on_change: Whether to rewrite the instruction prefix (the default) or append full
                 replacements when this block changes. Appending requires an addressable instruction
                 identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
+                Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
         """
         if name is not None:
             _instructions.validate_instruction_name(name)

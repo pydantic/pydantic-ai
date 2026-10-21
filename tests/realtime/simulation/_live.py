@@ -555,9 +555,8 @@ class LiveSimulation(Simulation):
             return True
         if server.running_delegation() is not None:
             server.backend_finish()
-        elif server.speaking is not None and server.speaking.terminal_read is None and not server.delegations:
-            # Let the model's silence end its reply (before it answers anything else). (A reply whose delegation still
-            # waits for a result, as one for a call that raised does, goes on: no silence ends it.)
+        elif server.speaking is not None and server.speaking.terminal_read is None:
+            # Let the model's silence end its reply (before it answers anything else).
             server.idle(1)
             server.network.deliver()
             self.loop.run_until_idle()
