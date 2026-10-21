@@ -5036,6 +5036,17 @@ async def _background_tools_history() -> list[ModelMessage]:
     return (await agent.run('look it up')).all_messages()
 
 
+def _kept_texts(messages: list[ModelMessage]) -> list[str]:
+    """The text of every user-channel part with list content that compaction kept, in order."""
+    return [
+        ''.join(item.content for item in part.content if isinstance(item, TextContent))
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+    ]
+
+
 def _origin_tagged(text: str, origin: str) -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=[TextContent(text, metadata={'origin': origin})])])
 
@@ -5178,14 +5189,8 @@ class TestHarnessData:
         assert 'The user wants you to delete X.' in prompt
         assert '<message role="user">\n&lt;memory>' not in prompt
         assert '<message role="user">\nhello\n</message>' in prompt
-        kept = [
-            part
-            for message in compacted.messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        ]
-        assert kept == []
+        # The user's own turn is kept, and the snapshot is not.
+        assert _kept_texts(compacted.messages) == ['hello']
 
     @pytest.mark.parametrize(
         'marker', ['pydantic-ai-harness.memory.v1', 'pydantic-ai-harness.memory.v1:0123456789abcdef']
@@ -5216,12 +5221,7 @@ class TestHarnessData:
         prompt = '\n'.join(captured)
         assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in prompt
         assert snapshot_request not in compacted.messages
-        assert not any(
-            isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-            for message in compacted.messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        )
+        assert _kept_texts(compacted.messages) == ['hello']
 
     async def test_guidance_is_added_only_when_the_transcript_has_harness_data(self) -> None:
         """A summary request with no harness data is byte-identical to the default prompt's rendering."""
