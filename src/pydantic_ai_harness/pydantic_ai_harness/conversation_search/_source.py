@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     SystemPromptPart,
 )
 from pydantic_ai_harness.compaction._summary import without_summaries
@@ -141,18 +142,24 @@ def without_summary_artifacts(messages: Sequence[ModelMessage]) -> list[ModelMes
 
     A summary is the part `SummarizingCompaction` marks as its own; a `CompactionPart` an
     application wrote itself stays searchable. In a history saved before `SummarizingCompaction` wrote
-    one, the summary is a request carrying its prefixed system prompt, which is removed whole.
+    one, the summary is a system prompt opening with `SUMMARY_PREFIX`. Only the summary part is removed,
+    since continuing a history merges the summary's request with the real turns next to it; a request
+    left with nothing else is dropped.
     """
-    return [
-        message
-        for message in without_summaries(messages)
-        if not (
-            isinstance(message, ModelRequest)
-            and any(
-                isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX) for part in message.parts
-            )
-        )
-    ]
+    out: list[ModelMessage] = []
+    for message in without_summaries(messages):
+        if isinstance(message, ModelRequest) and any(_is_legacy_summary(part) for part in message.parts):
+            parts = [part for part in message.parts if not _is_legacy_summary(part)]
+            if not parts:
+                continue
+            message = replace(message, parts=parts)
+        out.append(message)
+    return out
+
+
+def _is_legacy_summary(part: ModelRequestPart) -> bool:
+    """Whether *part* is the summary system prompt an earlier `SummarizingCompaction` wrote."""
+    return isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
 
 
 class SnapshotHistorySource:

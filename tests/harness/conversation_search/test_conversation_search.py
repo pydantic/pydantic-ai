@@ -161,6 +161,18 @@ class TestSnapshotHistorySource:
         history = await SnapshotHistorySource(store).run_history(run_id='r1')
         assert history == [original, reply, follow_up]
 
+    async def test_a_legacy_summary_merged_with_a_user_turn_keeps_the_turn(self) -> None:
+        """Continuing a history merges the old summary's request with real turns; only the summary is dropped."""
+        store = InMemoryStepStore()
+        merged = ModelRequest(
+            parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}older context'), UserPromptPart('the HERON detail')]
+        )
+        await _seed_run(store, 'r1', [merged, _reply('ok')])
+
+        history = await SnapshotHistorySource(store).run_history(run_id='r1')
+        assert [[part.part_kind for part in message.parts] for message in history] == [['user-prompt'], ['text']]
+        assert 'HERON' in await _search(SnapshotHistorySource(store), 'HERON')
+
     async def test_an_empty_compaction_part_adds_nothing_to_search(self) -> None:
         store = InMemoryStepStore()
         await _seed_run(store, 'r1', [ModelRequest(parts=[CompactionPart(content=''), UserPromptPart('the OSPREY')])])
