@@ -4863,7 +4863,8 @@ async def test_bedrock_cache_messages_with_document_as_last_content(
         document2,
     ]
 
-    result = await agent.run(run_args)
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run(run_args)
     assert result.output == snapshot("""\
 I'd be happy to analyze the documents you've provided.
 
@@ -4896,10 +4897,12 @@ Is there a specific aspect of these documents you'd like me to focus on, or any 
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
     assert usage.cache_read_tokens == 0
+    first_write = usage.cache_write_tokens
 
     messages = result.all_messages()
 
-    result = await agent.run('How long is the doc?', message_history=messages)
+    with _capture_bedrock_request_bodies(model) as sent_requests_2:
+        result = await agent.run('How long is the doc?', message_history=messages)
     assert result.output == snapshot("""\
 Based on the documents provided:
 
@@ -4914,11 +4917,17 @@ Based on the documents provided:
 Both documents are very short, consisting of single sentences. If you meant character count or another metric, let me know and I can provide that instead!\
 """)
 
+    # The documents move ahead of the text before them, so the cache point can go last.
+    assert [_block_kinds(body) for body in [*sent_requests, *sent_requests_2]] == snapshot(
+        [
+            [['text', 'text', 'document', 'document', 'text', 'cachePoint']],
+            [['text', 'text', 'document', 'text', 'document'], ['text'], ['text', 'cachePoint']],
+        ]
+    )
     usage = result.usage
     assert usage.input_tokens > 0
     assert usage.output_tokens > 0
-    assert usage.cache_write_tokens > 0
-    assert usage.cache_read_tokens > 0
+    assert (first_write, usage.cache_read_tokens) == snapshot((1712, 1712))
 
 
 def _block_kinds(body: dict[str, Any]) -> list[list[str]]:
