@@ -75,7 +75,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied, ToolSelector
 from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
@@ -93,9 +93,9 @@ from pydantic_ai_harness.code_mode._capability import (
 )
 from pydantic_ai_harness.code_mode._toolset import (
     _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
-    _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
+    sanitize_tool_name,
 )
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
@@ -2537,7 +2537,7 @@ class TestCodeMode:
         ],
     )
     def test_sanitize_tool_name(self, original: str, expected: str) -> None:
-        assert _sanitize_tool_name(original) == expected
+        assert sanitize_tool_name(original) == expected
 
     async def test_hyphenated_tool_name_is_sanitized_and_callable(self) -> None:
         """A tool with hyphens in the name is automatically renamed and callable from the sandbox."""
@@ -4510,7 +4510,7 @@ class TestDynamicCatalog:
         ],
     )
     async def test_deferred_tool_stays_declared_when_only_native_search_can_find_it(
-        self, tool_search: ToolSearch[object], selector: Any
+        self, tool_search: ToolSearch[object], selector: ToolSelector[object]
     ) -> None:
         """A deferred tool is declared for the native search when the local `search_tools` can't find it.
 
@@ -4560,27 +4560,39 @@ class TestDynamicCatalog:
         assert [p.content for p in instruction_parts[:2]] == ['Add carefully.', 'Be sunny.']
 
     async def test_announcement_names_the_function_code_calls(self) -> None:
-        """A tool whose name isn't a Python identifier is announced by the function name `run_code` calls it by."""
-        cap = CodeMode[object](dynamic_catalog=True)
-        ctx = build_run_context(None)
-        await cap.after_tool_execute(
-            ctx,
-            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
-            tool_def=_search_tool_def(),
-            args={},
-            result={'discovered_tools': [{'name': 'get-weather'}, {'name': 'forecast'}]},
-        )
+        """A tool whose name isn't a Python identifier is announced by the function name `run_code` dispatches."""
+        script = [
+            ToolCallPart('search_tools', {'queries': ['weather']}),
+            ToolCallPart('run_code', {'code': "await get_weather(city='Paris')"}),
+            TextPart('done'),
+        ]
+        responses = iter(script)
 
-        assert ctx.pending_messages is not None
-        [request] = ctx.pending_messages[0].messages
-        assert isinstance(request, ModelRequest)
-        [part] = request.parts
-        assert isinstance(part, SystemPromptPart)
-        assert part.content.endswith(': `get_weather` (the `get-weather` tool), `forecast`.')
-        assert part.metadata == {
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[next(responses)])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(_forecast, name='get-weather', defer_loading=True)],
+            capabilities=[ToolSearch[object](strategy='keywords'), CodeMode[object](dynamic_catalog=True)],
+        )
+        result = await agent.run('Weather in Paris?')
+
+        [announcement] = [
+            p for m in result.all_messages() for p in m.parts if isinstance(p, SystemPromptPart) and p.metadata
+        ]
+        assert announcement.content.endswith(': `get_weather` (the `get-weather` tool).')
+        assert announcement.metadata == {
             'origin': 'pydantic-ai-harness.code_mode.discovery.v1',
-            'tools': ['get-weather', 'forecast'],
+            'tools': ['get-weather'],
         }
+        run_code_returns = [
+            p.content
+            for m in result.all_messages()
+            for p in m.parts
+            if isinstance(p, ToolReturnPart) and p.tool_name == 'run_code'
+        ]
+        assert run_code_returns == ['Sunny in Paris.']
 
 
 def _forecast(city: str) -> str:

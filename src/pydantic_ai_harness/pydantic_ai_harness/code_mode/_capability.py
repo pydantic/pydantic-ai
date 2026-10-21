@@ -35,9 +35,9 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOS,
     CodeModeResourceLimits,
     CodeModeToolset,
-    _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     as_os_handler,
     in_durable_execution,
+    sanitize_tool_name,
 )
 
 if TYPE_CHECKING:
@@ -392,7 +392,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
 
 def _announced_function(name: str) -> str:
     """How an announcement names a tool's function: by the name code calls it by, and the tool's own if that differs."""
-    function_name = _sanitize_tool_name(name)
+    function_name = sanitize_tool_name(name)
     if function_name == name:
         return f'`{_neutralize_closing_system_tag(name)}`'
     return f'`{function_name}` (the `{_neutralize_closing_system_tag(name)}` tool)'

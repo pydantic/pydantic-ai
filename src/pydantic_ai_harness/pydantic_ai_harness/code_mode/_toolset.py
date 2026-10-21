@@ -562,7 +562,7 @@ def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
     return bool(tool_def.metadata and 'code_arg_name' in tool_def.metadata)
 
 
-def _sanitize_tool_name(name: str) -> str:
+def sanitize_tool_name(name: str) -> str:
     """Turn a tool name into a valid Python identifier.
 
     Replaces hyphens, dots, and other non-identifier characters with underscores,
@@ -1458,7 +1458,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
 
-            safe_name = _sanitize_tool_name(name)
+            safe_name = sanitize_tool_name(name)
             if safe_name == _RUN_CODE_TOOL_NAME:
                 raise UserError(
                     f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
