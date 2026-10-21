@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` for a microVM on this machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -15,6 +15,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
+| Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
@@ -341,6 +342,28 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
   not flush a VM's disk when the process exits, so stop it first:
   `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
+
+### DockerSandbox
+
+`DockerSandbox(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
+(backend `DockerSandboxBackend`) runs commands and file operations in a local container through the
+`docker` CLI (`executable='podman'` works). No extra, no SDK.
+
+- The first operation creates the container; the image needs a POSIX `sh`, and its own entrypoint and
+  command don't run. Creating the container (and pulling) is not bounded by a command's `timeout`. Without `image` the
+  capability only attaches and removes by ref, and leaves a run without a ref to other workspace capabilities.
+  `working_dir=None` uses the image's `WORKDIR`; a missing `working_dir` is created on first use, in an attached container too.
+- The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`; attaching starts a stopped container,
+  so it comes back. The container outlives the run: `await DockerSandbox().destroy(ref)`.
+  Leftovers carry the label `ai.pydantic.workspace=true`: `docker ps --all --filter label=ai.pydantic.workspace=true`.
+- Network on Docker's default bridge (internet plus LAN and host services); `allow_internet_access=False`
+  adds `--network none`, which Docker refuses next to a `--network` in `docker_args`. `docker_args`:
+  `['--memory', '2g']`, `['--volume', f'{project}:/workspace']` to work on a host directory.
+- A missing `working_dir` is created as the container's user: with `--user`, use a mount or
+  `working_dir=None`.
+- New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` for none).
+- With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
+  With Podman, `run()` returns when the command exits.
 
 ## Remote hosts and bubblewrap
 
