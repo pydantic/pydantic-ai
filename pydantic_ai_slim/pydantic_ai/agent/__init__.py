@@ -1598,10 +1598,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             effective_output_retries = override_output_retries.value
         effective_tool_retries_resolved = self._resolve_tool_retries(effective_tool_retries)
 
-        # Resolve the effective per-output-tool default: run arg > spec > agent init default
-        effective_output_toolset_max_retries = (
-            effective_output_retries if effective_output_retries is not None else self._max_output_retries
-        )
+        # Resolve the effective per-output-tool default: override > run arg > spec > agent init default
+        effective_output_toolset_max_retries = self._resolve_output_retries(effective_output_retries)
 
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
@@ -2565,11 +2563,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
                     message_history, prompt
                 )
-                # `override(retries=...)` sets a run's output budget, as in `iter()`.
-                override_output_retries = self._override_output_retries.get()
-                max_output_retries = (
-                    override_output_retries.value if override_output_retries is not None else self._max_output_retries
-                )
                 selection_ctx = models.ModelSelectionContext(
                     agent=self,
                     deps=deps,
@@ -2578,7 +2571,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     prompt=selection_prompt,
                     messages=selection_messages,
                     usage=usage,
-                    max_retries=max_output_retries,
+                    max_retries=self._resolve_output_retries(),
                 )
                 selected_model, _ = await self._evaluate_model_contribution(
                     contribution, capability=capability, ctx=selection_ctx
@@ -3267,6 +3260,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if override is not None:
             return override.value
         return retries if retries is not None else self._max_tool_retries
+
+    def _resolve_output_retries(self, retries: int | None = None) -> int:
+        """Resolve the effective output-retry budget: override > run/spec > agent default."""
+        override = self._override_output_retries.get()
+        if override is not None:
+            return override.value
+        return retries if retries is not None else self._max_output_retries
 
     def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
         """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
