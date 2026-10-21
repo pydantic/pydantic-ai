@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
@@ -61,8 +61,35 @@ class _RelayedPart:
     """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
 
 
-_RELAYED_PARTS: ContextVar[dict[int, _RelayedPart] | None] = ContextVar('_RELAYED_PARTS', default=None)
-"""The parts children contributed while an authoring container's `get_instructions` runs, by part identity."""
+@dataclass
+class _Relays:
+    """What an authoring container's declared instruction children contributed while its `get_instructions` ran."""
+
+    author: AbstractToolset[Any]
+    parts: dict[int, _RelayedPart] = field(default_factory=dict[int, _RelayedPart])
+    """The relayed parts, by part identity."""
+    _tree: set[int] | None = None
+
+    def covers(self, toolset: AbstractToolset[Any]) -> bool:
+        """Whether `toolset` is the author or below it through `_instruction_children`.
+
+        A toolset the author reaches some other way, like the one a `DynamicToolset` builds, isn't a child
+        the author passes along: what it returns is the author's own text.
+        """
+        if self._tree is None:
+            tree: set[int] = set()
+            pending: list[AbstractToolset[Any]] = [self.author]
+            while pending:
+                node = pending.pop()
+                if id(node) not in tree:
+                    tree.add(id(node))
+                    pending.extend(node._instruction_children())  # pyright: ignore[reportPrivateUsage]
+            self._tree = tree
+        return id(toolset) in self._tree
+
+
+_RELAYS: ContextVar[_Relays | None] = ContextVar('_RELAYS', default=None)
+"""The relays of the authoring container whose `get_instructions` is running."""
 
 
 @dataclass(kw_only=True)
@@ -213,18 +240,18 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         if not self._authors_own_instructions():
             return await self._collect_child_instruction_contributions(ctx)
 
-        relayed: dict[int, _RelayedPart] = {}
-        token = _RELAYED_PARTS.set(relayed)
+        relays = _Relays(self)
+        token = _RELAYS.set(relays)
         try:
             result = await self.get_instructions(ctx)
         finally:
-            _RELAYED_PARTS.reset(token)
+            _RELAYS.reset(token)
         contributions: list[InstructionContribution[AgentDepsT]] = []
         for part in normalize_toolset_instruction_parts(result):
             # Only the part object a child contributed, unchanged since, is relayed: a part this
             # container built or edited is its own text even when it carries a child's id, so it can't
             # speak under a key it doesn't own.
-            if (relay := relayed.get(id(part))) is not None and relay.part is part and part == relay.snapshot:
+            if (relay := relays.parts.get(id(part))) is not None and relay.part is part and part == relay.snapshot:
                 contributions.append(InstructionContribution(relay.source, relay.source_id, (part,)))
             else:
                 contributions.append(make_contribution(self, part))
@@ -238,10 +265,11 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             *(child._collect_instruction_contributions(ctx) for child in self._instruction_children())
         )
         contributions = [contribution for contributions in child_contributions for contribution in contributions]
-        # Called from inside an authoring container's `get_instructions`, record what each part came
-        # from and what it said, so the container can tell the parts it relays from the ones it writes.
-        if (relayed := _RELAYED_PARTS.get()) is not None:
-            relayed.update(
+        # Called from inside an authoring container's `get_instructions` on its own instruction children,
+        # record what each part came from and what it said, so the container can tell the parts it relays
+        # from the ones it writes.
+        if (relays := _RELAYS.get()) is not None and relays.covers(self):
+            relays.parts.update(
                 (id(part), _RelayedPart(contribution.source, contribution.source_id, part, replace(part)))
                 for contribution in contributions
                 for part in contribution.parts

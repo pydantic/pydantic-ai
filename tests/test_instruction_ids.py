@@ -14,6 +14,7 @@ persisted configuration keys on.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
@@ -35,6 +36,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
+    InstructionDeltaPart,
     InstructionId,
     InstructionPart,
     ModelMessage,
@@ -48,7 +50,14 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets import (
+    AbstractToolset,
+    CombinedToolset,
+    DynamicToolset,
+    FunctionToolset,
+    ToolsetTool,
+    WrapperToolset,
+)
 from pydantic_ai.toolsets.approval_required import ApprovalRequiredToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -413,6 +422,16 @@ class KeyBorrowingWrapper(RelayingWrapper):
         return [relayed, InstructionPart(content='Borrowed.', name='limits', id=relayed.id)]
 
 
+class CopyingWrapper(RelayingWrapper):
+    """A wrapper that passes on unchanged copies of the parts it wraps."""
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        relayed = normalize_toolset_instruction_parts(await super().get_instructions(ctx))
+        return [replace(part) for part in relayed]
+
+
 class InPlaceEditor(RelayingWrapper):
     """A wrapper that edits the parts it wraps in place before passing them on."""
 
@@ -442,6 +461,11 @@ class InPlaceEditor(RelayingWrapper):
             id='new-part-with-child-id',
         ),
         pytest.param(
+            CopyingWrapper,
+            [InstructionPart(content='Limits.', name='limits', id=toolset_instruction_id('wrapper', 'limits'))],
+            id='unchanged-copy',
+        ),
+        pytest.param(
             InPlaceEditor,
             [InstructionPart(content='Edited.', name='limits', id=toolset_instruction_id('wrapper', 'limits'))],
             id='edited-in-place',
@@ -453,7 +477,8 @@ async def test_a_wrapper_cannot_write_under_a_key_it_wraps(
 ):
     """Text the wrapper wrote is keyed by the wrapper, even when it carries the id of a part it wraps.
 
-    Only a part passed on exactly as its toolset contributed it keeps that toolset's key. Otherwise a
+    Only the part object its toolset contributed, passed on unchanged, keeps that toolset's key; even an
+    unchanged copy is the wrapper's. Otherwise a
     wrapper could put its own text under `toolset:leaf:limits`, where an application addressing the
     leaf's block would find it.
     """
@@ -461,6 +486,45 @@ async def test_a_wrapper_cannot_write_under_a_key_it_wraps(
     agent = Agent(toolsets=[wrapper(leaf, id='wrapper')])
 
     assert await run_and_capture(agent) == expected
+
+
+async def test_a_dynamic_toolset_owns_what_the_toolset_it_builds_says():
+    """A `DynamicToolset` speaks for the toolset its function builds, however that toolset is composed.
+
+    The built toolset isn't one of the dynamic toolset's instruction children, so a `CombinedToolset` it
+    returns doesn't relay its members' blocks past it: they're keyed by the dynamic toolset's id, and an
+    append-mode block among them keeps appending its changes instead of being downgraded for having no id.
+    """
+    version = 1
+
+    def bump() -> str:
+        nonlocal version
+        version += 1
+        return 'bumped'
+
+    def build(ctx: RunContext[Any]) -> AbstractToolset[Any]:
+        policy = InstructionPart(content=f'Policy v{version}.', name='policy', on_change='append')
+        return CombinedToolset([FunctionToolset([bump], instructions=[policy])])
+
+    sent: list[list[InstructionPart]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(list(info.model_request_parameters.instruction_parts or []))
+        if len(sent) == 1:
+            return ModelResponse(parts=[ToolCallPart('bump', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), toolsets=[DynamicToolset(build, id='runtime')])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = await agent.run('Hello')
+
+    assert [[(str(p.id), p.on_change) for p in parts] for parts in sent] == [
+        [('toolset:runtime:policy', 'append')],
+        [('toolset:runtime:policy', 'append')],
+    ]
+    deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
+    assert [(str(delta.id), delta.content) for delta in deltas] == [('toolset:runtime:policy', 'Policy v2.')]
 
 
 async def test_wrapping_a_toolset_whose_id_cannot_be_a_key_leaves_it_working():
