@@ -214,11 +214,10 @@ class TestMongoMediaStoreRoundTrip:
     async def test_retry_after_a_crashed_write_at_another_chunk_size_reads_back(
         self, stale_size: int, retry_size: int
     ) -> None:
-        """A retry overwrites the chunks a crashed write left behind, and reads stop at its `chunk_count`.
+        """A retry at another chunk size reads back past the chunks a crashed write left behind.
 
-        Chunk `_id`s are `<digest>:<n>`, so before this the retry kept the stale
-        chunks (`$setOnInsert`) and `get` read every chunk under the digest.
-        Once the retry wrote the manifest, the blob was unreadable for good.
+        The stale chunks stay in the collection. `get` reads only the chunks
+        that match the manifest's `chunk_size` and `chunk_count`.
         """
         client = _mock_client()
         data = bytes(range(64))
@@ -227,11 +226,19 @@ class TestMongoMediaStoreRoundTrip:
         # A crashed write left its chunks for this digest without writing the manifest.
         for n, start in enumerate(range(0, len(data), stale_size)):
             await chunks.insert_one(
-                {'_id': f'{digest}:{n}', 'files_id': digest, 'n': n, 'data': Binary(data[start : start + stale_size])}
+                {
+                    '_id': f'{digest}:{stale_size}:{n}',
+                    'files_id': digest,
+                    'chunk_size': stale_size,
+                    'n': n,
+                    'data': Binary(data[start : start + stale_size]),
+                }
             )
         store = MongoMediaStore(client=client, database='t', chunk_size_bytes=retry_size)
         uri = await store.put(data)
         assert await store.get(uri) == data
+        stale_count = len(range(0, len(data), stale_size))
+        assert await chunks.count_documents({'chunk_size': stale_size}) == stale_count
 
     async def test_concurrent_writer_at_another_chunk_size_cannot_corrupt_a_published_blob(self) -> None:
         """A writer that passed the manifest check before another published writes chunks of its own.

@@ -580,11 +580,7 @@ class TestEndToEndMediaWithAgent:
     async def test_tool_output_shaped_like_walker_data_persists_and_resumes(
         self, tmp_path: Path, tool_output: dict[str, object]
     ) -> None:
-        """Tool output that looks like a marker or like `BinaryContent` survives the snapshot.
-
-        Before, the first shape saved but made `latest_snapshot` raise, and the
-        second made the run itself raise `binascii.Error` from the snapshot write.
-        """
+        """Tool output that looks like a marker or like `BinaryContent` saves with the snapshot and restores unchanged."""
         store = SqliteStepStore(database=tmp_path / 'runs.db')
         agent: Agent[None, str] = Agent(
             TestModel(call_tools=['fetch']), capabilities=[StepPersistence(store=store, run_id='r1')]

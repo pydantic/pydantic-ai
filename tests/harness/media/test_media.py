@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import json as _json
 import os
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard
 
+import anyio
 import httpx
 import pytest
 from httpx import AsyncClient, MockTransport, Request, Response
@@ -163,7 +165,7 @@ class TestDiskMediaStore:
             await store.get_metadata(uri)
 
     async def test_get_metadata_missing_raises(self, tmp_path: Path) -> None:
-        """A blob that was never stored raises, like every other store, instead of reading as untagged."""
+        """A blob that was never stored raises `FileNotFoundError`, like every other store."""
         store = DiskMediaStore(tmp_path)
         with pytest.raises(FileNotFoundError):
             await store.get_metadata(media_uri_for(b'never put'))
@@ -179,10 +181,8 @@ class TestDiskMediaStore:
     ) -> None:
         """Writers racing on one digest each use their own temporary file.
 
-        The first writer's `replace` runs a whole second `put` before it
-        renames its own file. With a temporary path shared by every writer, the
-        second writer's rename moved the file out from under the first, which
-        then raised `FileNotFoundError`.
+        The first writer's `replace` runs a whole second `put`, which writes and
+        renames its own temporary file, before the first writer renames its own.
         """
         store = DiskMediaStore(tmp_path)
         data = b'raced'
@@ -193,7 +193,8 @@ class TestDiskMediaStore:
         def replace_after_another_writer(self: Path, target: Path) -> Path:
             if not interleaved:
                 interleaved.append('running')
-                interleaved.append(store._sync_put(data, context))  # pyright: ignore[reportPrivateUsage]
+                # `put` runs this on a worker thread, so the second writer goes back through the event loop.
+                interleaved.append(anyio.from_thread.run(functools.partial(store.put, data, context=context)))
             return real_replace(self, target)
 
         monkeypatch.setattr(Path, 'replace', replace_after_another_writer)
@@ -1036,12 +1037,7 @@ class TestExternalizeRestoreWalker:
         ],
     )
     async def test_tool_return_with_reserved_keys_round_trips(self, tmp_path: Path, content: dict[str, object]) -> None:
-        """A tool return that carries the marker's own keys restores as the tool returned it.
-
-        Before the literal wrapper, the reader took any such dict for a marker:
-        restore raised, so a run that persisted the tool return could not be
-        resumed, or the payload was swapped for another blob in the store.
-        """
+        """A tool return that carries the marker's own keys restores as the tool returned it, never as a marker."""
         store = DiskMediaStore(tmp_path)
         await store.put(b'another blob')
         messages: list[ModelMessage] = [
@@ -1087,11 +1083,7 @@ class TestExternalizeRestoreWalker:
         ],
     )
     async def test_binary_shaped_dict_without_canonical_base64_stays_inline(self, tmp_path: Path, data: str) -> None:
-        """A tool dict shaped like `BinaryContent` whose `data` is not canonical base64 is left as it is.
-
-        Before, `urlsafe_b64decode` raised on it (failing the snapshot write, and
-        with it the run) or decoded it leniently and restored different text.
-        """
+        """A tool dict shaped like `BinaryContent` whose `data` is not canonical base64 is left as it is."""
         store = DiskMediaStore(tmp_path)
         node = {'kind': 'binary', 'data': data}
         assert await externalize_media(node, media_store=store, threshold_bytes=1) == node
@@ -1234,8 +1226,8 @@ class TestSigV4Signer:
     def test_header_values_are_canonicalized_like_aws(self, value: str) -> None:
         """SigV4 trims each header value and collapses whitespace runs before signing.
 
-        S3 canonicalizes the headers it receives the same way, so signing the
-        raw value produced `SignatureDoesNotMatch` for such metadata.
+        S3 canonicalizes the headers it receives the same way, so the signature
+        covers the trimmed, collapsed value while the header is sent as given.
         """
 
         def sign(meta: str) -> dict[str, str]:
