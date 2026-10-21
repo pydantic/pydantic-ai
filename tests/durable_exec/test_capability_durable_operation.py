@@ -1358,6 +1358,27 @@ async def test_capability_operation_cache_identity_includes_context_and_model() 
     assert isinstance(inputs[2], RunContext)
 
 
+async def test_unmeasured_request_delta_is_applied_once() -> None:
+    class UnmeasuredRequestOperation(AbstractCapability[None]):
+        id = 'unmeasured'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.mark(ctx)
+
+        @durable_operation('mark')
+        async def mark(self, ctx: RunContext[None]) -> None:
+            ctx.usage.unmeasured_requests += 1
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='unmeasured_usage',
+        deps_type=type(None),
+        capabilities=[UnmeasuredRequestOperation(), RecordingDurability()],
+    )
+    result = await agent.run('hi')
+    assert result.usage.unmeasured_requests == 1
+
+
 async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
     capability = UsageOperation()
     agent = Agent(TestModel(), name='replayed_usage', capabilities=[capability, ReplayingDurability()])

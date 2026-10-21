@@ -17,7 +17,7 @@ from .. import __version__, _display, models, usage as _usage
 from .._run_context import AgentDepsT
 from ..agent import AbstractAgent, Agent
 from ..exceptions import UserError
-from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse, ToolReturnPart
+from ..messages import FunctionToolCallEvent, FunctionToolResultEvent, ModelMessage, ModelResponse
 from ..models import infer_model, known_model_names
 from ..native_tools import NATIVE_TOOLS_REQUIRING_CONFIG, SUPPORTED_NATIVE_TOOLS
 from ..output import OutputDataT
@@ -611,11 +611,9 @@ async def ask_agent(
                                     if event.args_valid is not None:
                                         pending_calls[event.tool_call_id] = event.part.tool_name
                                 elif isinstance(event, FunctionToolResultEvent):
-                                    # Pop on any result, not just a `ToolReturnPart`: a call that
-                                    # comes back as a `RetryPromptPart` would otherwise stay pending
-                                    # and pin its indicator for the rest of the run.
-                                    called = pending_calls.pop(event.tool_call_id, None) is not None
-                                    if called and isinstance(event.part, ToolReturnPart):
+                                    # Pop on any result, a retried one included: it would otherwise stay
+                                    # pending and pin its indicator for the rest of the run.
+                                    if pending_calls.pop(event.tool_call_id, None) is not None:
                                         content_pieces.append(f'> Called tool `{event.part.tool_name}`.')
                                 calling = [f'> _Calling tool `{name}`…_' for name in pending_calls.values()]
                                 live.update(Markdown('\n\n'.join([*content_pieces, *calling]), code_theme=code_theme))

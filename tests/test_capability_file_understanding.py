@@ -7,6 +7,7 @@ import pytest
 
 from pydantic_ai import (
     Agent,
+    AudioUrl,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -50,7 +51,7 @@ class Describer:
         part = messages[-1].parts[-1]
         assert isinstance(part, UserPromptPart)
         [item] = part.content
-        assert isinstance(item, ImageUrl | DocumentUrl | VideoUrl | BinaryContent)
+        assert isinstance(item, ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent)
         return ModelResponse(parts=[TextPart(f'A description of {item.identifier}.')])
 
 
@@ -120,7 +121,9 @@ async def test_supported_files_are_sent_as_they_are():
     describer = Describer()
     image = ImageUrl('https://example.com/cat.png')
     document = DocumentUrl('https://example.com/cat.pdf')
-    # Images and documents are accepted by default, video is not.
+    video = VideoUrl('https://example.com/cat.mp4')
+    audio = AudioUrl('https://example.com/cat.mp3')
+    # Every kind of file is accepted by default: only a model adapter or profile that says otherwise turns one off.
     agent = Agent(
         FunctionModel(capture), capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))]
     )
@@ -128,16 +131,13 @@ async def test_supported_files_are_sent_as_they_are():
         ModelRequest(parts=[UserPromptPart(['Two', 'texts'])]),
         ModelResponse(parts=[TextPart('ok')]),
     ]
-    await agent.run([image, document, VideoUrl('https://example.com/cat.mp4')], message_history=history)
+    await agent.run([image, document, video, audio], message_history=history)
 
-    prompt = last_prompt(seen)
-    assert prompt[0] is image
-    assert prompt[1] is document
-    assert isinstance(prompt[2], str) and 'type="text/plain"' in prompt[2]
-    assert describer.calls == 1
+    assert last_prompt(seen) == [image, document, video, audio]
+    assert describer.calls == 0
 
 
-async def test_video_is_sent_when_the_profile_accepts_it():
+async def test_video_and_audio_are_described_when_the_profile_rejects_them():
     seen: list[list[ModelMessage]] = []
 
     def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -145,13 +145,30 @@ async def test_video_is_sent_when_the_profile_accepts_it():
         return ModelResponse(parts=[TextPart('ok')])
 
     describer = Describer()
-    video = VideoUrl('https://example.com/cat.mp4')
-    model = FunctionModel(capture, profile=ModelProfile(supports_video_input=True))
+    model = FunctionModel(capture, profile=ModelProfile(supports_video_input=False, supports_audio_file_input=False))
     agent = Agent(model, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
-    await agent.run([video])
+    await agent.run(
+        [
+            VideoUrl('https://example.com/cat.mp4', identifier='clip'),
+            AudioUrl('https://example.com/cat.mp3', identifier='purr'),
+        ]
+    )
 
-    assert last_prompt(seen) == [video]
-    assert describer.calls == 0
+    assert last_prompt(seen) == snapshot(
+        [
+            """\
+-----BEGIN FILE id="clip" type="text/plain"-----
+A description of clip.
+-----END FILE id="clip"-----\
+""",
+            """\
+-----BEGIN FILE id="purr" type="text/plain"-----
+A description of purr.
+-----END FILE id="purr"-----\
+""",
+        ]
+    )
+    assert describer.calls == 2
 
 
 async def test_custom_instructions_reach_the_describer():

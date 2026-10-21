@@ -3,19 +3,18 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, TypeAlias, TypeGuard, TypeVar
 
+from pydantic_ai._file_input import SendableFile, unsupported_file_input
 from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
-    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    UserContent,
+    ToolReturnPart,
     UserPromptPart,
-    VideoUrl,
 )
 from pydantic_ai.models import KnownModelName, Model, download_item
 from pydantic_ai.profiles import ModelProfile
@@ -28,7 +27,8 @@ from .durable_operation import durable_operation
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-_File: TypeAlias = ImageUrl | DocumentUrl | VideoUrl | BinaryContent
+_File: TypeAlias = SendableFile
+_T = TypeVar('_T')
 
 _MAX_DESCRIPTIONS = 256
 """Descriptions kept per capability instance; the oldest goes first, so a long-lived agent stays bounded."""
@@ -47,10 +47,11 @@ _DEFAULT_INSTRUCTIONS = (
 class FileUnderstanding(AbstractCapability[AgentDepsT]):
     """Describe the files the agent's model cannot read, with a model that can.
 
-    Before each request, every image, document or video in a user prompt that the model's
-    [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a text
-    description of it, written by `fallback_subagent_model`. The agent's model sees the description in the file's
-    place; files it accepts are sent as they are.
+    Before each request, every image, document, audio file or video in a user prompt or a tool result that
+    the model's [`ModelProfile`][pydantic_ai.profiles.ModelProfile] says it does not accept is replaced by a
+    text description of it, written by `fallback_subagent_model`. The agent's model sees the description in
+    the file's place; files it accepts are sent as they are. Without this capability, a file a tool returned
+    that the model cannot read is replaced by a note saying so instead.
 
     ```python
     from pydantic_ai import Agent, DocumentUrl
@@ -82,9 +83,6 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
     the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before any is sent, as if the describing
     requests were the run's next ones.
-
-    Audio is left as it is: [`supports_audio_input`][pydantic_ai.profiles.ModelProfile.supports_audio_input]
-    is about realtime speech history and is not set per model, so it cannot say which models read audio files.
     """
 
     fallback_subagent_model: Model | KnownModelName | str
@@ -123,7 +121,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         descriptions: dict[str, str] = {}
         pending: dict[str, _File] = {}
         unaccepted = False
-        for content in _user_content(request_context.messages):
+        for content in _file_content(request_context.messages):
             if (item := _unaccepted_file(content, profile)) is None:
                 continue
             unaccepted = True
@@ -190,12 +188,15 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         return result.output, result.usage
 
 
-def _user_content(messages: list[ModelMessage]) -> Iterator[UserContent]:
+def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
+    """The items of every user prompt and of every tool result that carries files."""
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
                     yield from part.content
+                elif isinstance(part, ToolReturnPart) and part.files:
+                    yield from part.content_items()
 
 
 def _substitute(
@@ -204,7 +205,7 @@ def _substitute(
     if not isinstance(message, ModelRequest):
         return message
 
-    def text_for(content: UserContent) -> UserContent:
+    def text_for(content: _T) -> _T | str:
         if (item := _unaccepted_file(content, profile)) is None:
             return content
         # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
@@ -217,12 +218,14 @@ def _substitute(
         return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     original_parts = list(message.parts)
-    parts: list[ModelRequestPart] = [
-        replace(part, content=[text_for(item) for item in part.content])
-        if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-        else part
-        for part in original_parts
-    ]
+    parts: list[ModelRequestPart] = []
+    for part in original_parts:
+        if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
+            part = replace(part, content=[text_for(item) for item in part.content])
+        elif isinstance(part, ToolReturnPart) and part.files:
+            items = [text_for(item) for item in part.content_items()]
+            part = replace(part, content=items if isinstance(part.content, list) else items[0])
+        parts.append(part)
     return replace(message, parts=parts) if parts != original_parts else message
 
 
@@ -249,14 +252,10 @@ def _reuse_key(item: _File, conversation_id: str | None) -> str | None:
     return f'{conversation_id}:{item.url}' if conversation_id is not None else None
 
 
-def _unaccepted_file(item: UserContent, profile: ModelProfile) -> _File | None:
+def _unaccepted_file(item: object, profile: ModelProfile) -> _File | None:
     """The file in `item` the model doesn't take as it is, or `None`; text and anything but a file is left alone."""
-    if isinstance(item, ImageUrl) or (isinstance(item, BinaryContent) and item.is_image):
-        return None if profile.get('supports_image_input', True) else item
-    if isinstance(item, DocumentUrl) or (isinstance(item, BinaryContent) and item.is_document):
-        return None if profile.get('supports_document_input', True) else item
-    if isinstance(item, VideoUrl) or (isinstance(item, BinaryContent) and item.is_video):
-        return None if profile.get('supports_video_input', False) else item
+    if isinstance(item, SendableFile) and unsupported_file_input(item, profile) is not None:
+        return item
     return None
 
 

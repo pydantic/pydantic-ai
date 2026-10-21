@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..exceptions import PydanticAIDeprecationWarning
-from ..messages import CachePoint, ModelRequest, ModelResponse, UserPromptPart
+from ..messages import CachePoint, DocumentMediaType, ModelRequest, ModelResponse, UserPromptPart
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 from ..settings import CacheRetention
@@ -103,27 +104,51 @@ class ModelProfile(TypedDict, total=False):
     """
 
     supports_image_input: bool
-    """Whether the model accepts images in user messages. Default: `True`.
+    """Whether the model accepts images. Default: `True`.
 
-    Read by [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding], which describes in text
-    what the model cannot read. A model that accepts none is refused the file at request time either way.
+    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
+    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
+    A model adapter turns off what its message mapping cannot send, whatever the profile says.
 
-    Shipped profiles turn this off where an adapter or a model family is known not to take the file; `True`
+    A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
+    it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
+    user prompt is sent as it is, and the request fails if the model cannot take it.
+    [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] reads the same flags to describe
+    such files in text instead.
+
+    Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
     means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
     that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
-    The same holds for `supports_document_input` and `supports_video_input`.
     """
 
     supports_document_input: bool
-    """Whether the model accepts documents, such as PDFs, in user messages. Default: `True`.
+    """Whether the model accepts documents, such as PDFs. Default: `True`.
 
-    Read by [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding], like `supports_image_input`.
+    Which document media types it accepts is narrowed by `supported_document_media_types`.
+    See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_document_media_types: frozenset[DocumentMediaType]
+    """The document media types the model accepts, when it accepts documents at all. Default: every
+    media type in `DocumentMediaType`.
+
+    Only narrows those known types: a document with any other media type is judged by
+    `supports_document_input` alone. Anthropic, for example, reads PDFs and plain text but not Word or
+    Excel files. See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supports_audio_file_input: bool
+    """Whether the model accepts audio files, such as an [`AudioUrl`][pydantic_ai.messages.AudioUrl]
+    or audio [`BinaryContent`][pydantic_ai.messages.BinaryContent]. Default: `True`.
+
+    Separate from `supports_audio_input`, which is about realtime speech history. See
+    `supports_image_input` for how the file-input flags are used.
     """
 
     supports_video_input: bool
-    """Whether the model accepts video in user messages. Default: `False`.
+    """Whether the model accepts video. Default: `True`.
 
-    Read by [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding], like `supports_image_input`.
+    See `supports_image_input` for how the file-input flags are used.
     """
 
     supports_inline_system_prompts: bool
@@ -295,9 +320,9 @@ class ModelProfile(TypedDict, total=False):
     When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
     rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
     stops the imitation. Attributed to the user, that reasoning would read as something the user thought,
-    so it is wrapped in an `assistant_thinking` tag naming the model and provider that produced it rather
-    than in the model's own thinking tags. The cost is that the model still reports the reasoning's authorship
-    inaccurately when asked about it: naming the source in the tag does not change the answer it gives.
+    so it is wrapped in an `assistant_thinking` tag rather than in the model's own thinking tags. The cost
+    is that the model reports the reasoning's authorship inaccurately when asked about it, which naming the
+    source in the tag would not change.
 
     This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
     OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key — tracked in
@@ -445,7 +470,9 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_audio_input': False,
     'supports_image_input': True,
     'supports_document_input': True,
-    'supports_video_input': False,
+    'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
+    'supports_audio_file_input': True,
+    'supports_video_input': True,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,

@@ -101,6 +101,8 @@ class ToolCallTruth:
     cancelled_by_server: bool = False
     read: bool = False
     """Whether the client read the call (a cancelled response's calls can be dropped as stragglers)."""
+    read_seq: int | None = None
+    """When the client read it (the Gemini simulator records it, for the accepted in-flight finding)."""
 
 
 @dataclass
@@ -214,6 +216,13 @@ class GroundTruth:
             if input_.key in response.answers and input_.answered_by is None:
                 input_.answered_by = response.key
         return response
+
+    def answer(self, response: TruthResponse, keys: list[str]) -> None:
+        """`response`, already under way, answers the inputs `keys` too."""
+        response.answers.extend(keys)
+        for input_ in self.inputs:
+            if input_.key in keys and input_.answered_by is None:
+                input_.answered_by = response.key
 
     def new_call_id(self) -> str:
         call_id = f'call_{self.next_call_number}'
