@@ -177,14 +177,19 @@ carry their outcomes as structured data.
 
 Some capabilities have a reader of their own for files they keep in the workspace. When those files
 are in the run's workspace, the reader is marked with
-[`unless_tool_kind`](../tools-advanced.md#unless-tool-kind) set to `READ_FILE_KIND`,
-so it is left out of every run step that has `read_file`, whatever `read_file` is named or prefixed
-as, and the capability's text names `read_file` as it is called in the run:
+[`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`,
+so it is left out of every run step that has `read_file`, and the capability's text names
+`read_file` as it is called in the run:
 
 - `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
   files through `read_file` are not reduced again.
 - `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
+
+A `FileSystem` tool can't be called under a new name yet, such as under `PrefixTools`, because
+Pydantic AI refuses its capability events ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)).
+The dedicated reader steps aside for a renamed `FileSystem` all the same, so keep `FileSystem` under
+its own names for now.
 
 The capability decides from its own configuration, not from `FileSystem`'s access rules. With
 `denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,

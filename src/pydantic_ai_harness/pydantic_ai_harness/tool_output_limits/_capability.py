@@ -6,7 +6,7 @@ import logging
 import posixpath
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, TypeGuard
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
@@ -24,7 +24,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness.filesystem import READ_FILE_KIND, step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -273,7 +273,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         tool = Tool(
             read_tool_result,
             tool_kind=READ_TOOL_RESULT_KIND,
-            prepare=_unless_file_reader if self._spills_to_run_workspace else None,
+            prepare=step_aside_for_read_file if self._spills_to_run_workspace else None,
         )
         return FunctionToolset([tool], id=self.id or 'tool_output_limits')
 
@@ -594,10 +594,6 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if not isinstance(action, Summarize):  # pragma: no cover - durable inputs originate from `_summarize_path`
             raise RuntimeError(f'Durable summarize path no longer identifies a Summarize action: {path!r}.')
         return action
-
-
-def _unless_file_reader(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
-    return replace(tool_def, unless_tool_kind=READ_FILE_KIND)
 
 
 async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:

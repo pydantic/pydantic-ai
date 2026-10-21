@@ -89,7 +89,7 @@ class TestReaderStepsAside:
         assert 'Tool output too large' not in output
 
     async def test_prefixed_read_file_is_named(self, tmp_path: Path) -> None:
-        # A renamed `FileSystem` tool can be offered but not called, as its capability events would be refused.
+        # A renamed `FileSystem` tool can be offered but not called yet (#10927), so this checks what is offered.
         recorder, _ = await _run(tmp_path, _limits(), PrefixTools(FileSystem(), prefix='repo'), read_back=False)
         assert all(READ_TOOL_NAME not in tools and 'repo_read_file' in tools for tools in recorder.offered)
         assert recorder.marker is not None

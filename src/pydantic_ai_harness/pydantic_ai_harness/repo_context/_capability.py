@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import posixpath
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -17,8 +16,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
-from pydantic_ai_harness._workspace import require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import READ_FILE_KIND, DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
+from pydantic_ai_harness.filesystem import READ_FILE_KIND, DirectoryListedEvent, FileReadEvent, step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
@@ -226,19 +225,19 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
         The inventory reads the run's workspace, so this is all it takes for `read_file` to reach the same files.
         """
-        return bool(self.asset_roots) and all(_in_working_dir(root) for root in self.asset_roots)
+        return bool(self.asset_roots) and all(in_working_dir(root) for root in self.asset_roots)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """The asset-inventory toolset, or `None` when the tool is disabled."""
         if not self.expose_inventory_tool:
             return None
         if self._toolset is None:
-            self._toolset = RepoContextToolset[AgentDepsT](
-                self.asset_roots,
-                self.inventory_tool_name,
-                id=self.id or 'repo_context',
-                unless_tool_kind=READ_FILE_KIND if self._asset_roots_in_working_dir else None,
+            toolset = RepoContextToolset[AgentDepsT](
+                self.asset_roots, self.inventory_tool_name, id=self.id or 'repo_context'
             )
+            if self._asset_roots_in_working_dir:
+                toolset.tools[self.inventory_tool_name].prepare = step_aside_for_read_file
+            self._toolset = toolset
         return self._toolset
 
     async def after_tool_execute(
@@ -327,8 +326,3 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Serialization name for agent-spec support."""
         return 'RepoContext'
-
-
-def _in_working_dir(path: str) -> bool:
-    normalized = posixpath.normpath(path)
-    return not posixpath.isabs(normalized) and normalized.split('/', 1)[0] != '..'

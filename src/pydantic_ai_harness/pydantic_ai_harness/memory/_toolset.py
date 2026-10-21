@@ -8,7 +8,7 @@ import posixpath
 import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from opentelemetry.trace import Span
@@ -20,8 +20,8 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
-from pydantic_ai_harness._workspace import raise_tool_failure
-from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness._workspace import in_working_dir, raise_tool_failure
+from pydantic_ai_harness.filesystem import READ_FILE_KIND, step_aside_for_read_file
 from pydantic_ai_harness.memory._store import (
     FileStore,
     MemoryConflictError,
@@ -61,10 +61,9 @@ def run_workspace_directory(store: MemoryStore, scope: str) -> str | None:
     """
     if not isinstance(store, FileStore) or store.workspace is not None:
         return None
-    directory = posixpath.normpath(store.directory)
-    if posixpath.isabs(directory) or directory.split('/', 1)[0] == '..':
+    if not in_working_dir(store.directory):
         return None
-    return posixpath.join(directory, scope)
+    return posixpath.join(posixpath.normpath(store.directory), scope)
 
 
 def file_reader(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str) -> tuple[str, str] | None:
@@ -399,7 +398,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         store, scope = self._resolve_scope(ctx)
         if run_workspace_directory(store, scope) is None:
             return tool_def
-        return replace(tool_def, unless_tool_kind=READ_FILE_KIND)
+        return step_aside_for_read_file(ctx, tool_def)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)

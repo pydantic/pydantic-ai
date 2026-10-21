@@ -48,6 +48,7 @@ from pydantic_ai_harness.filesystem._tool_kinds import (
     SearchFilesCallPart,
     WriteFileArgs,
     WriteFileCallPart,
+    step_aside_for_read_file,
 )
 from pydantic_ai_harness.filesystem._toolset import (
     DEFAULT_TOOL_NAMES,
@@ -110,4 +111,5 @@ __all__ = [
     'SearchKind',
     'WriteFileArgs',
     'WriteFileCallPart',
+    'step_aside_for_read_file',
 ]

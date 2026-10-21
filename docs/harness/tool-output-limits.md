@@ -305,9 +305,10 @@ Spilled files are kept for the life of the workspace; they are not pruned by thi
 When spills are files in the run's workspace (the default `WorkspaceStore()`, without a
 `workspace=` of its own) and `FileSystem` is on the agent, `read_tool_result` steps aside for
 `FileSystem`'s `read_file`. The tool is marked with
-[`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind)
-set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind, whatever
-that tool is named or prefixed as. The spill marker then names that tool as it is called in the
+[`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind]
+set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep
+`FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet
+([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). The spill marker then names that tool as it is called in the
 run, with the spill's path:
 
 ```text
