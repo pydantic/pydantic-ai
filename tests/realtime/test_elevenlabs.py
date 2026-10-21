@@ -9,8 +9,8 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
 import pytest
@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.realtime import WebRTCSession
+from pydantic_ai.realtime import RealtimeSession as _RealtimeSession, WebRTCSession
 from pydantic_ai.realtime._lifecycle import InputAdded, InputLost, ResponseEnded, ResponseStarted, ToolCallsAbandoned
 from pydantic_ai.realtime.codec import OutputTranscript, ResponseDone
 from pydantic_ai.tools import ToolDefinition
@@ -519,6 +519,30 @@ def _call(response_id: str, call_id: str) -> dict[str, Any]:
     }
 
 
+async def _settle() -> None:
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
+@asynccontextmanager
+async def _eleven_session(runner: Any) -> AsyncGenerator[tuple[PushWebSocket, _RealtimeSession, list[Any]]]:
+    """A session over an ElevenLabs connection whose frames the test pushes, with the events it yields collected."""
+    ws = PushWebSocket()
+    session = RealtimeSession(ElevenLabsRealtimeConnection(ws), runner)  # pyright: ignore[reportArgumentType]
+    events: list[Any] = []
+
+    async def consume() -> None:
+        async for event in session:  # pragma: no branch
+            events.append(event)
+
+    async with session:
+        consumer = asyncio.create_task(consume())
+        try:
+            yield ws, session, events
+        finally:
+            consumer.cancel()
+
+
 async def test_tool_calls_abandoned_by_a_later_response() -> None:
     """A reply to the user that starts before a tool call's result is in makes ElevenLabs give up on that call.
 
@@ -576,24 +600,11 @@ async def test_abandoned_tool_call_still_running_doesnt_hold_the_reply_to_an_int
         await release.wait()
         return 'done'
 
-    ws = PushWebSocket()
-    session = RealtimeSession(ElevenLabsRealtimeConnection(ws), runner)  # pyright: ignore[reportArgumentType]
-    events: list[Any] = []
-
-    async def consume() -> None:
-        async for event in session:
-            events.append(event)
-
-    async def settle() -> None:
-        for _ in range(20):
-            await asyncio.sleep(0)
-
-    async with session:
-        consumer = asyncio.create_task(consume())
+    async with _eleven_session(runner) as (ws, session, events):
         ws.push(created('resp_1'))
         ws.push({**_call('resp_1', 'call_1'), 'name': 'slow'})
         ws.push(done('resp_1'))
-        await settle()
+        await _settle()
         await session.send('what is 2+2?')
         waiter = asyncio.create_task(session.wait_for_reply())
         ws.push(user_message_added())
@@ -602,12 +613,12 @@ async def test_abandoned_tool_call_still_running_doesnt_hold_the_reply_to_an_int
         ws.push(transcript('resp_2', 'Four.'))
         ws.push(done('resp_2'))
         await asyncio.wait_for(waiter, timeout=5)
-        await settle()
+        await _settle()
         assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
         assert not any(isinstance(event, FunctionToolResultEvent) for event in events)
 
         release.set()
-        await settle()
+        await _settle()
         # The late result is recorded and added to the conversation, but asks for no reply, and ends no exchange.
         assert any(isinstance(event, FunctionToolResultEvent) for event in events)
         assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
@@ -618,7 +629,6 @@ async def test_abandoned_tool_call_still_running_doesnt_hold_the_reply_to_an_int
             for part in message.parts
             if isinstance(part, ToolReturnPart)
         ] == ['call_1']
-        consumer.cancel()
 
 
 @pytest.mark.parametrize(
@@ -649,42 +659,29 @@ async def test_parallel_tool_calls_split_into_responses_get_one_reply(
             await first_result.wait()
         return 'Foggy.'
 
-    ws = PushWebSocket()
-    session = RealtimeSession(ElevenLabsRealtimeConnection(ws), runner)  # pyright: ignore[reportArgumentType]
-    events: list[Any] = []
-
-    async def consume() -> None:
-        async for event in session:  # pragma: no branch
-            events.append(event)
-
-    async def settle() -> None:
-        for _ in range(20):
-            await asyncio.sleep(0)
-
-    async with session:
-        consumer = asyncio.create_task(consume())
+    async with _eleven_session(runner) as (ws, session, events):
         await session.send('What is the weather in Paris and in Berlin?')
         waiter = asyncio.create_task(session.wait_for_reply())
         ws.push(user_message_added())
         ws.push(created('resp_1'))
         ws.push({**_call('resp_1', 'call_1'), 'name': 'get_weather'})
         ws.push(done('resp_1'))
-        await settle()
+        await _settle()
         ws.push(created('resp_2'))
         ws.push({**_call('resp_2', 'call_2'), 'name': 'get_weather'})
         ws.push(done('resp_2'))
-        await settle()
+        await _settle()
         first_result.set()
-        await settle()
+        await _settle()
         ws.push(tool_output_added('call_1'))
         ws.push(tool_output_added('call_2'))
         ws.push(created('resp_3'))
         ws.push(transcript('resp_3', 'Foggy in both.'))
-        await settle()
+        await _settle()
         assert not waiter.done()
         ws.push(done('resp_3'))
         await asyncio.wait_for(waiter, timeout=5)
-        await settle()
+        await _settle()
         assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
         assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
         sent = [json.loads(frame) for frame in ws.sent]
@@ -698,9 +695,8 @@ async def test_parallel_tool_calls_split_into_responses_get_one_reply(
         ws.push(transcript('resp_4', 'Also foggy.'))
         ws.push(done('resp_4'))
         await asyncio.wait_for(waiter, timeout=5)
-        await settle()
+        await _settle()
         assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 2
-        consumer.cancel()
 
 
 async def test_held_back_tool_result_request_goes_out_if_the_reply_started_without_the_result() -> None:
@@ -715,37 +711,24 @@ async def test_held_back_tool_result_request_goes_out_if_the_reply_started_witho
         await released[call_id].wait()
         return 'Foggy.'
 
-    ws = PushWebSocket()
-    session = RealtimeSession(ElevenLabsRealtimeConnection(ws), runner)  # pyright: ignore[reportArgumentType]
-    events: list[Any] = []
-
-    async def consume() -> None:
-        async for event in session:  # pragma: no branch
-            events.append(event)
-
-    async def settle() -> None:
-        for _ in range(20):
-            await asyncio.sleep(0)
-
-    async with session:
-        consumer = asyncio.create_task(consume())
+    async with _eleven_session(runner) as (ws, session, events):
         await session.send('What is the weather in Paris and in Berlin?')
         ws.push(user_message_added())
         for response_id, call_id in [('resp_1', 'call_1'), ('resp_2', 'call_2')]:
             ws.push(created(response_id))
             ws.push({**_call(response_id, call_id), 'name': 'get_weather'})
             ws.push(done(response_id))
-        await settle()
+        await _settle()
         # The first result goes out with its request; the second one's is held back until the reply to it is over.
         for call_id in ['call_1', 'call_2']:
             released[call_id].set()
-            await settle()
+            await _settle()
         ws.push(tool_output_added('call_1'))
         ws.push(created('resp_3'))
         ws.push(tool_output_added('call_2'))
         ws.push(transcript('resp_3', 'Foggy in Paris.'))
         ws.push(done('resp_3'))
-        await settle()
+        await _settle()
         sent = [json.loads(frame) for frame in ws.sent]
         assert [frame['event_id'] for frame in sent if frame['type'] == 'response.create'] == snapshot(
             ['pydantic_ai.response.0', 'pydantic_ai.response.1', 'pydantic_ai.response.2']
@@ -754,9 +737,8 @@ async def test_held_back_tool_result_request_goes_out_if_the_reply_started_witho
         ws.push(created('resp_4'))
         ws.push(transcript('resp_4', 'And in Berlin.'))
         ws.push(done('resp_4'))
-        await settle()
+        await _settle()
         assert sum(isinstance(event, RealtimeTurnCompleteEvent) for event in events) == 1
-        consumer.cancel()
 
 
 async def test_audio_tags_are_stripped_from_transcripts() -> None:
