@@ -74,6 +74,11 @@ class MCPStore:
         self.logs = directory / 'mcp_logs'
         self._workspace = workspace
 
+    @property
+    def workspace(self) -> Path:
+        """The session's directory: project files are found from it, and stdio servers start in it."""
+        return self._workspace or Path.cwd()
+
     def load(self) -> UserFile:
         """The saved file, or an empty one. A malformed file fails loudly with its path."""
         try:
@@ -105,8 +110,7 @@ class MCPStore:
         return list(self._project_files())
 
     def _project_files(self) -> dict[Path, type[ProjectFile | ClaudeProjectFile]]:
-        workspace = self._workspace or Path.cwd()
-        found = ((find_project_file(workspace, name), model) for name, model in _FORMATS.items())
+        found = ((find_project_file(self.workspace, name), model) for name, model in _FORMATS.items())
         return {path: model for path, model in found if path is not None}
 
     def trust_state(self, path: Path) -> TrustState:

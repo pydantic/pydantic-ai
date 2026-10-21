@@ -255,7 +255,7 @@ async def test_shell_opens_rewind_between_turns_and_releases_input(
         return result
 
     monkeypatch.setattr(LivePrompt, 'read', request)
-    monkeypatch.setattr('pydantic_clai2._app.rewind', choose)
+    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.rewind', choose)
     output = StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         await chat(

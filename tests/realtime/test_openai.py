@@ -2450,7 +2450,7 @@ async def test_connection_send_commit_and_clear_audio() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CommitAudio())
     await conn.send(ClearAudio())
-    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit'}
+    assert json.loads(ws.sent[0]) == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.commit.0'}
     assert json.loads(ws.sent[1]) == {'type': 'input_audio_buffer.clear'}
 
 
@@ -4746,6 +4746,58 @@ async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypa
     assert [frame['type'] for frame in second.sent] == ['session.update']
 
 
+async def test_a_tool_batch_response_request_lost_to_a_drop_is_not_asked_for_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The `response.create` a caller's last tool result sends for its batch is taken back too when it fails.
+
+    The caller was told the result failed (and the session expects no reply for that batch), so the
+    reconnect mustn't ask for one.
+    """
+
+    class _DropsOnCreate(_DroppableWebSocket):
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'response.create':
+                self.drop()
+            await super().send(data)
+
+    first, second = _DropsOnCreate(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        events = conn.__aiter__()
+        call = {'type': 'function_call', 'id': 'fc1', 'call_id': 'call_1', 'name': 't', 'arguments': '{}'}
+        first.push({'type': 'response.created', 'response': {'id': 'A'}})
+        first.push(
+            {
+                'type': 'response.function_call_arguments.done',
+                'response_id': 'A',
+                'item_id': 'fc1',
+                'output_index': 0,
+                'call_id': 'call_1',
+                'name': 't',
+                'arguments': '{}',
+            }
+        )
+        first.push(_response_done({'id': 'A', 'status': 'completed', 'output': [call]}))
+        while not isinstance(await anext(events), ToolCall):
+            pass
+        while conn._response_active:  # pyright: ignore[reportPrivateUsage]
+            await anext(events)
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await conn.send(ToolResult(tool_call_id='call_1', output='42'))
+        assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+        connect.release.set()
+        assert isinstance(await anext(events), RealtimeSessionReconnectEvent)
+
+    assert [frame['type'] for frame in second.sent] == ['session.update']
+
+
 async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5261,10 +5313,13 @@ async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monk
     end_chat_span = SessionInstrumentation.end_chat_span
 
     def record(
-        self: SessionInstrumentation, input_messages: list[ModelMessage], response: ModelResponse | None
+        self: SessionInstrumentation,
+        response_id: str,
+        input_messages: list[ModelMessage],
+        response: ModelResponse | None,
     ) -> None:
         ended.append((input_messages, response))
-        end_chat_span(self, input_messages, response)
+        end_chat_span(self, response_id, input_messages, response)
 
     monkeypatch.setattr(SessionInstrumentation, 'end_chat_span', record)
     ws = _QueuedWebSocket()
@@ -5534,12 +5589,63 @@ async def test_audio_whose_send_fails_after_its_turn_is_recorded_stays_out_of_th
     assert streamed_part.audio is not None and streamed_part.audio.data[44:] == sent
 
 
+def _push_to_talk_session(ws: _QueuedWebSocket) -> RealtimeSession:
+    connection = OpenAIRealtimeConnection(ws, manual_turns=True)  # type: ignore[arg-type]
+    return RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        audio_retention='input_audio',
+    )
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_turn_closed_before_its_commit_is_acknowledged_keeps_its_audio() -> None:
+    """A turn `commit_audio()` committed is recorded with its retained audio though the session closes before
+    reading the provider's `input_audio_buffer.committed`: the provider has it, and no transcript is coming."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    pcm = b'\x01\x00' * 2_400
+    async with session:
+        await session.send_audio(pcm)
+        await session.commit_audio()
+
+    [request] = session.all_messages()
+    [part] = request.parts
+    assert isinstance(part, SpeechPart) and part.speaker == 'user' and part.transcript is None
+    assert part.audio is not None and part.audio.data[44:] == pcm
+
+
+@pytest.mark.anyio
+async def test_push_to_talk_commits_the_provider_refuses_or_of_nothing_make_no_turn_at_close() -> None:
+    """A commit with no audio sent since the last one, or one the provider refused as too short, is no turn when
+    the session closes before anything acknowledges it."""
+    ws = _QueuedWebSocket()
+    session = _push_to_talk_session(ws)
+    async with session:
+        await session.send_audio(b'\x01\x00' * 100)
+        await session.commit_audio()
+        ws.push(
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'code': 'input_audio_buffer_commit_empty',
+                    'message': 'Error committing input audio buffer: buffer too small.',
+                },
+            }
+        )
+        assert isinstance(await anext(aiter(session)), RealtimeSessionErrorEvent)
+        await session.commit_audio()
+
+    assert session.all_messages() == []
+
+
 @pytest.mark.anyio
 async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None:
-    """The session core's history keeps retained audio; the session's own record (what tools see) lets its copy go.
+    """What tools see is the core's history itself, so its retained audio is kept, and bounded, once.
 
-    The part streamed as an event keeps its audio, so recorded audio is bounded by `retain_audio_max_seconds` once
-    rather than twice.
+    The part streamed as an event keeps its audio too.
     """
     ws = _QueuedWebSocket()
     connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -5581,7 +5687,7 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
                 streamed.append(event.part)
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
-        legacy = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        seen_by_tools = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
         history = session.all_messages()
 
     def speech(messages: list[ModelMessage]) -> list[SpeechPart]:
@@ -5589,8 +5695,8 @@ async def test_retained_audio_is_kept_once_when_the_core_keeps_history() -> None
 
     assert [part.transcript for part in speech(history)] == ['Hello.']
     assert all(part.audio is not None for part in speech(history))
-    assert [part.transcript for part in speech(legacy)] == ['Hello.']
-    assert all(part.audio is None for part in speech(legacy))
+    # The same messages, not copies.
+    assert all(seen is recorded for seen, recorded in zip(seen_by_tools, history, strict=True))
     assert [part.audio is not None for part in streamed] == [True]
 
 
@@ -5924,7 +6030,7 @@ async def test_late_transcript_keeps_one_part_per_output_item(case: LateTranscri
                     stream.append(event)
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
-        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
 
     def text_of(part: ModelResponsePart) -> str | None:
         if isinstance(part, TextPart):
@@ -6031,7 +6137,7 @@ async def test_transcript_after_its_response_ended_changes_nothing_recorded() ->
                     ws.push({'type': 'error', 'error': {'message': 'marker', 'type': 'invalid_request_error'}})
                 elif isinstance(event, RealtimeSessionErrorEvent):
                     break
-        own = session._own_messages()  # pyright: ignore[reportPrivateUsage]
+        own = session._core.conversation_so_far()  # pyright: ignore[reportPrivateUsage]
         recorded = session.all_messages()
 
     def transcripts(messages: list[ModelMessage]) -> list[list[str | None]]:
@@ -6094,3 +6200,59 @@ async def test_evicted_output_audio_is_released() -> None:
         assert [audio is not None for audio in retained()] == [False, True]
         gc.collect()
         assert evicted is not None and evicted() is None
+
+
+async def test_prune_tool_items_deletes_each_answered_call_with_its_output() -> None:
+    """Both of a call's items go together; a kept tool's stay, and so does a call whose output isn't in view."""
+
+    def added(item_type: str, call_id: str, item_id: str, name: str | None = None) -> str:
+        item = {'id': item_id, 'type': item_type, 'call_id': call_id, **({'name': name} if name else {})}
+        return json.dumps({'type': 'conversation.item.added', 'item': item})
+
+    frames = [
+        added('function_call', 'c1', 'item_c1', 'drop_me'),
+        added('function_call_output', 'c1', 'item_o1'),
+        added('function_call', 'c2', 'item_c2', 'keep_me'),
+        added('function_call_output', 'c2', 'item_o2'),
+        added('function_call', 'c3', 'item_c3', 'drop_me'),
+        # The beta protocol's acknowledgement counts too.
+        json.dumps(
+            {'type': 'conversation.item.created', 'item': {'id': 'item_c5', 'type': 'function_call', 'call_id': 'c5'}}
+        ),
+        json.dumps(
+            {
+                'type': 'conversation.item.created',
+                'item': {'id': 'item_o5', 'type': 'function_call_output', 'call_id': 'c5'},
+            }
+        ),
+        # An output of a call this connection didn't see.
+        added('function_call_output', 'c4', 'item_o4'),
+        # Malformed: ignored here.
+        json.dumps({'type': 'conversation.item.added', 'item': 'not an item'}),
+    ]
+    ws = FakeWebSocket(frames)
+    conn = OpenAIRealtimeConnection(ws, prune_tool_items=True, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(conn)
+    # Content the tool returned besides its output follows it as a user message, which goes with the call too.
+    await conn.send(ToolResult(tool_call_id='c1', output='Taken.', content=['A photo of the table.']))
+    [content_item] = [json.loads(frame)['item'] for frame in ws.sent if '"role":"user"' in frame]
+    calls = [
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c1'),
+        ToolCallPart(tool_name='keep_me', args='{}', tool_call_id='c2'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c3'),
+        ToolCallPart(tool_name='drop_me', args='{}', tool_call_id='c5'),
+    ]
+    assert await conn._prune_tool_calls(calls) == ['c1', 'c5']  # pyright: ignore[reportPrivateUsage]
+    assert [json.loads(frame) for frame in ws.sent if 'item.delete' in frame] == [
+        {'type': 'conversation.item.delete', 'item_id': 'item_c1'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o1'},
+        {'type': 'conversation.item.delete', 'item_id': content_item['id']},
+        {'type': 'conversation.item.delete', 'item_id': 'item_c5'},
+        {'type': 'conversation.item.delete', 'item_id': 'item_o5'},
+    ]
+    # With pruning off, nothing is deleted: kept tools alone don't turn it on.
+    off_ws = FakeWebSocket(frames)
+    off = OpenAIRealtimeConnection(off_ws, keep_tool_items={'keep_me'})  # type: ignore[arg-type]
+    await collect_codec_events(off)
+    assert await off._prune_tool_calls(calls) == []  # pyright: ignore[reportPrivateUsage]
+    assert not [frame for frame in off_ws.sent if 'item.delete' in frame]
