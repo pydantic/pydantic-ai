@@ -526,6 +526,30 @@ def test_live_continuation_call_is_a_response_of_its_own() -> None:
     )
 
 
+def test_live_delegation_settling_while_another_is_owed_ends_the_reply() -> None:
+    """A delegation that settles while another one's tool results are still owed ends the reply that called the tools.
+
+    What Live says next is the settled delegation's outcome, a reply of its own, ahead of the other one's answer.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.delegate()
+        sim.backend_finish()
+        sim.speak()
+        sim.advance_time(0.1)
+        sim.finish_tool()
+        sim.settle()
+        history.extend(_live_history(sim))
+
+    history: list[list[str]] = []
+    run_clean(LiveSimulation(), scenario)
+    assert history == snapshot([['r1w1', 'tool-call call_1'], ['tool-return call_1'], ['r2w1'], ['r3w1']])
+
+
 def test_live_speech_before_a_continuation_call_stays_in_the_reply() -> None:
     """SIM-18: what Live says after the round, before the backend calls again, is the reply that called the tools."""
 

@@ -624,9 +624,11 @@ class _LiveLifecycle(InferredLifecycle):
 
     The tool calls a delegated backend response asks for are the reply's, but the reply doesn't end with them: Live
     goes on speaking while the backend waits for their results ("Okay, checking the forecast ... now."), and only the
-    backend's answer is what it says with them in hand. So a reply that called tools goes on until the delegation
+    backend's answer is what it says with them in hand. So a reply that called tools goes on until a delegation
     settles (`delegation_settled()`), with what Live says meanwhile, or until the backend calls more tools in a
     continuation, which are a response of their own, after the results it was continued with, as in a standard run.
+    Any delegation settling ends it, not only the one that asked for its calls: what Live says next is that
+    delegation's outcome, which is a reply of its own.
     """
 
     transcripts_lag_replies = False
@@ -642,7 +644,7 @@ class _LiveLifecycle(InferredLifecycle):
         """The backend response that asked for the open response's tool calls reported its usage: it is over, and a
         call that comes now is a continuation's."""
         self._settles = False
-        """The provider message being mapped settles the delegation the open response's tool calls came from."""
+        """The provider message being mapped settles a delegation, whichever one the open response's calls came from."""
 
     def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         took_turn, self.turn_taken = self.turn_taken, False
@@ -655,9 +657,10 @@ class _LiveLifecycle(InferredLifecycle):
             self._settles = False
 
     def delegation_settled(self) -> None:
-        """The provider message being mapped ends the delegated work the open response called tools for.
+        """The provider message being mapped settles a delegation: it owes nothing more.
 
-        Its backend usage report ends the reply that delegated: what Live says next is the answer.
+        Its backend usage report ends the open response, if that called tools (of this delegation or another one still
+        owed its results): what Live says next is the settled delegation's outcome, a reply of its own.
         """
         self._settles = True
 
