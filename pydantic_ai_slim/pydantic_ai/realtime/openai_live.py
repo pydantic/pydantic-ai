@@ -106,7 +106,7 @@ from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus
+from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
@@ -653,6 +653,10 @@ class _LiveLifecycle(InferredLifecycle):
     def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         took_turn, self.turn_taken = self.turn_taken, False
         return took_turn
+
+    def calls_abandoned(self, call_ids: Sequence[str]) -> None:
+        """The delegated backend that asked for these calls gave up: no reply will answer their results."""
+        self._pending.append(ToolCallsAbandoned(tool_call_ids=tuple(call_ids)))
 
     def text_placed(self, input_id: InputId) -> None:
         """Live acknowledged a text input, placing it on its timeline where the conversation now is."""
@@ -1604,6 +1608,8 @@ class OpenAILiveConnection(RealtimeConnection):
             # Nothing further is coming for this delegation — no continuation, and no answer to any
             # call it had asked for — so it must not hold the clock open waiting for one.
             self._abandoned_calls.update(delegation.pending_tool_calls)
+            if delegation.pending_tool_calls:
+                self._lifecycle.calls_abandoned(sorted(delegation.pending_tool_calls))
             delegation.pending_tool_calls.clear()
             delegation.continuation_due = False
         if delegation.pending_tool_calls:
