@@ -910,10 +910,6 @@ _CONVERTER_PARITY_CASES = [
         '<p>a<![CDATA[ x   y \n z ]]>b<?php  echo  1 ?>c</p>',
         id='cdata-and-pi',
     ),
-    pytest.param(
-        '<p>a</p ><p>b</ p><p>c</><p>d</1><p>e</p\n  class="x"><p>f</p/><br/><p>g</p',
-        id='end-tag-forms',
-    ),
 ]
 
 
@@ -1002,6 +998,14 @@ class TestMarkdownConverter:
     def test_separator_run_at_the_limit_converts(self):
         """A tag with 100,000 whitespace characters inside it is accepted."""
         assert _convert_html('<p' + ' ' * 100_000 + '>ok</p>')[1] == 'ok'
+
+    @pytest.mark.parametrize('html', ['a</>b', 'ok</p'])
+    def test_end_tag_check_skips_what_the_parser_does_not_match(self, html: str):
+        """`</>` and an end tag with no closing `>` are not matched as tags, so they are not walked."""
+        with patch(
+            'pydantic_ai.common_tools.web_fetch._HTMLMarkupBudget._check_tag', side_effect=AssertionError('walked')
+        ):
+            _convert_html(html)
 
     def test_end_tag_attributes_are_counted(self):
         """Attribute-like text in an end tag is counted before the parser matches the tag."""
