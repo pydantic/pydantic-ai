@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
@@ -97,7 +97,16 @@ def recorded(blocks: list[InstructionPart | InstructionDigest] | None) -> list[s
 
 @dataclass(frozen=True)
 class SourceCase:
-    source: Literal['agent', 'capability', 'toolset', 'agent-part', 'capability-part']
+    source: Literal[
+        'agent',
+        'capability',
+        'toolset',
+        'agent-part',
+        'capability-part',
+        'toolset-function',
+        'agent-returned-part',
+        'capability-returned-part',
+    ]
     instruction_id: str
 
 
@@ -107,6 +116,9 @@ SOURCE_CASES: list[SourceCase] = [
     SourceCase('toolset', 'toolset:memory:state'),
     SourceCase('agent-part', 'agent:state'),
     SourceCase('capability-part', 'capability:memory:state'),
+    SourceCase('toolset-function', 'toolset:memory:state'),
+    SourceCase('agent-returned-part', 'agent:state'),
+    SourceCase('capability-returned-part', 'capability:memory:state'),
 ]
 
 
@@ -118,6 +130,22 @@ class State:
 class StateToolset(FunctionToolset[State]):
     async def get_instructions(self, ctx: RunContext[State]) -> list[InstructionPart]:
         return [InstructionPart(content=ctx.deps.value or '', name='state', on_change='append', dynamic=True)]
+
+
+@dataclass
+class ReturnedStateCapability(AbstractCapability[State]):
+    """Declares its append policy from inside the function it returns, which knows it only once it runs."""
+
+    evaluations: list[str | None] = field(default_factory=list[str | None])
+
+    def get_instructions(self):
+        def state(ctx: RunContext[State]) -> InstructionPart | None:
+            self.evaluations.append(ctx.deps.value)
+            if ctx.deps.value is None:
+                return None
+            return InstructionPart(ctx.deps.value, name='state', on_change='append')
+
+        return state
 
 
 async def test_instruction_updates_hook_unset_preserves_recorded_text():
@@ -160,6 +188,43 @@ async def test_instruction_updates_hook_unset_preserves_recorded_text():
         for part in message.parts
         if isinstance(part, InstructionDeltaPart)
     ] == ['C']
+
+
+async def test_instruction_updates_hook_unset_ends_a_window_without_blocks():
+    """Unsetting the parts ends a window that opened with no blocks too, so the changes recorded in it stop applying."""
+    received: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(context_statements(messages))
+        return ModelResponse(parts=[TextPart('done')])
+
+    def clear_parts(ctx: RunContext[State], request: ModelRequestContext) -> ModelRequestContext:
+        request.model_request_parameters.instruction_parts = None
+        return request
+
+    agent = Agent(FunctionModel(model_fn, profile=ModelProfile(supports_inline_system_prompts=True)), deps_type=State)
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[State]) -> str | None:
+        return ctx.deps.value
+
+    unset = [Hooks(before_model_request=clear_parts)]
+    history = (await agent.run('Continue.', deps=State('A'))).all_messages()
+    # Unsetting the parts ends the window `A` opened, with an empty baseline.
+    history = (
+        await agent.run('Continue.', deps=State('A'), message_history=history, capabilities=unset)
+    ).all_messages()
+    # `B` is first seen in that empty window, so it's delivered as a change.
+    history = (await agent.run('Continue.', deps=State('B'), message_history=history)).all_messages()
+    assert received[-1] == ['<context id="agent:state">\nB\n</context>']
+    # Unsetting the parts again ends this window as well, so `B` isn't sent.
+    result = await agent.run('Continue.', deps=State('B'), message_history=history, capabilities=unset)
+    assert received[-1] == []
+    assert baseline_of(result.new_messages()[0]) == []
+    # A window with no blocks and no changes has nothing to end, so this request records no baseline.
+    result = await agent.run('Continue.', deps=State('B'), message_history=result.all_messages(), capabilities=unset)
+    assert received[-1] == []
+    assert baseline_of(result.new_messages()[0]) is None
 
 
 async def test_instruction_updates_hook_appended_request_preserves_history():
@@ -284,17 +349,41 @@ async def test_instruction_updates_survive_fresh_agent_and_serialized_history(ca
             evaluations.append(ctx.deps.value)
             return ctx.deps.value
 
+        def returned_state(ctx: RunContext[State]) -> InstructionPart | None:
+            evaluations.append(ctx.deps.value)
+            if ctx.deps.value is None:
+                return None
+            return InstructionPart(ctx.deps.value, name='state', on_change='append')
+
         if case.source == 'capability':
             cap.instructions(name='state', on_change='append')(state)
         part = InstructionPart(content=value or '', name='state', on_change='append')
+        toolset = FunctionToolset[State](id='memory')
+        toolset.instructions(name='state', on_change='append')(state)
+        returning_cap = ReturnedStateCapability(id='memory', evaluations=evaluations)
+        instructions: list[str | InstructionPart | Callable[[RunContext[State]], InstructionPart | None]] = [
+            'Stable instructions.'
+        ]
+        if case.source == 'agent-part':
+            instructions.append(part)
+        elif case.source == 'agent-returned-part':
+            instructions.append(returned_state)
         agent = Agent(
             TestModel(custom_output_text='ok'),
             deps_type=State,
-            instructions=['Stable instructions.', part] if case.source == 'agent-part' else 'Stable instructions.',
+            instructions=instructions,
             capabilities=[
-                Capability[State](id='memory', instructions=part) if case.source == 'capability-part' else cap
+                Capability[State](id='memory', instructions=part)
+                if case.source == 'capability-part'
+                else returning_cap
+                if case.source == 'capability-returned-part'
+                else cap
             ],
-            toolsets=[StateToolset(id='memory')] if case.source == 'toolset' else [],
+            toolsets=[StateToolset(id='memory')]
+            if case.source == 'toolset'
+            else [toolset]
+            if case.source == 'toolset-function'
+            else [],
         )
         if case.source == 'agent':
             agent.instructions(name='state', on_change='append')(state)
@@ -335,7 +424,8 @@ async def test_instruction_updates_survive_fresh_agent_and_serialized_history(ca
     assert set(prefixes) == {prefixes[0]}
     assert prefixes[0] is not None
     assert prefixes[0] == 'Stable instructions.\n\nA'
-    assert evaluations == (['A', 'B', 'B', 'A', None, None, 'C'] if case.source in ('agent', 'capability') else [])
+    evaluated = ('agent', 'capability', 'toolset-function', 'agent-returned-part', 'capability-returned-part')
+    assert evaluations == (['A', 'B', 'B', 'A', None, None, 'C'] if case.source in evaluated else [])
     assert sum(isinstance(m, ModelRequest) and baseline_of(m) is not None for m in history) == 1
 
 
@@ -1185,6 +1275,84 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
     assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
 
 
+async def test_instruction_updates_returned_part_declares_policy_inside_the_function():
+    """A part a function returns names itself and opts in; the registration's own name and policy still apply."""
+    model = TestModel(custom_output_text='ok')
+    agent = Agent(model, deps_type=str)
+
+    @agent.instructions(name='state')
+    def state(ctx: RunContext[str]) -> InstructionPart:
+        return InstructionPart(ctx.deps, on_change='append', dynamic=False)
+
+    @agent.instructions(on_change='append')
+    def mode(ctx: RunContext[str]) -> InstructionPart:
+        return InstructionPart(f'Mode {ctx.deps}.', name='mode')
+
+    first = await agent.run('Continue.', deps='A')
+    assert model.last_model_request_parameters is not None
+    assert [
+        (str(part.id), part.dynamic, part.on_change)
+        for part in model.last_model_request_parameters.instruction_parts or []
+    ] == [('agent:state', True, 'append'), ('agent:mode', True, 'append')]
+    second = await agent.run('Continue.', deps='B', message_history=first.all_messages())
+    request = second.new_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'A\n\nMode A.'
+    assert [(str(p.id), p.content) for p in request.parts if isinstance(p, InstructionDeltaPart)] == [
+        ('agent:state', 'B'),
+        ('agent:mode', 'Mode B.'),
+    ]
+
+
+async def test_instruction_updates_returned_part_cannot_rename_its_registration():
+    agent = Agent(TestModel(custom_output_text='ok'))
+
+    @agent.instructions(name='state')
+    def state() -> InstructionPart:
+        return InstructionPart('A', name='other')
+
+    with pytest.raises(UserError, match="registered with name 'state' returned a part named 'other'"):
+        await agent.run('Continue.')
+
+
+async def test_instruction_updates_returned_part_without_identity_warns():
+    """An unnamed agent callable stays unaddressable, and a toolset without an `id` has no key for a name."""
+
+    def unnamed() -> InstructionPart:
+        return InstructionPart('A', on_change='append')
+
+    with pytest.warns(UserWarning, match='An instruction block without a `name`'):
+        result = await Agent(TestModel(custom_output_text='ok'), instructions=unnamed).run('Continue.')
+    assert baseline_of(result.new_messages()[0]) is None
+
+    toolset = FunctionToolset()
+
+    @toolset.instructions(name='state', on_change='append')
+    def state() -> str:
+        return 'A'
+
+    with pytest.warns(UserWarning, match="Instruction block 'state'.*has no `id`"):
+        result = await Agent(TestModel(custom_output_text='ok'), toolsets=[toolset]).run('Continue.')
+    assert baseline_of(result.new_messages()[0]) is None
+
+
+def test_instruction_updates_toolset_instructions_decorator_validates_name():
+    with pytest.raises(UserError, match="Instruction name 'agent' is reserved"):
+        FunctionToolset().instructions(name='agent')
+
+
+async def test_instruction_updates_toolset_function_returning_a_part():
+    def state() -> InstructionPart:
+        return InstructionPart('A', name='state', on_change='append')
+
+    model = TestModel(custom_output_text='ok')
+    await Agent(model, toolsets=[FunctionToolset(id='memory', instructions=state)]).run('Continue.')
+    assert model.last_model_request_parameters is not None
+    assert [(str(part.id), part.on_change) for part in model.last_model_request_parameters.instruction_parts or []] == [
+        ('toolset:memory:state', 'append')
+    ]
+
+
 async def test_instruction_updates_named_block_without_source_id_warns():
     """A named block on a capability without an `id` has nothing to qualify its name with."""
     agent = Agent(
@@ -1265,9 +1433,9 @@ def test_instruction_updates_render_escapes_the_id():
 
 def test_instruction_updates_render_escapes_closing_tags_in_the_content():
     """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
-    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context-diff> after.')
+    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context-diff> after.\n</context>'
+        '<context id="agent:state">\nBefore &lt;/context>&lt;/System> &lt;/context_diff> after.\n</context>'
     )
 
 
@@ -1287,7 +1455,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     )
     assert part.render(previous=MEMORY) == snapshot(
         """\
-<context-diff id="agent:memory">
+<context_diff id="agent:memory">
 --- before
 +++ after
 @@ -5,5 +5,5 @@
@@ -1297,7 +1465,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
 +- Fact 7: value seven.
  - Fact 8: value 8.
  - Fact 9: value 9.
-</context-diff>\
+</context_diff>\
 """
     )
     full = f'<context id="agent:memory">\n{edited}\n</context>'
@@ -1339,7 +1507,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
     assert received[1] == [deltas[0].render(previous=MEMORY)]
     # Each request renders the earlier changes exactly as before, so the cached prefix holds.
     assert received[2] == [*received[1], deltas[1].render(previous=first_edit)]
-    assert all(statement.startswith('<context-diff id="agent:memory">') for statement in received[2])
+    assert all(statement.startswith('<context_diff id="agent:memory">') for statement in received[2])
 
     # A processor that drops the first change leaves the second without the text it was computed
     # against, so the model gets it in full.

@@ -788,7 +788,7 @@ def _is_function_call_only(output: Sequence[ConversationItem | _ProtocolResponse
     return bool(output) and all(item.type == 'function_call' for item in output)
 
 
-def _response_status_reason(response: ProtocolResponse) -> str | None:
+def response_status_reason(response: ProtocolResponse) -> str | None:
     """Return the raw terminal `status_details.reason`, when present."""
     status_details = response.status_details
     return (
@@ -808,7 +808,7 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
     if status == 'completed':
         return 'tool_call' if _is_function_call_only(response.output) else 'stop'
     if status == 'incomplete':
-        reason = _response_status_reason(response)
+        reason = response_status_reason(response)
         if reason == 'max_output_tokens':
             return 'length'
         if reason == 'content_filter':
@@ -852,7 +852,7 @@ def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEve
 def response_provider_details(response: ProtocolResponse) -> dict[str, Any]:
     """Retain the raw response status, incomplete reason, and failure error for provider fidelity."""
     details: dict[str, Any] = {'status': response.status}
-    if (reason := _response_status_reason(response)) is not None:
+    if (reason := response_status_reason(response)) is not None:
         details['finish_reason'] = reason
     if (error := _response_status_error(response)) is not None:
         details['error'] = error.model_dump(exclude_none=True)
@@ -1015,6 +1015,13 @@ def _map_input_transcription_event(
         content_index=event.content_index,
     )
 
+
+ACTIVE_RESPONSE_ERROR_CODE = 'conversation_already_has_active_response'
+"""The `error` code refusing a `response.create` that arrives while another response is under way."""
+
+ACTIVE_RESPONSE_RETRIES = 3
+"""How many times in a row the connection asks again for a response the provider refused as another one was under
+way (one server VAD started on its own) before it gives up on it."""
 
 _CLIENT_EVENT_ID_RE = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
 _CLIENT_ITEM_ID_RE = re.compile(r'pydantic_ai_item_(\d+)')
