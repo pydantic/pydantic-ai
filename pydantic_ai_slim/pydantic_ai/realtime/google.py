@@ -84,7 +84,11 @@ from ..messages import (
     VideoUrl,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import ModelRequestParameters, download_item
+from ..models import (
+    ModelRequestParameters,
+    _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from ..models._speech import assistant_speech_text
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
@@ -628,6 +632,9 @@ async def _seed_request_parts(
                     await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
                 )
             )
+        elif isinstance(part, CompactionPart):
+            if part.content:
+                parts.append(genai_types.Part(text=_conversation_summary_text(part.content)))
         elif isinstance(part, SpeechPart):
             content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
             if isinstance(content, str):

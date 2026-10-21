@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Se
 
 import httpx2
 from pydantic import Field
-from typing_extensions import TypeAliasType, TypedDict, TypeIs, deprecated
+from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
@@ -91,7 +91,6 @@ from ..messages import (
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
-    _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
@@ -2683,55 +2682,46 @@ _CONVERSATION_SUMMARY_PROVENANCE = (
 def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFunction]
     messages: Sequence[ModelMessage],
 ) -> list[ModelMessage]:
-    """Send each `CompactionPart` that no provider produced as user-voice text framed as a summary.
+    """Swap each request-side `CompactionPart` for the user-voice text that frames its summary.
 
-    A part without `provider_name` was written by the application or a framework capability (such as
+    A `CompactionPart` in a `ModelRequest` was written by the application or a capability (such as
     Pydantic AI Harness's `SummarizingCompaction`), not by a provider's compaction API, so no provider
-    has a native block for it and every adapter would otherwise leave it out. A separate model wrote
-    it, not the assistant continuing the conversation and not the operator, so it goes out in the user
-    channel inside `<conversation_summary>`, opening with a line that says where it came from, as
-    Claude Code, Codex and OpenCode send theirs. The summary can't open or close a frame of its own or
-    a `<system>` tag. Parts without content have nothing to send and are left for the adapter to omit, and a part a
-    provider produced stays in that provider's own role.
-
-    The part is stored on the response side, so it is moved out into a request of its own, ahead of
-    the response that held it (a summary describes what came before), and merged with the requests
-    around it, keeping user and assistant turns alternating. The rest of that response stays whole,
-    so a tool call in it is still directly answered by the request after it. The merge only depends
-    on the messages at the summary's position, so it is the same on every later request and the
-    prompt prefix stays byte-stable.
+    has a native block for it. A separate model wrote it, not the assistant continuing the
+    conversation and not the operator, so it goes out as user text inside `<conversation_summary>`,
+    opening with a line that says where it came from, as Claude Code, Codex and OpenCode send theirs.
+    The summary can't open or close a frame of its own or a `<system>` tag. A part without content has
+    nothing to send and is left out. It already sits in a user turn, so nothing moves and the prompt
+    prefix stays byte-stable.
 
     Adapters call this as the first step of their own message mapping, not from `prepare_messages`:
     the request context, hooks and cache-health accounting keep seeing the typed part.
     """
     if not any(
-        _is_unattributed_summary(part)
+        isinstance(part, CompactionPart)
         for message in messages
-        if isinstance(message, ModelResponse)
+        if isinstance(message, ModelRequest)
         for part in message.parts
     ):
         return list(messages)
     new_messages: list[ModelMessage] = []
     for message in messages:
-        if not isinstance(message, ModelResponse):
-            new_messages.append(message)
-            continue
-        summaries = [part for part in message.parts if _is_unattributed_summary(part)]
-        if summaries:
-            new_messages.append(
-                ModelRequest(parts=[UserPromptPart(_conversation_summary_text(part.content)) for part in summaries])
-            )
-            rest = [part for part in message.parts if not _is_unattributed_summary(part)]
-            if rest:
-                new_messages.append(replace(message, parts=rest))
-        else:
-            new_messages.append(message)
-    return _merge_consecutive_messages(new_messages)
+        if isinstance(message, ModelRequest) and any(isinstance(part, CompactionPart) for part in message.parts):
+            parts: list[ModelRequestPart] = [
+                UserPromptPart(_conversation_summary_text(part.content)) if isinstance(part, CompactionPart) else part
+                for part in message.parts
+                if not isinstance(part, CompactionPart) or part.content
+            ]
+            message = replace(message, parts=parts)
+        new_messages.append(message)
+    return new_messages
 
 
-def _is_unattributed_summary(part: ModelResponsePart) -> TypeIs[CompactionPart]:
-    """Whether *part* is a compaction summary no provider produced, which every adapter renders as text."""
-    return isinstance(part, CompactionPart) and part.provider_name is None and bool(part.content)
+def _unrendered_compaction_part_error() -> UserError:
+    """The error for a request-side `CompactionPart` that reached an adapter's mapping unconverted."""
+    return UserError(
+        'A `CompactionPart` in a `ModelRequest` cannot be sent to this model as-is. Call '
+        '`_render_unattributed_compaction_parts(messages)` first, which turns it into its framed user text.'
+    )
 
 
 def _conversation_summary_text(content: str | None) -> str:

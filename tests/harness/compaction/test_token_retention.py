@@ -443,10 +443,8 @@ class TestSummarizingCompactionTokenRetention:
         result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
 
         kept_text = [part.content for message in result for part in message.parts if isinstance(part, UserPromptPart)]
-        # A zero-token copy of the user turn is kept as before. Without one, the tail is widened back to
-        # that request instead, so the summary isn't followed by a second assistant turn.
-        assert kept_text == [user_text]
-        assert len(result) == 3
+        assert kept_text == (['a'] if keep_messages and user_text == 'a' else [])
+        assert len(result) == 2 + len(kept_text)
         assert result[-1] is history[-1]
 
     async def test_message_count_mode_with_no_older_users_keeps_the_tail(self) -> None:

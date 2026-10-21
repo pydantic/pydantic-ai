@@ -11,7 +11,6 @@ from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
     ModelRequest,
-    ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
     ToolReturnPart,
@@ -53,8 +52,8 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
             *(
                 message.timestamp
                 for message in messages
-                if isinstance(message, ModelResponse)
-                and message.run_id is None
+                if message.run_id is None
+                and message.timestamp is not None
                 and any(isinstance(part, CompactionPart) for part in message.parts)
             ),
         ),

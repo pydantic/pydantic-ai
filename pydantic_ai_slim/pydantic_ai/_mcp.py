@@ -9,6 +9,7 @@ from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
 from .models import (
     _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unrendered_compaction_part_error,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -158,6 +159,9 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
                                 type='tool_result', toolUseId=part.tool_call_id, content=[content], isError=True
                             )
                         )
+                elif isinstance(part, messages.CompactionPart):  # pragma: no cover
+                    # `_render_unattributed_compaction_parts` swapped it for its framed user text above.
+                    raise _unrendered_compaction_part_error()
                 elif isinstance(part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart)):
                     # These parts are not currently sent to MCP sampling.
                     continue

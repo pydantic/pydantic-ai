@@ -12296,3 +12296,18 @@ def test_allowed_content_types_visible_in_vercel_adapter_signatures():
 
     assert 'allowed_content_types' in dispatch_request_parameters
     assert dispatch_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+
+
+async def test_adapter_roundtrip_request_side_compaction_part():
+    """A summary the application wrote rides the user message and loads back into the request, in place."""
+    summary = CompactionPart(content='the gist', metadata={'app': 'summary'})
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='first'), summary, UserPromptPart(content='next')])
+    ]
+
+    loaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+    [request] = loaded
+    assert isinstance(request, ModelRequest)
+    assert [type(part) for part in request.parts] == [UserPromptPart, CompactionPart, UserPromptPart]
+    assert request.parts[1] == summary

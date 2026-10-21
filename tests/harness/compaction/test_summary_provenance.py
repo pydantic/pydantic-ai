@@ -3,6 +3,7 @@
 from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
 
 
 class TestSummarizingCompaction:
@@ -21,10 +22,12 @@ class TestSummarizingCompaction:
             model=TestModel(custom_output_text='summary of both prompts'),
         )
 
-        # The first prompt precedes the summary; the later prompt is kept with its answer, so the summary
-        # isn't followed by a second assistant turn.
-        preserved_prompt, summary, later_request, last_response = result
-        assert isinstance(summary, ModelResponse) and summary.run_id is None
-        assert summary.parts == [CompactionPart(content='summary of both prompts')]
+        # The first prompt precedes the summary of everything after it.
+        preserved_prompt, summary, last_response = result
+        assert isinstance(summary, ModelRequest) and summary.run_id is None
+        assert summary.parts == [
+            CompactionPart(content='summary of both prompts', metadata={SUMMARY_METADATA_KEY: True})
+        ]
+        assert summary.timestamp is not None
         assert summary.timestamp > max(first_prompt.timestamp, later_prompt.timestamp)
-        assert preserved_prompt == messages[0] and later_request is messages[2] and last_response == messages[-1]
+        assert preserved_prompt == messages[0] and last_response == messages[-1]

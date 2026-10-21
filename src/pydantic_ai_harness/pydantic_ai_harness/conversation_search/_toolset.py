@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -179,7 +180,7 @@ def _user_prompt_text(part: UserPromptPart) -> str:
     return ' '.join(texts)
 
 
-def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | None:
+def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | None:  # noqa: C901
     """Render one request part to a searchable line, or `None` for non-content parts."""
     if isinstance(part, UserPromptPart):
         content = _user_prompt_text(part)
@@ -206,6 +207,12 @@ def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | Non
     if isinstance(part, RetryPromptPart):
         # A retry or validation-error prompt is worth recalling, so index it in full.
         return f'Retry [{part.tool_name}]: {part.content}'
+    if isinstance(part, CompactionPart):
+        # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
+        if not part.content:
+            return None
+        content = part.content[:500] + '...' if truncate and len(part.content) > 500 else part.content
+        return f'Summary: {content}'
     if isinstance(part, SpeechPart):
         # A realtime user turn: index the spoken transcript so speech is searchable, not the
         # raw audio. `transcript` is optional, so an audio-only part contributes no text.

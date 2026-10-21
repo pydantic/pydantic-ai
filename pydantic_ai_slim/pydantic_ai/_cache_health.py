@@ -178,10 +178,12 @@ def _count_compactions(request_context: ModelRequestContext, response: ModelResp
     """How many `CompactionPart`s the request's history and its response carry.
 
     Anthropic and OpenAI's server-side compaction return the part in the response that compacted; OpenAI's
-    stateless compaction adds it to the history before the request. Either way the count grows.
+    stateless compaction adds it to the history before the request, and a summary the application wrote sits in a
+    request. Either way the count grows.
     """
-    responses = [message for message in request_context.messages if isinstance(message, ModelResponse)]
-    return sum(isinstance(part, CompactionPart) for message in [*responses, response] for part in message.parts)
+    return sum(
+        isinstance(part, CompactionPart) for message in [*request_context.messages, response] for part in message.parts
+    )
 
 
 def _sums_cache_usage(response: ModelResponse) -> bool:

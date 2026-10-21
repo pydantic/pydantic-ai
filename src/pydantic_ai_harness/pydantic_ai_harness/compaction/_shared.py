@@ -139,6 +139,9 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # reveal was free.
     elif isinstance(part, ToolAvailabilityDeltaPart):
         return []
+    elif isinstance(part, CompactionPart):
+        # A summary the application wrote, sent as text.
+        return [part.content or '']
     elif isinstance(part, SpeechPart):
         # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
         # words the provider bills against the window -- not the binary audio, which has no

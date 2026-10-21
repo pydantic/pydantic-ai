@@ -41,7 +41,6 @@ from pydantic_ai_harness.compaction._receipts import (
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
-    _is_safe_cutoff,  # pyright: ignore[reportPrivateUsage]
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -56,9 +55,8 @@ from pydantic_ai_harness.compaction._shared import (
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summary import (
-    is_summary_message,
-    summary_response,
-    summary_text,
+    is_summary_part,
+    summary_request,
     without_summaries,
 )
 
@@ -235,12 +233,16 @@ def _format_messages(
                             'tool_return', tool_return_text(part), name=part.tool_name, max_chars=tool_return_max_chars
                         )
                     )
-        elif not (skip_previous_summary and is_summary_message(msg)):
+                elif (
+                    isinstance(part, CompactionPart)
+                    and part.content
+                    and not (skip_previous_summary and is_summary_part(part))
+                ):
+                    elements.append(_message_element('summary', part.content))
+        else:
             for part in msg.parts:
                 if isinstance(part, TextPart):
                     elements.append(_message_element('assistant', part.content))
-                elif isinstance(part, CompactionPart) and part.provider_name is None and part.content:
-                    elements.append(_message_element('summary', part.content))
                 elif isinstance(part, ToolCallPart):
                     elements.append(_message_element('tool_call', f'{part.args}', name=part.tool_name))
     return '\n'.join(elements)
@@ -315,13 +317,18 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
     """The first user message to keep after compaction, without what the summary request carries.
 
     Continuing a history merges consecutive requests, so after a compaction the first user message
-    also holds that compaction's summary request. Its summaries and receipts are superseded by the
-    new ones, and its leading system prompts are already copied into the new summary request.
+    also holds that compaction's summary and whatever request followed it. The summary goes after the
+    first user turn, so it and everything after it belong to later turns, which the new summary
+    covers. Receipts and an earlier release's summaries are superseded by the new ones, and its
+    leading system prompts are already copied into the new summary request.
     """
     carried = {part.content for part in system_parts}
+    first_turn = next(
+        (message.parts[:index] for index, part in enumerate(message.parts) if is_summary_part(part)), message.parts
+    )
     kept = [
         part
-        for part in message.parts
+        for part in first_turn
         if not is_receipt_part(part)
         and not (isinstance(part, SystemPromptPart) and (_is_legacy_summary(part) or part.content in carried))
     ]
@@ -331,50 +338,21 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
 def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     """Extract the most recent compaction summary from the message history.
 
-    A summary is a response marked as this capability's own (see `summary_response`); the last one in
-    the history is the newest. A `CompactionPart` an application wrote itself is not one. Failing that, a history saved by an earlier release holds its summary as a
-    `SystemPromptPart` opening with `_SUMMARY_PREFIX`, and each pass put its own ahead of the older
-    ones, so there the first one is the newest.
+    A summary is a `CompactionPart` marked as this capability's own (see `is_summary_part`); the last
+    one in the history is the newest. A `CompactionPart` an application wrote itself is not one.
+    Failing that, a history saved by an earlier release holds its summary as a `SystemPromptPart`
+    opening with `_SUMMARY_PREFIX`, and each pass put its own ahead of the older ones, so there the
+    first one is the newest.
     """
     for msg in reversed(messages):
-        if is_summary_message(msg) and (text := summary_text(msg)):
-            return _without_bridge_prefix(text)
+        for part in reversed(msg.parts):
+            if is_summary_part(part) and part.content:
+                return _without_bridge_prefix(part.content)
     for msg in messages:
         for part in msg.parts:
             if isinstance(part, SystemPromptPart) and _is_legacy_summary(part):
                 return _without_bridge_prefix(part.content[len(_SUMMARY_PREFIX) :])
     return None
-
-
-def _back_to_request(messages: list[ModelMessage], cutoff: int) -> int:
-    """Move *cutoff* back to the nearest request it can split the history at without orphaning a tool call.
-
-    The summary is stored in a response, so a kept tail that opened with a response would leave two
-    responses in a row in the stored history. Provider models send the summary in the user channel,
-    but a `FunctionModel`, a UI adapter or a history processor reading the history gets the typed
-    parts, and keeping one more turn spares them that shape. A history with no such request before
-    *cutoff* keeps *cutoff* as it is.
-    """
-    if not 0 < cutoff < len(messages):
-        return cutoff
-    for index in range(cutoff, 0, -1):
-        if isinstance(messages[index], ModelRequest) and _is_safe_cutoff(messages, index):
-            return index
-    return cutoff
-
-
-def _open_tail_at_request(
-    messages: list[ModelMessage], to_summarize: list[ModelMessage], preserved: list[ModelMessage]
-) -> tuple[list[ModelMessage], list[ModelMessage]]:
-    """Widen the kept tail of *messages* back to a request, taking what it gains out of *to_summarize*.
-
-    *preserved* is a suffix of *messages*, possibly shorter than what *to_summarize* leaves.
-    """
-    start = len(messages) - len(preserved)
-    adjusted = _back_to_request(messages, start)
-    if adjusted == start:
-        return to_summarize, preserved
-    return to_summarize[: min(len(to_summarize), adjusted)], messages[adjusted:]
 
 
 def _without_legacy_summaries(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -407,15 +385,18 @@ def _without_bridge_prefix(summary: str) -> str:
 def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessage]) -> bool:
     """Whether summarizing *message* would add nothing the compacted history does not already hold.
 
-    That is a message kept verbatim alongside the summary, a request made up only of system
+    That is a message kept verbatim alongside the summary, or a request made up only of system
     prompts (prompts copied into the new summary request, or a summary from an earlier release), pins
-    (reinjected), and receipts (replaced), or a response holding only an earlier summary.
+    (reinjected), receipts (replaced), and earlier summaries.
     """
     if any(message is retained for retained in kept):
         return True
     if isinstance(message, ModelResponse):
-        return is_summary_message(message)
-    return all(isinstance(part, SystemPromptPart) or is_pinned(part) or is_receipt_part(part) for part in message.parts)
+        return False
+    return all(
+        isinstance(part, SystemPromptPart) or is_pinned(part) or is_receipt_part(part) or is_summary_part(part)
+        for part in message.parts
+    )
 
 
 def _is_kept_user_message(message: ModelRequest) -> bool:
@@ -645,10 +626,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             cutoff = find_token_cutoff(messages, self.keep_tokens, self.tokenizer)
         else:
             cutoff = find_safe_cutoff(messages, self.keep_messages)
-        if not self.keep_user_messages:
-            # The summary is stored in a response, so the kept tail opens with a request; see
-            # `_back_to_request`. Retained user copies sit between them instead, when there are any.
-            cutoff = _back_to_request(messages, cutoff)
 
         if cutoff <= 0:
             return messages
@@ -667,11 +644,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [_kept_first_user_message(first_user_msg, system_parts)]
 
-        if self.keep_user_messages and not extra:
-            # No retained user copy separates the summary from the tail, so the tail opens at a request.
-            # The tail never widens past the first message, so something is still left to summarize.
-            to_summarize, preserved = _open_tail_at_request(messages, to_summarize, preserved)
-
         if self.keep_tokens and all(_adds_nothing_to_summarize(message, extra) for message in to_summarize):
             # A large message can keep the retained token floor and the summary above the trigger;
             # re-summarizing only the earlier summary would then cost a model call on every request.
@@ -682,11 +654,11 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         summary = self._maybe_bridge_prefix(summary, messages, ctx)
 
         # The summary is model-written text standing in for the turns it replaced, so it is a
-        # `CompactionPart` in a response of its own: core sends it as framed user-voice text and treats
+        # `CompactionPart` in a request of its own: core sends it as framed user-voice text and treats
         # it as a compaction boundary, and the standing system prompt stays exactly as it was. The
         # original first user turn precedes everything it summarizes, so it goes ahead of it; recent user
         # turns kept by `keep_user_messages` follow it, as they always did.
-        summary_message = summary_response(summary)
+        summary_message = summary_request(summary)
         standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
 
         if previous_summary is not None:
@@ -798,7 +770,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
     def _insert_receipt(
         self,
-        summary_message: ModelResponse,
+        summary_message: ModelRequest,
         to_summarize: list[ModelMessage],
         result: list[ModelMessage],
         ctx: RunContext[AgentDepsT],

@@ -667,13 +667,13 @@ async def test_speech_response_estimates_transcript_tokens() -> None:
     assert _estimate_usage([response]) == RequestUsage(input_tokens=50, output_tokens=3)
 
 
-def test_a_provider_less_compaction_summary_counts_as_text() -> None:
-    """A summary no provider produced is sent as text, so it counts; a provider's own opaque item doesn't."""
-    summary = ModelResponse(parts=[CompactionPart(content='three summary words')])
+def test_a_request_side_compaction_summary_counts_as_text() -> None:
+    """A summary the application wrote is sent as text, so it counts; a provider's own opaque item doesn't."""
+    summary = ModelRequest(parts=[CompactionPart(content='three summary words')])
     native = ModelResponse(
         parts=[CompactionPart(content=None, provider_name='openai', provider_details={'encrypted_content': 'x'})]
     )
-    assert _estimate_usage([summary]) == RequestUsage(input_tokens=50, output_tokens=3)
+    assert _estimate_usage([summary]) == RequestUsage(input_tokens=53, output_tokens=0)
     assert _estimate_usage([native]) == RequestUsage(input_tokens=50, output_tokens=0)
 
 

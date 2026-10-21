@@ -46,7 +46,7 @@ from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingC
 from pydantic_ai_harness.compaction._summarizing_compaction import (
     _SUMMARY_PREFIX,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai_harness.compaction._summary import summary_response
+from pydantic_ai_harness.compaction._summary import summary_request
 from pydantic_ai_harness.conversation_search import (
     ConversationSearch,
     ConversationSearchToolset,
@@ -154,7 +154,7 @@ class TestSnapshotHistorySource:
         store = InMemoryStepStore()
         original = _user('the ZEBRA passphrase is 42')
         reply = _reply('noted')
-        summary = summary_response('older context')
+        summary = summary_request('older context')
         follow_up = _user('what was it again?')
         await _seed_run(store, 'r1', [original, reply], [summary, reply, follow_up])
 
@@ -165,7 +165,7 @@ class TestSnapshotHistorySource:
         """Only the summaries `SummarizingCompaction` wrote are artifacts; an application's own is content."""
         store = InMemoryStepStore()
         prompt = _user('go on')
-        app = ModelResponse(parts=[CompactionPart(content='the PELICAN plan'), TextPart('continuing')])
+        app = ModelRequest(parts=[CompactionPart(content='the PELICAN plan'), UserPromptPart('continuing')])
         await _seed_run(store, 'r1', [prompt, app])
 
         history = await SnapshotHistorySource(store).run_history(run_id='r1')

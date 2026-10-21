@@ -76,11 +76,6 @@ REPLY = 'hi, ' + 'here is what I found. ' * 10
 """Long enough that a short summary of it makes the history smaller."""
 
 
-def three_turns() -> list[ModelMessage]:
-    """`two_turns` and a short third turn, which a compaction between turns keeps with its answer."""
-    return [*two_turns(), ModelRequest.user_text_prompt('one more'), ModelResponse(parts=[TextPart('ok')])]
-
-
 def two_turns() -> list[ModelMessage]:
     """Two request/response pairs, the second prompt long enough that summarizing it saves tokens."""
     return [
@@ -102,7 +97,7 @@ def two_turns() -> list[ModelMessage]:
     ],
 )
 async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str) -> None:
-    transcript = Transcript(messages=three_turns(), model=TestModel(custom_output_text='the gist'))
+    transcript = Transcript(messages=two_turns(), model=TestModel(custom_output_text='the gist'))
     plugin = make_plugin(transcript, protected_tokens=0)
     plugin.host.status.context_alert = True
     with capture_run_messages() as summary_run:
@@ -117,15 +112,14 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
         assert prompt.endswith(f'Give particular weight to: {focus}')
     else:
         assert 'Give particular weight to:' not in prompt
-    assert notice == 'Compacted 6 messages down to 4; about 56 of 62 tokens saved.'
-    # The first prompt precedes the summary; the last turn is kept whole, so the summary is never
-    # followed by a second assistant turn.
-    first_request, summary, last_request, last_response = transcript.messages
-    assert isinstance(summary, ModelResponse) and isinstance(first_request, ModelRequest)
-    assert isinstance(last_request, ModelRequest)
-    assert [part.content for part in last_request.parts if isinstance(part, UserPromptPart)] == ['one more']
+    assert notice == 'Compacted 4 messages down to 3; about 56 of 60 tokens saved.'
+    # The first prompt precedes the summary of everything after it.
+    first_request, summary, last_response = transcript.messages
+    assert isinstance(summary, ModelRequest) and isinstance(first_request, ModelRequest)
     [request_part] = first_request.parts
-    assert summary.parts == [CompactionPart(content='the gist')] and isinstance(request_part, UserPromptPart)
+    [summary_part] = summary.parts
+    assert isinstance(summary_part, CompactionPart) and summary_part.content == 'the gist'
+    assert isinstance(request_part, UserPromptPart)
     assert request_part.content == 'hello there', 'harness keeps the first user message verbatim'
     assert isinstance(last_response, ModelResponse)
     assert plugin.host.status.context_alert, 'the colour follows the figure: both wait for the next reading'
@@ -192,11 +186,10 @@ async def test_compact_counts_tokens_the_provider_reported() -> None:
         history.append(ModelRequest.user_text_prompt(f'next {turn}'))
     transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
     notice = await make_plugin(transcript, protected_tokens=15_000).commands.execute_async('/compact')
-    assert notice == 'Compacted 13 messages down to 7; about 39,997 of 59,002 tokens saved.'
+    assert notice == 'Compacted 13 messages down to 6; about 39,998 of 59,002 tokens saved.'
     first, summary, *tail = transcript.messages
     assert isinstance(summary.parts[0], CompactionPart) and first is history[0]
-    # At least the last 15,000 reported tokens are kept verbatim, from the request before them on.
-    assert tail == history[-5:]
+    assert tail == history[-4:], 'at least the last 15,000 reported tokens are kept verbatim'
 
 
 async def test_compact_is_traced_with_the_global_agent_instrumentation() -> None:
@@ -335,13 +328,12 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     await session.prompt('first')
     await session.prompt('second ' * 20)
-    await session.prompt('third')
     before = session.messages
     plugin = make_plugin(session, strategy=strategy, protected_tokens=0)
 
     notice = await plugin.commands.execute_async('/compact don\'t lose the "auth" notes')
 
-    assert notice.startswith('Compacted 6 messages down to ')
+    assert notice.startswith('Compacted 4 messages down to ')
     assert session.messages != before
     restored = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     await restored.resume(session.summary.id)
@@ -414,10 +406,7 @@ async def test_gauge_clears_the_estimate_mark_within_a_turn() -> None:
 
 
 async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    inputs(
-        monkeypatch,
-        ['first', 'second ' * 20, 'third', '/compact don\'t lose the "auth" notes', '/plugins list', '/exit'],
-    )
+    inputs(monkeypatch, ['first', 'second ' * 20, '/compact don\'t lose the "auth" notes', '/plugins list', '/exit'])
     output = io.StringIO()
     await chat(
         Agent(TestModel()),
@@ -432,7 +421,7 @@ async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: 
         ),
     )
     text = output.getvalue()
-    assert 'Compacted 6 messages down to ' in text
+    assert 'Compacted 4 messages down to 3' in text
     assert 'compaction' in text and 'pydantic_clai2.builtin_plugins.compaction (built-in)' in text
 
 

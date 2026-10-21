@@ -57,6 +57,7 @@ from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
+    is_request_compaction_part,
     resolve_allow_uploaded_files,
     tool_availability_delta_from_payload,
 )
@@ -419,6 +420,17 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     elif isinstance(part, DataUIPart):
                         if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             builder.add(tool_availability_delta_from_payload(part.data))
+                        elif (
+                            part.type == COMPACTION_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
+                            and is_request_compaction_part(compaction_part)
+                        ):
+                            # A summary the application wrote: it keeps its place among the prompts around it.
+                            if user_prompt_content:
+                                builder.add(_user_prompt_part(user_prompt_content))
+                                user_prompt_content = []
+                            builder.add(compaction_part)
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
 
@@ -758,6 +770,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 else:
                     # Non-tool retries (e.g., output validation errors) become user text
                     user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
+            elif isinstance(part, CompactionPart):
+                user_ui_parts.append(DataUIPart(type=COMPACTION_DATA_TYPE, data=compaction_payload(part)))
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in the UI
             else:

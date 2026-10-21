@@ -2268,6 +2268,9 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
         raise _unsynthesized_tool_availability_delta_error()
     elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
         raise _unprojected_instruction_delta_error()
+    elif isinstance(part, CompactionPart):
+        # A summary standing in for earlier turns: the same entry a response-side summary gets.
+        return {'summary': part.content or ''}
     elif isinstance(part, SpeechPart):  # pragma: no cover
         # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
         raise _unconverted_speech_part_error()

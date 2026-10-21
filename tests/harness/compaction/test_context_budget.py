@@ -54,6 +54,7 @@ from pydantic_ai_harness.compaction import (
     resolve_context_window,
 )
 from pydantic_ai_harness.compaction._shared import resolve_token_trigger
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
 
 try:
     from logfire.testing import CaptureLogfire
@@ -1744,8 +1745,8 @@ class TestSummarizerMustWriteText:
 
         assert result.output is True
         first = result.all_messages()[0]
-        assert isinstance(first, ModelResponse)
-        assert first.parts == [CompactionPart(content='Summary.')]
+        assert isinstance(first, ModelRequest)
+        assert first.parts == [CompactionPart(content='Summary.', metadata={SUMMARY_METADATA_KEY: True})]
 
 
 pytestmark = [pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')]

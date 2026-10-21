@@ -459,6 +459,9 @@ def _estimate_usage(  # noqa: C901
                     if not allow_tool_availability_deltas:
                         raise _unsynthesized_tool_availability_delta_error()
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, CompactionPart):
+                    # A summary the application wrote, sent as text.
+                    request_tokens += _estimate_string_tokens(part.content or '')
                 elif isinstance(part, SpeechPart):
                     # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
                     # user speech can arrive unconverted; estimate from the transcript like the
@@ -479,9 +482,8 @@ def _estimate_usage(  # noqa: C901
                 elif isinstance(part, FilePart):
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
-                    # A summary no provider produced is sent as text; a provider's own is opaque state.
-                    if part.provider_name is None and part.content:
-                        response_tokens += _estimate_string_tokens(part.content)
+                    # A provider's own compaction item is opaque state, not text the model reads.
+                    pass
                 elif isinstance(part, SpeechPart):
                     response_tokens += _estimate_string_tokens(part.content)
                 else:

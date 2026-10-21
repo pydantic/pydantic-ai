@@ -79,7 +79,7 @@ _agent: Agent[None, str] = Agent(
 async def _workflow() -> tuple[str, int]:
     result = await _agent.run('continue', message_history=_history())
     first = result.all_messages()[0]
-    assert isinstance(first, ModelResponse)
+    assert isinstance(first, ModelRequest)
     [summary_part] = first.parts
     assert isinstance(summary_part, CompactionPart) and summary_part.content is not None
     return summary_part.content, result.usage.requests

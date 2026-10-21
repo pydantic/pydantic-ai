@@ -63,6 +63,7 @@ from ..models import (
     _render_unattributed_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unrendered_compaction_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -444,7 +445,7 @@ class XaiModel(Model[AsyncClient]):
 
         return xai_messages
 
-    async def _map_request_parts(
+    async def _map_request_parts(  # noqa: C901
         self,
         parts: Sequence[ModelRequestPart],
         pending_tool_call_ids: list[str],
@@ -470,6 +471,9 @@ class XaiModel(Model[AsyncClient]):
                 raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, CompactionPart):  # pragma: no cover
+                # `_render_unattributed_compaction_parts` swapped it for its framed user text before mapping.
+                raise _unrendered_compaction_part_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()

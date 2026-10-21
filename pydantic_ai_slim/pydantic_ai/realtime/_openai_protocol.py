@@ -84,6 +84,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..models import _conversation_summary_text  # pyright: ignore[reportPrivateUsage]
 from ..models._speech import assistant_speech_text
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
@@ -619,6 +620,11 @@ async def _seed_request_items(
                 await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
             ):
                 items.append(_message_item('user', content))
+        elif isinstance(part, CompactionPart):
+            if part.content:
+                items.append(
+                    _message_item('user', [_text_content('input_text', _conversation_summary_text(part.content))])
+                )
         elif isinstance(part, SpeechPart):
             content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
             if isinstance(content, str):

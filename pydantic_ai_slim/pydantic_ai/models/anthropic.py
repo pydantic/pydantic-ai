@@ -113,6 +113,7 @@ from . import (
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unrendered_compaction_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -2539,6 +2540,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             is_error=request_part.outcome == 'failed',
                         )
                         user_content_params.append(tool_result_block_param)
+                    elif isinstance(request_part, CompactionPart):  # pragma: no cover
+                        # `_render_unattributed_compaction_parts` swapped it for its framed user text before mapping.
+                        raise _unrendered_compaction_part_error()
                     elif isinstance(request_part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
                         raise _unconverted_speech_part_error()
