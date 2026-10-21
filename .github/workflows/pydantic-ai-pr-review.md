@@ -77,9 +77,10 @@ concurrency:
   # group of its own, so it cannot cancel a review queued for the same head.
   # `author_association` can misreport a collaborator as `CONTRIBUTOR`; that
   # approval then runs alongside a queued review instead of replacing it. An org
-  # member with only read access approves as `MEMBER` and still replaces a queued
-  # review, which `roles:` then stops before the model: accepted, because such
-  # members rarely review here.
+  # member with only read access approves as `MEMBER`, so that approval still
+  # cancels a queued review. `roles:` then stops the new run before the model,
+  # which leaves the head unreviewed with no `CI Review skipped` check and no
+  # `ci-review-failed` label. Accepted, because such members rarely review here.
   group: >-
     ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && (github.event.review.state != 'approved' || (github.event.review.author_association != 'OWNER' && github.event.review.author_association != 'MEMBER' && github.event.review.author_association != 'COLLABORATOR')))) && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
