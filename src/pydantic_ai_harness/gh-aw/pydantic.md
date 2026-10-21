@@ -250,7 +250,8 @@ engine:
                   if native:
                       _partial.pop(event.index, None)
                   part = event.part
-                  if isinstance(part, RetryPromptPart):
+                  # TODO(v3): remove RetryPromptPart; releases before 2.57 emit it for a tool retry
+                  if isinstance(part, RetryPromptPart) or part.outcome == 'retried':
                       success = False
                       status = 'retry'
                       output = None
@@ -268,7 +269,7 @@ engine:
                       'success': success,
                       'status': status,
                   }
-                  if not isinstance(part, RetryPromptPart):
+                  if status != 'retry':
                       data['output'] = output
                   if error is not None:
                       data['error'] = error
