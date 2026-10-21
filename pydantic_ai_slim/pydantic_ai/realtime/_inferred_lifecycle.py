@@ -97,11 +97,12 @@ class InferredLifecycle:
       made up, so it is recorded as no provider's (`ResponseStarted.provider_id=False`).
     - A response whose calls are reported with
       [`response_continues`][pydantic_ai.realtime.codec.ToolCall.response_continues] goes on past them, as the model
-      keeps talking, until its `ResponseDone`, until the result of one of them goes out (a result directly follows
-      the response that made its call), or until a spoken turn joins the conversation, which follows it too. What the model says after that, before the `ResponseDone` that ends its turn, is a
-      response of its own. If the model was mid-sentence when the result went out, that is the rest of the
-      sentence, which answers nothing; otherwise it answers the result. Cut off while one of those calls still
-      runs, the response ends `completed`: its tool round goes on.
+      keeps talking, until its `ResponseDone`, until the result of one of them goes out (a result directly follows the
+      response that made its call), or until a spoken turn joins the conversation, which follows it too. What the model
+      says after that, before the `ResponseDone` that ends its turn, is a response of its own. If the model was
+      mid-sentence when the result went out, that is the rest of the sentence, which answers nothing; otherwise it
+      answers the result. Cut off while one of those calls still runs, the response ends `completed`: its tool round
+      goes on.
     - A response answers every input that asked for one (a `str` turn, a tool result, a `CreateResponse`) and wasn't
       answered when it started (`ResponseStarted.basis='inferred'`).
     - A spoken turn starts with its first input transcript, joins the conversation as the reply to it starts, and
