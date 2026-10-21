@@ -307,6 +307,8 @@ async def cancel_suspended_job(model: Model, response: ModelResponse) -> None:
                     # A repeated cancellation gives up on the provider cancel, so a hanging one can't block the run.
                     job.cancel()
                 cancelled = error
+    # `exception()` returns the cancel's error rather than raising it, which swallows it without asyncio logging it
+    # as never retrieved; only a cancel that was given up on raises, as `CancelledError`.
     with suppress(asyncio.CancelledError):
         job.exception()
     if cancelled is not None:
