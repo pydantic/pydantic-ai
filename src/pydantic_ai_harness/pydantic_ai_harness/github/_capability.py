@@ -20,8 +20,6 @@ except ImportError as exc:  # pragma: no cover
 
 GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/'
 _ID = 'github'
-# A token sent to these never crosses the network, so a local server may use plain `http://`.
-_LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '::1'})
 
 
 @dataclass(kw_only=True)
@@ -52,7 +50,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
     It cannot be combined with `auth`, `url`, or `toolsets`.
     """
     url: str = GITHUB_MCP_URL
-    """The MCP server URL, for example a GitHub Enterprise Cloud endpoint. It must be `https://` unless it is local."""
+    """The `https://` MCP server URL, for example a GitHub Enterprise Cloud endpoint."""
     toolsets: list[str] | None = None
     """GitHub tool groups to offer, such as `'repos'`. `None` keeps the server's defaults."""
 
@@ -64,11 +62,10 @@ class GitHub(AbstractCapability[AgentDepsT]):
         ):
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`, `url`, or `toolsets`.')
         parts = urlsplit(self.url)
-        if not parts.hostname or not (
-            parts.scheme == 'https' or (parts.scheme == 'http' and parts.hostname in _LOOPBACK_HOSTS)
-        ):
-            # The token travels in a header, so plain `http://` to another host would send it unencrypted.
-            raise UserError(f'`url` must be an `https://` URL, or `http://` on a loopback host; got {self.url!r}.')
+        if parts.scheme != 'https' or not parts.hostname:
+            # The token travels in a header, so plain `http://` would send it unencrypted, even to a loopback host
+            # when an `HTTP_PROXY` is set.
+            raise UserError(f'`url` must be an `https://` URL; got {self.url!r}. Pass `client` to connect another way.')
         # GitHub reads an empty toolsets header as its defaults, which include write tools.
         if self.toolsets == []:
             raise UserError('`toolsets` must name at least one tool group; use `None` for the defaults.')

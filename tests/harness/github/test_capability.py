@@ -197,20 +197,11 @@ class TestGitHub:
 
     @pytest.mark.parametrize(
         'url',
-        [
-            'http://api.githubcopilot.com/mcp/',
-            'http://localhost.example.com/mcp',
-            'https:///mcp',
-            'api.githubcopilot.com/mcp',
-        ],
+        ['http://api.githubcopilot.com/mcp/', 'http://127.0.0.1:8082/mcp', 'https:///mcp', 'api.githubcopilot.com/mcp'],
     )
-    def test_url_must_be_https_unless_local(self, url: str) -> None:
-        with pytest.raises(UserError, match=r"`url` must be an `https://` URL, or `http://` on a loopback host; got '"):
+    def test_url_must_be_https(self, url: str) -> None:
+        with pytest.raises(UserError, match=r"`url` must be an `https://` URL; got '"):
             GitHub(auth='token', url=url)
-
-    @pytest.mark.parametrize('url', ['http://localhost:8082/mcp', 'http://127.0.0.1:8082/mcp', 'http://[::1]:8082/mcp'])
-    def test_local_server_may_use_http(self, url: str) -> None:
-        assert transport(GitHub(auth='token', url=url).get_toolset()).url == url
 
     def test_empty_toolsets_raise(self) -> None:
         with pytest.raises(UserError, match='at least one tool group'):
