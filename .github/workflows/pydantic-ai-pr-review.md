@@ -1,22 +1,27 @@
 ---
 emoji: "🔎"
 name: "CI Review"
-description: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered when the PR's current head is approved and has passed CI, by the `final-review` label, or by dispatch: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered once the PR's current head has passed CI and is approved, labeled `final-review`, or dispatched: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Review a PR once it is about to merge, not on every push. One agent slot serves
-  # every PR (see `queue: max` in `.github/workflows/AGENTS.md`), so a review per
-  # passing push queued for hours. Each of these is a request:
+  # every PR (`engine.concurrency` below), so a review per passing push queued for
+  # hours. Each of these is a request:
   #
   # - an APPROVED review of the current head from a user with write access or
   #   higher (`pull_request_review`);
   # - `CI` passing on a head that already has such an approval (`workflow_run`),
   #   for an approval submitted before `CI` finished;
-  # - the `final-review` label, which gh-aw removes so it can be applied again;
+  # - adding the `final-review` label (`pull_request: labeled`). Nothing removes
+  #   it; to ask again, remove and reapply it;
   # - a manual dispatch.
   #
-  # `eligibility` skips every other event before inference, and every request
-  # still waits for the required `check` to pass on the head. A merge group's `CI`
+  # `eligibility` skips every other event before inference. Every request requires
+  # the required `check` to have passed on the head: an approval is checked again
+  # when `CI` passes, and a label or dispatch must be repeated. A merge group's `CI`
   # run is not a `pull_request` run, so the merge queue never starts a review.
+  #
+  # Not gh-aw's `label_command`: v0.86.2 adds `types: []` to `workflow_dispatch`
+  # when it merges `label_command` with other triggers, which GitHub rejects.
   #
   # No `branches:` filter on `workflow_run` — the head branch here is the PR's
   # branch, not a release branch, so restricting it would suppress every review.
@@ -25,9 +30,8 @@ on:
     types: [completed]
   pull_request_review:
     types: [submitted]
-  label_command:
-    name: final-review
-    events: [pull_request]
+  pull_request:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       recovery_issue:
@@ -67,11 +71,13 @@ concurrency:
   # and a later request for one head still supersedes an in-flight review of it,
   # which is the one cancellation worth keeping.
   #
-  # A review that is not an approval, and a label other than `final-review`, is
-  # not a request: each gets a group of its own, so it cannot cancel a review
-  # queued for the same head.
+  # A label other than `final-review`, a review that is not an approval, and an
+  # approval from someone who is not a collaborator are not requests: each gets a
+  # group of its own, so it cannot cancel a review queued for the same head.
+  # `author_association` can misreport a collaborator as `CONTRIBUTOR`; that
+  # approval then runs alongside a queued review instead of replacing it.
   group: >-
-    ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request_review' && github.event.review.state != 'approved') || (github.event_name == 'pull_request' && github.event.label.name != 'final-review')) && format('-{0}', github.run_id) || '' }}
+    ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && (github.event.review.state != 'approved' || (github.event.review.author_association != 'OWNER' && github.event.review.author_association != 'MEMBER' && github.event.review.author_association != 'COLLABORATOR')))) && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 # Deterministic, pre-inference gate: unless `eligibility` says so, no model runs.
 #
@@ -120,6 +126,42 @@ safe-outputs:
     # rerun dedup in `eligibility`, and `supersede-older-reviews`, which filters
     # `review.body.includes(marker)` and is a silent no-op without it.
     footer: always
+  threat-detection:
+    # Detection has an independent budget and the same unknown-model constraint.
+    max-ai-credits: -1
+    # Detection uses the stateful Claude CLI, so it retains normal recovery.
+    engine:
+      id: claude
+      model: ${{ vars.GH_AW_MODEL }}
+      env:
+        ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+        ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+        GH_AW_HARNESS_MAX_RETRIES: "3"
+# The Z.AI engine from `shared/engine-zai.md`, inlined rather than imported: gh-aw allows
+# one `engine` across a workflow and its imports, and only this workflow sets
+# `concurrency`. Keep everything else here equal to that file, including the
+# `runtimes`, `max-ai-credits` and `safe-outputs.threat-detection` it sets.
+runtimes:
+  uv: {}
+max-ai-credits: -1
+engine:
+  id: claude
+  model: ${{ vars.GH_AW_MODEL }}
+  command: /tmp/gh-aw/bin/pydantic-ai-runner-launch
+  env:
+    ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+    ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+    GITHUB_WORKFLOW: ${{ github.workflow }}
+    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
+    # The custom shim is stateless, so an outer retry repeats the whole task.
+    GH_AW_HARNESS_MAX_RETRIES: "0"
+  # One review at a time across all PRs, on the shared Z.AI account. gh-aw applies
+  # this group by default, but drops it for a workflow with `pull_request*` triggers.
+  concurrency:
+    group: "gh-aw-claude-${{ github.workflow }}"
+    queue: max
 timeout-minutes: 30
 env:
   # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
@@ -138,21 +180,21 @@ imports:
   - shared/rigor.md
   - shared/review-context.md
   - shared/checkout.md
-  - shared/engine-zai.md
   - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
   # Check out the PR head. `workflow_run` starts the job on the default branch, and
   # gh-aw's own "Checkout PR branch" step is gated on `github.event.pull_request` /
-  # `aw_context`, so under this trigger it no-ops — without this the agent would
-  # review `main`.
+  # `aw_context`, so under that trigger it no-ops — without this the agent would
+  # review `main`. Under the other triggers it checks out the PR branch, which can
+  # have moved past the head `eligibility` resolved.
   #
   # The steps after this one run workspace scripts over contributor-authored code,
   # which is safe only because of the collaborator + same-repo gates above. gh-aw
-  # does not backstop that: its "Restore agent config folders from base branch"
-  # step is gated on *its* checkout having succeeded, so it never runs here, and
-  # nothing restores `AGENTS.md`, `agent_docs/` or `scripts/` from base.
+  # does not backstop that under `workflow_run`: its "Restore agent config folders
+  # from base branch" step is gated on *its* checkout having succeeded, so it never
+  # runs there, and nothing restores `AGENTS.md`, `agent_docs/` or `scripts/` from base.
   #
   # Fetched by commit, not by head branch: a PR merged in the minutes between
   # `eligibility` and this step has its branch deleted, and the branch fetch then
@@ -307,8 +349,7 @@ jobs:
             TRIGGER_SHA=''
             EXPLICIT_REQUEST=true
           elif [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
-            # `pull_request` is `label_command`'s `labeled` event, which fires for every
-            # label. Neither event's head is checked here: the approval gate below
+            # `pull_request` is the `labeled` event, which fires for every label. Neither event's head is checked here: the approval gate below
             # requires an approval of the current head, and a label asks for a review
             # of whatever is on the PR now.
             if [ "$EVENT_NAME" = 'pull_request_review' ]; then
@@ -413,9 +454,9 @@ jobs:
 
           # --- Required checks -------------------------------------------------
           # `check`, which aggregates `CI`, is required on `main`, so every request
-          # waits here for `CI` to pass on the head. An approval submitted earlier
-          # is picked up again by the `workflow_run` of the `CI` run that passes; a
-          # label or dispatch has to be repeated.
+          # skips here until `CI` has passed on the head. An approval is checked
+          # again by the `workflow_run` of the `CI` run that passes; a label or
+          # dispatch must be repeated.
           FAILING=$(printf '%s' "$PR_JSON" | jq -r '
             [ .commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]
               | select(.isRequired)
