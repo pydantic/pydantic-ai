@@ -8,6 +8,7 @@ disambiguation and checkpoint storage are Absurd's own.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
+from datetime import datetime
 from typing import Any
 
 import anyio
@@ -48,7 +49,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
-from pydantic_ai_harness.absurd import AbsurdDurability
+from pydantic_ai_harness.absurd import AbsurdDurability, UnserializableStepResultError
 from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
@@ -677,7 +678,7 @@ class TestToolResults:
         )
 
         async with running_task_context(absurd) as ctx:
-            with pytest.raises(UserError, match='could not be serialized'):
+            with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
                 await agent.run('go')
         stored = await checkpoints(absurd, ctx.task_id)
         assert stored['opaque__function_toolset__tools.call_tool:charge'] == snapshot(
@@ -689,7 +690,7 @@ class TestToolResults:
             }
         )
         async with reenter_running_task(absurd, ctx.task_id):
-            with pytest.raises(UserError, match='could not be serialized'):
+            with pytest.raises(UnserializableStepResultError, match='could not be serialized'):
                 await agent.run('go')
 
         assert calls['calls'] == 1
@@ -855,6 +856,24 @@ class TestClaim:
             result = await agent.run('go')
 
         assert result.output == 'done'
+
+    async def test_step_extends_the_claim_before_its_body_runs(self, absurd: AsyncAbsurd) -> None:
+        # `begin_step` leaves the claim as it was, so a step that starts late in the claim window
+        # extends it first instead of waiting a heartbeat interval for its first heartbeat.
+        task: dict[str, str] = {}
+        claims: dict[str, datetime] = {}
+
+        async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            claims['in_step'] = await claim_expires_at(absurd, task['id'])
+            return ModelResponse(parts=[TextPart(content='ok')])
+
+        agent = Agent(FunctionModel(model, model_name='fn'), name='late', capabilities=[AbsurdDurability()])
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            claims['claimed'] = await claim_expires_at(absurd, ctx.task_id)
+            await agent.run('go')
+
+        assert claims['in_step'] > claims['claimed']
 
     async def test_lost_claim_cancels_the_step(self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch) -> None:
         # Once the run can't extend its claim (here, the task was cancelled), the step stops instead

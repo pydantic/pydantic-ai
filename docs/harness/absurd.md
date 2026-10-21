@@ -102,9 +102,9 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
 - The agent needs a `name` (or pass `name=` to `AbsurdDurability`), and every function, MCP, or
   dynamic toolset needs a unique `id`; `Agent(...)` raises a `UserError` otherwise. Don't rename
   either once deployed: in-flight tasks re-run the steps whose names changed.
-- A checkpointed tool's return value is stored as JSON. If it can't be serialized, the run raises a
-  `UserError` after the tool ran, and that failure is checkpointed: a retry raises it again without
-  running the tool.
+- A checkpointed tool's return value is stored as JSON. If it can't be serialized, the run raises
+  `UnserializableStepResultError` (a `UserError`) after the tool ran, and that failure is
+  checkpointed: a retry raises it again without running the tool.
 - A step is checkpointed after it runs, so a crash between a tool's side effect and its checkpoint
   re-runs the tool. Keep side effects in tools and in an `event_stream_handler` idempotent.
 - While a step runs, it extends the worker's claim on the task, so a model request or tool call can
