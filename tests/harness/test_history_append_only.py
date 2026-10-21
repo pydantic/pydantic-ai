@@ -270,10 +270,6 @@ _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
 
 
-_NO_DEFAULT_ID = (Known('ids', f'{_ISSUES}7237 (no default `id`)', 'instructions', 'instruction:anonymous@1'),)
-"""A static block without a default `id`: it never changes today, so nothing rewrites yet, but it can't append."""
-
-
 _MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
     'openai-chat': {'user-prompt': 2, 'model-response': 3, 'tool-return': 4},
     'openai-responses': {'user-prompt': 2, 'model-response': 4, 'tool-return': 4},
@@ -281,7 +277,6 @@ _MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
 """How many messages of each kind `Memory`'s snapshot rewrites or pushes back on the OpenAI APIs."""
 
 KNOWN: dict[str, tuple[Known, ...]] = {
-    'AskUser': _NO_DEFAULT_ID,
     'CodeMode(dynamic_catalog=True)': (
         Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
         # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
@@ -294,9 +289,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
             for name in ('forecast', 'tool_search', 'run_code')
         ),
     ),
-    'ConversationSearch': _NO_DEFAULT_ID,
-    'Macroscope': _NO_DEFAULT_ID,
-    'ManagedPrompt': _NO_DEFAULT_ID,
     # Anthropic attaches the snapshot to the turn's user prompt, so the write, the next turn and the second write
     # each rewrite one. The OpenAI APIs send it as a message after the user prompt, so each change also pushes
     # every later message back a position.
@@ -314,8 +306,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
         Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', count=2, providers=('anthropic', 'openai-chat')),
         Known('prefix', f'{_ISSUES}7289', 'system', 'system-prompt', providers=('openai-responses',)),
     ),
-    'PlaywrightBrowser': _NO_DEFAULT_ID,
-    'PydanticAIDocs': _NO_DEFAULT_ID,
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
