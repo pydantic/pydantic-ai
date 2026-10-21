@@ -311,7 +311,9 @@ import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, o
 tag cut after the harness moved into this repository; older tags do not carry the file and
 return a 404 at compile time. That ref pins the definition. The harness package version
 is pinned separately, by `engine: version:` in the definition, and a workflow's own
-`engine: version:` overrides it.
+`engine: version:` overrides it. An override has to be 0.59.0 or newer: each harness
+release pins its own `pydantic-ai-slim`, and the definition installs
+`pydantic-ai-slim>=2.59.0` alongside it.
 
 ## Compile and commit
 
@@ -396,8 +398,9 @@ reads:
 
 Only the secret for the provider you use needs setting, plus whichever one
 [threat detection](#threat-detection) reads. The workflow above uses
-`openai/gpt-5`, so it needs `CODEX_API_KEY` or, when that is unset, `OPENAI_API_KEY`. The
-examples below set `OPENAI_API_KEY`.
+`openai/gpt-5`, so it needs `CODEX_API_KEY` or, when that is unset, `OPENAI_API_KEY`, plus
+`COPILOT_GITHUB_TOKEN` for threat detection unless it adds the `codex` override shown there.
+The examples below set `OPENAI_API_KEY`.
 
 === "CLI"
 

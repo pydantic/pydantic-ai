@@ -46,7 +46,9 @@ pins are separate: the ref decides which definition compiles, and `engine.versio
 inside it decides which harness release runs. A workflow's own `engine: version:`
 overrides the package version the definition pins, because gh-aw applies the
 imported definition's version only when the workflow left it empty
-(`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`).
+(`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`). The
+override has to be 0.59.0 or newer: each harness release pins its own
+`pydantic-ai-slim`, and the definition installs `pydantic-ai-slim>=2.59.0` alongside it.
 
 `model` is required and must be `provider/model`. gh-aw accepts `copilot`,
 `anthropic`, `openai` and `codex` as the provider segment; it selects which backend
