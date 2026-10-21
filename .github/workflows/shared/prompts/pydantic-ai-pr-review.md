@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -74,6 +74,14 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   out real sleeps, timeouts or poll intervals instead of injecting them, or that
   feed one huge input to prove a complexity bound. Calibration is Example 5 in
   `.review-context/review-instructions.md`. Cap at **MEDIUM**.
+- **Fix reach.** When the diff fixes a bug in a code path that several
+  providers, models, or callers go through (a model class, a profile setting, a
+  helper), list the surfaces that path reaches and check that the PR reproduces
+  the defect on each. A recording or probe in which a surface accepts the change
+  does not count: it shows the change is safe there, not that the surface needs
+  it. Ask for placement that reaches only the reproduced surfaces, not for more
+  recordings. Rate it **HIGH** when the PR body or tests show a reached surface
+  already works on `main` without the change; otherwise **MEDIUM**.
 
 ## Review process
 
