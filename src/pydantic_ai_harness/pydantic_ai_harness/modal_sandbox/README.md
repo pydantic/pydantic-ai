@@ -177,7 +177,7 @@ async def terminate_sandbox(ref: WorkspaceRef) -> None:
 
 A sandbox you don't terminate ends when its `sandbox_timeout` runs out, or after `idle_timeout` seconds without activity if you set one. See [Modal's timeouts](https://modal.com/docs/guide/sandbox#timeouts).
 
-A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. A run cancelled while Modal is still creating the sandbox leaves no ref for the hook either; see [Telemetry](#telemetry):
+A failed run returns no result, so there is no ref to store, and `after_run` doesn't run. A run cancelled while Modal is still creating the sandbox leaves no ref for any hook; see [Telemetry](#telemetry). To terminate a failed run's sandbox, clean up in an `on_run_error` hook:
 
 ```python
 from typing import Any
