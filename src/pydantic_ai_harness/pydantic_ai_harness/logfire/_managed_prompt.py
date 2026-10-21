@@ -175,13 +175,13 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
             if self.default is not None:
                 warnings.warn(
                     '`default` is ignored when `name` is a `Variable`; the variable already carries its own default.',
-                    stacklevel=3,
+                    stacklevel=4,
                 )
             if self.logfire_instance is not None:
                 warnings.warn(
                     '`logfire_instance` is ignored when `name` is a `Variable`; '
                     'the variable already carries its own Logfire instance.',
-                    stacklevel=3,
+                    stacklevel=4,
                 )
             return self.name
 
@@ -195,7 +195,7 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
             warnings.warn(
                 f'The {_PROMPT_VARIABLE_PREFIX!r} prefix is added automatically; '
                 f'pass the bare prompt name rather than {name!r}.',
-                stacklevel=3,
+                stacklevel=4,
             )
             name = name[len(_PROMPT_VARIABLE_PREFIX) :]
 
@@ -243,7 +243,8 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         # The prompt is resolved once per run, so a new version published between runs of a conversation is
         # appended as a change (a diff, when that's shorter) rather than rewriting the cached prompt. The text
-        # is the operator's own prompt, from Logfire or the code default.
+        # is the operator's own prompt, from Logfire or the code default (rendered against `deps` when
+        # `render_template=True`).
         return append_on_change_by_default(super()._collect_instructions(), key=_ID_PREFIX)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

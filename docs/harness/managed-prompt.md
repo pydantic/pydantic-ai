@@ -217,8 +217,8 @@ agent = Agent('{{ openai:medium }}', capabilities=[ManagedPrompt(support_prompt,
 
 When `name` is a prompt name (not a `Variable`), pass `logfire_instance=` to declare the variable
 on a specific Logfire instance instead of the module-level default. `default` is required when
-`name` is a prompt name and is ignored, with a warning, when you pass a `Variable` (which already
-carries its own default and instance). The same goes for `logfire_instance`.
+`name` is a prompt name. With a `Variable`, `default` and `logfire_instance` are ignored with a warning,
+since the variable carries its own.
 
 The capability's `id` is derived from the prompt: `ManagedPrompt('support_agent', ...)` and a
 `Variable` named `prompt__support_agent` both get `managed-prompt-support_agent`. It names the

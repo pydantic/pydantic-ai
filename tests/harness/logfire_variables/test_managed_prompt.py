@@ -573,8 +573,16 @@ def test_logfire_instance_with_prebuilt_variable_warns() -> None:
 
 def test_default_with_prebuilt_variable_warns() -> None:
     var = logfire.var(name='prompt__default_conflict', type=str, default=DEFAULT)
-    with pytest.warns(UserWarning, match='`default` is ignored when `name` is a `Variable`'):
+    with pytest.warns(UserWarning, match='`default` is ignored when `name` is a `Variable`') as record:
         ManagedPrompt(var, default='Ignored.')
+    # The warning points at the caller, not at the dataclass `__init__` or the capability's internals.
+    assert record[0].filename == __file__
+
+
+def test_prefixed_name_warning_points_at_caller() -> None:
+    with pytest.warns(UserWarning, match='prefix is added automatically') as record:
+        ManagedPrompt('prompt__caller_location', default=DEFAULT)
+    assert record[0].filename == __file__
 
 
 @dataclass
