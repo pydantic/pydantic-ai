@@ -1003,15 +1003,9 @@ class BedrockConverseModel(Model[BaseClient]):
         # The default `maxTokens` is the model's maximum output, which can take longer to generate than the client's read
         # timeout, and botocore retries a timed-out `Converse` request, generating the response again each time. So the
         # request is streamed behind the scenes, and the read timeout then limits the wait between chunks.
-        stream_response = await self._messages_create(messages, True, settings, model_request_parameters)
-        streamed_response = self._process_streamed_response(stream_response, model_request_parameters)
-        try:
+        async with self._open_stream(messages, settings, model_request_parameters) as streamed_response:
             async for _ in streamed_response:
                 pass
-        finally:
-            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
-            with anyio.CancelScope(shield=True):
-                await streamed_response.close_stream()
         return streamed_response.get()
 
     async def count_tokens(
@@ -1071,19 +1065,19 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
-        response = await self._messages_create(messages, True, settings, model_request_parameters)
-        streamed_response = self._process_streamed_response(response, model_request_parameters)
-        try:
+        async with self._open_stream(messages, settings, model_request_parameters) as streamed_response:
             yield streamed_response
-        finally:
-            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
-            with anyio.CancelScope(shield=True):
-                await streamed_response.close_stream()
 
-    def _process_streamed_response(
-        self, response: ConverseStreamResponseTypeDef, model_request_parameters: ModelRequestParameters
-    ) -> BedrockStreamedResponse:
-        return BedrockStreamedResponse(
+    @asynccontextmanager
+    async def _open_stream(
+        self,
+        messages: list[ModelMessage],
+        settings: BedrockModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[BedrockStreamedResponse]:
+        """Send a `ConverseStream` request, and close its event stream on exit."""
+        response = await self._messages_create(messages, True, settings, model_request_parameters)
+        streamed_response = BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),
@@ -1093,6 +1087,12 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        try:
+            yield streamed_response
+        finally:
+            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
+            with anyio.CancelScope(shield=True):
+                await streamed_response.close_stream()
 
     def _default_max_tokens(self, model_settings: BedrockModelSettings) -> int | None:
         """The `maxTokens` to send when the request doesn't set `max_tokens`.

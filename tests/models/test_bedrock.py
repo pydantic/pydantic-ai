@@ -4574,8 +4574,7 @@ async def test_bedrock_stream_closed_when_cancelled_while_opening(
         async with model.request_stream(
             [ModelRequest.user_text_prompt('hi')], None, ModelRequestParameters()
         ) as stream:
-            async for _ in stream:
-                pass  # pragma: no cover
+            assert [event async for event in stream] == []
 
     assert scope.cancelled_caught
     assert event_stream.closed
