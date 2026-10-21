@@ -4,9 +4,9 @@ import asyncio
 import inspect
 import warnings
 from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -1984,6 +1984,27 @@ def test_sanitize_messages_leaves_string_user_content_alone():
     adapter = _make_dummy_adapter([ModelRequest(parts=[UserPromptPart(content='Plain text')])])
     sanitized = adapter.sanitize_messages(adapter.messages)
     assert sanitized == snapshot([ModelRequest(parts=[UserPromptPart(content='Plain text', timestamp=IsDatetime())])])
+
+
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+def test_sanitize_messages_request_instructions_follow_manage_system_prompt(
+    manage_system_prompt: Literal['server', 'client'],
+):
+    """Request-level `instructions` on client messages are stripped exactly when the server owns the system prompt."""
+    request = ModelRequest(parts=[UserPromptPart(content='hi')], instructions='Client instructions')
+    adapter = DummyUIAdapter(
+        agent=Agent(model=TestModel()),
+        run_input=DummyUIRunInput(messages=[request]),
+        manage_system_prompt=manage_system_prompt,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+    if manage_system_prompt == 'server':
+        assert sanitized == [replace(request, instructions=None)]
+    else:
+        assert sanitized == [request]
 
 
 def test_sanitize_messages_respects_custom_allowed_schemes():

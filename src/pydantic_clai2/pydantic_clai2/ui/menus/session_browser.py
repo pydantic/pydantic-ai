@@ -10,6 +10,7 @@ import sys
 import textwrap
 import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import TextIO
 
@@ -110,9 +111,11 @@ class SessionBrowser:
         return self.identities[workspace]
 
     def _resolve_projects(self) -> None:
-        for workspace in dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)]):
-            if workspace not in self.found:
-                self.found[workspace] = project_identity(workspace)
+        workspaces = dict.fromkeys([self.workspace, *(e.workspace for e in self.entries)])
+        if unknown := [workspace for workspace in workspaces if workspace not in self.found]:
+            # Each takes a few Git processes; run them side by side so opening waits for the slowest, not the sum.
+            with ThreadPoolExecutor() as pool:
+                self.found.update(zip(unknown, pool.map(project_identity, unknown)))
         self.identities = placements(self.entries, identities=self.found)
 
     def place(self, workspace: str) -> tuple[str, str]:
@@ -450,7 +453,8 @@ class SessionBrowser:
                 result = self.handle_key(key)
                 if result is not None:
                     return result
-                if time.monotonic() - refreshed >= 0.5:
+                # Only while no key arrives: a held arrow key must never wait on storage.
+                if not key and time.monotonic() - refreshed >= 0.5:
                     try:
                         self.reload()
                     finally:

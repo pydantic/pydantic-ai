@@ -184,6 +184,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # Hugging Face's chat API takes images and no other file.
+    _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+
     unsupported_settings = frozenset(
         {'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
     )
