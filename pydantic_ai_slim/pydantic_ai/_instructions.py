@@ -21,7 +21,8 @@ from pydantic_ai.messages import (
     InstructionSource,
     ModelMessage,
     ModelRequest,
-    ModelResponse,
+    ModelRequestPart,
+    ModelResponsePart,
     _instruction_text_hash,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.template import TemplateStr
@@ -329,9 +330,12 @@ def _unaddressable_reason(part: InstructionPart) -> str:
 
 def _opens_instruction_window(message: ModelMessage) -> bool:
     """Whether the instruction window changes at `message`: a request recording a baseline, or a compaction."""
-    if isinstance(message, ModelResponse):
-        return any(isinstance(part, CompactionPart) for part in message.parts)
-    return any(isinstance(part, InstructionBaselinePart) for part in message.parts)
+    return any(is_window_boundary(part) for part in message.parts)
+
+
+def is_window_boundary(part: ModelRequestPart | ModelResponsePart) -> bool:
+    """Whether `part` ends the instruction window before it: a baseline, or a compaction on either side."""
+    return isinstance(part, (InstructionBaselinePart, CompactionPart))
 
 
 def advance_instruction_window(
@@ -342,13 +346,16 @@ def advance_instruction_window(
     A request recording an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] opens a
     window; an empty one ends the previous window and opens one with no blocks, whose append-mode blocks are
     then delivered as changes rather than in the prefix. A compaction ends the window, as it does for all
-    state derived from history (see [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]).
+    state derived from history (see [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]),
+    whether a provider returned it in a response or the application stored its own summary in a request.
+    Parts are read in order, so a merged request holding a summary and then a baseline ends in the baseline's
+    window, and one holding a baseline and then a summary ends in none.
     """
-    if isinstance(message, ModelResponse):
-        return None if _opens_instruction_window(message) else window
     for part in message.parts:
         if isinstance(part, InstructionBaselinePart):
             window = part
+        elif isinstance(part, CompactionPart):
+            window = None
     return window
 
 

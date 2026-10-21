@@ -55,6 +55,7 @@ from .._instructions import (
     InstructionValues,
     advance_instruction_window,
     instruction_window_start,
+    is_window_boundary,
 )
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -3103,11 +3104,18 @@ def _project_instruction_state(
             projected.append(message)
             continue
         parts: list[ModelRequestPart] = []
-        for part in message.parts:
+        # In the request the current window opened at, only changes after the part that opened it count: a
+        # merged request can hold an earlier window's changes ahead of a summary or a baseline.
+        opened_at = (
+            max((i for i, part in enumerate(message.parts) if is_window_boundary(part)), default=-1)
+            if index == current_start
+            else -1
+        )
+        for part_index, part in enumerate(message.parts):
             if isinstance(part, InstructionDeltaPart):
                 # A change a newer version wrote, which this one can't address, is superseded by the window
                 # the next request opens.
-                if index >= current_start and part.id is not None:
+                if index >= current_start and part_index > opened_at and part.id is not None:
                     text = part.render(inline_system=inline_system, previous=values.apply(part))
                     parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
             elif not isinstance(part, InstructionBaselinePart):
