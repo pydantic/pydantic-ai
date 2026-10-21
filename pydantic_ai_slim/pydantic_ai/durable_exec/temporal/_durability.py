@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -13,7 +13,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
-from pydantic_ai._utils import aclose_if_supported
+from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
@@ -126,12 +126,13 @@ IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
 """Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
-ContinueAsNewArgs = Callable[[RunContext[AgentDepsT]], Mapping[str, Any]]
-"""Callable that builds the keyword arguments for `temporalio.workflow.continue_as_new()`.
+ContinueAsNewHandler = Callable[[RunContext[AgentDepsT]], Awaitable[None] | None]
+"""Sync or async function called when Temporal suggests continuing the workflow as new.
 
 It receives the run's [`RunContext`][pydantic_ai.tools.RunContext], including the current
-`messages`, `usage`, and `usage_limits`, and returns the keyword arguments passed to
-`workflow.continue_as_new(**kwargs)`.
+`messages`, `usage`, and `usage_limits`, and calls `temporalio.workflow.continue_as_new()` with the
+arguments the workflow's run method needs to resume. Returning without calling it defers the
+continuation to the next model request.
 """
 
 
@@ -182,8 +183,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     activity_config: ActivityConfig
     """Base Temporal activity config used for all activities."""
 
-    continue_as_new_args: ContinueAsNewArgs[AgentDepsT] | None
-    """Callable that builds the `workflow.continue_as_new()` kwargs, or `None` to disable continuation."""
+    continue_as_new: ContinueAsNewHandler[AgentDepsT] | None
+    """Function called when Temporal suggests continuing as new, or `None` to disable continuation."""
 
     def __init__(
         self,
@@ -198,7 +199,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
-        continue_as_new_args: ContinueAsNewArgs[AgentDepsT] | None = None,
+        continue_as_new: ContinueAsNewHandler[AgentDepsT] | None = None,
         non_retryable_model_errors: Sequence[type[ModelAPIError]] = (),
     ):
         """Create a TemporalDurability capability.
@@ -250,11 +251,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
-            continue_as_new_args: Optional callable invoked just before each model
-                request when running inside a workflow and
-                `workflow.info().is_continue_as_new_suggested()` is true. It receives
-                the run's `RunContext` and returns the keyword arguments for
-                `workflow.continue_as_new(**kwargs)`. `None` disables continuation.
+            continue_as_new: Sync or async function called just before each model request
+                when running inside a workflow and `workflow.info().is_continue_as_new_suggested()`
+                is true. It receives the run's `RunContext` and calls `workflow.continue_as_new()`
+                with the arguments the workflow needs to resume, or returns without calling it to
+                defer to the next model request. `None` disables continuation.
             non_retryable_model_errors: Model error classes, such as
                 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], that fail a model
@@ -280,7 +281,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             _coerce_workflow_stream_topic(event_stream_topic) if event_stream_topic is not None else None
         )
         self.run_context_type = run_context_type
-        self.continue_as_new_args = continue_as_new_args
+        self.continue_as_new = continue_as_new
         self._deps_type = deps_type
         self._non_retryable_model_errors = tuple(non_retryable_model_errors)
 
@@ -686,13 +687,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Continue the workflow as new when Temporal suggests it and arguments are configured."""
+        """Let `continue_as_new` continue the workflow as new when Temporal suggests it."""
         if (
             self.in_durable_context
-            and self.continue_as_new_args is not None
+            and self.continue_as_new is not None
             and workflow.info().is_continue_as_new_suggested()
         ):
-            workflow.continue_as_new(**self.continue_as_new_args(ctx))
+            await await_maybe(self.continue_as_new(ctx))
         return await super().before_model_request(ctx, request_context)
 
     def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
