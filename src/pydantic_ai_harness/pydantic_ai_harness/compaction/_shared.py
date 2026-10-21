@@ -48,6 +48,7 @@ from pydantic_ai_harness.compaction._receipts import (
     open_receipt_scope,
     reset_receipt_scope,
 )
+from pydantic_ai_harness.filesystem import READ_FILE_KIND
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -919,27 +920,31 @@ CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-resu
 
 
 def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
-    """*part* with its content replaced by *placeholder*, or `None` if its type can't hold one.
+    """*part* with its content replaced by *placeholder*, or `None` if it can't be cleared.
 
-    A typed `ToolReturnPart` subclass keeps its type when its kind declares no content shape, like
-    `FileSystem`'s `ReadFileReturnPart`. One whose kind declares a shape, like `ToolSearchReturnPart`,
-    is left alone even when the placeholder happens to fit that shape: core re-parses (and trusts) that
-    structured content on every request -- see `parse_discovered_tools` -- so replacing it would discard
-    state the run still needs.
+    A plain `ToolReturnPart` can always be cleared. Of the typed subclasses, only `FileSystem`'s
+    `read_file` returns are: their kind declares no content shape, so a `ReadFileReturnPart` keeps its
+    type with the placeholder as content. Other typed returns, like `ToolSearchReturnPart`, carry
+    structured content that core re-parses (and trusts) on every request -- see `parse_discovered_tools`
+    -- so they are left alone, even when the placeholder happens to fit their shape.
 
     The cleared part is marked in its `metadata` when that is `None` or a `dict`, so
-    `is_cleared_return` recognizes it without trusting its model-visible content.
+    `is_cleared_return` recognizes it without trusting its model-visible content. A typed part with
+    other metadata can't be marked, so it isn't cleared.
     """
-    # Core exposes a kind's content shape (`ToolKind.content`) but no public way to get a part
-    # class's kind, so read the `_kind` its typed-part registration sets.
-    kind = type(part)._kind  # pyright: ignore[reportPrivateUsage]
-    if kind is not None and kind.content is not None:
+    is_plain = type(part) is ToolReturnPart
+    if not is_plain and part.tool_kind != READ_FILE_KIND.id:
         return None
     metadata: object = part.metadata
     if metadata is None:
         metadata = {CLEARED_TOOL_RESULT_METADATA: True}
     elif isinstance(metadata, dict):
         metadata = {**cast('dict[str, Any]', metadata), CLEARED_TOOL_RESULT_METADATA: True}
+    elif not is_plain:
+        # `is_cleared_return` only falls back to the content for plain parts, so a cleared typed part
+        # without the mark would go unrecognized, and `ClearToolResults` would count from the start of
+        # history again on every request.
+        return None
     return replace(part, content=placeholder, metadata=metadata)
 
 

@@ -42,7 +42,10 @@ def _returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
 
 
 async def _read_repeatedly(
-    tmp_path: Path, capability: AbstractCapability[object], reads: int
+    tmp_path: Path,
+    capability: AbstractCapability[object],
+    reads: int,
+    history: list[ModelMessage] | None = None,
 ) -> list[list[ModelMessage]]:
     """Read `notes.txt` `reads` times, one read per step, and return the history each request sent."""
     (tmp_path / 'notes.txt').write_text('hello\n')
@@ -57,7 +60,7 @@ async def _read_repeatedly(
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(respond), capabilities=[FileSystem[object](content_hashes=False), capability])
-    await agent.run('Read it', workspace=LocalWorkspaceBackend(tmp_path))
+    await agent.run('Read it', message_history=history, workspace=LocalWorkspaceBackend(tmp_path))
     return requests
 
 
@@ -163,3 +166,49 @@ async def test_clear_tool_results_marks_cleared_results_alongside_their_metadata
         {'source': 'cache', 'pydantic-ai-harness.compaction.cleared-tool-result.v1': True},
         'note',
     ]
+
+
+async def test_clear_tool_results_keeps_a_typed_result_whose_metadata_cannot_be_marked() -> None:
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Read it')]),
+        ModelResponse(parts=[ToolCallPart('read_file', {'path': 'a.txt'}, tool_call_id='read_a')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'read_file', READ, tool_call_id='read_a', tool_kind=READ_FILE_KIND.id, metadata='from cache'
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Read it')]),
+    ]
+    assert isinstance(history[2].parts[0], ReadFileReturnPart)
+
+    # Clearing it would leave nothing marking it as cleared, so it is left as it is.
+    [result] = _returns(await _first_request(ClearToolResults[object](max_messages=1, keep_pairs=0), history))
+    assert type(result) is ReadFileReturnPart
+    assert (result.content, result.metadata) == (READ, 'from cache')
+
+
+async def test_clear_tool_results_batches_around_a_typed_result_whose_metadata_cannot_be_marked(
+    tmp_path: Path,
+) -> None:
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Read the old file')]),
+        ModelResponse(parts=[ToolCallPart('read_file', {'path': 'old.txt'}, tool_call_id='old')]),
+        ModelRequest(
+            parts=[ToolReturnPart('read_file', 'old', tool_call_id='old', tool_kind=READ_FILE_KIND.id, metadata='note')]
+        ),
+        ModelResponse(parts=[TextPart('Read it')]),
+    ]
+    requests = await _read_repeatedly(
+        tmp_path, ClearToolResults[object](max_messages=4, keep_pairs=1), reads=3, history=history
+    )
+
+    # `old` is never cleared, as nothing could mark it. The third read request clears `read_1` (marked),
+    # and the fourth counts from that clear, so `read_2` is kept rather than cleared one step later.
+    assert [[part.content for part in _returns(request)] for request in requests[1:]] == [
+        ['old', READ],
+        ['old', '[tool result cleared]', READ],
+        ['old', '[tool result cleared]', READ, READ],
+    ]
+    assert all(type(part) is ReadFileReturnPart for part in _returns(requests[-1]))

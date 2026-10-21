@@ -374,9 +374,8 @@ turn even when it falls outside the window, so the agent does not lose the origi
 arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
-rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. A typed result whose
-kind declares no content shape, like the `ReadFileReturnPart` that `FileSystem`'s `read_file` returns,
-is cleared like any other and keeps its type.
+rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
+`read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type.
 
 With `max_messages`, the count starts after the last cleared result, because clearing blanks content
 but removes no messages. Clearing then happens in batches: after a clear, the next one waits until
