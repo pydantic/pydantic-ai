@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -761,5 +762,45 @@ def test_named_tuple_unaffected():
     <item>1</item>
     <item>x</item>
   </p>
+</r>\
+""")
+
+
+def test_generators_inside_deque_match_list():
+    class Item(BaseModel):
+        a: int
+
+    def make() -> Any:
+        return (Item(a=i) for i in range(2))
+
+    assert format_as_xml(deque([make(), make()]), root_tag='r') == format_as_xml([make(), make()], root_tag='r')
+    assert format_as_xml({'k': deque([make()])}, root_tag='r') == format_as_xml({'k': [make()]}, root_tag='r')
+
+
+def test_iterable_dataclass_formats_by_fields():
+    @dataclass
+    class ListData(list[Any]):
+        x: int = 0
+
+    @dataclass
+    class IterData:
+        x: int
+
+        def __iter__(self) -> Any:
+            return self
+
+        def __next__(self) -> Any:
+            raise StopIteration
+
+    list_data = ListData(x=5)
+    list_data.append(i for i in range(2))
+    assert format_as_xml(list_data, root_tag='r') == snapshot("""\
+<r>
+  <x>5</x>
+</r>\
+""")
+    assert format_as_xml(IterData(3), root_tag='r') == snapshot("""\
+<r>
+  <x>3</x>
 </r>\
 """)

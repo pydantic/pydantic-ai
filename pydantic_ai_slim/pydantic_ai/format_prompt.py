@@ -97,25 +97,27 @@ def _materialize_iterators(value: Any) -> Any:
     `_ToXml` walks its data from the root twice: once to build the XML, once (for
     dataclass/BaseModel items) to collect class names and field metadata. An iterator reachable
     from both walks would be exhausted by whichever runs first, so every one is materialised
-    here, at any depth reachable through a root value, a `Mapping`'s values, or a `list`/`tuple`'s
-    items, before either walk starts.
+    here, at any depth reachable through a root value, a `Mapping`'s values, or the items of any
+    other iterable container (`list`, `tuple`, `set`, `deque`, ...), before either walk starts.
 
     Returns the original object, untouched, whenever none of its children needed materialising
-    and it isn't itself an iterator -- so a `NamedTuple`, `OrderedDict`, or other `list`/`tuple`/
-    `Mapping` subclass whose constructor doesn't accept a single iterable passes through as-is
-    rather than being rebuilt (and breaking).
+    and it isn't itself an iterator -- so a `NamedTuple`, `OrderedDict`, or other container
+    subclass whose constructor doesn't accept a single iterable passes through as-is rather than
+    being rebuilt (and breaking). Dataclasses and `BaseModel`s also pass through untouched, even
+    when they subclass an iterable type or define `__iter__`, because `_to_xml` formats them by
+    their fields, not their items.
     """
-    if isinstance(value, Iterator):
-        return [_materialize_iterators(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, str | bytes | bytearray | BaseModel) or (is_dataclass(value) and not isinstance(value, type)):
+        return value
     if isinstance(value, Mapping):
         materialized_mapping = {k: _materialize_iterators(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType]
         if any(materialized_mapping[k] is not v for k, v in value.items()):  # pyright: ignore[reportUnknownVariableType]
             return materialized_mapping  # pyright: ignore[reportUnknownVariableType]
         return value  # pyright: ignore[reportUnknownVariableType]
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, Iterable):
         materialized_items = [_materialize_iterators(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
-        if any(new is not old for new, old in zip(materialized_items, value)):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-            # Nothing downstream needs the original list/tuple (sub)type -- `_to_xml` and
+        if isinstance(value, Iterator) or any(new is not old for new, old in zip(materialized_items, value)):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+            # Nothing downstream needs the original container type -- `_to_xml` and
             # `_parse_data_structures` only iterate it -- so a plain `list` covers both.
             return materialized_items
         return value  # pyright: ignore[reportUnknownVariableType]
