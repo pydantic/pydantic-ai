@@ -1600,7 +1600,7 @@ class _CascadeLifecycle(InferredLifecycle):
 
     def reply_named(self, ids: Sequence[str]) -> None:
         """The text of a reply came, naming (by their `id`s) the text inputs it answers; ids of others are ignored."""
-        named = (int(text_id.removeprefix(_TEXT_ID_PREFIX)) for text_id in ids if text_id.startswith(_TEXT_ID_PREFIX))
+        named = (int(match[1]) for text_id in ids if (match := _TEXT_ID.fullmatch(text_id)) is not None)
         self._named = tuple(input_id for input_id in named if input_id in self._text)
 
     def revise_open(self) -> list[LifecycleEvent]:
@@ -1657,6 +1657,8 @@ class _CascadeLifecycle(InferredLifecycle):
 
 _TEXT_ID_PREFIX = 'pydantic_ai_input_'
 """What the `id` a text input goes out under starts with, ahead of the input's id."""
+_TEXT_ID = re.compile(rf'{_TEXT_ID_PREFIX}(\d+)')
+"""The `id` a text input went out under, naming the input; an echoed id that doesn't parse names none."""
 
 
 class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
