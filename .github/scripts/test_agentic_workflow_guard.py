@@ -27,6 +27,7 @@ from agentic_workflow_guard import (
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
     check_compiler_versions,
+    check_daily_aic_guardrail,
     check_dangling_needs,
     check_job_timeout_env,
     check_lock_regenerated,
@@ -876,6 +877,64 @@ jobs:
     )
 
     assert check_ai_credits_accounting(lock) == []
+
+
+# --- daily AI-credits guardrail (the artifact scan that drained `GITHUB_TOKEN`) -
+
+
+def test_daily_aic_guardrail_rejects_the_compiled_default(tmp_path: Path):
+    """The shape every lock carried before `max-daily-ai-credits: -1`."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    env:
+      GH_AW_MAX_DAILY_AI_CREDITS: ${{ vars.GH_AW_DEFAULT_MAX_DAILY_AI_CREDITS || '5000' }}
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+""",
+    )
+
+    violations = check_daily_aic_guardrail(lock)
+
+    assert [v.check for v in violations] == ['daily-aic-guardrail']
+    assert '`max-daily-ai-credits: -1`' in violations[0].message
+
+
+def test_daily_aic_guardrail_rejects_a_disable_set_only_in_an_import(tmp_path: Path):
+    """An imported `-1` drops the threshold env but still compiles the step."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+""",
+    )
+
+    assert [v.check for v in check_daily_aic_guardrail(lock)] == ['daily-aic-guardrail']
+
+
+def test_daily_aic_guardrail_accepts_a_lock_without_the_step(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check workflow lock file
+        id: check-lock-file
+""",
+    )
+
+    assert check_daily_aic_guardrail(lock) == []
 
 
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):

@@ -233,6 +233,9 @@ certifi = "2026-10-20T02:25:00Z"
 # TODO(dsfaccini): Remove after 2026-10-23 22:19 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
 pillow = "2026-10-16T22:19:00Z"
+# boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
+# TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
+boxlite = "2026-10-18T01:35:01Z"
 
 [dependency-groups]
 dev = [
@@ -402,6 +405,7 @@ convention = "google"
 # these adds 100ms or more (measured with `python -X importtime` on top of what `tests/conftest.py` already imports);
 # import them inside the test or fixture that needs them. Enforced for `tests/` only, see `per-file-ignores`.
 banned-module-level-imports = [
+    "boxlite",
     "dbos",
     "e2b",
     "prefect",
@@ -452,6 +456,7 @@ quote-style = "single"
 # workflow definitions; the cost is paid only where that dependency is what is being tested.
 "tests/durable_exec/**/*.py" = ["TID253"]
 "tests/**/*{temporal,dbos,prefect,durable}*.py" = ["TID253"]
+"tests/harness/boxlite_sandbox/*.py" = ["TID253"]
 "tests/harness/e2b_sandbox/*.py" = ["TID253"]
 "tests/harness/smol_sandbox/*.py" = ["TID253"]
 
@@ -512,6 +517,8 @@ markers = [
     "sprites_live: runs against a real Sprites control plane; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
     "smol_live: boots real smolvm VMs; needs a host that can run them",
+    "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
+    "docker_live: starts real containers; needs a Docker daemon",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",

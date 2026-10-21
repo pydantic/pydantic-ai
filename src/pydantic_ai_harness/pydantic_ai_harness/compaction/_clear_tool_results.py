@@ -15,6 +15,7 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_token_count,
     exceeds,
+    is_cleared_return,
     iter_tool_pairs,
     rebuild_with_cleared,
     record_compaction_reclaim,
@@ -193,7 +194,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             return False
         for since_last_clear, message in enumerate(reversed(messages)):
             if isinstance(message, ModelRequest) and any(
-                type(part) is ToolReturnPart and str(part.content) == self.placeholder for part in message.parts
+                isinstance(part, ToolReturnPart) and is_cleared_return(part, self.placeholder) for part in message.parts
             ):
                 break
         else:
