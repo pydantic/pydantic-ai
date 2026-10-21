@@ -10,8 +10,8 @@ on:
       - "!clai2-bleeding"
   pull_request: {}
   # The merge queue: a pull request reaches `main` only through a merge group that passed this
-  # workflow's full test matrix. A `pull_request` run skips the matrix legs that only repeat a
-  # middle Python version (see `pull_request` in the test jobs' matrices); every leg that
+  # workflow's full test matrix. A `pull_request` run skips the matrix legs that only repeat
+  # another leg's checks (see `pull_request` in the test jobs' matrices); every leg that
   # collects coverage or carries a check no other leg runs stays on it, so coverage and the
   # coverage gate come out identical under both events. `.github/scripts/test_ci_matrix.py`
   # checks that.
@@ -562,9 +562,11 @@ jobs:
         # `all-extras` is the slowest install shape -- it runs sharded in `test-all-extras` instead.
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         # A single-value dimension, so the `exclude` below can drop the legs a pull request skips:
-        # 3.11 and 3.14 collect coverage, 3.13 detects blocking calls and 3.15 is the newest, so only
-        # 3.12 goes. The merge queue and `main` run every leg (see `merge_group` in `on:`). The value
-        # is the string `'true'`, not the boolean `==` yields: `exclude` doesn't match `"true"` to `true`.
+        # 3.14 collects coverage and 3.13 detects blocking calls, so both run every install; 3.11 and
+        # 3.15, the oldest and newest, run only `standard`; 3.12 goes. A `pydantic-clai2`-only change
+        # keeps its 3.11 leg too, which collects coverage there (see `COLLECT_COVERAGE`). The merge
+        # queue and `main` run every leg (see `merge_group` in `on:`). The value is the string
+        # `'true'`, not the boolean `==` yields: `exclude` doesn't match `"true"` to `true`.
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         install:
           - name: pydantic-ai-slim
@@ -606,6 +608,31 @@ jobs:
             install: { name: standard }
           - pull_request: "true"
             python-version: "3.12"
+          - pull_request: "true"
+            python-version: "3.11"
+            install: { name: pydantic-ai-slim }
+          - pull_request: "true"
+            python-version: "3.11"
+            install: { name: pydantic-evals }
+          - pull_request: "true"
+            python-version: "3.11"
+            install: { name: pydantic-ai-harness }
+          - pull_request: "true"
+            python-version: "3.11"
+            clai2_only: "false"
+            install: { name: pydantic-clai2 }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-ai-slim }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-evals }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-ai-harness }
+          - pull_request: "true"
+            python-version: "3.15"
+            install: { name: pydantic-clai2 }
     env:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape

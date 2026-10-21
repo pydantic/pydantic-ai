@@ -35,6 +35,13 @@ LANE_VARS = (
     'RENDER_LOCAL_RUNTIME',
 )
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
+# The `classify` outputs of each route a change can take through the test jobs: the full one, and the narrower
+# ones for a change confined to `pydantic-ai-harness` (and `pydantic-clai2`) or to `pydantic-clai2`.
+ROUTES = {
+    'full': {'clai2_only': 'false', 'harness_only': 'false'},
+    'harness_only': {'clai2_only': 'false', 'harness_only': 'true'},
+    'clai2_only': {'clai2_only': 'true', 'harness_only': 'false'},
+}
 
 Leg = dict[str, object]
 
@@ -225,12 +232,11 @@ def _matches(leg: Leg, pattern: Mapping[str, object]) -> bool:
     return True
 
 
-def _expand(job_name: str, event_name: str) -> list[Leg]:
+def _expand(job_name: str, event_name: str, route: str = 'full') -> list[Leg]:
     """The legs of a job's matrix, following GitHub's product, then `exclude`, then `include` order."""
     context: dict[str, object] = {
         'github': {'event_name': event_name},
-        # The full path: a `pydantic-clai2`- or `pydantic-ai-harness`-only change is a separate, narrower route.
-        'needs': {'classify': {'outputs': {'clai2_only': 'false', 'harness_only': 'false'}}},
+        'needs': {'classify': {'outputs': ROUTES[route]}},
     }
     matrix = _mapping(_mapping(_job(job_name)['strategy'])['matrix'])
     excludes = [_mapping(entry) for entry in _list(matrix.pop('exclude', []))]
@@ -288,19 +294,21 @@ def test_ci_runs_on_the_merge_queue_without_cancelling_it():
         assert _render(cancel_in_progress, {'github': {'event_name': event_name}}) is cancels
 
 
+@pytest.mark.parametrize('route', ROUTES)
 @pytest.mark.parametrize('job_name', REDUCED_JOBS)
-def test_pull_requests_run_a_subset_of_the_full_matrix(job_name: str):
-    full = {_identity(leg) for leg in _expand(job_name, 'merge_group')}
-    reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request')}
+def test_pull_requests_run_a_subset_of_the_full_matrix(job_name: str, route: str):
+    full = {_identity(leg) for leg in _expand(job_name, 'merge_group', route)}
+    reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request', route)}
 
     assert reduced < full
-    assert {_identity(leg) for leg in _expand(job_name, 'push')} == full
+    assert {_identity(leg) for leg in _expand(job_name, 'push', route)} == full
 
 
+@pytest.mark.parametrize('route', ROUTES)
 @pytest.mark.parametrize('job_name', REDUCED_JOBS)
-def test_pull_requests_keep_every_leg_that_carries_a_check(job_name: str):
-    reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request')}
-    for leg in _expand(job_name, 'merge_group'):
+def test_pull_requests_keep_every_leg_that_carries_a_check(job_name: str, route: str):
+    reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request', route)}
+    for leg in _expand(job_name, 'merge_group', route):
         lanes = {name: value for name, value in _lane_values(job_name, leg).items() if value not in ('', 'false')}
         if lanes:
             assert _identity(leg) in reduced, f'{job_name} {leg} sets {lanes} but a pull request skips it'
@@ -327,9 +335,10 @@ def test_every_dependency_resolution_runs_on_a_pull_request():
 PULL_REQUEST_STEP_COMMANDS = ('coverage run', 'shard_durations.py report')
 
 
+@pytest.mark.parametrize('route', ROUTES)
 @pytest.mark.parametrize('job_name', REDUCED_JOBS)
-def test_pull_requests_keep_every_leg_a_coverage_or_report_step_runs_on(job_name: str):
-    reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request')}
+def test_pull_requests_keep_every_leg_a_coverage_or_report_step_runs_on(job_name: str, route: str):
+    reduced = {_identity(leg) for leg in _expand(job_name, 'pull_request', route)}
     for step in map(_mapping, _list(_job(job_name)['steps'])):
         condition, run = step.get('if'), step.get('run')
         if not isinstance(condition, str) or not isinstance(run, str):
@@ -338,6 +347,6 @@ def test_pull_requests_keep_every_leg_a_coverage_or_report_step_runs_on(job_name
             continue
         condition = re.sub(r'^\s*\$\{\{(.*)\}\}\s*$', r'\1', condition, flags=re.DOTALL)
         condition = re.sub(r'^\s*!cancelled\(\)\s*&&', '', condition)
-        for leg in _expand(job_name, 'merge_group'):
+        for leg in _expand(job_name, 'merge_group', route):
             if _truthy(_Expression(condition, {'matrix': leg}).evaluate()):
                 assert _identity(leg) in reduced, f'{job_name}: {step.get("name")!r} runs on {leg}, which a PR skips'
