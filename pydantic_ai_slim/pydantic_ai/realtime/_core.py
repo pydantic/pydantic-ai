@@ -1676,9 +1676,10 @@ class SessionCore:
         response = self._speaking_response()
         return response.open_part_index if response is not None and response.open_part is not None else None
 
-    def response_under_way(self) -> bool:
-        """Whether a response is under way that the session didn't refuse."""
-        return any(not response.refused for response in self._open_responses.values())
+    def response_under_way(self, *, besides_caller_of: str | None = None) -> bool:
+        """Whether a response is under way that the session didn't refuse, other than the one that made `besides_caller_of`."""
+        caller = self._call_response.get(besides_caller_of) if besides_caller_of is not None else None
+        return any(not response.refused and response is not caller for response in self._open_responses.values())
 
     def call_waiting(self, call_id: str) -> bool:
         """Whether a tool call is waiting for the session to take it to run (see `take_call`)."""
