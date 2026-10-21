@@ -314,9 +314,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     `OpenAIProvider` enables it for the GPT-5.6 and GPT-6 families. `openai_model_profile` leaves it off, because
     `max` is unverified on the OpenAI-compatible endpoints that share that profile. When enabled, unified
-    `thinking='max'` is sent as
-    `reasoning.effort='max'`; otherwise it falls back to `'xhigh'`. Explicit `openai_reasoning_effort='max'`
-    settings are still passed through unchanged."""
+    `thinking='max'` is sent as `reasoning.effort='max'`; otherwise it falls back to `'xhigh'`. Explicit
+    `openai_reasoning_effort='max'` settings are still passed through unchanged."""
 
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
