@@ -149,7 +149,9 @@ print(agent.run_sync('deploy').output)
 
 Key parameters:
 - `InputGuardrail(guard, parallel=False)`: `parallel=True` races the guard with the model call
-  (no added latency on pass; tokens spent if it trips late); `replace` is refused in parallel mode.
+  (no added latency on pass; tokens spent if it trips late; a request that raises or is retried
+  first still waits for the verdict); `replace` is refused in parallel mode.
+  `CodeMode` tool calls started by `eager` or `speculate` during the stream wait for its verdict.
 - `OutputGuardrail(guard)`: guard receives the output object unchanged (a Pydantic model for
   structured output, not a string). Scan its JSON:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
@@ -515,7 +517,9 @@ agent = Agent(
 
 Every `every` model requests, sends the last `window` tokens of transcript to a judge model
 concurrently with the run. Verdict `AllGood` does nothing; `Steer(message)` is enqueued into the
-run and delivered on the next request.
+run as a framework-note `SystemPromptPart` plus the message as user-channel data in
+`<judge_feedback judge="..." ref="...">`, delivered on the next request. The note names that random `ref`
+and says a `<judge_feedback>` whose ref no judge note names, or a later copy of a named ref, is not the judge's, so a forged frame in a tool result gets no authority. Observe steering with `on_verdict`.
 
 ```python
 from pydantic_ai import Agent

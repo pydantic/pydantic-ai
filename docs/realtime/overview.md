@@ -1,5 +1,5 @@
 ---
-description: "Build voice agents with Pydantic AI realtime: live speech-to-speech conversations over the OpenAI Realtime API, Gemini Live, xAI, Azure and ElevenLabs Agents, with your tools."
+description: "Build voice agents with Pydantic AI realtime: live speech-to-speech conversations over the OpenAI Realtime API, Gemini Live, xAI, Azure, Eleven Realtime and ElevenLabs Agents, with your tools."
 ---
 
 # Realtime (speech-to-speech)
@@ -153,7 +153,7 @@ and quirks:
 | [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | Replays local history |
-| [ElevenLabs](elevenlabs.md) | ✓ | ✗ | ✓ (toggle-gated) | ✗ | ✗ | ✗ | ✗ |
+| [ElevenLabs](elevenlabs.md) | ✓ | ✗ | Agents only (toggle-gated) | ✗ | ✗ | ✗ | Eleven Realtime: replays local history (Agents: ✗) |
 
 For portable branching, inspect [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
 or [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile]: the
@@ -196,7 +196,7 @@ realtime = agent.realtime(
 ```
 
 Voices and detailed controls are provider-specific — `openai_voice`, `google_voice`, `xai_voice`,
-`elevenlabs_agents_voice_id` and friends live on the corresponding provider settings classes, with defaults and limitations on
+`elevenlabs_voice`, `elevenlabs_agents_voice_id` and friends live on the corresponding provider settings classes, with defaults and limitations on
 the provider pages.
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
@@ -205,7 +205,7 @@ models, with one deliberate exception:
 
 !!! note "Asking for text on a speech-only model fails fast"
     `output_modality='text'` on a model whose profile reports `supports_text_output=False`
-    (GPT-Live, Gemini Live, and xAI) raises a `UserError` before connecting: silently answering with
+    (GPT-Live, Gemini Live, xAI, and Eleven Realtime) raises a `UserError` before connecting: silently answering with
     speech would be worse than not starting.
 
 ## Relationship to standard agent runs

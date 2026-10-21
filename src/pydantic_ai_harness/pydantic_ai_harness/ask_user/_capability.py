@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.ask_user._toolset import AskUserToolset
 from pydantic_ai_harness.ask_user._types import TOOL_NAME, Answerer
 
@@ -59,11 +61,24 @@ class AskUser(AbstractCapability[AgentDepsT]):
     Must be positive; `None` waits indefinitely. Needs an answerer: a deferred call has nothing to wait on.
     """
 
+    id: str | None = 'ask_user'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    An agent has one `ask_user_question` tool, so two `AskUser` sharing this `id` are one answerer stated
+    twice when they agree, and an error when they differ. To keep two, give each its own `id` and wrap them
+    in `PrefixTools`, since their tool names are the same.
+    """
+
     def __post_init__(self) -> None:
         if self.timeout is not None and self.timeout <= 0:
             raise UserError('`AskUser.timeout` must be positive, or `None` to wait indefinitely.')
         if self.answerer is None and self.timeout is not None:
             raise UserError('`AskUser.timeout` bounds the answerer, so it cannot be combined with `answerer=None`.')
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one answerer stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static, cache-stable guidance on when to ask."""

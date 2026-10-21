@@ -20,7 +20,9 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
+    ModelTimeoutError,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -469,11 +471,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -661,7 +665,8 @@ async def test_model_transport_error(allow_model_requests: None) -> None:
         with pytest.raises(ModelAPIError) as exc_info:
             await agent.run('hello')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelTimeoutError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'timed out'
     assert isinstance(exc_info.value.__cause__, httpx.ReadTimeout)
 
@@ -857,7 +862,7 @@ async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key
 async def test_cohere_empty_response_skipped_in_history(allow_model_requests: None):
     """An empty `ModelResponse(parts=[])` must not be sent back as an assistant message with
     neither content nor tool calls, which Cohere rejects with a 400. The agent graph retries
-    empty responses by emitting a `RetryPromptPart`, relying on the model adapter to omit the
+    empty responses by emitting a `RetryFeedbackPart`, relying on the model adapter to omit the
     empty response from the API payload.
     """
     completions = [
@@ -878,7 +883,7 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     # self-correct.
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'system'])
 
 
 @pytest.mark.parametrize(
@@ -926,8 +931,13 @@ async def test_zero_argument_tool_call(arguments: str | None, expected_args: str
 
     parts = [part for message in result.all_messages() for part in message.parts]
     assert ToolCallPart(tool_name='get_current_time', args=expected_args, tool_call_id='tc-1') in parts
-    assert any(isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' for part in parts)
-    assert not any(isinstance(part, RetryPromptPart) for part in parts)
+    # `outcome == 'success'` is what says the tool actually ran: an args-validation failure answers
+    # the same call with a retried return carrying the same name.
+    assert any(
+        isinstance(part, ToolReturnPart) and part.tool_name == 'get_current_time' and part.outcome == 'success'
+        for part in parts
+    )
+    assert not any(isinstance(part, RetryFeedbackPart) for part in parts)
     assert result.output == 'it is noon'
 
 
