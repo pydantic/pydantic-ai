@@ -488,16 +488,12 @@ def _matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: i
 _QUANTIFIER = re.compile(r'[*+]|\{(?P<count>\d+)\}|\{(?P<low>\d*),(?P<high>\d*)\}')
 
 
-def _repeats_at(pattern: str, index: int, *, exact: bool = True) -> bool:
-    """Whether a quantifier that can repeat what precedes it more than once starts at `index`.
-
-    With `exact=False`, a fixed count such as `{2}` does not count: it matches one way only, so
-    inside a repeated group it makes nothing ambiguous, and `(a{2})+` is as safe as `(aa)+`.
-    """
+def _repeats_at(pattern: str, index: int) -> bool:
+    """Whether a quantifier that can repeat what precedes it more than once starts at `index`."""
     if (quantifier := _QUANTIFIER.match(pattern, index)) is None:
         return False
     if (count := quantifier['count']) is not None:
-        return exact and int(count) > 1
+        return int(count) > 1
     high = quantifier['high']
     return high is None or not high or int(high) > 1
 
@@ -569,7 +565,7 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             if repeats and _repeats_at(pattern, _skip_insignificant(pattern, index + 1, verbose)):
                 return True
             repeats = outer_repeats or repeats
-        elif _repeats_at(pattern, index, exact=False):
+        elif _repeats_at(pattern, index):
             repeats = True
         index += 1
     return False
@@ -1522,8 +1518,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             ctx: The current agent run context.
             pattern: Regex pattern to search for.
             path: Directory to search in, relative to the working directory.
-            include_glob: If provided, only search files matching this glob, where `*` also spans `/`:
-                '*.py' for every Python file, 'src/*.py' for those anywhere under `src`.
+            include_glob: If provided, only search files whose path from the root matches this glob, where `*`
+                also spans `/`: '*.py' for every Python file, 'src/*.py' for those anywhere under `src`.
 
         Returns:
             str: Matching lines formatted as file:line_number:text, with paths relative to the working directory.
