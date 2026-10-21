@@ -32,8 +32,6 @@ try:
         HTTPClientError,
         ReadTimeoutError,
     )
-
-    from pydantic_ai.models.bedrock import _error_category as error_category  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use Bedrock embedding models, '
@@ -685,7 +683,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 code, message = error.get('Code'), error.get('Message')
                 provider_error_code = code if isinstance(code, str) else None
                 raise ModelHTTPError.for_category(
-                    error_category(provider_error_code, message)
+                    _model_errors.bedrock_code_category(provider_error_code, message)
                     or _model_errors.http_status_category(status_code, message),
                     status_code=status_code,
                     model_name=self.model_name,
