@@ -21,7 +21,7 @@ command, or error handling:
 - On the local target a VM's id is its name, and `connect` opens any VM this OS user has by name.
 - `ExecOptions.timeout` kills the command in the VM, which then exits 124.
 - smolvm stops a command's stdout and stderr once they pass 11 MiB, but the native SDK queues output
-  events without a bound of its own until they are read. `MAX_OUTPUT_BYTES` bounds what the backend
+  events without a bound of its own until they are read. `_MAX_OUTPUT_BYTES` bounds what the backend
   keeps; what smolmachines holds in between is up to that 11 MiB of output plus each event's overhead,
   which nothing bounds.
 """
@@ -32,8 +32,8 @@ import asyncio
 import logging
 import re
 import uuid
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, cast
+from collections.abc import Awaitable, Callable, Mapping
+from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
 
@@ -43,19 +43,17 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
-    CommandOutput,
-    Lifecycles,
     absolute_path,
     check_env,
     check_timeout,
     command_argv,
     running_on_asyncio,
-    settled,
 )
 
 if TYPE_CHECKING:
@@ -73,6 +71,8 @@ except ImportError as _import_error:
 
 logger = logging.getLogger(__name__)
 
+_T = TypeVar('_T')
+
 _NAME_PREFIX = 'pydantic-ai-'
 _NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
 """The names the backend gives its VMs, and so the only refs it attaches to or deletes.
@@ -89,9 +89,12 @@ _SETUP_TIMEOUT = 60.0
 _ENGINE_TIMEOUT_GRACE = 5.0
 """Seconds past a command's timeout before smolvm kills it itself, in case this event loop can't."""
 
-lifecycles = Lifecycles('smol-sandbox')
-"""This process's unfinished creations, attachments and deletions of VMs."""
+lifecycle: dict[str, asyncio.Task[object]] = {}
+"""This process's latest unfinished creation, attachment or deletion of each VM, by name.
 
+Each one waits for the one started before it, so the latest finishing means they all have, and none
+stops when its callers are cancelled.
+"""
 _HOST_UNAVAILABLE = frozenset(
     {'UNSUPPORTED_PLATFORM', 'RUNTIME_NOT_INSTALLED', 'KVM_UNAVAILABLE', 'HYPERVISOR_UNAVAILABLE'}
 )
@@ -111,6 +114,10 @@ esac
 exec "$p" "$@" </dev/null"""
 _EXEC = ('/bin/sh', '-c', _EXEC_SCRIPT, 'sh')
 
+# The local backend's cap and E2B's preview: the output is held in memory until the command ends.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_CHARS = 64 * 1024
+
 ASYNCIO_ONLY = '`SmolSandbox` needs the asyncio event loop: the smol SDK runs its calls on asyncio threads.'
 
 
@@ -127,6 +134,32 @@ def check_ref(ref: WorkspaceRef) -> None:
         raise ValueError(
             f'SmolSandbox only uses VMs it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}'
         )
+
+
+def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
+    """Run `work` on `machine_id` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
+    previous = lifecycle.get(machine_id)
+
+    async def run() -> _T:
+        if previous is not None:
+            # A deletion that overtook a boot would find nothing, and the boot would then leave its VM behind.
+            await asyncio.wait([previous])
+        return await work()
+
+    task = asyncio.create_task(run(), name=f'smol-sandbox-{machine_id}')
+    # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
+    # when every caller was cancelled first.
+    task.add_done_callback(lambda done: done.cancelled() or done.exception())
+    lifecycle[machine_id] = task
+    task.add_done_callback(lambda done: lifecycle.pop(machine_id) if lifecycle.get(machine_id) is done else None)
+    return task
+
+
+async def settled(task: asyncio.Task[_T]) -> _T:
+    # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails reports
+    # that failure to the loop exception handler even though it is retrieved here.
+    await asyncio.wait([task])
+    return task.result()
 
 
 async def _open(machine: smol.Machine, argv: list[str], options: smol.ExecOptions) -> smol.ExecStream:
@@ -149,6 +182,35 @@ def _close_opened(opening: asyncio.Future[smol.ExecStream]) -> None:
 def _next_event(stream: smol.ExecStream) -> Mapping[str, object] | None:
     """The stream's next event, or `None` once it ends; the SDK types events as bare `dict`s."""
     return cast('Mapping[str, object] | None', next(stream, None))
+
+
+class _Output:
+    """A command's output so far, bounded by `_MAX_OUTPUT_BYTES`."""
+
+    def __init__(self) -> None:
+        self.stdout: list[str] = []
+        self.stderr: list[str] = []
+        self.size = 0
+
+    def add(self, stream: list[str], data: str) -> None:
+        # A character is at least one byte, so an event longer than what is left is over the cap
+        # without encoding a copy of it.
+        self.size += len(data) if len(data) > _MAX_OUTPUT_BYTES - self.size else len(data.encode())
+        if self.size > _MAX_OUTPUT_BYTES:
+            # Only the preview of the event that crosses the cap is kept, so a single huge event
+            # can't grow what is retained past the cap.
+            stream.append(data[:_OUTPUT_PREVIEW_CHARS])
+            stdout, stderr = self.text(_OUTPUT_PREVIEW_CHARS)
+            raise WorkspaceOutputLimitError(
+                'smol command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+                limit=_MAX_OUTPUT_BYTES,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        stream.append(data)
+
+    def text(self, chars: int | None = None) -> tuple[str, str]:
+        return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
 class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
@@ -238,9 +300,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                 # Named and recorded before the boot starts, so cleanup has the ref whatever ends the run.
                 ref = self._ref = WorkspaceRef(provider='smol', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
                 logger.info('Creating smol VM %s', ref.id)
-                task = lifecycles.start(ref.id, lambda: self._acquire(ref.id, create=True))
+                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=True))
             else:
-                task = lifecycles.start(ref.id, lambda: self._acquire(ref.id, create=False))
+                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=False))
             self._acquisition = task
         return await settled(task)
 
@@ -318,7 +380,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         working_dir: str | None,
         timeout: float | None = None,
     ) -> CommandResult:
-        output = CommandOutput('smol')
+        output = _Output()
         exit_code: int | None = None
         engine_timeout = None if timeout is None else timeout + _ENGINE_TIMEOUT_GRACE
         options = smol.ExecOptions(env=env or None, workdir=working_dir, timeout=engine_timeout)

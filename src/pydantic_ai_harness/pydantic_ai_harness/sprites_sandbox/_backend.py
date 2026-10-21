@@ -87,8 +87,6 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
-    MAX_OUTPUT_BYTES,
-    OUTPUT_PREVIEW,
     absolute_path,
     command_argv,
     run_to_completion,
@@ -127,6 +125,9 @@ _HANDSHAKE_RETRY_DELAYS = (1.0, 4.0)
 _INTERNAL_EXEC_TIMEOUT = 30
 # Bounds the control-plane lookup that confirms, after each command, the Sprite was not deleted while it ran.
 _DELETION_CHECK_TIMEOUT = 2.0
+# Combined output ceiling and error preview size, as in Pydantic AI's local backend.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_PREVIEW_BYTES = 64 * 1024
 _AUTH_MESSAGE = (
     'Sprites rejected the credentials. Set SPRITE_TOKEN, or pass a configured `AsyncSpritesClient` as `client=`.'
 )
@@ -257,7 +258,7 @@ async def _cleanup_call(call: Callable[[], Awaitable[object]], *, timeout: float
 class _ExecCommand(WSCommand):
     """The SDK's exec WebSocket command, asking the Sprite to end the command soon after a disconnect.
 
-    It also stops reading once the output passes `MAX_OUTPUT_BYTES`; `marker` is `_ending_with`'s.
+    It also stops reading once the output passes `_MAX_OUTPUT_BYTES`; `marker` is `_ending_with`'s.
     """
 
     def __init__(self, cmd: AsyncCmd, marker: str) -> None:
@@ -275,7 +276,7 @@ class _ExecCommand(WSCommand):
     async def _handle_message(self, message: str | bytes) -> None:
         await super()._handle_message(message)
         # Counted as frames arrive, so a runaway command cannot grow the buffers past one frame over the cap.
-        if len(self._stdout_buffer) + len(self._stderr_buffer) > MAX_OUTPUT_BYTES:
+        if len(self._stdout_buffer) + len(self._stderr_buffer) > _MAX_OUTPUT_BYTES:
             # Ends the read loop without an exit status, so `wait()` fails.
             self._overflowed = True
             self.done = True
@@ -288,12 +289,12 @@ class _ExecCommand(WSCommand):
                 raise
         # Raised inside `_run`'s `try`, whose handler closes the socket, which stops the command.
         stdout, stderr = _split_output(
-            self.get_stdout()[:OUTPUT_PREVIEW], self.get_stderr()[:OUTPUT_PREVIEW], self._marker
+            self.get_stdout()[:_PREVIEW_BYTES], self.get_stderr()[:_PREVIEW_BYTES], self._marker
         )
         raise WorkspaceOutputLimitError(
             "Sprites command output exceeded 10 MiB safety limit; redirect the command's "
             'output to a file and read part of it instead',
-            limit=MAX_OUTPUT_BYTES,
+            limit=_MAX_OUTPUT_BYTES,
             stdout=stdout,
             stderr=stderr,
         )

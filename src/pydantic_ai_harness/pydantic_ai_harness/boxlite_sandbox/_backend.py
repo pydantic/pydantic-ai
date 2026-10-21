@@ -33,9 +33,9 @@ import asyncio
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 import anyio
 
@@ -45,20 +45,17 @@ from pydantic_ai.workspaces import (
     SupportsCommands,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
-    OUTPUT_DRAIN_GRACE,
-    CommandOutput,
-    Lifecycles,
     absolute_path,
     check_env,
     check_timeout,
     command_argv,
     running_on_asyncio,
-    settled,
     stop_shielded,
 )
 
@@ -122,6 +119,8 @@ class _Runtime(Protocol):
     async def remove(self, id_or_name: str, force: bool = False) -> None: ...
 
 
+_T = TypeVar('_T')
+
 _NAME_PREFIX = 'pydantic-ai-'
 _NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
 """The names the backend gives its boxes, and so the only refs it attaches to or deletes.
@@ -138,6 +137,14 @@ _RESERVED_OPTIONS = frozenset(
 
 _SETUP_TIMEOUT = 60.0
 """Seconds the backend's own commands in the box get: `mkdir -p`, `pwd -P`, and the check that the box still runs."""
+
+# The local backend's cap and E2B's preview: the output is held in memory until the command ends.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_CHARS = 64 * 1024
+
+_OUTPUT_DRAIN_GRACE = 2.0
+"""Seconds the output is still read after the command exits, as the local backend does: a background
+job can hold the output pipes open."""
 
 _STOP = 1
 """SIGHUP, which the backend sends to stop a command; it has the same number on every platform.
@@ -176,8 +183,13 @@ exit "$r"
 _DROPPED = re.compile(r'\[boxlite\] (?:stdout|stderr) output dropped \d+ bytes\r\n')
 """The line BoxLite sends in place of output its guest buffer dropped."""
 
-lifecycles = Lifecycles('boxlite-sandbox')
-"""This process's unfinished creations, attachments and deletions of boxes."""
+lifecycle: dict[str, asyncio.Task[object]] = {}
+"""This process's latest unfinished creation, attachment or deletion of each box, by name.
+
+Each one waits for the one started before it, so the latest finishing means they all have, and none
+stops when its callers are cancelled. A box reports itself running for a moment after a deletion has
+ended its commands, so a command that ended that way waits for the deletion before checking the box.
+"""
 
 _late_stops: set[asyncio.Task[None]] = set()
 """Stops of commands that started after their caller was cancelled, held until they end."""
@@ -224,12 +236,38 @@ def _network(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) -
     return _sdk().NetworkSpec(outbound=_sdk().OutboundNetworkSpec(mode='enabled', allow_net=list(allowed_hosts or ())))
 
 
+def start_lifecycle(name: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
+    """Run `work` on box `name` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
+    previous = lifecycle.get(name)
+
+    async def run() -> _T:
+        if previous is not None:
+            # A deletion that overtook a creation would find nothing, and the creation would then leave its box behind.
+            await asyncio.wait([previous])
+        return await work()
+
+    task = asyncio.create_task(run(), name=f'boxlite-sandbox-{name}')
+    # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
+    # when every caller was cancelled first.
+    task.add_done_callback(lambda done: done.cancelled() or done.exception())
+    lifecycle[name] = task
+    task.add_done_callback(lambda done: lifecycle.pop(name) if lifecycle.get(name) is done else None)
+    return task
+
+
+async def settled(task: asyncio.Task[_T]) -> _T:
+    # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails reports
+    # that failure to the loop exception handler even though it is retrieved here.
+    await asyncio.wait([task])
+    return task.result()
+
+
 class _StaleHandle(Exception):
     """The box's handle was stopped before a command started on it."""
 
 
-class _Output(CommandOutput):
-    """A command's output and exit code so far.
+class _Output:
+    """A command's output and exit code so far, the output bounded by `_MAX_OUTPUT_BYTES` across both streams.
 
     `read` and `wait` run in one task group. They record a failure and cancel the group rather than raise
     it, so `_exec` raises it as itself, not wrapped in an `ExceptionGroup`. The state lives here, not in
@@ -238,15 +276,15 @@ class _Output(CommandOutput):
     """
 
     def __init__(self) -> None:
-        super().__init__('BoxLite')
+        self.stdout: list[str] = []
+        self.stderr: list[str] = []
+        self.size = 0
         self.exit_code: int | None = None
         self.error: Exception | None = None
 
     async def read(self, stream: AsyncIterator[str], chunks: list[str], group: TaskGroup) -> None:
         try:
             async for data in stream:
-                if _DROPPED.fullmatch(data):
-                    raise WorkspaceError(f'BoxLite dropped part of the command output: {data.strip()}')
                 self.add(chunks, data)
         except Exception as error:
             self.error = error
@@ -260,7 +298,27 @@ class _Output(CommandOutput):
             group.cancel_scope.cancel()
         else:
             # A background job the command started can hold its output open; read on briefly.
-            group.cancel_scope.deadline = anyio.current_time() + OUTPUT_DRAIN_GRACE
+            group.cancel_scope.deadline = anyio.current_time() + _OUTPUT_DRAIN_GRACE
+
+    def add(self, stream: list[str], data: str) -> None:
+        if _DROPPED.fullmatch(data):
+            raise WorkspaceError(f'BoxLite dropped part of the command output: {data.strip()}')
+        # A character is at least one byte, so an event longer than what is left is over the cap
+        # without encoding a copy of it.
+        self.size += len(data) if len(data) > _MAX_OUTPUT_BYTES - self.size else len(data.encode())
+        if self.size > _MAX_OUTPUT_BYTES:
+            stream.append(data[:_OUTPUT_PREVIEW_CHARS])
+            stdout, stderr = self.text(_OUTPUT_PREVIEW_CHARS)
+            raise WorkspaceOutputLimitError(
+                'BoxLite command output exceeded the 10 MiB limit; redirect it to a file and read part of it instead',
+                limit=_MAX_OUTPUT_BYTES,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        stream.append(data)
+
+    def text(self, chars: int | None = None) -> tuple[str, str]:
+        return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
 class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
@@ -357,9 +415,9 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 # Named and recorded before the creation starts, so cleanup has the ref whatever ends the run.
                 ref = self._ref = WorkspaceRef(provider='boxlite', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
                 logger.info('Creating BoxLite box %s', ref.id)
-                task = lifecycles.start(ref.id, lambda: self._acquire(ref.id, create=True))
+                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=True))
             else:
-                task = lifecycles.start(ref.id, lambda: self._acquire(ref.id, create=False))
+                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=False))
             self._acquisition = task
         return await settled(task)
 
@@ -526,11 +584,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         Checked only after a failure, to keep the round trip off successful commands; a check that fails
         leaves the original error to propagate rather than ending the run on a guess.
         """
-        # A box reports itself running for a moment after a deletion has ended its commands, so a command
-        # that ended that way waits for the deletion. Not while acquiring: an operation queued behind the
-        # acquisition waits for it to finish.
-        pending = lifecycles.latest(box.name)
-        if pending is not None and asyncio.current_task() is not self._acquisition:
+        # Not while acquiring: an operation queued behind the acquisition waits for it to finish.
+        if (pending := lifecycle.get(box.name)) is not None and asyncio.current_task() is not self._acquisition:
             await asyncio.wait([pending])
         try:
             info = await runtime().get_info(box.name)
