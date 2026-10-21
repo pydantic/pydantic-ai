@@ -99,9 +99,8 @@ Two mechanisms:
 - **Server-side mode**: GitHub (`X-MCP-Readonly` header), Linear (`/mcp/readonly` endpoint), PostHog
   (`x-posthog-read-only` header). The server decides which tools exist.
 - **Annotation filter**: every other class, GitHub always (on top of its header), and Linear/PostHog when
-  you pass `client`. Keeps only
-  tools whose MCP annotations set `readOnlyHint: true`. Unmarked tools are dropped, so a server that
-  does not annotate can leave the agent with no tools.
+  you pass `client`. Keeps only tools whose MCP annotations set `readOnlyHint: true`. Unmarked tools are
+  dropped, so a server that does not annotate can leave the agent with no tools.
 
 `read_only` is not an access boundary. The token's scopes are. PostHog's default mode serves one
 `posthog` tool that is not marked read-only, so `PostHog(client=..., read_only=True)` leaves no tools.

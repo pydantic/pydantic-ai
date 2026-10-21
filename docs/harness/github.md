@@ -4,7 +4,7 @@ description: "Give a Pydantic AI agent GitHub tools through GitHub's hosted MCP 
 
 # GitHub
 
-Give an agent the tools of GitHub's hosted MCP server: repositories, issues, pull requests, Actions, and more. By default the agent gets GitHub's default tool groups, which include tools that make changes. The token's permissions decide what those tools can reach.
+Let an agent read and change GitHub repositories, issues, pull requests, and other resources. `GitHub` gives the agent the tools in GitHub's default tool groups, including tools that make changes; `toolsets` picks other groups. The credential you connect with decides what those tools can reach.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -37,7 +37,9 @@ print(result.output)
 
 A token of `'oauth'`, from any of these, raises an error: GitHub does not support the automatic OAuth client registration that FastMCP's browser sign-in needs.
 
-Use a fixed token for scripts. In a multi-user app, pass a function that reads the run's token from deps:
+A fixed token or `GITHUB_TOKEN` suits a script or an agent on your own machine, where every run is the same account.
+
+In an app where each user connects their own GitHub account, one agent serves all of them, so the token cannot be fixed when the agent is created. Pass a function that reads the current user's token from the run's deps:
 
 ```python
 from dataclasses import dataclass
@@ -60,7 +62,7 @@ agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[GitHub(auth=g
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only`, `toolsets`, and `url` still apply to every run.
 
-Your app obtains, stores, and refreshes each user's token, for example through a GitHub App's OAuth flow. Load it before the run, async if needed, and put it in deps. The `auth` function is sync and only reads it.
+Your app gets each user's token, stores it, and refreshes it. For example, a "Connect GitHub" button that signs them in through your GitHub App with OAuth and saves the user access token to their account, or a settings page where each user pastes their own personal access token. Before each run, load it (this can be async) and put it in the deps; the function only reads it.
 
 When users differ in more than their credential, such as a user whose organization is on a GitHub Enterprise Cloud data-residency endpoint, build the whole capability for each run with a [dynamic capability](../capabilities/custom.md#dynamically-building-a-capability):
 
@@ -93,9 +95,7 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 ## Provider settings
 
-- `toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups.
-- `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only. If none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`.
-- `url` sets a GitHub Enterprise Cloud endpoint. It must be an `https://` URL.
+`toolsets=['repos', 'issues', 'actions']` picks which of GitHub's tool groups the server offers. Leave it unset to get the server's default groups. `read_only=True` asks the server for its read-only mode, and also drops any tool the server does not mark as read-only; if none are marked, the agent gets no GitHub tools and emits an `MCPReadOnlyNoToolsWarning`. Set `url` to use a GitHub Enterprise Cloud endpoint; it must be an `https://` URL.
 
 The capability does not limit which repositories the agent can reach. Set that with the token's or GitHub App's permissions. To send other headers, or to use custom authentication, pass a configured `client`.
 
@@ -124,9 +124,9 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Pass `client`, your own FastMCP client or transport, to control the connection yourself: a different authentication scheme, a proxy, a plain-HTTP local server, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth`, `url`, or `toolsets` raises an error. With a client, `read_only=True` only drops the tools the server does not mark as read-only, since no read-only header is sent. `include_instructions=False` stops the server's instructions from reaching the model.
+Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, a plain-HTTP local server, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth`, `url`, or `toolsets` raises an error. With a client, `read_only=True` keeps only the tools the server marks as read-only, instead of asking the server for read-only mode. `include_instructions=False` stops the server's instructions from reaching the model.
 
-A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately.
+A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](../capabilities/prefix-tools.md).
 
 ## Telemetry
 

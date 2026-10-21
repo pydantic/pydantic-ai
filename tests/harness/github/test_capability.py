@@ -200,10 +200,10 @@ class TestGitHub:
         with pytest.raises(UserError, match='Set `GITHUB_TOKEN`'):
             Agent(TestModel(), capabilities=[GitHub()])
 
-    @pytest.mark.parametrize('source', ['auth', 'environment'])
-    def test_oauth_token_raises(self, source: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize('auth', ['oauth', None], ids=['auth', 'environment'])
+    def test_oauth_token_raises(self, auth: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv('GITHUB_TOKEN', 'oauth')
-        capability = GitHub[str | None](auth='oauth' if source == 'auth' else None)
+        capability = GitHub[str | None](auth=auth)
         with pytest.raises(UserError, match="GitHub needs a token, not 'oauth'"):
             capability.get_toolset()
 
