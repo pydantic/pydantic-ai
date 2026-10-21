@@ -3968,7 +3968,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_prefect_durability_streaming_in_flow() -> None:
-    """`ProcessEventStream` receives captured model events in flow code."""
+    """`ProcessEventStream` receives model events replayed from the task's final response in flow code."""
     events_in_task: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:

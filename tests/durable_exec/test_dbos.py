@@ -3679,7 +3679,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_dbos_durability_streaming_in_workflow(dbos: DBOS) -> None:
-    """`ProcessEventStream` receives captured model events in workflow code."""
+    """`ProcessEventStream` receives model events replayed from the step's final response in workflow code."""
     events_in_step: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:

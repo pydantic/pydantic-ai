@@ -1365,8 +1365,8 @@ async def model_request_stream(
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this runs in
     workflow code: the capability swaps `request_context.model` for a wrapper whose
-    `request_stream` drains one segment inside its own activity/step/task and replays its
-    buffered events, so the composite below stitches per-segment replays.
+    `request_stream` drains one segment inside its own activity/step/task and replays that
+    segment's final response, so the composite below stitches per-segment replays.
 
     The yielded stream is a composite that stitches the (possibly suspended → complete)
     segments into one continuous stream: it opens a `model.request_stream(...)` per segment
