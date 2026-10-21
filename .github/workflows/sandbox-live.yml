@@ -4,8 +4,9 @@ name: Sandbox live tests
 # service. Most tests start a billed cloud sandbox, so `sandbox-live-nightly.yml` calls this
 # only on its daily schedule or when a maintainer explicitly dispatches it.
 #
-# This file has no per-provider step. Adding a provider adds its name to `PRESENT` and its
-# secret below.
+# Adding a provider adds its name to `PRESENT` and its secret below. Docker is the exception:
+# it has no extra or secret, and its live tier runs a second time against Podman in a step of
+# its own.
 #
 # There is deliberately no `ref` input: a scheduled or manual caller runs with the cache of
 # the branch it started from (usually `main`), and checking out another ref there would run

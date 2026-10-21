@@ -1,4 +1,23 @@
-"""A [workspace backend][pydantic_ai.workspaces.WorkspaceBackend] in a local Docker (or Podman) container."""
+"""A [workspace backend][pydantic_ai.workspaces.WorkspaceBackend] in a local Docker (or Podman) container.
+
+CLI behavior verified 2026-10-21 against Docker 29.2 (runc, in Colima) and Podman 6.1.4 (crun, in a Podman
+machine) on macOS, see https://docs.docker.com/reference/cli/docker/ and
+https://docs.podman.io/en/latest/Commands.html. Re-check these before changing how containers are created,
+commands run or stopped, or errors read, with `-m docker_live` and `PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE`
+set to `docker` and to `podman`:
+
+- `docker run --workdir` creates a missing directory; `podman run --workdir` refuses it.
+- Killing the local `docker exec` client leaves its command running in the container.
+- A `docker exec` process leads a session of its own, so its process group is the command's.
+- `docker exec` waits until every copy of the command's output is closed; `podman exec` returns at exit.
+- Docker reports a missing `exec --workdir` on stdout.
+- A missing container's errors contain `no such container`, in any case.
+- `inspect --format` reads labels through `{{index .Config.Labels "<key>"}}`.
+- Of repeated `--pids-limit` flags the last wins, and `-1` lifts the limit.
+- Both refuse a second `--network` next to `--network none`.
+- A `--tmpfs` mount is mode 1777, so a non-root `--user` can write it, also with `--read-only`.
+- BusyBox's `kill` rejects `--` before a negative process group, as does dash's after `-0`.
+"""
 
 from __future__ import annotations as _annotations
 
