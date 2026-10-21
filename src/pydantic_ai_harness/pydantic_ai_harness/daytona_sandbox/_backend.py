@@ -34,8 +34,6 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness._workspace_provider import (
-    MAX_OUTPUT_BYTES,
-    OUTPUT_PREVIEW,
     absolute_path,
     check_timeout,
     command_argv,
@@ -77,6 +75,9 @@ _TEARDOWN_TIMEOUT = 30.0
 _RETRY_DELAY = 1.0
 # The most partial output a timeout reports per stream.
 _PARTIAL_OUTPUT_LIMIT = 4096
+# A command's whole output is downloaded into memory.
+_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+_OUTPUT_PREVIEW_BYTES = 64 * 1024
 
 logger = logging.getLogger(__name__)
 
@@ -336,20 +337,20 @@ class _DaytonaProcess:
                         out_size, err_size = (int(size) for size in sizes.result.split())
                     except ValueError:
                         raise WorkspaceError(f'Could not read the command output sizes: {sizes.result!r}') from None
-                    if out_size + err_size > MAX_OUTPUT_BYTES:
-                        stdout, stderr = await self._excerpts('head', OUTPUT_PREVIEW)
+                    if out_size + err_size > _MAX_OUTPUT_BYTES:
+                        stdout, stderr = await self._excerpts('head', _OUTPUT_PREVIEW_BYTES)
                         raise WorkspaceOutputLimitError(
-                            _OUTPUT_LIMIT_MESSAGE, limit=MAX_OUTPUT_BYTES, stdout=stdout, stderr=stderr
+                            _OUTPUT_LIMIT_MESSAGE, limit=_MAX_OUTPUT_BYTES, stdout=stdout, stderr=stderr
                         )
                     out = await self._sandbox.fs.download_file(self._out, _REQUEST_TIMEOUT) if out_size else b''
                     err = await self._sandbox.fs.download_file(self._err, _REQUEST_TIMEOUT) if err_size else b''
                     # A background child can keep writing after the sizes were read.
-                    if len(out) + len(err) > MAX_OUTPUT_BYTES:
+                    if len(out) + len(err) > _MAX_OUTPUT_BYTES:
                         raise WorkspaceOutputLimitError(
                             _OUTPUT_LIMIT_MESSAGE,
-                            limit=MAX_OUTPUT_BYTES,
-                            stdout=out[:OUTPUT_PREVIEW].decode(errors='replace'),
-                            stderr=err[:OUTPUT_PREVIEW].decode(errors='replace'),
+                            limit=_MAX_OUTPUT_BYTES,
+                            stdout=out[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
+                            stderr=err[:_OUTPUT_PREVIEW_BYTES].decode(errors='replace'),
                         )
         finally:
             await self._remove_output_files()
