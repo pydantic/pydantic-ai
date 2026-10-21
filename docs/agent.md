@@ -2007,11 +2007,13 @@ with capture_run_messages() as messages:  # (2)!
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
-                        content='Please try again.',
+                    ToolReturnPart(
                         tool_name='calc_volume',
+                        content='Please try again.',
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=datetime.datetime(...),
@@ -2027,7 +2029,7 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(
-                    cost=Decimal('0.000224'), input_tokens=72, output_tokens=8
+                    cost=Decimal('0.000216'), input_tokens=68, output_tokens=8
                 ),
                 model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),
