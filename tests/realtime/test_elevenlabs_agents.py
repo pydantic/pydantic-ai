@@ -3031,6 +3031,23 @@ async def test_a_reply_text_after_another_message_of_the_turn_revises_its_own_re
     ]
 
 
+async def test_an_echoed_id_that_does_not_parse_is_ignored() -> None:
+    """An id with our prefix that names no input is ignored rather than failing the frame, so the reply still lands."""
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            _reply(
+                'Hello!', event_id=1, response_id='resp_1', answers=['pydantic_ai_input_oops', 'pydantic_ai_input_0']
+            ),
+        ],
+    )
+    assert frames[-1] == [OutputTranscript(text='Hello!', is_final=True, item_id='resp_1')]
+
+
 class _PacedWebSocket(FakeWebSocket):
     """A connection held open that hands out its scripted frames a batch at a time, as the test releases them."""
 
