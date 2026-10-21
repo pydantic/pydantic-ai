@@ -167,9 +167,9 @@ Every searchable deferred tool stays in the search corpus after discovery. A `Co
 
 Tools may join a run after its first request: `FunctionToolset.add_function()`/`add_tool()` called from inside a tool, a dynamic toolset (`@agent.toolset`) returning more, an MCP server's `tools/list_changed`, or `prepare_tools`/a per-tool `prepare` letting one through. Don't hand-write a `ToolAvailabilityDeltaPart` for these. Each step, the framework compares the visible function tools with those the run started with, records every newcomer as a `ToolAvailabilityDeltaPart` beside that step's tool results, and sets `ModelRequestParameters.introduced_tool_names`. Only immediately available function tools count: a newcomer with `defer_loading=True` joins the tool search corpus and is revealed when a search finds it.
 
-- OpenAI Responses delivers the newcomer as an `additional_tools` item, so `tools[]` stays byte-identical.
-- Anthropic delivers it as a `defer_loading` declaration plus a `tool_addition` block (or a synthesized `tool_reference` result). This is stable once a deferred tool is already declared; some models (e.g. Opus 4.8) add a one-time preamble with the first deferred declaration.
-- Every other provider appends it to `tools[]` and adds a one-line announcement.
+- First-party OpenAI Responses (`OpenAIProvider`) delivers the newcomer as an `additional_tools` item, so `tools[]` stays byte-identical.
+- Anthropic models with tool search (Sonnet 4.5+, Opus 4.5+, Haiku 4.5+) deliver it as a `defer_loading` declaration plus a `tool_addition` block (or a synthesized `tool_reference` result). This is stable once a deferred tool is already declared; some models (e.g. Opus 4.8) add a one-time preamble with the first deferred declaration.
+- Everything else, including older Anthropic models and OpenAI-compatible Responses endpoints, appends it to `tools[]` and adds a one-line announcement.
 
 Exception: when no plainly visible tool is left to keep stable (the run started with no visible function, output or native tools, or every tool it started with has since left), the tools present go straight into `tools[]` with no delta, which also keeps Anthropic from receiving a request whose tools are all deferred.
 

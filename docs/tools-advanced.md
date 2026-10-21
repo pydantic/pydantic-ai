@@ -1043,9 +1043,9 @@ A tool can also join a run without being searched for or loaded. It might be add
 
 | Provider | How the new tool arrives | Cache prefix |
 |---|---|---|
-| OpenAI Responses | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged |
-| Anthropic | A `defer_loading` declaration plus a `tool_addition` block (or a `tool_reference` result on models without mid-conversation tool changes) | **Stable** once the request already declares a deferred tool. Otherwise, on some models (Claude Opus 4.8, for example) the first deferred declaration adds a one-time preamble, which moves the prefix on that request only |
-| Others | Added to `tools[]`, plus a note in the conversation that it's now available | **Breaks** from the tool definitions onward on the request where it appears |
+| First-party OpenAI Responses (`OpenAIProvider`) | An `additional_tools` input item carrying its definition | **Stable**: `tools[]` is unchanged |
+| Anthropic models with tool search (Sonnet 4.5+, Opus 4.5+, Haiku 4.5+) | A `defer_loading` declaration plus a `tool_addition` block (or a `tool_reference` result on models without mid-conversation tool changes) | **Stable** once the request already declares a deferred tool. Otherwise, on some models (Claude Opus 4.8, for example) the first deferred declaration adds a one-time preamble, which moves the prefix on that request only |
+| Everything else, including older Anthropic models, OpenAI-compatible Responses endpoints (Azure, OpenRouter, and so on), and OpenAI Chat Completions | Added to `tools[]`, plus a note in the conversation that it's now available | **Breaks** from the tool definitions onward on the request where it appears |
 
 There is one exception: when nothing the model was already given is left to keep stable, because the run started with no plainly visible tools (text output and only deferred tools, say, or an MCP server with an empty list) or every tool it started with has since left, the tools present go into `tools[]` directly and nothing is recorded. This also keeps a request from carrying only deferred tools, which Anthropic rejects.
 

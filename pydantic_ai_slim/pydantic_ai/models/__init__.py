@@ -13,7 +13,7 @@ import json
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
 from dataclasses import dataclass, field, replace
@@ -2672,21 +2672,48 @@ def resolve_request_tools(
         function_tools.append(t)
         visibility_by_name[t.name] = visibility
 
-    # A newcomer goes on the addition channel to keep the request's `tools` section stable. With nothing
-    # else plainly declared there is no section to keep, so it is declared like any other tool, which also
-    # keeps an Anthropic request from carrying only deferred tools. The agent graph makes the same call when
-    # recording the newcomer, but only this function knows which native tools survive for this model: an
-    # unsupported `optional` one the graph counted is left out here.
-    if not params.output_tools and not supported_natives and 'visible' not in visibility_by_name.values():
-        for name in params.introduced_tool_names & visibility_by_name.keys():
-            visibility_by_name[name] = 'visible'
-
-    return replace(
-        params,
-        native_tools=supported_natives,
-        function_tools=function_tools,
-        tool_visibility=visibility_by_name,
+    # The agent graph makes the same call when recording a newcomer, but only resolution knows which native
+    # tools survive for this model: an unsupported `optional` one the graph counted is left out here.
+    return _declare_lone_newcomers(
+        replace(
+            params,
+            native_tools=supported_natives,
+            function_tools=function_tools,
+            tool_visibility=visibility_by_name,
+        )
     )
+
+
+def _declare_lone_newcomers(
+    params: ModelRequestParameters, declared_names: Collection[str] | None = None
+) -> ModelRequestParameters:
+    """Declare mid-run newcomers plainly when the request has no other plainly declared tool.
+
+    A newcomer goes on the tool-addition channel to keep the request's `tools` section stable. With nothing
+    else plainly declared there is no section to keep, so it is declared like any other tool, which also
+    keeps an Anthropic request from carrying only deferred tools.
+
+    `declared_names` narrows the declarations to the ones a provider still sends after its own filtering,
+    such as Anthropic's `tool_choice` restriction; by default every resolved tool counts.
+    """
+    tool_visibility = params.tool_visibility
+    if tool_visibility is None or params.native_tools:
+        return params
+
+    def declared(name: str) -> bool:
+        return declared_names is None or name in declared_names
+
+    if any(declared(tool.name) for tool in params.output_tools) or any(
+        visibility == 'visible' and declared(name) for name, visibility in tool_visibility.items()
+    ):
+        return params
+    newcomers = [name for name in params.introduced_tool_names if name in tool_visibility and declared(name)]
+    if not newcomers:
+        return params
+    resolved = dict(tool_visibility)
+    for name in newcomers:
+        resolved[name] = 'visible'
+    return replace(params, tool_visibility=resolved)
 
 
 def prepare_return_schemas(

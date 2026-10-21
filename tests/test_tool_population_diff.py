@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, ToolOrOutput
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, PrepareTools, ProcessHistory
 from pydantic_ai.messages import (
     CompactionPart,
@@ -32,6 +32,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage
@@ -370,6 +371,47 @@ async def test_newcomer_is_persisted_when_a_hook_ends_the_request_in_a_request_o
     assert _deltas(result.all_messages()) == [['later']]
 
 
+async def test_newcomer_is_recorded_inside_a_compaction_a_hook_adds_to_the_request():
+    """A hook that compacts the request without persisting it leaves the persisted tail before the boundary.
+
+    A delta recorded only there would be outside what the model works from, so the newcomer would go into
+    `tools`. It is recorded on the outgoing tail too, and stays on the addition channel.
+    """
+    seen: list[ModelRequestParameters] = []
+
+    class CompactRequest(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [
+                *request_context.messages,
+                ModelResponse(parts=[CompactionPart(content='summary')]),
+                ModelRequest(parts=[UserPromptPart('continue')]),
+            ]
+            return request_context
+
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool_plain
+    def unlock() -> str:
+        toolset.add_function(_later, name='later')
+        return 'unlocked'
+
+    agent = Agent(
+        FunctionModel(_recording(_unlock_later_done, seen), profile={'tool_addition_mode': 'with_definitions'}),
+        toolsets=[toolset],
+        capabilities=[CompactRequest()],
+    )
+    result = await agent.run('go')
+
+    assert result.output == 'done'
+    assert [params.tool_visibility for params in seen] == [
+        {'unlock': 'visible'},
+        {'unlock': 'visible', 'later': 'via_history'},
+        {'unlock': 'visible', 'later': 'via_history'},
+    ]
+
+
 async def test_newcomer_is_re_announced_after_compaction_drops_its_delta():
     """Announcements are scoped to the post-compaction window: once the summary replaces the delta, it is recorded again."""
     returned: list[str] = []
@@ -603,6 +645,48 @@ async def test_rotating_out_every_visible_tool_establishes_the_newcomers(
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
 
 
+async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainly(allow_model_requests: None):
+    """A `tool_choice` naming only the newcomer filters out the tool that kept it deferred, so it is declared plainly.
+
+    Anthropic restricts tools by leaving the others out of the request, which would leave the newcomer as
+    the only tool, with `defer_loading=True`, and Anthropic rejects that.
+    """
+    usage = BetaUsage(input_tokens=1, output_tokens=1)
+    client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaToolUseBlock(id='c1', input={}, name='unlock', type='tool_use')], usage),
+            completion_message([BetaToolUseBlock(id='c2', input={}, name='later', type='tool_use')], usage),
+            completion_message([BetaTextBlock(text='done', type='text')], usage),
+        ]
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=client))
+
+    class RestrictToLater(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if any(tool.name == 'later' for tool in request_context.model_request_parameters.function_tools):
+                request_context.model_settings = merge_model_settings(
+                    request_context.model_settings, ModelSettings(tool_choice=ToolOrOutput(function_tools=['later']))
+                )
+            return request_context
+
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool_plain
+    def unlock() -> str:
+        toolset.add_function(_later, name='later')
+        return 'unlocked'
+
+    result = await Agent(model, toolsets=[toolset], capabilities=[RestrictToLater()]).run('go')
+
+    assert result.output == 'done'
+    assert [
+        [(tool['name'], tool.get('defer_loading', False)) for tool in kwargs['tools']]
+        for kwargs in get_mock_chat_completion_kwargs(client)
+    ] == [[('unlock', False)], [('later', False)], [('later', False)]]
+
+
 def _responses_text() -> Any:
     return response_message(
         [
@@ -649,6 +733,35 @@ async def test_openai_responses_keeps_tools_byte_identical(allow_model_requests:
     assert [tool['name'] for item in additional for tool in item['tools']] == ['later']
     # The item stays where it was recorded on the next request, so the message prefix doesn't move either.
     assert requests[2]['input'][: len(requests[1]['input'])] == requests[1]['input']
+
+
+async def test_openai_responses_newcomer_before_a_compaction_is_declared_in_tools(allow_model_requests: None):
+    """Once a compaction summarizes the newcomer's delta away, the tool is declared in `tools` like any other.
+
+    The Responses trim drops the history before the compaction, including the `additional_tools` item
+    that carried the newcomer, so the next run must establish it in `tools` rather than treat it as
+    already delivered.
+    """
+    client = MockOpenAIResponses.create_mock(
+        [_responses_call('unlock', 'c1'), _responses_call('later', 'c2'), _responses_text(), _responses_text()]
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=client))
+    agent = _add_function_agent(model)
+    first = await agent.run('go')
+    assert _deltas(first.all_messages()) == [['later']]
+
+    compaction = ModelResponse(
+        parts=[
+            CompactionPart(content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'})
+        ],
+        provider_name='openai',
+    )
+    second = await agent.run('again', message_history=[*first.all_messages(), compaction])
+
+    assert _deltas(second.new_messages()) == []
+    request = get_mock_responses_kwargs(client)[-1]
+    assert [tool['name'] for tool in request['tools']] == ['unlock', 'later']
+    assert not [node for node in _walk(request['input']) if node.get('type') == 'additional_tools']
 
 
 @pytest.mark.parametrize('make_agent', CAUSES)

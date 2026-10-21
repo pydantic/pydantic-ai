@@ -15478,13 +15478,12 @@ async def test_openai_responses_compact_replants_standing_prompt(allow_model_req
 async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_declaration(
     allow_model_requests: None,
 ):
-    """The wire partition and the trim must see the same history.
+    """A delta before the compaction boundary doesn't take a tool out of `tools`.
 
-    Request building filters a delta-introduced tool out of `tools` so its `additional_tools` item
-    is the sole declaration — but when that item's carrier sits before the compaction boundary, the
-    trim drops it. Deriving `introduced_tool_names` from the trimmed history means the tool is
-    simply not "introduced" and keeps its regular `tools` declaration, instead of vanishing from
-    the request entirely."""
+    The trim drops the delta along with the rest of the pre-compaction history, so a plain tool it names
+    keeps its regular `tools` declaration rather than vanishing from the request. This calls the model
+    directly; `test_openai_responses_newcomer_before_a_compaction_is_declared_in_tools` in
+    `test_tool_population_diff.py` covers the agent run, where the newcomer tracking decides it."""
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
     tool = ToolDefinition(

@@ -3142,7 +3142,8 @@ def _record_tool_population_changes(
     Callability is untouched: `RunContext.is_tool_available` reads the tool's own definition, which
     this doesn't change.
 
-    The delta goes on each of `requests` (see `_history_recording_targets`). They are empty on a
+    The delta goes on each of `requests` (see `_history_recording_targets`), and also on the outgoing tail
+    when none of them is inside the post-compaction window of `messages`. They are empty on a
     continuation, which completes a turn the provider has already seen and so must not grow. A
     continuation is always its run's first request (a turn suspended mid-run is continued inside the
     model request), so the population it carries is what establishes `established_tool_names`: the only
@@ -3169,7 +3170,15 @@ def _record_tool_population_changes(
     announced = [name for name in introduced if name not in discovered]
     if announced and requests:
         delta = _messages.ToolAvailabilityDeltaPart(tools_added=announced)
-        for request in requests:
+        targets = list(requests)
+        window = _messages.post_compaction_window(messages)
+        if not any(message is target for message in window for target in targets):
+            # A hook added a compaction after the persisted tail without persisting it, so a delta there
+            # would be outside what the model works from: put it on the outgoing tail too.
+            outgoing = messages[-1]
+            assert isinstance(outgoing, _messages.ModelRequest)
+            targets.append(outgoing)
+        for request in targets:
             request.parts = [*request.parts, delta]
         ctx.state.event_stream_buffer.append(_messages.ToolAvailabilityDeltaEvent(part=delta))
         # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
