@@ -33,9 +33,11 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    ModelServerError,
     PartDeltaEvent,
     PartEndEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -75,7 +77,17 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsSameStr, IsStr, RequestCapture, TestEnv, message, try_import
+from ..conftest import (
+    IsDatetime,
+    IsNow,
+    IsSameStr,
+    IsStr,
+    RequestCapture,
+    TestEnv,
+    legacy_retry_prompt_part,
+    message,
+    try_import,
+)
 from .conftest import json_objects
 from .mock_openai import (
     MockOpenAI,
@@ -103,6 +115,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
+    from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
         OpenAIChatModel,
@@ -111,12 +124,17 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.zai import ZaiProvider
 
     MockChatCompletion = chat.ChatCompletion | Exception
     MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
@@ -524,11 +542,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -2206,7 +2226,8 @@ _STREAM_ERROR_SSE_ERROR = b'data: {"error":{"message":"upstream model failed","t
     ],
 )
 async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, content: bytes) -> None:
-    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
+    """An error object inside a 200 SSE stream surfaces as the `ModelHTTPError` the same error gets before a stream
+    opens, with `in_stream` set.
 
     A mock transport stands in for a cassette because no real provider returns such a stream on demand.
     https://github.com/pydantic/pydantic-ai/issues/8722
@@ -2223,8 +2244,13 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
             async with Agent(model).run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == 'upstream model failed'
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert isinstance(exc_info.value, ModelServerError)
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.in_stream is True
+    assert exc_info.value.body == {'message': 'upstream model failed', 'type': 'server_error', 'code': 500}
+    assert exc_info.value.provider_error_code == '500'
+    assert exc_info.value.provider_error_type == 'server_error'
     cause = exc_info.value.__cause__
     assert isinstance(cause, APIError)
     assert cause.body == snapshot({'message': 'upstream model failed', 'type': 'server_error', 'code': 500})
@@ -5211,7 +5237,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
-    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryFeedbackPart`
     that tells the model which kinds of output are valid, while relying on the model adapter to omit
     the empty response from the API payload.
     """
@@ -5227,16 +5253,16 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     assert result.output == 'hello back'
 
     # The empty response is omitted from the payload (no `content=None` assistant message that would
-    # trigger a 400); a retry prompt is appended instead so the model can self-correct.
+    # trigger a 400); the retry feedback is appended instead so the model can self-correct. OpenAI
+    # honors a mid-conversation system message, so it keeps the system voice.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message['role'] == 'assistant' for message in second_call_messages)
-    assert second_call_messages == [
-        {'content': 'hello', 'role': 'user'},
-        {
-            'role': 'user',
-            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
-        },
-    ]
+    assert second_call_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'hello'},
+            {'role': 'system', 'content': 'Please return text.'},
+        ]
+    )
 
     assert result.all_messages() == snapshot(
         [
@@ -5264,9 +5290,9 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5377,6 +5403,41 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
     agent = Agent(m)
     result = await agent.run('Hello')
     assert result.output == 'hello'
+
+
+@pytest.mark.parametrize(
+    'model_class,provider_class,model_name',
+    [
+        pytest.param(OpenAIChatModel, OpenAIProvider, 'gpt-5.2', id='openai'),
+        pytest.param(GitHubCopilotModel, GitHubCopilotProvider, 'gpt-5.2', id='github-copilot'),
+        pytest.param(OpenRouterModel, OpenRouterProvider, 'openai/gpt-5.2', id='openrouter'),
+        pytest.param(ZaiModel, ZaiProvider, 'glm-5.1', id='zai'),
+    ]
+    if imports_successful()
+    else [],
+)
+async def test_metadata_non_string_value(
+    allow_model_requests: None,
+    model_class: type[OpenAIChatModel],
+    provider_class: type[OpenAIProvider | GitHubCopilotProvider | OpenRouterProvider | ZaiProvider],
+    model_name: str,
+) -> None:
+    """OpenAI-compatible providers can return `metadata` values outside the SDK's `dict[str, str]`."""
+    metadata: dict[str, JsonValue] = {
+        'weight_version': 'default',
+        'weight_versions': [{'version': 'default', 'start': 0, 'end': 44}],
+    }
+    # Emulate an unvalidated SDK response, including OpenRouter's downstream provider.
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant')).model_copy(
+        update={'metadata': metadata, 'provider': 'test'}
+    )
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = model_class(model_name, provider=provider_class(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    assert result.output == 'hello'
+    assert m._validate_completion(c).metadata == metadata  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
@@ -6312,6 +6373,10 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
         assert model.system == provider_name
         if isinstance(model, OpenAIChatModel):
             assert model.profile.get('openai_chat_supports_document_input') is False
+            # Only the documents the mapping inlines as text remain; any other is replaced by a note.
+            assert model.profile.get('supported_document_media_types') == snapshot(
+                frozenset({'text/csv', 'text/html', 'text/markdown', 'text/plain'})
+            )
             with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
                 await Agent(model).run([BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
 
@@ -6354,6 +6419,77 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
 
     with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
         agent.run_sync('bad prompt')
+
+
+_AZURE_PROMPT_BLOCKED_MESSAGE = (
+    "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. "
+    'Please modify your prompt and retry.'
+)
+
+
+@pytest.mark.parametrize(
+    ('body', 'provider_details'),
+    [
+        pytest.param(
+            {
+                'message': _AZURE_PROMPT_BLOCKED_MESSAGE,
+                'type': 'invalid_request_error',
+                'param': 'prompt',
+                'code': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+                'innererror': {'code': 'ContentFiltered'},
+            },
+            {
+                'finish_reason': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+            },
+            id='reported-body',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter', 'message': _AZURE_PROMPT_BLOCKED_MESSAGE, 'innererror': {}}},
+            {'finish_reason': 'content_filter'},
+            id='innererror-without-code',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter'}},
+            {'finish_reason': 'content_filter'},
+            id='code-only',
+        ),
+    ],
+)
+def test_responses_azure_prompt_filter_error_without_filter_result(
+    allow_model_requests: None, body: dict[str, Any], provider_details: dict[str, Any]
+) -> None:
+    """Azure's Responses API can send an `innererror` without `content_filter_result` for a blocked prompt."""
+    mock_client = MockOpenAIResponses.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
+            body=body,
+        )
+    )
+
+    m = OpenAIResponsesModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+
+    with pytest.raises(
+        ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+    ) as exc_info:
+        Agent(m).run_sync('bad prompt')
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == provider_details
 
 
 async def test_openai_response_filter_error(allow_model_requests: None):
@@ -7088,7 +7224,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         tool_name='search_knowledge',
                         tool_call_id='call_123',
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',

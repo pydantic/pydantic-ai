@@ -213,8 +213,15 @@ the user declines.
 
 ## One per agent
 
-`AskUser` has no default `id`, so two on one agent are not merged: they collide on the
-`ask_user_question` tool name. To serve several UIs, pass one answerer that dispatches to them.
+`AskUser` declares the default `id` `'ask_user'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `AskUser`s on one agent that
+share it are one answerer stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `ask_user_question`.
+To serve several UIs, pass one answerer that dispatches to them.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Tracing
 
