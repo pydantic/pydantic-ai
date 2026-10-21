@@ -385,8 +385,10 @@ class TestCodeMode:
             assert description is not None
             assert all(example in description for example in expected_examples)
             assert 'e.g. `result =' not in description
+            assert 'call them by name without redefining or importing them.' in description
             if has_async:
-                assert 'use `await asyncio.gather(...)` with positional awaitables' in description
+                assert '\n\nTo run' in description
+                assert 'concurrently, first `import asyncio`, then use `await asyncio.gather(...)`' in description
             else:
                 assert 'asyncio.gather' not in description
 

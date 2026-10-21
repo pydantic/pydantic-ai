@@ -470,15 +470,19 @@ def _base_description(*, has_os: bool, has_mount: bool) -> str:
 def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     """Build the functions-header paragraph for the `run_code` tool description."""
     base = (
-        '\nThe following functions are available inside the sandbox. Call them directly '
-        '(do **not** redefine or import them). All parameters are keyword-only.'
+        '\nThe following functions are available inside the sandbox. These functions are already defined'
+        ' in the sandbox; call them by name without redefining or importing them.'
+        ' All parameters are keyword-only.'
     )
     if has_async and not has_sync:
         return base + (
             ' All tool functions are async: invoke them with `await`,'
             ' e.g. `await tool_name(arg=value)`.'
             ' Calling without `await` returns an unresolved future, not the value.'
-            ' For concurrency, use `await asyncio.gather(...)` with positional awaitables.'
+            # A separate paragraph that leads with the import: next to "without importing them",
+            # models drop `import asyncio` and the first snippet fails the type check.
+            '\n\nTo run calls concurrently, first `import asyncio`, then use `await asyncio.gather(...)`'
+            ' with positional awaitables.'
             ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
             ' and wait APIs.'
         )
@@ -488,7 +492,8 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
         ' Async functions (`async def`) must be invoked with `await`,'
         ' e.g. `await tool_name(arg=value)`.'
         ' Sync functions (`def`) are called directly, e.g. `tool_name(arg=value)`.'
-        ' For concurrent async calls, use `await asyncio.gather(...)` with positional awaitables.'
+        '\n\nTo run async calls concurrently, first `import asyncio`, then use `await asyncio.gather(...)`'
+        ' with positional awaitables.'
         ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
         ' and wait APIs.'
     )
