@@ -217,9 +217,10 @@ RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
         'native-audio model (which finishes its reply rather than cutting it off for the input), on Vertex '
         "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), and on ElevenLabs "
         'Agents (fixed where the provider says: the OpenAI protocol asks again for a request server VAD overtook, '
-        'Gemini 3.x hands an input that cut a reply off to the next, and GPT-Live answers text in the reply under '
-        'way; and on GPT-Live for a delegation the model starts on its own while a delegated tool round is owed its '
-        'answer, which the reply that called the tools now goes on past)'
+        'Gemini 3.x hands an input that cut a reply off to the next, GPT-Live answers text in the reply under way, '
+        'and ElevenLabs Agents names the typed turns a reply answers; and on GPT-Live for a delegation the model '
+        'starts on its own while a delegated tool round is owed its answer, which the reply that called the tools '
+        'now goes on past)'
     ),
     tracked_by='a provider signal that tells which reply answers an input sent as another started',
     evidence='simulated',
