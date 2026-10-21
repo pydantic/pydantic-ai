@@ -36,7 +36,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
-from pydantic_ai.toolsets._instruction_collection import InstructionContribution, make_contribution
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 
 try:
@@ -1009,7 +1008,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         instead of rewriting the instructions. When `dynamic_catalog` is off (or there are no
         sandboxed tools) the stash is empty and we defer entirely to the wrapped toolset.
         """
-        upstream = await self.wrapped.get_instructions(ctx)
+        # Through `super()`, so the wrapped toolsets' parts are relayed under their own ids, not this toolset's.
+        upstream = await super().get_instructions(ctx)
         catalog_part = self._catalog_instruction()
         if catalog_part is None:
             return upstream
@@ -1018,19 +1018,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if isinstance(upstream, (str, InstructionPart)):
             return [upstream, catalog_part]
         return [*upstream, catalog_part]
-
-    async def _collect_instruction_contributions(
-        self, ctx: RunContext[AgentDepsT]
-    ) -> list[InstructionContribution[AgentDepsT]]:
-        """Relay the wrapped toolsets' instructions as their own, then add the catalog as this toolset's.
-
-        The inherited collection would attribute every part `get_instructions` returns without an id to
-        this toolset, giving the wrapped toolsets' anonymous instructions this toolset's id.
-        """
-        contributions = await self._collect_child_instruction_contributions(ctx)
-        if (catalog_part := self._catalog_instruction()) is not None:
-            contributions.append(make_contribution(self, catalog_part))
-        return contributions
 
     def _catalog_instruction(self) -> InstructionPart | None:
         """The catalog `get_tools` stashed this step, as the instruction block that carries it."""

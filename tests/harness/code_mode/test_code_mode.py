@@ -3670,7 +3670,7 @@ class TestDynamicCatalog:
         instructions = await toolset.get_instructions(ctx)
 
         assert isinstance(instructions, list)
-        assert instructions[0] == 'wrapped instructions'
+        assert isinstance(instructions[0], InstructionPart) and instructions[0].content == 'wrapped instructions'
         assert isinstance(instructions[1], InstructionPart)
         assert 'async def add' in instructions[1].content
 
@@ -3689,7 +3689,7 @@ class TestDynamicCatalog:
         instructions = await toolset.get_instructions(ctx)
 
         assert isinstance(instructions, list)
-        assert instructions[0] == 'a'
+        assert isinstance(instructions[0], InstructionPart) and instructions[0].content == 'a'
         assert isinstance(instructions[1], InstructionPart) and instructions[1].content == 'b'
         # The catalog is appended at the end.
         assert isinstance(instructions[2], InstructionPart) and 'async def add' in instructions[2].content
