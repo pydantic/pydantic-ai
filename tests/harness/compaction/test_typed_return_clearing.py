@@ -150,7 +150,7 @@ async def test_clear_tool_results_does_not_count_from_a_typed_result_that_reads_
     ]
 
 
-async def test_clear_tool_results_marks_cleared_results_alongside_their_metadata() -> None:
+async def test_clear_tool_results_marks_cleared_results_alongside_their_metadata(tmp_path: Path) -> None:
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Look things up')]),
         ModelResponse(
@@ -172,6 +172,21 @@ async def test_clear_tool_results_marks_cleared_results_alongside_their_metadata
         {'source': 'cache', 'pydantic-ai-harness.compaction.cleared-tool-result.v1': True},
         'note',
     ]
+
+    # The plain result with string metadata was cleared without the mark. Continued on its own, it still
+    # counts as the last clear: with `keep_pairs=0`, a count from the start of the history (seven
+    # messages) would clear the new read too.
+    unmarked = returns[1]
+    continued: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Look it up')]),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='str')]),
+        ModelRequest(parts=[unmarked]),
+        ModelResponse(parts=[TextPart('Looked up')]),
+    ]
+    requests = await _read_repeatedly(
+        tmp_path, ClearToolResults[object](max_messages=4, keep_pairs=0), reads=1, history=continued
+    )
+    assert [part.content for part in _returns(requests[1])] == ['[tool result cleared]', READ]
 
 
 async def test_clear_tool_results_keeps_a_typed_result_whose_metadata_cannot_be_marked() -> None:
@@ -231,3 +246,55 @@ async def test_clear_tool_results_does_not_count_from_another_strategys_clears(t
     # one of `ClearToolResults`', so its count still covers all five messages, and it clears `read_1` too.
     third = _returns(requests[2])
     assert [part.content for part in third] == ['[tool result cleared]', READ]
+
+
+async def test_clear_tool_results_clears_a_failed_read(tmp_path: Path) -> None:
+    (tmp_path / 'notes.txt').write_text('hello\n')
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(list(messages))
+        if len(requests) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'missing.txt'}, tool_call_id='missing')])
+        if len(requests) == 2:
+            return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'notes.txt'}, tool_call_id='notes')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    capabilities = [FileSystem[object](content_hashes=False), ClearToolResults[object](max_messages=4, keep_pairs=1)]
+    await Agent(FunctionModel(respond), capabilities=capabilities).run(
+        'Read them', workspace=LocalWorkspaceBackend(tmp_path)
+    )
+
+    # The read of a missing file, an error message rather than file content, is cleared like any other.
+    [missing] = _returns(requests[1])
+    assert missing.tool_kind == READ_FILE_KIND.id
+    assert missing.content != '[tool result cleared]'
+    cleared, kept = _returns(requests[2])
+    assert (cleared.tool_call_id, cleared.content, cleared.tool_kind) == (
+        'missing',
+        '[tool result cleared]',
+        READ_FILE_KIND.id,
+    )
+    assert cleared.metadata == {'pydantic-ai-harness.compaction.cleared-tool-result.v1': True}
+    assert (kept.tool_call_id, kept.content) == ('notes', READ)
+
+
+async def test_clear_tool_results_clears_a_plain_return_carrying_the_read_file_kind() -> None:
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Read it')]),
+        ModelResponse(parts=[ToolCallPart('read_file', {'path': 'a.txt'}, tool_call_id='read_a')]),
+        # A denied read stays a plain `ToolReturnPart` that keeps the kind.
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'read_file', 'Denied', tool_call_id='read_a', tool_kind=READ_FILE_KIND.id, outcome='denied'
+                )
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Could not read it')]),
+    ]
+    assert type(history[2].parts[0]) is ToolReturnPart
+
+    [result] = _returns(await _first_request(ClearToolResults[object](max_messages=1, keep_pairs=0), history))
+    assert type(result) is ToolReturnPart
+    assert (result.content, result.tool_kind, result.outcome) == ('[tool result cleared]', READ_FILE_KIND.id, 'denied')
