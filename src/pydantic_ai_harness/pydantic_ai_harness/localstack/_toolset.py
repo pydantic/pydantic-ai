@@ -222,10 +222,12 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> Any:
-        """Enforce the model-visible output cap at the tool dispatch seam.
+        """Cap every `str` tool result at the dispatch seam, as a backstop.
 
-        Only `str` results are capped; a future tool returning rich content
-        (e.g. `ToolReturn`) needs this seam extended.
+        `aws_cli` and `localstack_health` already cap their own output so durable
+        records stay bounded; this seam also covers tools added after
+        construction. A tool returning rich content (e.g. `ToolReturn`) needs
+        this seam extended.
         """
         result = await super().call_tool(name, tool_args, ctx, tool)
         if not isinstance(result, str):
