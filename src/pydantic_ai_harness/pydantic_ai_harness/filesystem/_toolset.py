@@ -859,7 +859,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         case: on a case-insensitive filesystem (the macOS and Windows default) `.GIT/config` is
         `.git/config`, and the workspace reports a path in the case it was written, so a
         case-sensitive match would let a differently cased spelling past. On a case-sensitive
-        filesystem this only protects more.
+        filesystem this only protects more. It is exact for literal text; a `?` or `[...]` can still miss a
+        name whose case folding changes its length, such as `SS` for `ß` on APFS.
         """
         parts = path.split('/')
         paths = ['/'.join(parts[:end]) for end in range(1, len(parts) + 1)]
