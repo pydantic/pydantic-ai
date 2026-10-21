@@ -15,7 +15,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
-from pydantic_ai.exceptions import ToolFailed
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import (
@@ -35,6 +35,7 @@ from pydantic_ai_harness.memory._store import (
     MemorySearchMatch,
     MemorySearchResult,
     MemoryStore,
+    MetadataMemoryStore,
     SearchableMemoryStore,
     lexical_search,
 )
@@ -159,6 +160,17 @@ async def run_as_operation(call: Awaitable[_T]) -> _T | RetryRequest:
         _IN_OPERATION.reset(token)
 
 
+def require_metadata_store(store: MemoryStore) -> MetadataMemoryStore:
+    """Return `store` if it records write metadata; `Memory(write_metadata=...)` would otherwise lose it."""
+    if not isinstance(store, MetadataMemoryStore):
+        raise UserError(
+            '`Memory(write_metadata=...)` needs a store that records write metadata, and '
+            f'`{type(store).__name__}` does not. Use `InMemoryStore`, `SqliteMemoryStore` or '
+            '`PostgresMemoryStore`, or implement `MetadataMemoryStore.write_with_metadata` in a custom store.'
+        )
+    return store
+
+
 @dataclass(frozen=True)
 class MemoryToolOperations(Generic[AgentDepsT]):
     """The durable operations a `Memory` capability runs each memory tool call through."""
@@ -249,6 +261,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         if old_text is None and not content.strip():
             raise ModelRetry('Nothing to write -- pass the text to append, or `old_text` to replace.')
         store, scope = self._resolve_scope(ctx)
+        metadata_store = None if capability.write_metadata is None else require_metadata_store(store)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'write', path, {'content': content, 'file': file, 'old_text': old_text})
         scope_hash = _scope_hash(scope)
@@ -263,6 +276,8 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, 'replayed', replayed=True)
                     return result
 
+                write_metadata = capability.write_metadata
+                metadata = write_metadata(ctx) if callable(write_metadata) else write_metadata
                 for attempt in range(_MAX_CAS_ATTEMPTS):
                     current = await store.read(path, max_chars=capability.max_memory_size)
                     if current is not None and current.truncated:
@@ -281,13 +296,16 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                             f'{name!r} would grow to {len(updated)} characters; the limit is '
                             f'{capability.max_memory_size}. Split the content into separate memory files.'
                         )
+                    expected_version = None if current is None else current.version
                     try:
-                        mutation = await store.write(
-                            path,
-                            updated,
-                            expected_version=None if current is None else current.version,
-                            operation=operation,
-                        )
+                        if metadata_store is None:
+                            mutation = await store.write(
+                                path, updated, expected_version=expected_version, operation=operation
+                            )
+                        else:
+                            mutation = await metadata_store.write_with_metadata(
+                                path, updated, expected_version=expected_version, operation=operation, metadata=metadata
+                            )
                     except MemoryConflictError:
                         if attempt + 1 == _MAX_CAS_ATTEMPTS:
                             raise ModelRetry('Memory changed repeatedly while writing; retry the operation.')

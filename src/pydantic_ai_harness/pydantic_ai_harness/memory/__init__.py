@@ -14,6 +14,7 @@ from pydantic_ai_harness.memory._store import (
     MemorySearchMatch,
     MemorySearchResult,
     MemoryStore,
+    MetadataMemoryStore,
     SearchableMemoryStore,
 )
 from pydantic_ai_harness.memory._toolset import (
@@ -41,6 +42,7 @@ __all__ = [
     'MemoryStore',
     'MemoryToolset',
     'MemoryWriteResult',
+    'MetadataMemoryStore',
     'PostgresConnection',
     'PostgresMemoryStore',
     'PostgresPool',

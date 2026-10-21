@@ -60,6 +60,7 @@ from pydantic_ai_harness.memory import (
     MemorySearchResult,
     MemoryStore,
     MemoryToolset,
+    MetadataMemoryStore,
     SqliteMemoryStore,
 )
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
@@ -663,6 +664,196 @@ class TestWriteMemory:
     async def test_mutation_requires_stable_ids(self, tool_call_id: str, run_id: str) -> None:
         with pytest.raises(RuntimeError, match='stable'):
             await MemoryToolset(Memory[None]()).write_memory(_ctx(tool_call_id, run_id), 'content')
+
+
+@dataclass
+class MetadataDelegatingStore(DelegatingStore):
+    """A custom store that opts in to write metadata by implementing `write_with_metadata`."""
+
+    async def write_with_metadata(
+        self,
+        path: str,
+        content: str,
+        *,
+        expected_version: str | None,
+        metadata: Mapping[str, str] | None,
+        operation: MemoryOperation | None = None,
+    ) -> MemoryMutation:
+        return await self.inner.write_with_metadata(
+            path, content, expected_version=expected_version, metadata=metadata, operation=operation
+        )
+
+
+class AuditedSqliteStore(SqliteMemoryStore):
+    """A subclass of a bundled store that overrides `write` with the signature it had before metadata."""
+
+    def __init__(self, database: Path) -> None:
+        super().__init__(database=database)
+        self.writes = 0
+
+    async def write(
+        self, path: str, content: str, *, expected_version: str | None, operation: MemoryOperation | None = None
+    ) -> MemoryMutation:
+        self.writes += 1
+        return await super().write(path, content, expected_version=expected_version, operation=operation)
+
+
+def _write_memory_model(content: str) -> FunctionModel:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('write_memory', {'content': content}, tool_call_id='write')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(model)
+
+
+@dataclass
+class _UserDeps:
+    user_id: str
+
+
+class TestWriteMetadata:
+    async def test_agent_edit_replaces_the_provenance_a_ui_write_recorded(self) -> None:
+        store = InMemoryStore()
+        await store.write_with_metadata(
+            'alice/main/MEMORY.md', '- prefers tea\n', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+        agent = Agent(
+            _write_memory_model('- switched to coffee'),
+            deps_type=_UserDeps,
+            capabilities=[
+                Memory[_UserDeps](
+                    store=store,
+                    namespace=lambda ctx: ctx.deps.user_id,
+                    write_metadata=lambda ctx: {'updated_by': 'agent', 'actor_id': ctx.deps.user_id},
+                )
+            ],
+        )
+
+        await agent.run('I drink coffee now', deps=_UserDeps('alice'))
+        await agent.run('I drink coffee now', deps=_UserDeps('bob'))
+
+        for user_id in ('alice', 'bob'):
+            memory_file = await store.read(f'{user_id}/main/MEMORY.md', max_chars=1_000)
+            assert memory_file is not None
+            assert memory_file.metadata == {'updated_by': 'agent', 'actor_id': user_id}
+        alice = await store.read('alice/main/MEMORY.md', max_chars=1_000)
+        assert alice is not None
+        assert alice.content == '- prefers tea\n- switched to coffee\n'
+
+    async def test_agent_edit_without_write_metadata_clears_the_ui_provenance(self, tmp_path: Path) -> None:
+        store = SqliteMemoryStore(database=tmp_path / 'memory.db')
+        await store.write_with_metadata(
+            'main/MEMORY.md', '- typed by the user\n', expected_version=None, metadata={'updated_by': 'ui'}
+        )
+
+        await MemoryToolset(Memory[None](store=store)).write_memory(_ctx('append'), '- inferred by the model')
+
+        memory_file = await store.read('main/MEMORY.md', max_chars=1_000)
+        assert memory_file is not None
+        assert (memory_file.content, memory_file.metadata) == ('- typed by the user\n- inferred by the model\n', None)
+
+    async def test_static_write_metadata_is_recorded_on_each_write(self) -> None:
+        capability = Memory[None](write_metadata={'updated_by': 'agent'})
+        toolset = MemoryToolset(capability)
+
+        await toolset.write_memory(_ctx('create'), '- fact')
+        await toolset.write_memory(_ctx('topic'), 'details', file='topic')
+
+        for name in ('MEMORY.md', 'topic.md'):
+            memory_file = await capability.store.read(f'main/{name}', max_chars=1_000)
+            assert memory_file is not None
+            assert memory_file.metadata == {'updated_by': 'agent'}
+
+    async def test_replayed_write_keeps_its_metadata_without_resolving_it_again(self) -> None:
+        resolved: list[str] = []
+
+        def write_metadata(ctx: RunContext[None]) -> Mapping[str, str] | None:
+            resolved.append(ctx.tool_call_id or '')
+            return {'attempt': str(len(resolved))} if len(resolved) == 1 else None
+
+        capability = Memory[None](write_metadata=write_metadata)
+        toolset = MemoryToolset(capability)
+
+        first = await toolset.write_memory(_ctx('write'), '- fact')
+        replay = await toolset.write_memory(_ctx('write'), '- fact')
+        unattributed = await toolset.write_memory(_ctx('second'), '- more')
+
+        assert (first['replayed'], replay['replayed'], unattributed['replayed']) == (False, True, False)
+        assert resolved == ['write', 'second']
+        memory_file = await capability.store.read('main/MEMORY.md', max_chars=1_000)
+        assert memory_file is not None
+        assert memory_file.metadata is None
+
+    async def test_custom_store_opts_in_by_implementing_write_with_metadata(self) -> None:
+        store = MetadataDelegatingStore()
+        assert isinstance(store, MetadataMemoryStore)
+        assert not isinstance(DelegatingStore(), MetadataMemoryStore)
+        await MemoryToolset(Memory[None](store=store, write_metadata={'updated_by': 'agent'})).write_memory(
+            _ctx(), '- fact'
+        )
+
+        memory_file = await store.read('main/MEMORY.md', max_chars=1_000)
+        assert memory_file is not None
+        assert memory_file.metadata == {'updated_by': 'agent'}
+
+    async def test_stores_written_before_metadata_keep_type_checking_and_working(self, tmp_path: Path) -> None:
+        """Pyright checks this file: neither store declares `metadata`, and neither needs a `pyright: ignore`."""
+        custom = DelegatingStore()
+        audited = AuditedSqliteStore(tmp_path / 'memory.db')
+        stores: list[MemoryStore] = [custom, audited]
+
+        for store in stores:
+            await MemoryToolset(Memory[None](store)).write_memory(_ctx(), '- fact')
+            memory_file = await store.read('main/MEMORY.md', max_chars=1_000)
+            assert memory_file is not None
+            assert (memory_file.content, memory_file.metadata) == ('- fact\n', None)
+        assert audited.writes == 1
+
+    @pytest.mark.parametrize('store_type', [FileStore, DelegatingStore])
+    def test_store_without_metadata_is_rejected_at_construction(
+        self, tmp_path: Path, store_type: type[FileStore | DelegatingStore]
+    ) -> None:
+        store = (
+            FileStore('.', workspace=LocalWorkspaceBackend(tmp_path)) if store_type is FileStore else DelegatingStore()
+        )
+        with pytest.raises(UserError, match=f'`{store_type.__name__}` does not'):
+            Memory[None](store=store, write_metadata={'updated_by': 'agent'})
+
+    @pytest.mark.parametrize(
+        ('metadata', 'error'), [({'updated_by': 1}, TypeError), ({'updated_by': 'x' * 5_000}, ValueError)]
+    )
+    def test_invalid_static_write_metadata_is_rejected_at_construction(
+        self, metadata: dict[str, object], error: type[Exception]
+    ) -> None:
+        with pytest.raises(error):
+            Memory[None](write_metadata=metadata)  # pyright: ignore[reportArgumentType]
+
+    async def test_resolved_store_without_metadata_is_rejected_when_the_run_starts(self, tmp_path: Path) -> None:
+        store = FileStore('.', workspace=LocalWorkspaceBackend(tmp_path))
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise AssertionError('the run must stop before a model request')  # pragma: no cover
+
+        agent = Agent(
+            FunctionModel(model),
+            capabilities=[Memory[object](store_resolver=lambda ctx: store, write_metadata={'updated_by': 'agent'})],
+        )
+        with pytest.raises(UserError, match='`FileStore` does not'):
+            await agent.run('remember')
+        toolset = MemoryToolset(Memory[None](store_resolver=lambda ctx: store, write_metadata={'updated_by': 'agent'}))
+        with pytest.raises(UserError, match='`FileStore` does not'):
+            await toolset.write_memory(_ctx(), '- fact')
+        assert not (tmp_path / 'main').exists()
+
+    async def test_write_metadata_is_not_a_tool_argument(self) -> None:
+        toolset = MemoryToolset(Memory[None](write_metadata=lambda ctx: {'updated_by': 'agent'}))
+        tools = await toolset.get_tools(_ctx())
+        assert set(tools['write_memory'].tool_def.parameters_json_schema['properties']) == {
+            'content',
+            'file',
+            'old_text',
+        }
 
 
 class TestReadDeleteMemory:

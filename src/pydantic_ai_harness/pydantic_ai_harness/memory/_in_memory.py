@@ -16,6 +16,8 @@ from pydantic_ai_harness.memory._store import (
     MemoryOperation,
     MemoryOperationConflictError,
     MemorySearchResult,
+    decode_metadata,
+    encode_metadata,
     is_direct_child,
     lexical_search,
     validate_store_path,
@@ -40,7 +42,7 @@ def _check_operation(
 
 
 class InMemoryStore:
-    """Process-lifetime versioned memory store."""
+    """Process-lifetime versioned memory store, with write metadata."""
 
     def __init__(self, files: Mapping[str, str] | None = None) -> None:
         self._files = dict(files or {})
@@ -48,6 +50,8 @@ class InMemoryStore:
             validate_store_path(path)
         self._versions: dict[str, int] = {}
         self._operation_ids: dict[str, str | None] = {}
+        # Kept as JSON, like the database stores keep it, so no caller holds the stored mapping.
+        self._metadata: dict[str, str] = {}
         self._receipts: dict[str, tuple[str, MemoryMutation]] = {}
         self._generation = 0
         self._paths = sorted(self._files)
@@ -85,6 +89,7 @@ class InMemoryStore:
             version=str(version),
             operation_id=self._operation_ids.get(path),
             truncated=truncated,
+            metadata=decode_metadata(self._metadata.get(path)),
         )
 
     async def read(self, path: str, *, max_chars: int) -> MemoryFile | None:
@@ -106,7 +111,22 @@ class InMemoryStore:
         expected_version: str | None,
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
+        """Create or replace `path` if its version equals `expected_version`, recording no metadata."""
+        return await self.write_with_metadata(
+            path, content, expected_version=expected_version, metadata=None, operation=operation
+        )
+
+    async def write_with_metadata(
+        self,
+        path: str,
+        content: str,
+        *,
+        expected_version: str | None,
+        metadata: Mapping[str, str] | None,
+        operation: MemoryOperation | None = None,
+    ) -> MemoryMutation:
         validate_store_path(path)
+        encoded = encode_metadata(metadata)
         async with self._lock:
             if operation is not None and (receipt := _check_operation(self._receipts, operation)) is not None:
                 return receipt
@@ -119,6 +139,10 @@ class InMemoryStore:
                 bisect.insort(self._paths, path)
             self._versions[path] = version
             self._operation_ids[path] = operation.id if operation else None
+            if encoded is None:
+                self._metadata.pop(path, None)
+            else:
+                self._metadata[path] = encoded
             mutation = MemoryMutation(version=str(version), replayed=False, existed=current is not None)
             if operation is not None:
                 self._keep_receipt(operation, mutation)
@@ -144,6 +168,7 @@ class InMemoryStore:
                 self._paths.remove(path)
             self._versions.pop(path, None)
             self._operation_ids.pop(path, None)
+            self._metadata.pop(path, None)
             self._next_generation()
             mutation = MemoryMutation(version=None, replayed=False, existed=existed)
             if operation is not None:

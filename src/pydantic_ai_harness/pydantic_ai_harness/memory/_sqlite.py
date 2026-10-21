@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TypeVar
 
@@ -17,6 +17,8 @@ from pydantic_ai_harness.memory._store import (
     MemoryOperation,
     MemoryOperationConflictError,
     MemorySearchResult,
+    decode_metadata,
+    encode_metadata,
     lexical_search,
     validate_store_path,
     validate_store_prefix,
@@ -38,7 +40,7 @@ def _enable_wal(connection: sqlite3.Connection) -> None:
 
 _SQLITE_MEMORY_SCHEMA = (
     'CREATE TABLE IF NOT EXISTS memory_files ('
-    'path TEXT PRIMARY KEY, content TEXT NOT NULL, version INTEGER NOT NULL, last_operation_id TEXT)'
+    'path TEXT PRIMARY KEY, content TEXT NOT NULL, version INTEGER NOT NULL, last_operation_id TEXT, write_metadata TEXT)'
 )
 _SQLITE_OPERATIONS_SCHEMA = (
     'CREATE TABLE IF NOT EXISTS memory_operations ('
@@ -59,7 +61,7 @@ def _prefix_end(prefix: str) -> str:
 
 
 class SqliteMemoryStore:
-    """SQLite-backed store with transactional CAS and operation receipts."""
+    """SQLite-backed store with transactional CAS, operation receipts, and write metadata."""
 
     def __init__(
         self,
@@ -101,6 +103,8 @@ class SqliteMemoryStore:
                     connection.execute('ALTER TABLE memory_files ADD COLUMN version INTEGER NOT NULL DEFAULT 1')
                 if 'last_operation_id' not in columns:
                     connection.execute('ALTER TABLE memory_files ADD COLUMN last_operation_id TEXT')
+                if 'write_metadata' not in columns:
+                    connection.execute('ALTER TABLE memory_files ADD COLUMN write_metadata TEXT')
                 connection.execute(_SQLITE_OPERATIONS_SCHEMA)
                 connection.execute(_SQLITE_METADATA_SCHEMA)
                 connection.execute(
@@ -160,7 +164,7 @@ class SqliteMemoryStore:
 
         def op(connection: sqlite3.Connection) -> MemoryFile | None:
             row = connection.execute(
-                'SELECT substr(content, 1, ?), version, last_operation_id, length(content) '
+                'SELECT substr(content, 1, ?), version, last_operation_id, length(content), write_metadata '
                 'FROM memory_files WHERE path = ?',
                 (max_chars, path),
             ).fetchone()
@@ -171,6 +175,7 @@ class SqliteMemoryStore:
                 version=str(row[1]),
                 operation_id=str(row[2]) if row[2] is not None else None,
                 truncated=int(row[3]) > max_chars,
+                metadata=decode_metadata(row[4]),
             )
 
         return await anyio.to_thread.run_sync(self._run, op)
@@ -191,6 +196,7 @@ class SqliteMemoryStore:
         content: str,
         expected_version: str | None,
         operation: MemoryOperation | None,
+        metadata: str | None,
     ) -> MemoryMutation:
         if operation is not None and (receipt := self._get_operation(connection, operation)) is not None:
             return receipt
@@ -199,16 +205,17 @@ class SqliteMemoryStore:
         if current != expected_version:
             raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
         version = str(self._next_generation(connection))
+        operation_id = operation.id if operation else None
         if current is None:
             connection.execute(
-                'INSERT INTO memory_files(path, content, version, last_operation_id) VALUES (?, ?, ?, ?)',
-                (path, content, int(version), operation.id if operation else None),
+                'INSERT INTO memory_files(path, content, version, last_operation_id, write_metadata) VALUES (?, ?, ?, ?, ?)',
+                (path, content, int(version), operation_id, metadata),
             )
         else:
             cursor = connection.execute(
-                'UPDATE memory_files SET content = ?, version = ?, last_operation_id = ? '
+                'UPDATE memory_files SET content = ?, version = ?, last_operation_id = ?, write_metadata = ? '
                 'WHERE path = ? AND version = ?',
-                (content, int(version), operation.id if operation else None, path, int(current)),
+                (content, int(version), operation_id, metadata, path, int(current)),
             )
             if cursor.rowcount != 1:  # pragma: no cover - BEGIN IMMEDIATE prevents an intervening writer
                 raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
@@ -228,10 +235,25 @@ class SqliteMemoryStore:
         expected_version: str | None,
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
+        """Create or replace `path` if its version equals `expected_version`, recording no metadata."""
+        return await self.write_with_metadata(
+            path, content, expected_version=expected_version, metadata=None, operation=operation
+        )
+
+    async def write_with_metadata(
+        self,
+        path: str,
+        content: str,
+        *,
+        expected_version: str | None,
+        metadata: Mapping[str, str] | None,
+        operation: MemoryOperation | None = None,
+    ) -> MemoryMutation:
         validate_store_path(path)
+        encoded = encode_metadata(metadata)
         return await anyio.to_thread.run_sync(
             lambda: self._run(
-                lambda connection: self._write(connection, path, content, expected_version, operation),
+                lambda connection: self._write(connection, path, content, expected_version, operation, encoded),
                 immediate=True,
             )
         )

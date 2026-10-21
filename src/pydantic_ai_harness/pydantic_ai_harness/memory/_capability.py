@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -22,7 +22,7 @@ from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._in_memory import InMemoryStore
 from pydantic_ai_harness.memory._render import injection_listing_limit, list_subfiles, render_memory_prompt
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
-from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, validate_store_path
+from pydantic_ai_harness.memory._store import MemoryFile, MemoryStore, encode_metadata, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
     MemoryDeleteResult,
@@ -30,6 +30,7 @@ from pydantic_ai_harness.memory._toolset import (
     MemoryToolOperations,
     MemoryToolset,
     MemoryWriteResult,
+    require_metadata_store,
     run_as_operation,
 )
 
@@ -52,6 +53,9 @@ _MEMORY_DATA_SUFFIX = '\n</memory>'
 _MEMORY_TAG_RE = re.compile(r'<(?=(?:\s*/)?\s*memory\b)', re.IGNORECASE)
 """The `<` of a `<memory>` or `</memory>` tag in stored content, which could otherwise close the block early."""
 _MEMORY_PART_METADATA = 'pydantic-ai-harness.memory.v1'
+
+WriteMetadataFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], Mapping[str, str] | None]
+"""Resolves the metadata recorded with one `write_memory` write, or `None` to record none."""
 
 
 @dataclass
@@ -117,6 +121,14 @@ class Memory(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
     id: str | None = 'memory'
 
+    write_metadata: Mapping[str, str] | WriteMetadataFunc[AgentDepsT] | None = None
+    """Metadata to record with each `write_memory` write, such as `{'updated_by': 'agent'}`, or a
+    callable that resolves it from the run for each write.
+
+    The application supplies it; it is never a tool argument. It needs a `MetadataMemoryStore`, and
+    raises `UserError` when the store, or the one `store_resolver` returns, is not one. When unset,
+    the model's writes to such a store record no metadata."""
+
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
     _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
@@ -131,6 +143,10 @@ class Memory(AbstractCapability[AgentDepsT]):
         _validate_positive('max_search_files', self.max_search_files)
         if self.injection_errors not in ('ignore', 'raise'):
             raise ValueError("injection_errors must be 'ignore' or 'raise'")
+        if self.write_metadata is not None and not callable(self.write_metadata):
+            encode_metadata(self.write_metadata)
+        if self.write_metadata is not None and self.store_resolver is None:
+            require_metadata_store(self.store)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Memory[AgentDepsT]:
         """Return a clone with scope resolution isolated to this run."""
@@ -160,6 +176,8 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     def _resolve_scope(self, ctx: RunContext[AgentDepsT]) -> tuple[MemoryStore, str]:
         store = self.store_resolver(ctx) if self.store_resolver is not None else self.store
+        if self.write_metadata is not None:
+            require_metadata_store(store)
         namespace = self.namespace(ctx) if callable(self.namespace) else self.namespace
         scope = f'{namespace}/{self.agent_name}' if namespace else self.agent_name
         validate_store_path(scope)
