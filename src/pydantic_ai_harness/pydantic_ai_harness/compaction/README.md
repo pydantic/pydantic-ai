@@ -490,8 +490,10 @@ or spacing, is escaped, so a tool return can't close its message and forge anoth
 early. Each tool return is capped, after that escaping, at `tool_return_max_chars` (default 500)
 characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to
 render each return whole, when the summarizer's context window is large enough to absorb the payloads.
-Content a harness capability added on the user channel, such as a `BackgroundTools` result, is not a user
-message. It carries an `origin` in its `TextContent.metadata` starting with `pydantic-ai-harness.`, and it is
+Content a harness capability added on the user channel and tagged with an `origin` in its
+`TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a
+`BackgroundTools` result and `TrajectoryJudge` feedback. `Memory` snapshots aren't tagged this way yet, so
+they are still summarized as user messages; that gap closes once core provenance lands. Tagged content is
 rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
 `role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
 treat it as the user's requests or standing constraints; other summary requests are unchanged.

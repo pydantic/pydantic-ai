@@ -121,9 +121,11 @@ _BRIDGE_PREFIX = 'This summary was produced by a different model than the one co
 _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
 """Model-request metadata marking a user turn retained by `keep_user_messages`."""
 
-# Interim, deliberately generic rule: every harness capability that adds content on the user channel tags it
-# with an `origin` under this prefix, so one check covers them all without per-capability code. It is temporary:
-# once core provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
+# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
+# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
+# `BackgroundTools` results and `TrajectoryJudge` feedback. `Memory` marks its snapshot with a bare string
+# instead, so it isn't recognized yet: a known gap. The rule is temporary: once core provenance
+# (`CapabilityPart`) lands, recognize that instead of this metadata convention.
 _HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
 """The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
 
