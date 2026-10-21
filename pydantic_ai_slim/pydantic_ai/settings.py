@@ -144,6 +144,13 @@ class ModelSettings(TypedDict, total=False):
     `tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in
     parentheses after the name.
 
+    A model ignores a setting it doesn't support, so the same settings work across models. For the settings
+    whose absence changes what the request guarantees (`timeout`, `max_retries`, `stop_sequences`,
+    `parallel_tool_calls=False`, `extra_headers` and `extra_body`), it emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the others, like `temperature`,
+    are ignored silently. A model class declares what it ignores in
+    [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings].
+
     Being listed means Pydantic AI sends the setting, not that the service honors it: the
     OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
     provider behind one of them may ignore a field its own API doesn't define, or reject it. Where we
@@ -269,6 +276,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
@@ -287,6 +295,24 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI Decisions
     """
 
+    request_timeout: float
+    """A deadline for one request to one model, in seconds, enforced by Pydantic AI for every model.
+
+    [`timeout`][pydantic_ai.settings.ModelSettings.timeout] is applied by the provider client to each attempt:
+    an SDK retry re-arms it, and on a streamed response it only limits the wait for each chunk. This one clock
+    instead covers every attempt the provider SDK and HTTP transport make, any continuation of a paused
+    response, and reading a streamed response through its last chunk, including the time your code takes to
+    consume it. In Temporal's terms, `timeout` is the start-to-close timeout of one attempt and
+    `request_timeout` the schedule-to-close timeout of the whole request.
+
+    When it runs out, the request is cancelled and
+    [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] is raised. A
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] gives each model it tries a fresh deadline,
+    and by default falls back to the next model when one runs out.
+
+    It is not sent to the provider. See [Timeouts](../timeouts.md#model-request-deadlines).
+    """
+
     max_retries: int
     """Override how many times the provider SDK's client retries a failed request, for one request.
 
@@ -303,11 +329,13 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google (keeps the delays and status codes of the provider's `retry_options`)
     * Groq
-    * Mistral (`0` only, which turns off a `retry_config` set on the client)
+    * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a
+      warning)
     * Cohere
     * Cerebras
     * Crusoe
@@ -327,6 +355,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -500,6 +529,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Google
@@ -637,6 +667,7 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
     * Groq
@@ -656,6 +687,31 @@ class ModelSettings(TypedDict, total=False):
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
+
+
+ModelSettingName: TypeAlias = Literal[
+    'max_tokens',
+    'temperature',
+    'top_p',
+    'top_k',
+    'timeout',
+    'request_timeout',
+    'max_retries',
+    'parallel_tool_calls',
+    'tool_choice',
+    'seed',
+    'presence_penalty',
+    'frequency_penalty',
+    'logit_bias',
+    'stop_sequences',
+    'extra_headers',
+    'thinking',
+    'cache',
+    'service_tier',
+    'extra_body',
+]
+"""The name of a [`ModelSettings`][pydantic_ai.settings.ModelSettings] field, as listed in a model class's
+[`unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]."""
 
 
 def merge_model_settings(base: ModelSettings | None, overrides: ModelSettings | None) -> ModelSettings | None:

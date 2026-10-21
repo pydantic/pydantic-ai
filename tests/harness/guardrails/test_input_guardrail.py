@@ -378,7 +378,7 @@ class TestInputGuardrailRedaction:
 
         def guard(prompt: str) -> bool | GuardrailResult:
             guard_calls.append(prompt)
-            if prompt.startswith('Background tool'):
+            if prompt.startswith('<tool_result'):
                 return GuardrailResult.replace('[redacted]')
             return True
 
@@ -403,12 +403,13 @@ class TestInputGuardrailRedaction:
         async def lookup() -> str:
             return 'answer'
 
+        completion = '<tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</tool_result>'
         first = await agent.run('go')
         assert first.output == 'done'
         assert guard_calls == ['go']
         assert model_completions == [
             (
-                "Background tool 'lookup' (task tool-1) completed.\nResult: answer",
+                completion,
                 {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
             )
         ]
@@ -416,7 +417,7 @@ class TestInputGuardrailRedaction:
         resumed = await agent.run(None, message_history=first.all_messages()[:-1])
 
         assert resumed.output == 'done'
-        assert guard_calls == ['go', "Background tool 'lookup' (task tool-1) completed.\nResult: answer"]
+        assert guard_calls == ['go', completion]
         assert model_completions[-1] == (
             '[redacted]',
             {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},

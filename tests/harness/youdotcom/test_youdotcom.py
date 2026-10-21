@@ -153,8 +153,15 @@ def _finance(
     )
 
 
+class _NoDomainFiltersModel(FunctionModel):
+    """A model whose native web search ignores domain filters, as Gemini's does."""
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
 async def _tools_sent(
-    capability: AbstractCapability[object], *, native_web_search: bool
+    capability: AbstractCapability[object], *, native_web_search: bool, applies_domain_filters: bool = True
 ) -> tuple[list[str], list[AbstractNativeTool]]:
     """The function and native tools one request carries, on a model with or without native web search."""
     sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
@@ -169,7 +176,8 @@ async def _tools_sent(
         return ModelResponse(parts=[TextPart('done')])
 
     supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[AbstractNativeTool]]()
-    model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported))
+    model_class = FunctionModel if applies_domain_filters else _NoDomainFiltersModel
+    model = model_class(respond, profile=ModelProfile(supported_native_tools=supported))
     await Agent(model, capabilities=[capability]).run('Search the web.')
     return sent[0]
 
@@ -795,6 +803,12 @@ class TestAgentSpec:
 
     async def test_you_search_is_the_fallback_where_native_search_is_unsupported(self) -> None:
         tools, natives = await _tools_sent(YouSearch(native=True, client=_FakeYouClient()), native_web_search=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    async def test_you_search_is_the_fallback_where_native_search_cannot_apply_the_domain_filters(self) -> None:
+        capability = YouSearch[object](native=True, exclude_domains=['b.dev'], client=_FakeYouClient())
+        tools, natives = await _tools_sent(capability, native_web_search=True, applies_domain_filters=False)
         assert tools == ['web_search', 'get_page']
         assert natives == []
 

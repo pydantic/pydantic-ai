@@ -13,10 +13,14 @@ from uuid import UUID, uuid4
 
 import httpx2
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_initial_input_tokens
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    UserError,
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -24,6 +28,8 @@ from ..messages import (
     FilePart,
     FileUrl,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -71,6 +77,7 @@ from . import (
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -418,7 +425,8 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
-        return ModelAPIError(model_name=model_name, message=transport_error_message(e))
+        timeout = isinstance(e, httpx2.TimeoutException)
+        return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -431,12 +439,19 @@ def _map_api_error(
                 and message.startswith(f'models/{model_name} is not found ')
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        return ModelHTTPError(
+        status = e.status if isinstance(e.status, str) else None
+        category = _model_errors.google_status_category(status, e.message)
+        # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
+        response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        return ModelHTTPError.for_category(
+            category or _model_errors.http_status_category(status_code, e.message),
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
             suggested_model_id=suggested_model_id,
+            provider_error_code=status,
+            in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 
@@ -533,6 +548,8 @@ class GoogleModel(Model[Client]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -644,6 +661,10 @@ class GoogleModel(Model[Client]):
         """Return the set of native tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, FileSearchTool, WebFetchTool, ImageGenerationTool})
 
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return all of `native_tool`'s restricting settings, as Gemini's native tools apply none of them."""
+        return native_tool.restricting_settings
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
@@ -659,11 +680,16 @@ class GoogleModel(Model[Client]):
                 f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
                 "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
             )
-        # Count only native tools this model supports. `Model.prepare_request` swaps an unsupported
-        # one for its local fallback, drops it when optional, or rejects it, so it never reaches the
-        # wire beside output tools. A supported one is sent even when optional.
+        # Count only native tools this model supports, including the settings set on them.
+        # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when
+        # optional, or rejects it, so it never reaches the wire beside output tools. A supported one
+        # is sent even when optional.
         supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
-        sent_native_tools = [t for t in model_request_parameters.native_tools if isinstance(t, supported_native_tools)]
+        sent_native_tools = [
+            t
+            for t in model_request_parameters.native_tools
+            if isinstance(t, supported_native_tools) and not self.unsupported_native_tool_settings(t)
+        ]
         if (
             sent_native_tools
             and model_request_parameters.output_tools
@@ -1290,6 +1316,8 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         raise _unsynthesized_tool_availability_delta_error()
                     elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -1534,6 +1562,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
     _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _media_processing_tool_call_id: str | None = field(default=None, init=False)
@@ -1566,7 +1595,11 @@ class GeminiStreamedResponse(StreamedResponse):
         uncheckpointed_output = False
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
-                self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                self._add_usage(
+                    _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage),
+                    reported=chunk.usage_metadata is not None,
+                    cumulative=True,
+                )
                 if (initial_input_tokens := _initial_input_tokens(chunk)) is not None:
                     mark_initial_input_tokens(self, initial_input_tokens)
                 # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
@@ -2210,7 +2243,7 @@ def _metadata_as_usage(
 ) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return existing_usage or usage.RequestUsage()
+        return existing_usage or usage.RequestUsage(unmeasured_requests=1)
     return _usage_metadata_as_usage(
         prompt_token_count=metadata.prompt_token_count,
         output_token_count=metadata.candidates_token_count,

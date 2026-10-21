@@ -16,9 +16,16 @@ When a model calls a tool, the session emits
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
 failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
 [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions are raised from `async for` while the event stream is being iterated. Otherwise they end
-the audio and transcript views and are raised when the session closes. If the receive side has
-already ended, an outbound session method raises the failure instead; it is delivered only once.
+exceptions end the exchange the call was part of: the model never gets the result, so
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for its
+answer. GPT-Live is the exception: its backend can't move on without a result for every call, so the
+model gets the failure history records ([details](openai.md#gpt-live-provider-specific-quirks)).
+While the event stream is being iterated, the exception is raised from `async for`, and the
+session goes on receiving: a consumer that catches it and iterates again keeps a working session,
+and a reply asked for afterwards is answered as usual. Otherwise the session stops receiving, the
+audio and transcript views end, and the exception is raised when the session closes. If the receive
+side has already ended, an outbound session method raises the failure instead; it is delivered only
+once.
 The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
 [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
 The general
@@ -57,11 +64,13 @@ settings = RealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_w
 ```
 
 A choice that forces a tool call — `'required'` or a list of tool names — raises a
-[`UserError`][pydantic_ai.exceptions.UserError] before connecting on OpenAI, Azure OpenAI, and xAI.
-Applied to every response, including the one after a tool result, it would never let the model
-answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the session.
-Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of tool
-names as a restriction, like `ToolOrOutput`. To choose the tools from the run context, filter them
+[`UserError`][pydantic_ai.exceptions.UserError] before connecting on OpenAI, Azure OpenAI, xAI, and
+ElevenLabs Agents. Applied to every response, including the one after a tool result, it would never let
+the model answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the
+session. Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of
+tool names as a restriction, like `ToolOrOutput`. On [ElevenLabs Agents](elevenlabs.md#settings), a
+restriction narrows the hosted agent's attached tools for the conversation, which needs the agent's
+*Tool IDs* override enabled. To choose the tools from the run context, filter them
 with a [filtered toolset](../toolsets.md#filtering-tools) or
 [`prepare_tools`](../tools-advanced.md#prepare-tools) instead.
 
@@ -84,7 +93,7 @@ says which:
 | --- | --- | --- |
 | `'always'` | OpenAI (GPT-Live and gpt-realtime), Azure OpenAI, xAI, `gemini-3.8-live-extended-thinking` | The model keeps talking; there's no mode that waits |
 | `'optional'` | Gemini native-audio models, `gemini-3.8-live` | The model waits for the result, unless the session asks otherwise |
-| `'never'` | Other Gemini Live models | The model waits for the result |
+| `'never'` | Other Gemini Live models, ElevenLabs Agents | The model waits for the result |
 
 On an `'optional'` model, set the shared
 [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to

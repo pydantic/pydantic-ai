@@ -132,8 +132,9 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     tool, and Exa's `web_search` is only sent to models that do not support it,
     so the two never share a request. `get_page` and `deep_search` stay Exa's
     on every model. `include_domains` and `exclude_domains` are passed to the
-    native tool as `allowed_domains` and `blocked_domains`; `num_results` and
-    `text_summary` only apply to Exa's search.
+    native tool as `allowed_domains` and `blocked_domains`, and a model whose
+    native search can't apply them (such as Gemini) gets Exa's `web_search`
+    instead. `num_results` and `text_summary` only apply to Exa's search.
 
     To use Exa as the fallback of a core `WebSearch` instead, with its native
     options and no `get_page`, pass `WebSearch(local=ExaSearch().web_search_tool())`.

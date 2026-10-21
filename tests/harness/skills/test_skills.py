@@ -88,9 +88,12 @@ def _loaded(library: Path, name: str, body: str = 'Follow these directions.') ->
 
 
 def _catalog(*entries: str) -> str:
+    """The deferred capability catalog as `FunctionModel` receives it: tagged, since its changes are appended."""
     return (
+        '<context id="capability:deferred_capabilities">\n'
         'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
-        "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries)
+        "A capability's tools stay hidden until it is loaded:\n" + '\n'.join(entries) + '\n</context>\n'
+        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     )
 
 
@@ -102,13 +105,14 @@ class TestSkills:
             'exclude',
             'missing_directories',
             'duplicate_names',
+            'unknown_names',
             'workspace',
         )
 
     def test_repr_only_exposes_skill_library_configuration(self) -> None:
         assert repr(Skills('skills')) == (
             "Skills(directories=('skills',), include=None, exclude=frozenset(), "
-            "missing_directories='error', duplicate_names='error')"
+            "missing_directories='error', duplicate_names='error', unknown_names='error')"
         )
 
     def test_construction_reads_nothing(self, tmp_path: Path) -> None:
@@ -317,9 +321,12 @@ async def _names(skills: Skills[Any], workspace: Path) -> list[str]:
 
 
 async def _descriptions(skills: Skills[Any], workspace: Path) -> str:
+    """The catalog entries a run over `workspace` lists, one per line."""
     run = await _run(skills, workspace)
     assert run.instructions is not None
-    return run.instructions.split('\n', 1)[1]
+    # Between the catalog's opening sentence and the closing tag its changes are appended under.
+    entries = run.instructions.split('\n', 2)[2]
+    return entries.rsplit('\n</context>\n', 1)[0]
 
 
 class TestSkillValidation:
@@ -337,6 +344,25 @@ class TestSkillValidation:
 
         with pytest.raises(ValueError, match=rf'Unknown skill in {selector}: missing.*Available skills: available'):
             await _run(skills, tmp_path)
+
+    async def test_unknown_names_can_be_skipped(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'alpha')
+        _write_skill(tmp_path / 'skills', 'beta')
+
+        included = Skills('skills', include=['beta', 'missing'], unknown_names='skip')
+        excluded = Skills('skills', exclude=['beta', 'missing'], unknown_names='skip')
+
+        assert await _names(included, tmp_path) == ['beta']
+        assert await _names(excluded, tmp_path) == ['alpha']
+
+    async def test_combined_configurations_keep_their_own_unknown_names(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'first', 'alpha')
+        _write_skill(tmp_path / 'second', 'beta')
+        tolerant = Skills('first', exclude=['missing'], unknown_names='skip')
+
+        assert await _names(_combined(tolerant, Skills('second')), tmp_path) == ['alpha', 'beta']
+        with pytest.raises(ValueError, match='Unknown skill in exclude: missing'):
+            await _run(_combined(tolerant, Skills('second', exclude=['missing'])), tmp_path)
 
     @pytest.mark.parametrize('selector', ['include', 'exclude'])
     def test_selector_must_not_be_a_string(self, selector: str) -> None:
@@ -635,6 +661,7 @@ class TestSkillLibraryLayering:
         [
             ('missing_directories', 'skips', "'error' or 'skip'"),
             ('duplicate_names', 'keep_frist', "'error' or 'keep_first'"),
+            ('unknown_names', 'ignore', "'error' or 'skip'"),
         ],
     )
     def test_options_are_validated_for_specs_and_untyped_callers(self, option: str, value: str, allowed: str) -> None:

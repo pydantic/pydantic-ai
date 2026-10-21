@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Callable
 
 import pytest
 
 from pydantic_ai import Agent, ModelRequestContext, ModelRetry, RunContext
 from pydantic_ai.capabilities import AgentCapability, Hooks
-from pydantic_ai.exceptions import SkipModelRequest
+from pydantic_ai.exceptions import SkipModelRequest, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode, GuardrailResult, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
@@ -215,6 +217,45 @@ class TestCodeModeInputGuardrail:
         assert result.output == 'done'
         assert run.calls_at_verdict == []
         assert sorted(run.calls) == [1, 2]
+
+    @pytest.mark.parametrize('code_mode', STREAMED_TIERS)
+    async def test_call_over_tool_calls_limit_waits_for_a_parallel_guard_that_blocks(
+        self, code_mode: Callable[[], CodeMode[None]], monkeypatch: pytest.MonkeyPatch
+    ):
+        """The verdict comes before the `tool_calls_limit` check, so the block ends the run, not the limit."""
+        run = GuardedRun()
+        run.watch_verdict_wait(monkeypatch)
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await run.verdict_due.wait()
+            return GuardrailResult.block('blocked')
+
+        agent = run.agent(code_mode(), InputGuardrail(guard=guard, parallel=True))
+        # `run_code` and `ping(n=1)` together already exceed the limit.
+        result = await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=1))
+
+        assert result.output == 'blocked'
+        assert run.calls == []
+
+    @pytest.mark.parametrize('code_mode', STREAMED_TIERS)
+    async def test_tool_calls_limit_counts_calls_a_parallel_guard_released(
+        self, code_mode: Callable[[], CodeMode[None]], monkeypatch: pytest.MonkeyPatch
+    ):
+        """Calls that waited for the verdict together are checked against `tool_calls_limit` one at a time."""
+        run = GuardedRun()
+        run.watch_verdict_wait(monkeypatch)
+
+        async def guard(prompt: str) -> GuardrailResult:
+            await run.verdict_due.wait()
+            return GuardrailResult.allow()
+
+        agent = run.agent(code_mode(), InputGuardrail(guard=guard, parallel=True))
+        # Room for `run_code` and one nested call.
+        with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 2 (tool_calls=3)')):
+            await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=2))
+
+        assert run.calls_at_verdict == []
+        assert run.calls == [1]
 
     @pytest.mark.parametrize('with_sequential_guard', [False, True], ids=['no-guard', 'sequential-guard'])
     @pytest.mark.parametrize('code_mode', STREAMED_TIERS)

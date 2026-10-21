@@ -29,6 +29,7 @@ from pydantic_ai import (
     ImageGenerator,
     ModelMessage,
     ModelRequest,
+    ModelRequestTimeout,
     ModelResponse,
     MultiModalContent,
     PartDeltaEvent,
@@ -63,6 +64,7 @@ from pydantic_ai.capabilities import (
     NativeTool,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     Toolset,
     WrapperCapability,
     durable_operation,
@@ -71,8 +73,14 @@ from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelOverloadedError,
+    ModelRateLimitError,
     ModelRetry,
+    ModelTimeoutError,
+    ModelUnavailableError,
     SkipModelRequest,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -90,6 +98,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    ModelSelectionContext,
     infer_model,
 )
 from pydantic_ai.models.fallback import FallbackModel
@@ -115,6 +124,7 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
@@ -359,6 +369,10 @@ def _broken_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     raise ValueError('not a model error')
 
 
+def _timeout_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelTimeoutError('timeout-model', 'Request timed out.', phase='read')
+
+
 def _describe(error: Exception) -> str:
     if isinstance(error, ModelHTTPError):
         return f'{type(error).__name__} {error.status_code} {error.retry_after} {error.body}'
@@ -392,6 +406,26 @@ streamed_model_error_agent = _model_error_agent(
     'durability_streamed_model_error', FunctionModel(stream_function=_overloaded_stream_fn), streamed=True
 )
 other_error_agent = _model_error_agent('durability_other_error', FunctionModel(_broken_model_fn))
+timeout_agent = Agent(
+    FunctionModel(_timeout_model_fn),
+    name='durability_timeout_error',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ModelTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await timeout_agent.run('hello')).output
+        except ModelTimeoutError as error:
+            # What a retry policy's `non_retryable_error_types` matched, on the activity failure the error rebuilt from.
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{type(error).__name__} {error.phase} {application_error.type}'
 
 
 @workflow.defn
@@ -428,6 +462,99 @@ async def test_durability_model_error_reaches_workflow_with_its_type(client: Cli
     assert output == "ModelHTTPError 503 7.0 {'error': 'overloaded'}"
 
 
+async def test_durability_categorized_model_error_reaches_workflow_as_its_category(client: Client):
+    """Workflow code catches a model activity's `ModelTimeoutError` as itself, while the retry policy sees the
+    `ModelAPIError` type it saw before error categories existed."""
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ModelTimeoutWorkflow], plugins=[AgentPlugin(timeout_agent)]
+    ):
+        output = await client.execute_workflow(
+            ModelTimeoutWorkflow.run, id=ModelTimeoutWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == 'ModelTimeoutError read ModelAPIError'
+
+
+# --- Model errors that `non_retryable_model_errors` stops Temporal from retrying ---
+
+_non_retryable_attempts: list[str] = []
+
+
+def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+    _non_retryable_attempts.append(prompt.content)
+    if prompt.content == 'context_window':
+        raise ModelHTTPError.for_category(ModelContextWindowExceededError, status_code=400, model_name='test-model')
+    if prompt.content == 'overloaded':
+        raise ModelOverloadedError('test-model', 'Model is overloaded.')
+    raise ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='test-model')
+
+
+non_retryable_agent = Agent(
+    FunctionModel(_non_retryable_model_fn),
+    name='durability_non_retryable_model_errors',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+            non_retryable_model_errors=[ModelContextWindowExceededError, ModelUnavailableError],
+        )
+    ],
+)
+
+
+@workflow.defn
+class NonRetryableModelErrorWorkflow:
+    @workflow.run
+    async def run(self, error_kind: str) -> str:
+        try:
+            return (await non_retryable_agent.run(error_kind)).output
+        except ModelAPIError as error:
+            activity_error = error.__cause__
+            assert isinstance(activity_error, ActivityError)
+            application_error = activity_error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{type(error).__name__} {application_error.type} non_retryable={application_error.non_retryable}'
+
+
+@pytest.mark.parametrize(
+    ('error_kind', 'attempts', 'expected'),
+    [
+        pytest.param(
+            'context_window',
+            1,
+            'ModelContextWindowExceededError ModelHTTPError non_retryable=True',
+            id='listed-category',
+        ),
+        pytest.param(
+            'overloaded', 1, 'ModelOverloadedError ModelAPIError non_retryable=True', id='subclass-of-listed-category'
+        ),
+        pytest.param('rate_limit', 3, 'ModelRateLimitError ModelHTTPError non_retryable=False', id='unlisted-category'),
+    ],
+)
+async def test_durability_non_retryable_model_errors(client: Client, error_kind: str, attempts: int, expected: str):
+    """A model error that's an instance of a class in `non_retryable_model_errors` fails the activity on its first
+    attempt and still reaches workflow code as its own class, with the `ApplicationError` type a retry policy saw
+    before; any other model error is retried as the retry policy says."""
+    _non_retryable_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NonRetryableModelErrorWorkflow],
+        plugins=[AgentPlugin(non_retryable_agent)],
+    ):
+        output = await client.execute_workflow(
+            NonRetryableModelErrorWorkflow.run,
+            args=[error_kind],
+            id=f'{NonRetryableModelErrorWorkflow.__name__}_{error_kind}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == expected
+    assert _non_retryable_attempts == [error_kind] * attempts
+
+
 async def test_durability_non_model_error_still_reaches_workflow_as_activity_error(client: Client):
     async with Worker(
         client,
@@ -442,6 +569,157 @@ async def test_durability_non_model_error_still_reaches_workflow_as_activity_err
             task_queue=TASK_QUEUE,
         )
     assert output == 'ActivityError'
+
+
+# --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
+
+
+async def _hanging_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    await asyncio.sleep(3600)
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def _hanging_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    await asyncio.sleep(3600)
+    yield 'unreachable'  # pragma: no cover
+
+
+def _request_timeout_agent(name: str, model: FunctionModel, *, streamed: bool = False) -> Agent[None, str]:
+    capabilities: list[AbstractCapability[None]] = [ProcessEventStream(_drain_events)] if streamed else []
+    capabilities.append(TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+    return Agent(
+        model,
+        name=name,
+        deps_type=type(None),
+        capabilities=capabilities,
+        model_settings={'request_timeout': 0.2},
+    )
+
+
+request_timeout_agent = _request_timeout_agent(
+    'durability_request_timeout', FunctionModel(_hanging_model_fn, model_name='hanging')
+)
+streamed_request_timeout_agent = _request_timeout_agent(
+    'durability_streamed_request_timeout',
+    FunctionModel(stream_function=_hanging_stream_fn, model_name='hanging'),
+    streamed=True,
+)
+
+
+@workflow.defn
+class RequestTimeoutWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        agent = {agent.name: agent for agent in (request_timeout_agent, streamed_request_timeout_agent)}[agent_name]
+        try:
+            await agent.run('hello')
+        except ModelRequestTimeout as error:
+            return f'{type(error).__name__} {error.model_name} {error.timeout}'
+        raise AssertionError('unreachable')  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [pytest.param(request_timeout_agent, id='request'), pytest.param(streamed_request_timeout_agent, id='stream')],
+)
+async def test_durability_request_timeout_cancels_the_model_activity(client: Client, agent: Agent[None, str]):
+    """The deadline is a workflow timer: when it fires, the hanging model activity is cancelled and the workflow sees
+    `ModelRequestTimeout`, well within the activity's own timeouts."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RequestTimeoutWorkflow],
+        plugins=[AgentPlugin(agent)],
+    ):
+        handle = await client.start_workflow(
+            RequestTimeoutWorkflow.run,
+            args=[agent.name],
+            id=f'{RequestTimeoutWorkflow.__name__}_{agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    assert output == 'ModelRequestTimeout hanging 0.2'
+    event_types = {event.WhichOneof('attributes') for event in history.events}
+    assert {'timer_started_event_attributes', 'activity_task_cancel_requested_event_attributes'} <= event_types
+
+    # The deadline replays from history, so a replayed run raises at the same point.
+    await Replayer(
+        workflows=[RequestTimeoutWorkflow], workflow_runner=UnsandboxedWorkflowRunner(), plugins=[AgentPlugin(agent)]
+    ).replay_workflow(history)
+
+
+_pausing_model_fresh_starts = 0
+
+
+async def _pauses_forever_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Keeps pausing its response, each segment taking more than half of the `request_timeout` below.
+
+    Only its first fresh request is served: after that it is unavailable, so the fallback moves on.
+    """
+    global _pausing_model_fresh_starts
+    last = messages[-1]
+    segment = len(last.parts) if isinstance(last, ModelResponse) and last.state == 'suspended' else 0
+    if segment == 0:
+        _pausing_model_fresh_starts += 1
+        if _pausing_model_fresh_starts > 1:
+            raise ModelAPIError('pauses', 'unavailable')
+    await asyncio.sleep(0.15)
+    return ModelResponse(
+        parts=[TextPart(f'segment {segment}. ')], provider_response_id=f'segment-{segment}', state='suspended'
+    )
+
+
+def _fallback_answer_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('fallback answer')])
+
+
+fallback_continuation_agent = Agent(
+    FallbackModel(
+        FunctionModel(_pauses_forever_fn, model_name='pauses'),
+        FunctionModel(_fallback_answer_fn, model_name='fallback'),
+    ),
+    name='durability_fallback_continuation',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    model_settings={'request_timeout': 0.25},
+)
+
+
+@workflow.defn
+class FallbackContinuationWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        result = await fallback_continuation_agent.run('hello')
+        response = result.all_messages()[-1]
+        assert isinstance(response, ModelResponse)
+        return [
+            result.output,
+            *(
+                f'{attempt.model_name}: {(attempt.error or "").split(":")[0]}'
+                for attempt in response.failed_attempts or []
+            ),
+        ]
+
+
+async def test_durability_fallback_continuation_keeps_its_deadline_across_activities(client: Client):
+    """A `FallbackModel` runs inside each continuation segment's activity, and the deadline of the model it picked
+    carries over from one activity to the next: the second segment times out, and the fallback answers."""
+    global _pausing_model_fresh_starts
+    _pausing_model_fresh_starts = 0
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackContinuationWorkflow],
+        plugins=[AgentPlugin(fallback_continuation_agent)],
+    ):
+        output = await client.execute_workflow(
+            FallbackContinuationWorkflow.run,
+            id=FallbackContinuationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == snapshot(['fallback answer', 'pauses: ModelRequestTimeout', 'pauses: ModelAPIError'])
 
 
 # --- Durability with tools ---
@@ -695,6 +973,61 @@ async def test_durability_deadline_survives_replay(client: Client):
         (deadline, None),
         (None, deadline),
         (None, deadline),
+    ]
+
+
+_selection_seen: list[tuple[int, str | None, str | None, str | None]] = []
+
+
+def _record_selection(ctx: ModelSelectionContext[object]) -> Model:
+    deadline = ctx.deadline.isoformat() if ctx.deadline is not None else None
+    _selection_seen.append((ctx.run_step, ctx.run_id, ctx.conversation_id, deadline))
+    assert ctx.model is not None
+    return ctx.model
+
+
+_selection_agent = Agent(
+    FunctionModel(_deadline_model_fn),
+    name='durability_selection_run_fields',
+    toolsets=[FunctionToolset(tools=[record_deadline], id='deadline')],
+    capabilities=[SelectModel(_record_selection), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class SelectionRunFieldsWorkflow:
+    @workflow.run
+    async def run(self, timeout: float) -> tuple[list[tuple[int, str | None, str | None, str | None]], list[str]]:
+        # The selector runs in the workflow, so each replay records its selections afresh.
+        _selection_seen.clear()
+        start = workflow.now()
+        result = await _selection_agent.run('Hello', timeout=timeout)
+        return list(_selection_seen), [result.run_id, result.conversation_id, start.isoformat()]
+
+
+async def test_durability_selector_sees_run_ids_and_deadline(client: Client):
+    """A model selector in the workflow sees the run's replay-stable IDs and deadline on every step.
+
+    Step one is selected during run setup and later steps in the graph; with workflow caching off, every
+    activity result replays the workflow, and each replay selects with the same values.
+    """
+    timeout = 3600
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SelectionRunFieldsWorkflow],
+        plugins=[AgentPlugin(_selection_agent)],
+        max_cached_workflows=0,
+    ):
+        workflow_id = f'selection-run-fields-{uuid.uuid4()}'
+        handle = await client.start_workflow(
+            SelectionRunFieldsWorkflow.run, args=[timeout], id=workflow_id, task_queue=TASK_QUEUE
+        )
+        selections, (run_id, conversation_id, start) = await handle.result()
+    deadline = (datetime.fromisoformat(start) + timedelta(seconds=timeout)).isoformat()
+    assert run_id.startswith(f'{handle.result_run_id}:')
+    assert [tuple(selection) for selection in selections] == [
+        (step, run_id, conversation_id, deadline) for step in (1, 2, 3)
     ]
 
 

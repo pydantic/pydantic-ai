@@ -68,6 +68,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    ModelSelectionContext,
     StreamedResponse,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -5018,9 +5019,62 @@ async def test_dbos_deadline_survives_recovery(dbos: DBOS) -> None:
     # Recovery re-executes the workflow function: the start-time step replays, so the tool, which runs in
     # the workflow, sees the same deadline even though time has moved on.
     await asyncio.sleep(0.01)
-    handle = await asyncio.to_thread(DBOS._execute_workflow_id, workflow_id)  # pyright: ignore[reportPrivateUsage]
-    assert await asyncio.to_thread(handle.get_result) == '{"record_deadline":"ok"}'
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == '{"record_deadline":"ok"}'
     assert deadline_seen == [deadline, deadline]
+
+
+step_one_selections: list[tuple[int, str | None, str | None, datetime | None]] = []
+
+
+def _record_step_one_selection(ctx: ModelSelectionContext[object]) -> str:
+    step_one_selections.append((ctx.run_step, ctx.run_id, ctx.conversation_id, ctx.deadline))
+    return 'alt'
+
+
+step_one_selector_agent = Agent(
+    'primary',
+    name='step_one_selector_agent',
+    capabilities=[
+        SelectModel(_record_step_one_selection),
+        DBOSDurability(models={'primary': _durability_fn_model, 'alt': _dbos_alt_model}),
+    ],
+)
+
+
+@DBOS.workflow()
+async def step_one_selector_workflow() -> tuple[str, str]:
+    result = await step_one_selector_agent.run('Hello', timeout=3600)
+    if len(step_one_selections) == 1:
+        raise _ProcessCrash
+    return result.run_id, result.conversation_id
+
+
+async def test_dbos_step_one_selector_sees_run_ids_and_deadline(dbos: DBOS) -> None:
+    """A step-one selector sees the run's IDs and deadline, without moving the run's steps.
+
+    They are resolved before the selector runs. A selector that runs no DBOS step of its own leaves the
+    workflow's step counter where it was, so the default run ID keeps its `function_id + 1` position and the
+    start-time step stays the run's first step, as when they were resolved after selection. Recovery replays
+    the start-time step, so the selector sees the same values again.
+    """
+    step_one_selections.clear()
+    workflow_id = f'step-one-selector-{uuid.uuid4()}'
+    with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+        await step_one_selector_workflow()
+    [(run_step, run_id, conversation_id, deadline)] = step_one_selections
+    assert (run_step, run_id) == (1, f'{workflow_id}:1')
+    assert conversation_id is not None
+    assert deadline is not None
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert [(step['function_id'], step['function_name']) for step in steps] == snapshot(
+        [(1, 'step_one_selector_agent.run_start_time'), (2, 'step_one_selector_agent__model.request')]
+    )
+
+    await asyncio.sleep(0.01)
+    handle = await DBOS.resume_workflow_async(workflow_id)
+    assert await handle.get_result() == (run_id, conversation_id)
+    assert step_one_selections == [step_one_selections[0]] * 2
 
 
 def _call_slow_tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

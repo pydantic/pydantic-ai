@@ -3,6 +3,7 @@
 import io
 import re
 import socket
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import anyio
@@ -12,15 +13,17 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import _app, chat
-from pydantic_clai2._app import create_shell
+from pydantic_clai2 import chat
 from pydantic_clai2.builtin_plugins.web.app import HEADER
-from pydantic_clai2.builtin_plugins.web.protocol import Notice, Snapshot, UpdateChanged, UpdateInfo
+from pydantic_clai2.builtin_plugins.web.protocol import DialogOpened, Notice, Snapshot, UpdateChanged, UpdateInfo
 from pydantic_clai2.cli.self_update import Relaunch, Updates, WebHandoff, installed
 from pydantic_clai2.cli.web import run_web
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime import session_runtime
+from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.ui.menus.update_menu import VERSION
 from tests.clai2.test_app_edges import inputs
 from tests.clai2.test_self_update import WEB_TOKEN, _updates  # pyright: ignore[reportPrivateUsage]
 from tests.clai2.test_web import TOKEN, WIRE, MakeWeb, make_web as make_web, receive_until
@@ -34,7 +37,7 @@ def _use(monkeypatch: pytest.MonkeyPatch, updates: Updates) -> None:
     def build(*, channel: object) -> Updates:
         return updates
 
-    monkeypatch.setattr(_app, 'Updates', build)
+    monkeypatch.setattr(session_runtime, 'Updates', build)
 
 
 @pytest.mark.parametrize('code', [0, 1])
@@ -50,7 +53,13 @@ def test_the_page_follows_an_update(code: int, make_web: MakeWeb, monkeypatch: p
         assert isinstance(snapshot, Snapshot)
         assert (snapshot.version, snapshot.update) == (installed().label, None)
         running = web_.run()
-        assert web_.post('/api/input', {'text': '/update'}).json() == {'menu': None}
+        # Typed in the page, `/update` opens Settings > About, whose version row installs once confirmed.
+        assert web_.post('/api/input', {'text': '/update'}).json() == {'menu': 'update'}
+        with ThreadPoolExecutor(1) as pool:
+            action = pool.submit(web_.post, f'/api/commands/update/fields/{VERSION}/action')
+            confirm = receive_until(socket_, DialogOpened)[1].dialog
+            assert web_.post(f'/api/dialogs/{confirm.id}', {'value': 'yes'}).status_code == 204
+            assert action.result(timeout=10).status_code == 200
         received, output = receive_until(socket_, Notice)
         assert [message.update for message in received if isinstance(message, UpdateChanged)] == [
             UpdateInfo(target='0.53.0'),
@@ -109,7 +118,14 @@ async def test_run_web_restarts_on_the_same_port_and_token(tmp_path: Path, monke
         found = re.search(r'(http://\S+)/\?token=(\S+)', output.getvalue())
         assert found is not None
         async with httpx.AsyncClient(base_url=found[1], headers={HEADER: found[2]}) as client:
-            assert (await client.post('/api/input', json={'text': '/update'})).json() == {'menu': None}
+            assert (await client.post('/api/input', json={'text': '/update'})).json() == {'menu': 'update'}
+            async with anyio.create_task_group() as confirming:
+                confirming.start_soon(client.post, f'/api/commands/update/fields/{VERSION}/action')
+                dialogs: list[dict[str, str]] = []
+                while not dialogs:
+                    await anyio.sleep(0.01)
+                    dialogs = (await client.get('/api/state')).json()['dialogs']
+                await client.post(f'/api/dialogs/{dialogs[0]["id"]}', json={'value': 'yes'})
 
     relaunched: list[Relaunch] = []
     with anyio.fail_after(30):

@@ -100,7 +100,9 @@ class BrowserDialogs:
         secret: bool = False,
         check: Callable[[str], str | None] | None = None,
         description: str = '',
+        multiline: bool = False,
     ) -> str | None:
+        secret = secret and not multiline
         dialog = Dialog(
             id=self._id(),
             kind='text',
@@ -110,8 +112,13 @@ class BrowserDialogs:
             placeholder=placeholder,
             initial='' if secret else initial,
             secret=secret,
+            multiline=multiline,
         )
         return await self._ask(dialog, check=check)
+
+    async def view(self, *, title: str, text: str) -> None:
+        """Open until a browser answers it, whatever the answer."""
+        await self._ask(Dialog(id=self._id(), kind='view', title=title, text=text))
 
     async def confirm(self, *, title: str, yes: str, no: str, description: str = '') -> bool:
         dialog = Dialog(id=self._id(), kind='confirm', title=title, description=description, yes=yes, no=no)
