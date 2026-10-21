@@ -48,7 +48,6 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -100,7 +99,7 @@ pytestmark = [
     pytest.mark.ui_roundtrip,
     # A hydrated client sends back the system prompt `dump_messages()` wrote; the adapter strips it, says so,
     # and reinjects the agent's own.
-    pytest.mark.filterwarnings('ignore:Client-submitted system prompts were stripped:UserWarning'),
+    pytest.mark.filterwarnings('ignore:Parts carrying the system voice were stripped:UserWarning'),
 ]
 
 Protocol = Literal['vercel', 'agui']
@@ -142,7 +141,7 @@ def project(messages: Sequence[ModelMessage]) -> list[tuple[str, list[dict[str, 
         else:
             parts.sort(
                 key=lambda part: call_order.get(
-                    part.tool_call_id if isinstance(part, ToolReturnPart | RetryPromptPart) else '', len(call_order)
+                    part.tool_call_id if isinstance(part, ToolReturnPart) else '', len(call_order)
                 )
             )
         projected.append((message.kind, [_project_part(part) for part in parts]))
@@ -156,7 +155,7 @@ Script = Callable[[list[ModelMessage], AgentInfo], ModelResponse]
 
 
 def _results_since_question(messages: list[ModelMessage]) -> int:
-    """How many tool results (or retry prompts) the model has seen since the user last asked a question.
+    """How many tool results, retries included, the model has seen since the user last asked a question.
 
     Enqueued user content isn't a question: the scenario prompts all start with `Question`.
     """
@@ -170,7 +169,7 @@ def _results_since_question(messages: list[ModelMessage]) -> int:
                 for part in message.parts
             ):
                 break
-            count += sum(isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts)
+            count += sum(isinstance(part, ToolReturnPart) for part in message.parts)
     return count
 
 
@@ -378,12 +377,8 @@ _AGUI_ACTIVITY = (
     'so records the adapter carries as activities never come back; documented in #10569, carrier design pending'
 )
 _RETRY = (
-    'a tool retry loads back as `ToolReturnPart(outcome="failed")` holding the rendered feedback, which '
-    'Anthropic and OpenAI send differently from the `RetryPromptPart` the server has; #8094 reworks tool retries'
-)
-_MODEL_NAME = (
-    "UI messages don't carry `ModelResponse.model_name` or `provider_name`, which Anthropic writes on another "
-    "model's thinking (`<assistant_thinking model=... provider=...>`); #10642 drops both from that tag"
+    "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
+    '`outcome="failed"` instead of `"retried"`; #8185'
 )
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
@@ -425,7 +420,7 @@ SCENARIOS = [
     ),
     Scenario(id='tool_call', script=_tool_call_script, setup=_get_weather),
     Scenario(id='parallel_tool_calls', script=_parallel_tool_calls_script, setup=_get_weather_london_first),
-    Scenario(id='thinking', script=_thinking_script, gaps=_gaps(_MODEL_NAME, *_ALL_WIRE)),
+    Scenario(id='thinking', script=_thinking_script),
     Scenario(
         id='tool_availability_delta',
         script=_reveal_script,
@@ -448,14 +443,7 @@ SCENARIOS = [
         id='retry_feedback',
         script=_retry_script,
         setup=_retry_tools,
-        gaps=_gaps(
-            _RETRY,
-            ('load', 'dump', 'vercel'),
-            ('load', 'dump', 'agui'),
-            ('load', 'stream', 'vercel'),
-            ('load', 'stream', 'agui'),
-            *_ALL_WIRE,
-        ),
+        gaps=_gaps(_RETRY, ('load', 'stream', 'vercel')),
     ),
     Scenario(
         id='request_scoped_system_prompt',
@@ -537,7 +525,7 @@ class Client(ABC):
 
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
-            warnings.filterwarnings('ignore', 'Client-submitted system prompts were stripped', UserWarning)
+            warnings.filterwarnings('ignore', 'Parts carrying the system voice were stripped', UserWarning)
             return adapter.sanitize_messages(messages)
 
     async def turn(
