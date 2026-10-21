@@ -203,9 +203,14 @@ async def evaluate(
     # Refused rather than read for truthiness: a classifier label such as `'unsafe'`, or a
     # verdict object of the wrong type, is truthy and would let the value through.
     raise UserError(
-        f'A guard must return True, False, or a GuardrailResult; {guard!r} returned {type(outcome).__name__}. '
+        f'A guard must return True, False, or a GuardrailResult; {_guard_name(guard)} returned {type(outcome).__name__}. '
         'Wrap a comparison on a NumPy or tensor score in bool().'
     )
+
+
+def _guard_name(guard: GuardCallable) -> str:
+    """A guard's name for an error message, without its `repr`, which can show bound arguments such as keys."""
+    return getattr(guard, '__qualname__', type(guard).__name__)
 
 
 def is_guard_chain(guard: object) -> TypeIs[Sequence[GuardCallable]]:

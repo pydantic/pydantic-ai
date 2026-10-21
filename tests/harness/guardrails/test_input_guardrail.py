@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import inspect
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
@@ -377,6 +378,17 @@ class TestInputGuardrail:
             await agent.run('hello')
 
         assert seen == []
+
+    async def test_a_wrong_verdict_error_does_not_show_bound_guard_arguments(self):
+        def check(prompt: str, *, api_key: str) -> object:
+            return 'unsafe'
+
+        agent = Agent(TestModel(), capabilities=[InputGuardrail(guard=functools.partial(check, api_key='sk-bound'))])  # pyright: ignore[reportArgumentType]
+
+        with pytest.raises(UserError, match='partial returned str') as exc_info:
+            await agent.run('hello')
+
+        assert 'sk-bound' not in str(exc_info.value)
 
     async def test_retry_action_is_a_usage_error(self):
         agent = Agent(
