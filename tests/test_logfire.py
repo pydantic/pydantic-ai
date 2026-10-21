@@ -1897,6 +1897,13 @@ def test_tool_argument_validation_failure_emits_span(
     assert tool_spans[0]['logfire.level_num'] == 17
     assert tool_spans[0]['logfire.msg'] == 'invalid tool call: double'
     assert tool_spans[0]['pydantic_ai.tool.failure_stage'] == 'validation'
+    # Recorded whether or not content is captured.
+    assert {key: value for key, value in tool_spans[0].items() if '.retry.' in key} == {
+        'pydantic_ai.tool.retry.cause': 'validation_error' if failure_source == 'schema' else 'model_retry',
+        'pydantic_ai.tool.retry.attempt': 1,
+        'pydantic_ai.tool.retry.max_retries': 1,
+    }
+    assert not [key for key in tool_spans[1] if '.retry.' in key]
     assert 'logfire.level_num' not in tool_spans[1]
     assert tool_spans[1]['logfire.msg'] == 'running tool: double'
     assert 'pydantic_ai.tool.failure_stage' not in tool_spans[1]
@@ -1907,6 +1914,44 @@ def test_tool_argument_validation_failure_emits_span(
     else:
         assert all('gen_ai.tool.call.result' not in span for span in tool_spans)
         assert 'private-invalid-value' not in str(capfire.exporter.exported_spans_as_dict())
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('failure_source', ['schema', 'validator'])
+def test_tool_argument_validation_failure_past_the_budget_records_its_cause_alone(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    failure_source: Literal['schema', 'validator'],
+) -> None:
+    """A validation failure with no retry left ends the run, so its span claims no attempt."""
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        x: Any = 'not a number' if failure_source == 'schema' else 2
+        return ModelResponse(parts=[ToolCallPart('double', {'x': x})])
+
+    def validate_args(ctx: RunContext[Any], x: int) -> None:
+        raise ModelRetry(f'reject {x}')
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        retries={'tools': 0},
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))],
+    )
+
+    @agent.tool_plain(args_validator=validate_args)
+    def double(x: int) -> int:
+        return x * 2  # pragma: no cover
+
+    with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
+        agent.run_sync('Use the tool')
+
+    [tool_span] = [
+        attributes
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert {key: value for key, value in tool_span.items() if '.retry.' in key} == {
+        'pydantic_ai.tool.retry.cause': 'validation_error' if failure_source == 'schema' else 'model_retry'
+    }
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
