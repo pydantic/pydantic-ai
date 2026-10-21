@@ -2500,6 +2500,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             on_change: Whether to rewrite the instruction prefix (the default) or append full
                 replacements when this block changes. Appending requires an addressable instruction
                 identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
+                Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
         """
         if name is not None:
             _instructions.validate_instruction_name(name)
