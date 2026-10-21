@@ -2716,7 +2716,7 @@ def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFuncti
     return new_messages
 
 
-def _unrendered_compaction_part_error() -> UserError:
+def _unrendered_compaction_part_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
     """The error for a request-side `CompactionPart` that reached an adapter's mapping unconverted."""
     return UserError(
         'A `CompactionPart` in a `ModelRequest` cannot be sent to this model as-is. Call '
