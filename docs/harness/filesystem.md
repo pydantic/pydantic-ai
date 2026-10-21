@@ -173,6 +173,25 @@ written for the model rather than a format to parse, so their returns stay plain
 `ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
 carry their outcomes as structured data.
 
+### Capabilities that step aside for `read_file`
+
+Some capabilities have a reader of their own for files they keep in the workspace. When those files
+are in the run's workspace, the reader is marked with
+[`unless_tool_kind`](../tools-advanced.md#unless-tool-kind) set to `READ_FILE_KIND`,
+so it is left out of every run step that has `read_file`, whatever `read_file` is named or prefixed
+as, and the capability's text names `read_file` as it is called in the run:
+
+- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
+  files through `read_file` are not reduced again.
+- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own.
+- `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
+
+The capability decides from its own configuration, not from `FileSystem`'s access rules. With
+`denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,
+the asset roots), or `allowed_patterns` that leave them out, the dedicated reader is still left out
+and `read_file` refuses the files. Give such a capability a store with a workspace of its own to keep
+its reader.
+
 ## Events
 
 `FileSystem` emits typed capability events in the `file_system` namespace so a
