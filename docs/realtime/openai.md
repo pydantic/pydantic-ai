@@ -546,7 +546,7 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
   more for the rest of the session. So when a tool raises, the model *does* get a result, unlike on
   the [other providers](tools.md#function-tools): the failure history records, `The tool raised an
-  unhandled error.`, goes out as the call's output, the backend carries on (it may try the tool
+  unhandled error.`, goes out as the call's output, marked as an error, the backend carries on (it may try the tool
   again), and Live speaks what it makes of it. The exception is still raised from the session as
   usual, and a [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was
   waiting still returns. When the exception is a

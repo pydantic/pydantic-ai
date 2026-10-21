@@ -2447,7 +2447,7 @@ class RealtimeSession:
     async def _send_failed_result(
         self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
     ) -> bool:
-        """Send the failure history records for a call that couldn't settle, where the connection needs it; whether it went out.
+        """Send the failure history records for a call that couldn't settle, if the connection needs it; whether it did.
 
         Only for a connection whose model can't move on without it (see `_sends_failed_tool_results`). A usage limit
         stops the exchange instead: its result must not ask for another request.
