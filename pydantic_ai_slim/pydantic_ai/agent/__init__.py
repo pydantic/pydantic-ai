@@ -5121,7 +5121,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
     assembly, which also covers capabilities supplied per-run or returned by `for_run` and so can't
     be checked at construction.
     """
-    owners: dict[str, type[AbstractCapability[Any]]] = {}
+    owners: dict[str, AbstractCapability[Any]] = {}
     for cap in capabilities:
         if cap.defer_loading is True and cap._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             raise exceptions.UserError(
@@ -5141,10 +5141,10 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
         # one order through and reject the other.
         owner = owners.get(cap.id)
         if owner is not None:
-            _reject_class_crossing_id(cap.id, {owner, type(cap)})
+            _reject_class_crossing_id(cap.id, {type(owner), type(cap)})
             if not _declares_default_id(type(cap)):
-                raise exceptions.UserError(_repeated_id_message(cap.id))
-        owners.setdefault(cap.id, type(cap))
+                raise exceptions.UserError(_repeated_id_message(cap.id, [owner, cap]))
+        owners.setdefault(cap.id, cap)
     return set(owners)
 
 
