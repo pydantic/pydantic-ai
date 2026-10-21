@@ -282,18 +282,6 @@ _MEMORY_OPENAI_MOVES: dict[Provider, dict[str, int]] = {
 
 KNOWN: dict[str, tuple[Known, ...]] = {
     'AskUser': _NO_DEFAULT_ID,
-    'CodeMode(dynamic_catalog=True)': (
-        Known('ids', f'{_ISSUES}8965', 'instructions', 'instruction:anonymous@1'),
-        # Discovering a deferred tool rewrites the catalog block in the system prompt and folds the tool into
-        # `run_code` by dropping its declaration. On Responses the native client-executed `tool_search` is also
-        # swapped for the local `search_tools` function, which moves `run_code` up.
-        Known('prefix', f'{_ISSUES}8965', 'system', 'instruction:anonymous@1'),
-        Known('prefix', f'{_ISSUES}8965', 'deferred-tools', 'tool:forecast', providers=('anthropic',)),
-        *(
-            Known('prefix', f'{_ISSUES}8965', 'tools', f'tool:{name}', providers=('openai-responses',))
-            for name in ('forecast', 'tool_search', 'run_code')
-        ),
-    ),
     'ConversationSearch': _NO_DEFAULT_ID,
     'Macroscope': _NO_DEFAULT_ID,
     'ManagedPrompt': _NO_DEFAULT_ID,

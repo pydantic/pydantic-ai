@@ -11,7 +11,7 @@ from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
-from typing import TYPE_CHECKING, Any, Literal, Self, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias, TypeGuard
 from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
@@ -33,8 +33,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     is_multi_modal_content,
 )
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
+from pydantic_ai.toolsets._instruction_collection import InstructionContribution, make_contribution
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 
 try:
@@ -331,8 +333,41 @@ class _RunCodeArguments(RunCodeArgs):
 
 
 _RUN_CODE_TOOL_NAME = 'run_code'
+_CODE_MODE_TOOLSET_ID = 'code_mode'
+_CATALOG_INSTRUCTION_NAME = 'catalog'
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
+
+_Placement: TypeAlias = Literal['native', 'sandboxed', 'hidden']
+"""Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, or nowhere yet."""
+
+
+def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, ToolsetTool[Any]]) -> None:
+    """Decide which not-yet-revealed tools `run_code` will take over stay off the wire until they're revealed.
+
+    With `dynamic_catalog`, a deferred tool that will be sandboxed once revealed is never declared natively:
+    it's found through the local `search_tools` function or by loading its capability, and from then on
+    appears only in the catalog, whose change is appended to history. Declaring it natively first and
+    dropping the declaration on reveal would change the request's tools prefix.
+
+    A tool in the native tool search's corpus still has to be declared when that search has to find it:
+    when there's no local `search_tools` (the `'bm25'` and `'regex'` strategies), or when another corpus
+    member stays native, which keeps the native search on the wire and drops `search_tools` with it.
+    """
+    hidden = [name for name, where in placements.items() if where == 'hidden']
+    in_native_corpus = [name for name in hidden if tools[name].tool_def.with_native == ToolSearchTool.kind]
+    local_search = any(
+        tool.tool_def.tool_kind == 'tool-search' and placements[name] == 'native' for name, tool in tools.items()
+    )
+    corpus_stays_native = any(
+        tool.tool_def.with_native == ToolSearchTool.kind and placements[name] == 'native'
+        for name, tool in tools.items()
+    )
+    if in_native_corpus and (not local_search or corpus_stays_native):
+        for name in in_native_corpus:
+            placements[name] = 'native'
+
+
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
@@ -844,7 +879,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     When `True`, the description keeps only the static base prose and the catalog is
     surfaced as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] via
     [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions],
-    so Tool Search discoveries don't bust the tool-definitions cache prefix.
+    with the id `toolset:code_mode:catalog` and `on_change='append'`, so a change to it is
+    appended to the conversation instead of rewriting the instructions. Deferred tools the
+    selector sandboxes are then kept off the wire until they're revealed, and from then on are
+    callable only inside `run_code`, so a discovery doesn't change the request's tools either.
     """
 
     repl_store: CodeModeReplStore[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
@@ -882,13 +920,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # logs every step. Reset on `for_run` because each run gets a fresh instance.
     _warned_deferred: set[str] = field(default_factory=set[str], init=False, repr=False)
 
-    @property
-    def id(self) -> str | None:
-        return 'code_mode'
-
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
+
+    @property
+    def id(self) -> str | None:
+        """`'code_mode'`, which qualifies the catalog instruction into the id `toolset:code_mode:catalog`."""
+        return _CODE_MODE_TOOLSET_ID
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh toolset instance with isolated REPL state for this agent run."""
@@ -964,53 +1003,77 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         """Surface the tool catalog as a dynamic instruction when `dynamic_catalog` is set.
 
-        The catalog is stashed by `get_tools` earlier in the same step. `dynamic=True` so
-        providers that split static/dynamic instructions (Anthropic, Bedrock) place a cache
-        breakpoint *before* the catalog -- discoveries change it but leave the static prefix
-        cache intact. When `dynamic_catalog` is off (or there are no sandboxed tools) the
-        stash is empty and we defer entirely to the wrapped toolset.
+        The catalog is stashed by `get_tools` earlier in the same step. It's named `'catalog'`,
+        which this toolset's id qualifies into `toolset:code_mode:catalog`, and uses
+        `on_change='append'`, so a discovery appends the updated catalog to the message history
+        instead of rewriting the instructions. When `dynamic_catalog` is off (or there are no
+        sandboxed tools) the stash is empty and we defer entirely to the wrapped toolset.
         """
         upstream = await self.wrapped.get_instructions(ctx)
-        if not self._last_catalog:
+        catalog_part = self._catalog_instruction()
+        if catalog_part is None:
             return upstream
-        catalog_part = InstructionPart(content=self._last_catalog, dynamic=True, name='catalog')
         if upstream is None:
             return catalog_part
         if isinstance(upstream, (str, InstructionPart)):
             return [upstream, catalog_part]
         return [*upstream, catalog_part]
 
+    async def _collect_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        """Relay the wrapped toolsets' instructions as their own, then add the catalog as this toolset's.
+
+        The inherited collection would attribute every part `get_instructions` returns without an id to
+        this toolset, giving the wrapped toolsets' anonymous instructions this toolset's id.
+        """
+        contributions = await self._collect_child_instruction_contributions(ctx)
+        if (catalog_part := self._catalog_instruction()) is not None:
+            contributions.append(make_contribution(self, catalog_part))
+        return contributions
+
+    def _catalog_instruction(self) -> InstructionPart | None:
+        """The catalog `get_tools` stashed this step, as the instruction block that carries it."""
+        if not self._last_catalog:
+            return None
+        return InstructionPart(
+            content=self._last_catalog, dynamic=True, name=_CATALOG_INSTRUCTION_NAME, on_change='append'
+        )
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Return the `run_code` tool plus any native (non-sandboxed) tools."""
         wrapped_tools = await self.wrapped.get_tools(ctx)
 
         # Split tools into sandboxed vs native based on the selector.
-        sandboxed_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
-        native_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
+        placements: dict[str, _Placement] = {}
         for name, tool in wrapped_tools.items():
+            tool_def = tool.tool_def
             # Framework control tools (tool search, capability loading) stay native to
             # drive protocol-level flows. Any other registered `tool_kind` is an ordinary tool.
-            if tool.tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
-                native_tools[name] = tool
-            elif not ctx.is_tool_available(tool.tool_def):
-                # Use the run's public availability predicate so Tool Search and deferred
-                # capability reveals share the same wire-side semantics. Hidden tools stay native
-                # until revealed, then fall through to the checks below and become sandboxed.
-                native_tools[name] = tool
-            elif tool.tool_def.unless_native:
+            if tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
+                placements[name] = 'native'
+            elif tool_def.unless_native:
                 # Keep the local fallback native so `Model.prepare_request` can drop it
                 # when the provider supports the native tool.
-                native_tools[name] = tool
-            elif _is_code_execution_tool(tool.tool_def):
+                placements[name] = 'native'
+            elif _is_code_execution_tool(tool_def):
                 # A tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
                 # `run_workflow`) is a peer of `run_code`, not something to fold inside it.
-                native_tools[name] = tool
-            elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
-                sandboxed_tools[name] = tool
-                if self.dynamic_catalog and tool.tool_def.defer_loading:
-                    native_tools[name] = tool
+                placements[name] = 'native'
+            elif not ctx.is_tool_available(tool_def):
+                # Use the run's public availability predicate so Tool Search and deferred
+                # capability reveals share the same wire-side semantics. A hidden tool stays
+                # native until revealed and is sandboxed from then on, unless
+                # `_place_hidden_tools` keeps it off the wire altogether.
+                hidden = self.dynamic_catalog and await matches_tool_selector(self.tool_selector, ctx, tool_def)
+                placements[name] = 'hidden' if hidden else 'native'
+            elif await matches_tool_selector(self.tool_selector, ctx, tool_def):
+                placements[name] = 'sandboxed'
             else:
-                native_tools[name] = tool
+                placements[name] = 'native'
+        _place_hidden_tools(placements, wrapped_tools)
+        sandboxed_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'sandboxed'}
+        native_tools = {name: wrapped_tools[name] for name, where in placements.items() if where == 'native'}
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
@@ -1031,9 +1094,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         has_mount = self.mount is not None
         if self.dynamic_catalog:
             description = _base_description(has_os=has_os, has_mount=has_mount)
-            self._last_catalog = self._render_catalog(
-                {n: td for n, td in callable_defs.items() if not td.defer_loading}
-            )
+            self._last_catalog = self._render_catalog(callable_defs)
         else:
             description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
             self._last_catalog = ''
