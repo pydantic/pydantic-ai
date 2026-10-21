@@ -3,7 +3,7 @@
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
 `Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
-`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
+`SpritesSandbox` / `DaytonaSandbox` for an isolated cloud machine, or `SmolSandbox` / `BoxLiteSandbox` / `DockerSandbox` for a microVM or container on this machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 `building-pydantic-ai-agents` skill's WORKSPACES.md reference; this file covers the harness side.
 
@@ -15,6 +15,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()` / `DaytonaSandbox()`; tool capabilities stay the same |
 | Isolation without a cloud account | `SmolSandbox()`: a smolvm microVM on this machine (macOS Apple silicon, Linux x86_64/aarch64 with KVM) |
+| Local microVM with an egress allow-list, or host mounts/ports/secrets | `BoxLiteSandbox(allow_internet_access=True, allowed_hosts=[...])`: a BoxLite micro-VM; `box_options` passes other `boxlite.BoxOptions` |
 | Isolation on this machine with Docker or Podman | `DockerSandbox(image='python:3.13-slim')`: a local container |
 | Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
@@ -345,6 +346,30 @@ Apple silicon, or Linux x86_64/aarch64 with glibc 2.34+ and access to `/dev/kvm`
   `await (await SmolSandbox().backend(ref).get_sandbox()).stop()`.
 - File operations go through the VM's shell, 64 KiB per command; multi-MiB files take seconds.
 
+### BoxLiteSandbox
+
+`BoxLiteSandbox(*, image=None, cpus=None, memory_mb=None, allow_internet_access=False, allowed_hosts=None,
+working_dir='/workspace', env=None, box_options=None)` (backend `BoxLiteSandboxBackend`, extra `[boxlite]`)
+creates a local [BoxLite](https://github.com/boxlite-ai/boxlite) micro-VM on first use. No credentials or
+daemon; needs macOS 14+ on Apple silicon, or Linux x86_64/aarch64 with glibc 2.28+ and access to `/dev/kvm`;
+Python up to 3.14.
+
+- Without `image` it runs Alpine (BusyBox, root, no Python/git/`rg`); pass e.g. `image='python:3.12-slim'`.
+  No network unless `allow_internet_access=True`; `allowed_hosts=['pypi.org', ...]` limits egress to those
+  hosts, IPs or CIDRs. `working_dir` is created.
+- `box_options` passes other `boxlite.BoxOptions` arguments to a new box (`volumes`, `ports`, `secrets`,
+  `disk_size_gb`, `user`); the ones the named settings own raise `UserError`. Runtime-wide settings
+  (registry logins, home dir) go to `boxlite.Boxlite.init_default(boxlite.Options(...))` before first use.
+- The ref is `WorkspaceRef(provider='boxlite', id='pydantic-ai-<32 hex>')`; from history, `workspace=ref`,
+  `backend(ref)` or `destroy(ref)` any other id raises `ValueError`. An existing box goes in as
+  `workspace=BoxLiteSandboxBackend(sandbox=box)` (or `ref=` with any name), which history doesn't reattach.
+  Runs never delete the box: `await BoxLiteSandbox().destroy(ref)` (quiet if gone; waits for a creation in
+  progress). A box stops, keeping its disk, when the process lets go of it; its ref boots it
+  again. One process at a time can use a BoxLite home (`~/.boxlite` or `BOXLITE_HOME`); another gets
+  `WorkspaceUnavailableError`.
+- Output is read while the command runs and for at most 2 s after it exits, so a background job never holds
+  a command open; output past 10 MiB stops the command with `WorkspaceOutputLimitError`.
+
 ### DockerSandbox
 
 `DockerSandbox(*, image=None, working_dir='/workspace', env=None, allow_internet_access=True, docker_args=(), executable='docker')`
@@ -489,6 +514,7 @@ task's approval fails the run.
 - https://pydantic.dev/docs/ai/harness/sprites-sandbox/
 - https://pydantic.dev/docs/ai/harness/daytona-sandbox/
 - https://pydantic.dev/docs/ai/harness/smol-sandbox/
+- https://pydantic.dev/docs/ai/harness/boxlite-sandbox/
 - https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/repo-context/
 - https://pydantic.dev/docs/ai/harness/macroscope/
