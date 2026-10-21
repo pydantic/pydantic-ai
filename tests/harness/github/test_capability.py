@@ -266,7 +266,7 @@ class TestPerRunAuth:
 
     async def test_provider_returning_oauth_raises(self) -> None:
         capability = GitHub[str | None](auth=per_user_token)
-        with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
+        with pytest.raises(UserError, match="must return a GitHub token, not 'oauth'"):
             await connections_for(capability, 'oauth')
 
     async def test_server_settings_apply_per_run(self) -> None:

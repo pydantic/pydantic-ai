@@ -91,7 +91,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
         if self.client is not None:
             toolset = MCPToolset(self.client, id=self.id, include_instructions=self.include_instructions)
         else:
-            toolset = connect_with_auth(self.auth, self._connect, id=self.id)
+            toolset = connect_with_auth(self.auth, self._connect, id=self.id, expected='a GitHub token')
         # The hosted connection also sends `X-MCP-Readonly`; filtering here keeps write tools out when the header is
         # dropped or ignored on the way.
         return read_only_toolset(toolset) if self.read_only else toolset
