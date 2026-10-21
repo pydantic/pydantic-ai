@@ -15,7 +15,7 @@ The model gets four tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run and tool call. |
+| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
 | `read_memory` | Read a bounded prefix of one memory file. |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
@@ -33,15 +33,13 @@ agent = Agent(
 )
 ```
 
-`FileStore.list_paths` skips symlinked directory prefixes, including links outside the store.
-
 `FileStore` keeps the notes as Markdown files in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so the model can also open them with its file tools. A run without a workspace fails at its start. With a read-only run workspace, the write and delete tools are hidden; a store with its own workspace follows that workspace's permissions instead. Workspace refusals during mutations become tool failures. To keep them on your machine while the agent works in a sandbox, pass a backend: `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))`.
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 
 ## Injection modes and limits
 
-Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
+Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part beside the latest user prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
@@ -58,7 +56,7 @@ memory = Memory(
 
 Only the current request retains the injected user-role part, so copies do not accumulate in message history. A part saved to history by an earlier release is removed on the next request. Each model request receives the latest bounded snapshot, including after `write_memory` or an external update changes `MEMORY.md`.
 
-The block goes on the request that holds the latest user prompt, so after a tool call, or when a run resumes after a deferred tool approval, it stays with the user's prompt rather than following the tool results, where a model could read it as a new message from the user. With no user prompt in the history, it goes on the last request. While the snapshot is unchanged, each request in a tool loop starts with the previous one, so prefix caching keeps working. When the snapshot changes, or a new user prompt moves the block, the content from the block's earlier position onward changes once.
+The block goes on the request that holds the latest user prompt, so after tool results or a resumed deferred tool approval it stays with that prompt instead of following the tool results, where the model could read it as a new user message. With no user prompt in the history, it goes on the last request. While the snapshot is unchanged, each request in a tool loop starts with the previous one, so prompt caching keeps working. When the snapshot changes or a new user prompt moves the block, the content from the block's earlier position onward changes once.
 
 When combining it with compaction, list compaction before `Memory`; otherwise a later persistent rewrite replaces the request-only memory block.
 
@@ -71,20 +69,20 @@ from pydantic_ai_harness.memory import FileStore
 memory = Memory(FileStore('.agent-memory'), inject_memory=False)
 ```
 
-With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts, and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. Tool failures are still returned as tool errors; this setting controls automatic injection only.
+With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts, and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. This setting controls automatic injection only. In the tools, a path that resolves outside the store asks the model to retry, and a workspace failure during `write_memory` or `delete_memory` is returned as a failed tool call unless the workspace is unavailable. The failure message names only the memory file, so backend paths and the namespace stay out of the model's context. A write or delete that keeps conflicting with concurrent changes asks the model to retry. Any other store error ends the run.
 
 ## Persistence and concurrency
 
-The store contract includes optimistic compare-and-swap mutations and idempotency. A write based on a stale revision fails with a conflict instead of overwriting a concurrent edit. Replaying the same run and tool call does not apply its mutation twice; reusing that operation identifier with different arguments raises `MemoryOperationConflictError`. These guarantees belong to the mutation operation, so custom stores must implement them atomically rather than composing separate read and write calls.
+Writes and deletes are compare-and-swap: a mutation based on stale content fails with a conflict instead of overwriting a concurrent edit. A replayed tool call is not applied twice, and reusing its operation identifier with different arguments raises `MemoryOperationConflictError`. Custom stores must make both checks atomic inside `write` and `delete` rather than composing separate read and write calls.
 
-Every `MemoryStore.read` call includes a finite `max_chars`, and every `list_paths` call includes a finite `limit`. A store returns the bounded prefix plus `MemoryFile.truncated=True` when more content exists, while its version still represents the complete file. `read_memory` marks that bounded result as truncated. `write_memory` refuses to append or edit an oversized externally supplied file because doing so would derive new content from a partial read; remediate or replace it through the backing store first. A custom `SearchableMemoryStore.search` must likewise honor `max_file_chars` as well as the result limits.
+Every `read` call passes a finite `max_chars` and every `list_paths` call a finite `limit`. When the file is longer, a store returns the bounded prefix with `MemoryFile.truncated=True` and the version of the complete file. A custom `SearchableMemoryStore.search` must honor `max_file_chars` as well as the result limits. `read_memory` marks a truncated result. `write_memory` refuses to append to or edit a file larger than `max_memory_size`, because it would build the new content from a partial read; edit or replace that file in the backing store first.
 
 | Store | Persistence and concurrency boundary |
 | --- | --- |
-| `InMemoryStore()` | Process lifetime; atomic across tasks using that store instance. |
+| `InMemoryStore()` | Process lifetime; atomic across tasks using that store instance. Receipts for the 1,024 most recent mutations are kept. |
 | `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
-| `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. |
-| `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. The caller owns the pool lifecycle. |
+| `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `memory_operations` table until you delete old rows. |
+| `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. Receipts accumulate in the `{table}_operations` table until you delete old rows. The caller owns the pool lifecycle. |
 
 ```python
 from pydantic_ai_harness import Memory
@@ -98,7 +96,7 @@ sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 
 If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
 
-`FileStore` keeps receipts for its most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict.
+`FileStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileStore` listings and searches skip symlinked directories, including links that point outside the store.
 
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
@@ -162,10 +160,73 @@ agent = Agent(
 
 Namespace isolation controls which records the capability addresses. It is not an authorization system for a custom or shared backing store. Validate the identity in application dependencies, restrict backend credentials, and ensure custom stores cannot escape the resolved namespace.
 
+A namespace is one or more `/`-separated segments of letters, digits, `_`, `-`, and `.`; a segment of `.` or one containing `..` raises `ValueError` when the run starts. `FileStore` keeps each namespace in a directory, so on a case-insensitive filesystem, the macOS and Windows default, `Alice` and `alice` share files: normalize the case of the identity before returning it. Windows also drops trailing dots from directory names, so there `alice.` and `alice` share files too. Spans record `memory.scope_hash`, an unsalted hash of the namespace and `agent_name`. It keeps the identity out of telemetry, but anyone who can guess an identity can confirm it.
+
+## Write metadata
+
+When the agent is not the only writer, for example when people can also edit what it remembered about them in your product, a store can record who made each write. `InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`: `write_with_metadata` stores a `Mapping[str, str]` with the content, and `read` returns it as `MemoryFile.metadata`. Set `write_metadata` on `Memory` to record metadata with the model's writes, either as a mapping or as a callable that resolves it from the run for each write. Your application supplies it and it never appears in a tool schema, so the model cannot choose its own provenance. The callable runs inside each `write_memory` call, after the check for a replayed call, so unlike `store_resolver` and `namespace` it need not be deterministic under Temporal or Prefect.
+
+The model's files live at `{namespace}/{agent_name}/{file}`, so with the default `agent_name='main'` your UI edits `{user_id}/main/MEMORY.md` to change the notebook the agent reads.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import Memory
+from pydantic_ai_harness.memory import SqliteMemoryStore
+
+
+@dataclass
+class AppDeps:
+    user_id: str
+
+
+store = SqliteMemoryStore(database='.agent-memory.db')
+agent = Agent(
+    'anthropic:claude-opus-5-5',
+    deps_type=AppDeps,
+    capabilities=[
+        Memory(
+            store,
+            namespace=lambda ctx: ctx.deps.user_id,
+            write_metadata=lambda ctx: {'updated_by': 'agent', 'user_id': ctx.deps.user_id},
+        )
+    ],
+    defer_model_check=True,
+)
+
+
+async def save_from_editor(user_id: str, content: str, version: str | None) -> None:
+    """Save what the user typed in your memory editor, recording that they typed it."""
+    await store.write_with_metadata(
+        f'{user_id}/main/MEMORY.md',
+        content,
+        expected_version=version,
+        metadata={'updated_by': 'ui', 'user_id': user_id},
+    )
+
+
+async def last_written_by(user_id: str) -> str | None:
+    file = await store.read(f'{user_id}/main/MEMORY.md', max_chars=65_536)
+    return None if file is None or file.metadata is None else file.metadata.get('updated_by')
+```
+
+Metadata describes the write that produced the current version:
+
+- It is written in the same transaction as the content (under the same lock for `InMemoryStore`), and each write replaces it. A write without metadata, including the model's writes when `write_metadata` is unset, records none, so after the agent edits a file the user typed, the file no longer reads `updated_by='ui'`.
+- A delete removes it. A replayed tool call returns the original receipt, which carries no metadata, and leaves the stored metadata as it is; `read` the file for the metadata of its current version. Metadata is not part of the operation fingerprint, so a callable that resolves different metadata on a retry is not a conflict.
+- The bundled stores accept string keys and values without NUL characters, at most 4,096 characters as JSON, and `Memory` checks a fixed `write_metadata` mapping when it is constructed. An empty mapping is no metadata. It stays out of the model's context, the memory spans, and the memory snapshot a durable engine journals.
+- `PostgresMemoryStore` keeps it in a `write_metadata JSONB` column of its table, so the application can query it, for example `WHERE write_metadata->>'updated_by' = 'ui'`. `SqliteMemoryStore` keeps it as JSON text in a `write_metadata` column. Both add the column to an existing table on first use, and rows written before then read as `metadata=None`.
+
+`Memory(write_metadata=...)` raises `UserError` at construction, or when the run starts for a `store_resolver`, if the store does not implement `MetadataMemoryStore`, rather than drop the metadata. `FileStore` does not implement it: a sidecar file could not change in one atomic step with the Markdown, and the model's file tools could edit it.
+
+A store records write metadata when it has a `write_with_metadata` method, so a custom store opts in by implementing the one `MetadataMemoryStore` declares. It must store the metadata in the same atomic step as the content, and the store's `write` must record none, as the bundled stores' `write` does by calling `write_with_metadata` with `metadata=None`. A custom store that implements only `MemoryStore` keeps working as before without metadata. A subclass of a bundled store that overrides `write` keeps working too; with `write_metadata` set, `Memory` calls `write_with_metadata` instead, so override that method as well.
+
 ## Multiple memories on one agent
 
-An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Three constraints apply:
+An agent can carry several `Memory` capabilities at once, for example a personal notebook plus a shared org notebook. Four constraints apply:
 
+- Give each instance a distinct `id`. Instances that share the default `id='memory'` are one capability to the agent: unless they share one store instance and the same settings, constructing the agent raises `UserError`.
 - Give each instance a distinct `agent_name` or `namespace`. Injected blocks are tracked by their resolved scope, so instances that differ only in their store resolve the same scope and replace each other's injection.
 - All instances define the same tool names, so wrap every instance but one in `prefix_tools` to keep the tool schemas distinct.
 - Set a distinct `heading` on each instance so the model sees the blocks as separate sections. `agent_name` is a storage key and never appears in the prompt, so it can't label them.
@@ -181,7 +242,7 @@ agent = Agent(
     'anthropic:claude-opus-5-5',
     capabilities=[
         Memory(store, heading='Your notes'),
-        Memory(store, agent_name='org', heading='Org notes').prefix_tools('org'),
+        Memory(store, agent_name='org', heading='Org notes', id='org_memory').prefix_tools('org'),
     ],
     defer_model_check=True,
 )
@@ -195,7 +256,11 @@ agent = Agent(
 - `max_search_result_chars` limits the combined scope-relative filename and snippet text, default 4,000 characters.
 - `max_search_files` limits how many files a fallback scan may inspect, default 1,000.
 
-The bundled stores implement `SearchableMemoryStore`. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
+The bundled stores implement `SearchableMemoryStore`. A store counts as searchable when it has a `search` method, so a custom store's `search` must take the arguments `SearchableMemoryStore.search` declares. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
+
+The bundled stores search only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`. The fallback scan for a custom store skips them too, but they still count toward the `max_search_files + 1` paths it requests.
+
+Scoring runs on the event loop and yields after each file, so a scan near the limits slows that search without stalling other runs in the process.
 
 Before backend dispatch, queries are limited to 1,000 characters and 32 unique whitespace-separated terms. Repeated case-insensitive terms are collapsed so they cannot inflate scoring or scan work.
 
@@ -220,6 +285,7 @@ Memory(
     max_search_files=1_000,
     injection_errors='ignore',         # or 'raise'
     guidance=None,                     # None uses the default notebook guidance
+    write_metadata=None,               # needs a MetadataMemoryStore; see Write metadata
 )
 ```
 
@@ -259,9 +325,9 @@ Each model request that uses automatic snapshot loading records one bounded snap
 
 ## Security and provenance
 
-Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
+Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. In stored content, the `<` of a `<memory>` or `</memory>` tag, in any case or spacing, is injected as `&lt;`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
-Memory records do not carry source citations or verified provenance. If an application needs auditable facts, store provenance in the note itself or implement a custom store and schema. Optimistic concurrency prevents lost updates; it does not establish that a remembered claim is true.
+Memory records do not carry source citations. To record who wrote a file, such as the user in your product or the agent, use [write metadata](#write-metadata) with a `MetadataMemoryStore` rather than a header in the note. Metadata records which writer produced the current version; it does not establish that a remembered claim is true, and neither does optimistic concurrency, which prevents lost updates.
 
 ## API reference
 

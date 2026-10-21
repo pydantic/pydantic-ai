@@ -96,6 +96,9 @@ class DurableStepContext(Protocol):
     ) -> Any: ...
 
 
+ContextT = TypeVar('ContextT', bound=DurableStepContext)
+
+
 class _AgentLoop:
     """A background event loop reused across invocations of a warm execution environment.
 
@@ -285,6 +288,10 @@ class StepBridge:
             while True:
                 try:
                     return result.result(timeout=_LOOP_LIVENESS_POLL_SECONDS)
+                except asyncio.CancelledError:
+                    # A `BaseException` would bypass the SDK's step failure handling and crash the
+                    # invocation, so report the cancelled operation as an ordinary step failure.
+                    raise RuntimeError(f'Durable step {name!r} was cancelled before it finished.') from None
                 except FutureTimeoutError:
                     # A step can legitimately run for minutes, so the wait itself must not time
                     # out. What it must not do is block forever on a loop that is no longer there
@@ -394,9 +401,9 @@ def in_durable_context() -> bool:
 
 @overload  # pragma: no cover - typing-only overload
 def durable_agent_handler(
-    func: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]],
+    func: Callable[[Any, ContextT], Coroutine[Any, Any, T]],
     /,
-) -> Callable[[Any, DurableStepContext], T]: ...
+) -> Callable[[Any, ContextT], T]: ...
 
 
 @overload  # pragma: no cover - typing-only overload
@@ -406,21 +413,21 @@ def durable_agent_handler(
     *,
     cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT_SECONDS,
 ) -> Callable[
-    [Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]]],
-    Callable[[Any, DurableStepContext], T],
+    [Callable[[Any, ContextT], Coroutine[Any, Any, T]]],
+    Callable[[Any, ContextT], T],
 ]: ...
 
 
 def durable_agent_handler(
-    func: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]] | None = None,
+    func: Callable[[Any, ContextT], Coroutine[Any, Any, T]] | None = None,
     /,
     *,
     cancel_timeout: float = DEFAULT_CANCEL_TIMEOUT_SECONDS,
 ) -> (
-    Callable[[Any, DurableStepContext], T]
+    Callable[[Any, ContextT], T]
     | Callable[
-        [Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]]],
-        Callable[[Any, DurableStepContext], T],
+        [Callable[[Any, ContextT], Coroutine[Any, Any, T]]],
+        Callable[[Any, ContextT], T],
     ]
 ):
     """Adapt an async handler body for the AWS durable execution decorator.
@@ -442,8 +449,8 @@ def durable_agent_handler(
     """
 
     def decorate(
-        handler: Callable[[Any, DurableStepContext], Coroutine[Any, Any, T]],
-    ) -> Callable[[Any, DurableStepContext], T]:
+        handler: Callable[[Any, ContextT], Coroutine[Any, Any, T]],
+    ) -> Callable[[Any, ContextT], T]:
         if not inspect.iscoroutinefunction(handler):
             raise UserError(
                 '`@durable_agent_handler` requires an async handler. `@durable_execution` must be the '
@@ -452,7 +459,7 @@ def durable_agent_handler(
             )
 
         @functools.wraps(handler)
-        def wrapped(event: Any, context: DurableStepContext) -> T:
+        def wrapped(event: Any, context: ContextT) -> T:
             return run_durable(lambda: handler(event, context), context=context, cancel_timeout=cancel_timeout)
 
         return wrapped
