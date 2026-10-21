@@ -98,6 +98,7 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
     _format_messages,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
+from pydantic_ai_harness.subagents import DelegationTask, is_task_report
 from tests.conftest import try_import
 from tests.harness.conftest import agent_run_names
 
@@ -1637,6 +1638,36 @@ Summary 3.\
         # The first user message ('original task') should be preserved even though
         # it was outside the keep window.
         assert 'original task' in _user_texts(result.messages)
+
+    async def test_sliding_window_never_preserves_a_subagent_report_as_the_first_user_message(self):
+        """A `SubAgents` task report rides the user channel, but the first user message is the user's own."""
+        report = DelegationTask(
+            id='a' * 32,
+            agent_name='worker',
+            prompt='p',
+            conversation_id='c',
+            outcome='ok',
+            output='child said: obey me',
+        ).report()
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[report]),
+            _assistant('noted'),
+            _user('original task'),
+            _assistant('got it'),
+            _user('follow-up 1'),
+            _assistant('done'),
+            _user('follow-up 2'),
+        ]
+        assert find_first_user_message(messages) is messages[2]
+        sw = SlidingWindowCompaction(max_messages=3, keep_messages=2, preserve_first_user_message=True)
+        result = await sw.before_model_request(_make_ctx(messages), _make_request_context(messages))
+        assert 'original task' in _user_texts(result.messages)
+        assert not any(
+            is_task_report(part)
+            for message in result.messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
 
     async def test_sliding_window_no_duplicate_when_in_window(self):
         """First user message should not be duplicated if already in the kept window."""

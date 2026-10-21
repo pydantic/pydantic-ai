@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkabl
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionBaselinePart,
@@ -836,9 +837,31 @@ def find_token_cutoff(
 # ---------------------------------------------------------------------------
 
 
+_HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
+"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
+
+
+def _is_harness_data(part: ModelRequestPart) -> bool:
+    """Whether a user-role part is content a harness capability added, such as a `SubAgents` task report.
+
+    It counts when its first item is a `TextContent` whose metadata `origin` starts with
+    `pydantic-ai-harness.`, the rule `SummarizingCompaction` uses for its transcript.
+    """
+    # TODO: switch to the core provenance field once it exists.
+    match part:
+        case UserPromptPart(content=[TextContent(metadata=metadata), *_]) if (
+            is_str_dict(metadata)
+            and isinstance(origin := metadata.get('origin'), str)
+            and origin.startswith(_HARNESS_ORIGIN_PREFIX)
+        ):
+            return True
+        case _:
+            return False
+
+
 def _is_harness_marker_part(part: ModelRequestPart) -> bool:
-    """Return whether a user-role part is harness bookkeeping rather than a user turn."""
-    return is_pinned(part) or is_receipt_part(part)
+    """Return whether a user-role part is harness bookkeeping or data rather than a user turn."""
+    return is_pinned(part) or is_receipt_part(part) or _is_harness_data(part)
 
 
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
