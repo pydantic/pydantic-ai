@@ -852,7 +852,8 @@ class ToolDefinition:
 
     A tool is only left out in favor of a tool that stays. When tools would each be left out in favor
     of the other, the one listed first in the step's tools stays, and every tool whose kind it names
-    steps aside; cycles that can't satisfy every rule are resolved best-effort.
+    steps aside. A tool is never left out unless a tool it names stays, so a cycle that can't meet every
+    rule can keep a tool beside one whose kind it names.
     See [Superseding a tool by kind](../tools-advanced.md#unless-tool-kind).
     """
 

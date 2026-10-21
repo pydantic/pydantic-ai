@@ -153,6 +153,20 @@ def test_a_pinned_tool_wins_against_every_tool_whose_kind_it_names():
     assert _offered_tools(agent) == [['read_file', 'read_index']]
 
 
+def test_an_odd_cycle_never_leaves_a_tool_out_without_its_replacement():
+    # A unless B, B unless C, C unless A can't satisfy every rule. `read_file` stays first on the cycle,
+    # which sets `read_notes` aside and drops `read_index`; with `read_index` gone `read_notes` has
+    # nothing to step aside for, so it comes back, beside `read_file` that names its kind.
+    agent = Agent(
+        tools=[
+            Tool(read_file, prepare=_with(tool_kind=FILE_READ, unless_tool_kind=NOTES_READ)),
+            Tool(read_notes, prepare=_with(tool_kind=NOTES_READ, unless_tool_kind=INDEX_READ)),
+            Tool(read_index, prepare=_with(tool_kind=INDEX_READ, unless_tool_kind=FILE_READ)),
+        ]
+    )
+    assert _offered_tools(agent) == [['read_file', 'read_notes']]
+
+
 def test_only_a_tool_that_stays_supersedes():
     # `read_index` drops `read_notes`, so `read_file`, which would only have stepped aside for `read_notes`, stays.
     agent = Agent(

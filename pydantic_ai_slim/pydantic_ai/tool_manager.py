@@ -111,8 +111,9 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
     (A unless B's kind, B unless C's kind) C drops B and A stays. Tools that can only be resolved in
     favor of each other form a cycle; there the first tool in toolset order that is on the cycle stays,
     every tool whose kind it names steps aside, and the rest follows from that. Some cycles can't satisfy
-    every rule at once (A unless B, B unless C, C unless A), so cyclic configurations are resolved
-    best-effort, deterministically from toolset order.
+    every rule at once (A unless B, B unless C, C unless A). There a tool is never left out without a tool
+    it names staying, so the rule given up is the other one: a tool can stay beside a tool it names. The
+    result is deterministic from toolset order.
     """
     names_by_kind: dict[str, list[str]] = {}
     for name, tool in tools.items():
@@ -146,7 +147,25 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
             for other in suppliers[pinned]:
                 stays.setdefault(other, False)
         undecided = [name for name in undecided if name not in stays]
+    _restore_tools_without_a_replacement(stays, suppliers)
     return {name: tool for name, tool in tools.items() if stays[name]}
+
+
+def _restore_tools_without_a_replacement(stays: dict[str, bool], suppliers: Mapping[str, list[str]]) -> None:
+    """Bring back each left-out tool none of whose suppliers stays.
+
+    Keeping a tool beside one it names is only redundant, but dropping one with nothing to replace it
+    loses what it does. A cycle that can't meet both rules (A unless B, B unless C, C unless A) can leave
+    a tool out whose suppliers all went too. Restoring a tool only adds replacements for others, so this
+    never brings back a tool that was left out for good reason.
+    """
+    restored = True
+    while restored:
+        restored = False
+        for name, others in suppliers.items():
+            if not stays[name] and not any(stays[other] for other in others):
+                stays[name] = True
+                restored = True
 
 
 def _first_on_a_cycle(undecided: list[str], suppliers: Mapping[str, list[str]]) -> str:
