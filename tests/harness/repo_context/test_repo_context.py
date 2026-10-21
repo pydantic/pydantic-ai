@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import PrefixTools
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -251,8 +252,9 @@ class TestInstructions:
     async def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
         cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True)
-        await cap.before_run(_run_context(workspace=workspace))
-        instructions = cap.get_instructions()
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        instructions = _render_capability_instructions(cap, ctx)
         assert isinstance(instructions, str)
         assert 'ignored' not in instructions
         assert 'inventory_agent_context' in instructions
@@ -308,6 +310,43 @@ class TestToolset:
         backend = LocalWorkspaceBackend(working_dir=tmp_path)
         result = await agent.run('go', workspace=backend)
         assert 'inventory_agent_context' in result.output
+
+    @pytest.mark.parametrize('prefix', [None, 'repo'])
+    async def test_inventory_steps_aside_for_read_file(self, tmp_path: Path, prefix: str | None) -> None:
+        offered: list[set[str]] = []
+        instructions: list[str | None] = []
+
+        async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            offered.append({tool.name for tool in info.function_tools})
+            instructions.append(info.instructions)
+            yield 'done'
+
+        file_system = FileSystem() if prefix is None else PrefixTools(FileSystem(), prefix=prefix)
+        agent = Agent(
+            FunctionModel(stream_function=respond),
+            capabilities=[RepoContext[object](expose_inventory_tool=True), file_system],
+        )
+        await agent.run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        reader = 'read_file' if prefix is None else f'{prefix}_read_file'
+        assert offered and all('inventory_agent_context' not in tools and reader in tools for tools in offered)
+        assert instructions[0] is not None
+        assert f'such as `{reader}`' in instructions[0]
+        assert '`.claude/`' in instructions[0]
+        assert 'inventory_agent_context' not in instructions[0]
+
+    async def test_inventory_kept_for_roots_outside_the_working_dir(self, tmp_path: Path) -> None:
+        offered: list[set[str]] = []
+
+        async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            offered.append({tool.name for tool in info.function_tools})
+            yield 'done'
+
+        agent = Agent(
+            FunctionModel(stream_function=respond),
+            capabilities=[RepoContext[object](expose_inventory_tool=True, asset_roots=('../shared',)), FileSystem()],
+        )
+        await agent.run('go', workspace=LocalWorkspaceBackend(working_dir=tmp_path))
+        assert offered and all('inventory_agent_context' in tools for tools in offered)
 
 
 class TestScanAssets:

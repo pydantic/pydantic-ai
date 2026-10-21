@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -17,7 +18,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness.filesystem import READ_FILE_KIND, DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
@@ -31,6 +32,11 @@ from pydantic_ai_harness.repo_context._toolset import RepoContextToolset
 _INVENTORY_HINT = (
     'Call `{tool_name}` to map where this repo keeps its coding-assistant setup '
     '(instruction dirs, skills, sub-agents, and hooks) so you can inspect it.'
+)
+_ASSET_ROOTS_HINT = (
+    'This repo may keep its coding-assistant setup in {roots}: `skills/*/SKILL.md`, '
+    '`agents/*.md` (sub-agents), and `settings.json` (hooks). Inspect it with your file tools, '
+    'such as `{reader}`.'
 )
 _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
@@ -65,7 +71,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
        reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
        `.grok` and their `skills/`, `agents/`, `settings.json`). It locates
-       assets; it does not parse them.
+       assets; it does not parse them. It steps aside for `FileSystem`'s
+       `read_file` when the asset roots are inside the working directory, and
+       the instructions then point at the roots instead.
 
     3. Nested-on-traversal (`nested_traversal`, off by default): when the model
        lists or reads a directory through a filesystem capability event,
@@ -181,13 +189,13 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
 
-    def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
+    def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
-        if not self.autoload_instructions:
-            return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name) if self.expose_inventory_tool else None
+        if not self.autoload_instructions and not self.expose_inventory_tool:
+            return None
 
-        def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
-            return self._render_instructions()
+        def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
+            return self._render_instructions(ctx)
 
         return instructions
 
@@ -196,14 +204,29 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         # diff, when that's shorter) rather than rewriting the cached prompt.
         return append_on_change_by_default(super()._collect_instructions(), key='repo_context')
 
-    def _render_instructions(self) -> str | None:
+    def _render_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
         parts: list[str] = []
-        if self._context_files:
+        if self.autoload_instructions and self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
         if self.expose_inventory_tool:
-            parts.append(_INVENTORY_HINT.format(tool_name=self.inventory_tool_name))
+            parts.append(self._inventory_hint(ctx))
         return '\n\n'.join(parts) or None
+
+    def _inventory_hint(self, ctx: RunContext[AgentDepsT]) -> str:
+        """Point at the inventory tool, or at the asset roots when a file reader replaces it in this run."""
+        if self._asset_roots_in_working_dir and (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
+            roots = ', '.join(f'`{root}/`' for root in self.asset_roots)
+            return _ASSET_ROOTS_HINT.format(roots=roots, reader=reader)
+        return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name)
+
+    @property
+    def _asset_roots_in_working_dir(self) -> bool:
+        """Whether every asset root is inside the working directory, which `FileSystem`'s root contains.
+
+        The inventory reads the run's workspace, so this is all it takes for `read_file` to reach the same files.
+        """
+        return bool(self.asset_roots) and all(_in_working_dir(root) for root in self.asset_roots)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """The asset-inventory toolset, or `None` when the tool is disabled."""
@@ -211,7 +234,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return None
         if self._toolset is None:
             self._toolset = RepoContextToolset[AgentDepsT](
-                self.asset_roots, self.inventory_tool_name, id=self.id or 'repo_context'
+                self.asset_roots,
+                self.inventory_tool_name,
+                id=self.id or 'repo_context',
+                unless_tool_kind=READ_FILE_KIND if self._asset_roots_in_working_dir else None,
             )
         return self._toolset
 
@@ -301,3 +327,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Serialization name for agent-spec support."""
         return 'RepoContext'
+
+
+def _in_working_dir(path: str) -> bool:
+    normalized = posixpath.normpath(path)
+    return not posixpath.isabs(normalized) and normalized.split('/', 1)[0] != '..'
