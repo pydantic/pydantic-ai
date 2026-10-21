@@ -334,10 +334,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
 
     manage_system_prompt: Literal['server', 'client'] = 'server'
-    """Who owns the system prompt.
+    """Who owns the system prompt and request-level instructions in client-submitted messages.
 
-    Only affects `system_prompt` — [`instructions`][pydantic_ai.agent.Agent.instructions]
-    are always injected by the agent on every request regardless of this setting.
+    The agent's own [`instructions`][pydantic_ai.agent.Agent.instructions] are always
+    injected on every request regardless of this setting.
 
     `'server'` (default): the agent's configured `system_prompt` is authoritative.
     Any `SystemPromptPart` sent by the frontend is stripped with a warning (since a
@@ -349,9 +349,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     frontend messages are reset to `None` as well.
 
     `'client'`: the frontend owns the system prompt. Frontend `SystemPromptPart`s
-    and request-level `instructions` are preserved as-is, and the agent's configured `system_prompt` is not injected
-    — the caller is fully responsible for sending it on every turn if desired. To
-    opt into the same fallback-to-configured behavior as server mode, add the
+    and request-level `instructions` are preserved as-is, and the agent's configured
+    `system_prompt` is not injected — the caller is fully responsible for sending it
+    on every turn if desired. To opt into the same fallback-to-configured behavior as
+    server mode, add the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability
     to your agent.
     """
