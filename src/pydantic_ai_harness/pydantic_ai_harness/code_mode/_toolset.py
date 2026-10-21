@@ -882,6 +882,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # logs every step. Reset on `for_run` because each run gets a fresh instance.
     _warned_deferred: set[str] = field(default_factory=set[str], init=False, repr=False)
 
+    @property
+    def id(self) -> str | None:
+        return 'code_mode'
+
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
@@ -969,7 +973,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         upstream = await self.wrapped.get_instructions(ctx)
         if not self._last_catalog:
             return upstream
-        catalog_part = InstructionPart(content=self._last_catalog, dynamic=True)
+        catalog_part = InstructionPart(content=self._last_catalog, dynamic=True, name='catalog')
         if upstream is None:
             return catalog_part
         if isinstance(upstream, (str, InstructionPart)):
@@ -1003,6 +1007,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 native_tools[name] = tool
             elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
                 sandboxed_tools[name] = tool
+                if self.dynamic_catalog and tool.tool_def.defer_loading:
+                    native_tools[name] = tool
             else:
                 native_tools[name] = tool
 
@@ -1025,7 +1031,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         has_mount = self.mount is not None
         if self.dynamic_catalog:
             description = _base_description(has_os=has_os, has_mount=has_mount)
-            self._last_catalog = self._render_catalog(callable_defs)
+            self._last_catalog = self._render_catalog(
+                {n: td for n, td in callable_defs.items() if not td.defer_loading}
+            )
         else:
             description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
             self._last_catalog = ''
