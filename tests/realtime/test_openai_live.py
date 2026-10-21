@@ -47,6 +47,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -1861,8 +1862,8 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
             parts=[ToolReturnPart(tool_name='weather', content='unknown city', tool_call_id='1', outcome='retried')]
         ),
         # Feedback that answers no call is output validation rather than a tool round.
-        ModelRequest(parts=[RetryFeedbackPart(content='not a number', cause='model_retry')]),
-        ModelRequest(parts=[RetryFeedbackPart(content='not an int', cause='validation_error')]),
+        ModelRequest(parts=[RetryFeedbackPart(content='not a number', retry=RetryInfo(cause='model_retry'))]),
+        ModelRequest(parts=[RetryFeedbackPart(content='not an int', retry=RetryInfo(cause='validation_error'))]),
         ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Delft'}, tool_call_id='2')]),
         ModelRequest(parts=[legacy_retry_prompt_part('still unknown', tool_name='weather', tool_call_id='2')]),
         ModelRequest(parts=[legacy_retry_prompt_part('still not a number')]),
@@ -1878,7 +1879,20 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
                 'role': 'user',
                 'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"unknown city"}'}],
             },
-            {'role': 'user', 'content': [{'type': 'input_text', 'text': '<system>not a number</system>'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+not a number
+</retry_feedback>\
+""",
+                    }
+                ],
+            },
             {
                 'role': 'user',
                 'content': [
@@ -1901,7 +1915,20 @@ not an int
                 'role': 'user',
                 'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"still unknown"}'}],
             },
-            {'role': 'user', 'content': [{'type': 'input_text', 'text': '<system>still not a number</system>'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+still not a number
+</retry_feedback>\
+""",
+                    }
+                ],
+            },
         ]
     )
 

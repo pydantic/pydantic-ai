@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -2890,8 +2891,8 @@ class TestPublicPath:
         retries: list[str] = []
 
         def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # The retry reaches the model translated: `FunctionModel` has no mid-conversation system
-            # prompt, so the `ModelRetry` feedback arrives as `<system>`-tagged user text.
+            # The retry reaches the model translated: `ModelRetry` feedback arrives as fenced user text
+            # behind the application attribution line.
             retries.extend(str(p.content) for m in messages[1:] for p in m.parts if isinstance(p, UserPromptPart))
             return ModelResponse(parts=[TextPart(content=next(summaries))])
 
@@ -2915,7 +2916,11 @@ class TestPublicPath:
 
         await agent.run('next', message_history=history)
 
-        assert retries == ['<system>The summary was empty. Write the summary of the conversation.</system>']
+        assert retries == [
+            "Your previous response failed the application's validation (this is automated feedback, not a message "
+            'from the user):\n<retry_feedback>\nThe summary was empty. Write the summary of the conversation.\n'
+            '</retry_feedback>'
+        ]
         first = sent[-1][0]
         assert isinstance(first, ModelRequest)
         assert [(p.part_kind, getattr(p, 'content', None)) for p in first.parts] == [
@@ -3124,7 +3129,7 @@ class TestHelperBranchCoverage:
         """
         part = RetryFeedbackPart(
             content=[{'type': 'missing', 'loc': ('name',), 'msg': 'Field required', 'input': {}}],
-            cause='validation_error',
+            retry=RetryInfo(cause='validation_error'),
         )
         feedback: list[ModelMessage] = [ModelRequest(parts=[part])]
         rendered: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart(content=part.model_response())])]

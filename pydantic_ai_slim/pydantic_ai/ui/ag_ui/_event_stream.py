@@ -551,8 +551,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # A non-success outcome carries the return's `tool_kind` with it, as `dump_messages` does; a
         # successful return needs no event, as loading falls back to the call's claim.
         tool_kind = part.tool_kind if part.outcome != 'success' else None
-        cause = part.cause if isinstance(part, ToolReturnPart) else None
-        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(tool_kind, part.outcome, cause)):
+        retry = part.retry if isinstance(part, ToolReturnPart) else None
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(tool_kind, part.outcome, retry)):
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)

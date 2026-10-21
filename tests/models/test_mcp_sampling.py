@@ -9,6 +9,7 @@ from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     UserPromptPart,
@@ -279,7 +280,7 @@ def test_output_retry_history():
         message_history=[
             ModelRequest(parts=[UserPromptPart('Hello')]),
             ModelResponse(parts=[TextPart('One'), ThinkingPart('Hidden'), TextPart('Two')]),
-            ModelRequest(parts=[RetryFeedbackPart('Try again', cause='model_retry')]),
+            ModelRequest(parts=[RetryFeedbackPart('Try again', retry=RetryInfo(cause='model_retry'))]),
         ]
     )
     assert [msg.model_dump(by_alias=True, exclude_none=True) for msg in create_message.call_args.args[0]] == snapshot(
@@ -288,7 +289,15 @@ def test_output_retry_history():
             {'role': 'assistant', 'content': {'type': 'text', 'text': 'OneTwo'}},
             {
                 'role': 'user',
-                'content': {'type': 'text', 'text': '<system>Try again</system>'},
+                'content': {
+                    'type': 'text',
+                    'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Try again
+</retry_feedback>\
+""",
+                },
             },
         ]
     )

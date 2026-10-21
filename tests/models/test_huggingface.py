@@ -27,6 +27,7 @@ from pydantic_ai import (
     ModelRetry,
     ModelTimeoutError,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -449,7 +450,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -947,7 +948,7 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
                 parts=[
                     RetryFeedbackPart(
                         content='Response is invalid',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -982,7 +983,12 @@ async def test_retry_feedback_without_inline_system_prompts(allow_model_requests
     assert {k: v for k, v in asdict(messages[-1]).items() if v is not None} == snapshot(
         {
             'role': 'user',
-            'content': '<system>Response is invalid</system>',
+            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Response is invalid
+</retry_feedback>\
+""",
         }
     )
 

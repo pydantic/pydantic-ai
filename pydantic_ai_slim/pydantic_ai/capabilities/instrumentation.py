@@ -43,7 +43,16 @@ from pydantic_ai.exceptions import (
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart, tool_return_ta
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    RetryFeedbackCause,
+    RetryInfo,
+    ToolCallPart,
+    ToolRetryCause,
+    ToolReturnPart,
+    tool_return_ta,
+)
 from pydantic_ai.models._continuation import observe_continuation_segments
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -72,6 +81,8 @@ def _usage_response(request_context: ModelRequestContext) -> ModelResponse | Non
 
 
 if TYPE_CHECKING:
+    from opentelemetry.trace import Span
+
     from pydantic_ai._run_context import RunContext
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -615,6 +626,7 @@ class Instrumentation(AbstractCapability[Any]):
         attributes: dict[str, Any],
         action: Callable[[], Awaitable[Any]],
         serialize_result: Callable[[Any], str],
+        run_context: RunContext[Any],
         handle_tool_control_flow: bool = False,
     ) -> Any:
         """Open a `gen_ai`-flavoured tool/output span around `action`.
@@ -626,6 +638,8 @@ class Instrumentation(AbstractCapability[Any]):
         error. When `handle_tool_control_flow` is True, the helper additionally special-cases
         `CallDeferred`/`ApprovalRequired` (deferrals are control flow, not errors) and records
         `ToolRetryError`'s retry prompt as the tool result before re-raising.
+        Either way, a failure that makes the call or output be retried sets the retry attributes
+        (see `_set_retry_attributes`).
         Output-function spans leave that flag off — `ToolRetryError` is treated as a
         plain error there because the retry prompt is recorded on the surrounding
         request/agent spans, and `CallDeferred`/`ApprovalRequired` never reach output
@@ -671,6 +685,7 @@ class Instrumentation(AbstractCapability[Any]):
                     )
                 raise
             except ToolRetryError as e:
+                _record_retry(span, names, e, run_context)
                 if handle_tool_control_flow and include_content and span.is_recording():
                     # Tool retries are surfaced as model-visible errors; record the feedback
                     # the model will see as the tool result before re-raising.
@@ -691,6 +706,7 @@ class Instrumentation(AbstractCapability[Any]):
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
+                _record_retry(span, names, e, run_context)
                 _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
@@ -725,6 +741,7 @@ class Instrumentation(AbstractCapability[Any]):
             serialize_result=lambda value: tool_return_ta.dump_json(
                 redact_binary_content(value, self.settings)
             ).decode(),
+            run_context=ctx,
             handle_tool_control_flow=True,
         )
 
@@ -795,4 +812,58 @@ class Instrumentation(AbstractCapability[Any]):
             serialize_result=lambda value: safe_to_json(
                 serialize_any(redact_binary_content(value, self.settings))
             ).decode(),
+            run_context=ctx,
         )
+
+
+def _record_retry(span: Span, names: InstrumentationNames, error: BaseException, run_context: RunContext[Any]) -> None:
+    """Set the retry attributes when `error` makes the call or output be retried.
+
+    A `ToolRetryError` carries the retry it becomes. A `ValidationError` or `ModelRetry` raised by a
+    hook or an output function is turned into one outside the span, as is the attempt on any retry
+    the agent loop charges after the span closes, so those come from `run_context`.
+    """
+    answers_call = run_context.tool_name is not None
+    if isinstance(error, ToolRetryError):
+        retry = error.tool_retry.retry
+        if retry is None:  # pragma: no cover - only a legacy part whose cause its content can't tell
+            return
+        answers_call = isinstance(error.tool_retry, ToolReturnPart)
+        if retry.attempt is None:
+            retry = _pending_retry(retry.cause, run_context)
+    elif isinstance(error, ValidationError | ModelRetry):
+        retry = _pending_retry('validation_error' if isinstance(error, ValidationError) else 'model_retry', run_context)
+    else:
+        return
+    _set_retry_attributes(span, names, retry, answers_call=answers_call)
+
+
+def _pending_retry(cause: ToolRetryCause | RetryFeedbackCause, run_context: RunContext[Any]) -> RetryInfo:
+    """The retry a failure in this span becomes once the agent loop charges it, after the span closes.
+
+    `run_context.retry` and `max_retries` are the counter the retry is charged to: the tool's own for a
+    tool or output tool call, the run's output-retry count for any other output. A failure past the
+    budget ends the run instead of retrying, so it records the cause alone.
+    """
+    attempt = run_context.retry + 1
+    if attempt > run_context.max_retries:
+        return RetryInfo(cause=cause)
+    return RetryInfo(cause=cause, attempt=attempt, max_retries=run_context.max_retries)
+
+
+def _set_retry_attributes(span: Span, names: InstrumentationNames, retry: RetryInfo, *, answers_call: bool) -> None:
+    """Record why a tool call or output has to be made again, and which attempt that is.
+
+    A retry that answers a tool call, including an output tool's, takes the `pydantic_ai.tool.retry.*`
+    attributes, and one for output that answers no call takes `pydantic_ai.output.retry.*`.
+    """
+    cause_attr, attempt_attr, max_attr = (
+        (names.tool_retry_cause_attr, names.tool_retry_attempt_attr, names.tool_retry_max_retries_attr)
+        if answers_call
+        else (names.output_retry_cause_attr, names.output_retry_attempt_attr, names.output_retry_max_retries_attr)
+    )
+    span.set_attribute(cause_attr, retry.cause)
+    if retry.attempt is not None:
+        span.set_attribute(attempt_attr, retry.attempt)
+    if retry.max_retries is not None:
+        span.set_attribute(max_attr, retry.max_retries)

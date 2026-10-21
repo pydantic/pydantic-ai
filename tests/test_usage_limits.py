@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     RunContext,
     TextPart,
     ToolCallPart,
@@ -1056,7 +1057,7 @@ async def test_failed_tool_calls_not_counted() -> None:
                         tool_call_id='pyd_ai_tool_call_id__flaky_tool',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),

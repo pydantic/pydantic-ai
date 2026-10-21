@@ -25,6 +25,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     StructuredDict,
     SystemPromptPart,
     TextContent,
@@ -1710,7 +1711,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -1890,7 +1891,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -2340,7 +2341,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',

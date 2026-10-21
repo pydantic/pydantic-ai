@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -113,7 +114,7 @@ async def test_prompts_answers_thinking_and_tool_calls_render_like_a_live_turn()
             parts=[
                 ToolReturnPart('grep', 'src/a.py:1:needle', tool_call_id='g1'),
                 ToolReturnPart('lookup', 'bad key', tool_call_id='l1', outcome='retried'),
-                RetryFeedbackPart('output invalid', cause='model_retry'),
+                RetryFeedbackPart('output invalid', retry=RetryInfo(cause='model_retry')),
             ]
         ),
         ModelResponse(parts=[TextPart('found it')]),

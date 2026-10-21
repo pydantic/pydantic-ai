@@ -46,6 +46,7 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -955,7 +956,7 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -4270,7 +4271,16 @@ async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: N
                     {'content': [{'text': 'Hello'}], 'role': 'ROLE_USER'},
                     {'content': [{'text': 'Invalid'}], 'role': 'ROLE_ASSISTANT'},
                     {
-                        'content': [{'text': '<system>Please provide a valid response</system>'}],
+                        'content': [
+                            {
+                                'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Please provide a valid response
+</retry_feedback>\
+"""
+                            }
+                        ],
                         'role': 'ROLE_USER',
                     },
                 ],
@@ -4287,7 +4297,7 @@ async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: N
     messages = result.all_messages()
     assert len(messages) == 4  # UserPrompt, ModelResponse, RetryFeedback, ModelResponse
     part = message_part(messages, RetryFeedbackPart, message_index=2)
-    assert part.cause == 'model_retry'
+    assert part.retry.cause == 'model_retry'
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):

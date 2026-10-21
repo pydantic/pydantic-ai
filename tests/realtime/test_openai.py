@@ -49,6 +49,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -1700,10 +1701,10 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
                 legacy_retry_prompt_part(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
                 legacy_retry_prompt_part(content='answer in prose'),
-                RetryFeedbackPart(content='answer in prose', cause='model_retry'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
                 RetryFeedbackPart(
                     content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
-                    cause='validation_error',
+                    retry=RetryInfo(cause='validation_error'),
                 ),
                 UserPromptPart(
                     content=[
@@ -1788,7 +1789,12 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': '<system>answer in prose</system>',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
                         }
                     ],
                 },
@@ -1801,7 +1807,12 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': '<system>answer in prose</system>',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
                         }
                     ],
                 },

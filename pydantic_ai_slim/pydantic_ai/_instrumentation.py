@@ -1230,6 +1230,16 @@ class InstrumentationNames:
     # Set on tool spans for calls that failed before execution; absent on execution failures
     tool_failure_stage_attr: ClassVar[str] = 'pydantic_ai.tool.failure_stage'
 
+    # Set on a tool span whose call has to be made again, from the retried return's `retry`
+    tool_retry_cause_attr: ClassVar[str] = 'pydantic_ai.tool.retry.cause'
+    tool_retry_attempt_attr: ClassVar[str] = 'pydantic_ai.tool.retry.attempt'
+    tool_retry_max_retries_attr: ClassVar[str] = 'pydantic_ai.tool.retry.max_retries'
+
+    # Set on an output function span whose output has to be produced again, from the feedback's `retry`
+    output_retry_cause_attr: ClassVar[str] = 'pydantic_ai.output.retry.cause'
+    output_retry_attempt_attr: ClassVar[str] = 'pydantic_ai.output.retry.attempt'
+    output_retry_max_retries_attr: ClassVar[str] = 'pydantic_ai.output.retry.max_retries'
+
     @classmethod
     def for_version(cls, version: int) -> Self:
         """Create instrumentation configuration for a specific version.

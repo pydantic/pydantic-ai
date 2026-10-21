@@ -61,11 +61,12 @@ from .._adapter import (
     DEFAULT_ALLOWED_CONTENT_TYPES,
     compaction_part_from_payload,
     compaction_payload,
-    parse_retry_cause,
+    parse_tool_retry,
     resolve_allow_uploaded_files,
     retry_feedback_from_payload,
     retry_feedback_payload,
     tool_availability_delta_from_payload,
+    tool_retry_payload,
 )
 from .._utils import get_ui_message_id, set_ui_message_id
 from ._event_stream import VercelAIEventStream
@@ -690,7 +691,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                         tool_call_id=tool_call_id,
                                         content=part.error_text,
                                         outcome='retried' if retried else 'failed',
-                                        cause=parse_retry_cause(provider_meta.get('cause')) if retried else None,
+                                        retry=parse_tool_retry(provider_meta.get('retry')) if retried else None,
                                         tool_kind=tool_kind,
                                     )
                                 )
@@ -1028,7 +1029,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             provider_details=part.provider_details,
             tool_kind=part.tool_kind,
             outcome=carried_outcome,
-            cause=tool_result.cause if isinstance(tool_result, ToolReturnPart) else None,
+            retry=tool_retry_payload(tool_result.retry)
+            if isinstance(tool_result, ToolReturnPart) and tool_result.retry is not None
+            else None,
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []

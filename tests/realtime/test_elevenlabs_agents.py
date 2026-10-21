@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     PartEndEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
+    RetryInfo,
     SpeechPart,
     TextContent,
     TextPart,
@@ -930,7 +931,10 @@ async def test_tool_sync_off_hands_undefined_tool_calls_to_the_tool_manager() ->
 
     [result] = [event for event in events if isinstance(event, FunctionToolResultEvent)]
     assert isinstance(result.part, ToolReturnPart)
-    assert (result.part.outcome, result.part.cause) == ('retried', 'unknown_tool')
+    assert (result.part.outcome, result.part.retry) == (
+        'retried',
+        RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
+    )
     assert 'Unknown tool name' in str(result.part.content)
     assert 'get_weather' in str(result.part.content)
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []

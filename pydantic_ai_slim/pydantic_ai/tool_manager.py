@@ -200,6 +200,14 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
 
 
+def _record_attempt(error: ToolRetryError, *, attempt: int | None, max_retries: int | None) -> ToolRetryError:
+    """Stamp a retried tool return with the attempt the tool manager just charged for it."""
+    part = error.tool_retry
+    if isinstance(part, _messages.ToolReturnPart) and part.retry is not None and attempt is not None:
+        part.retry = replace(part.retry, attempt=attempt, max_retries=max_retries)
+    return error
+
+
 class _UnknownTool(ModelRetry):
     """A `ModelRetry` refusing a call to a tool name that doesn't exist.
 
@@ -412,19 +420,31 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
         return tool.tool_def if tool is not None else None
 
-    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
-        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
+    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> int:
+        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries, else return the attempt.
+
+        The attempt is 1-based: the retry this failure makes, on the count `max_retries` limits.
+        """
         assert self.ctx is not None
+        retries = self.ctx.retries.get(name, 0)
         # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
         # (the count starts at 0 and only ever grows, so it would never equal a negative target).
-        if self.ctx.retries.get(name, 0) >= max_retries:
+        if retries >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
                 'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
             ) from error
+        return retries + 1
 
     @staticmethod
-    def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
+    def _wrap_error_as_retry(
+        name: str,
+        call: ToolCallPart,
+        error: ValidationError | ModelRetry,
+        *,
+        attempt: int | None,
+        max_retries: int | None,
+    ) -> ToolRetryError:
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
         cause = (
             'unknown_tool'
@@ -433,10 +453,14 @@ class ToolManager(Generic[AgentDepsT]):
             if isinstance(error, _ToolUnavailable)
             else None
         )
-        return ToolRetryError(
-            build_retried_tool_return(
-                error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
-            )
+        return _record_attempt(
+            ToolRetryError(
+                build_retried_tool_return(
+                    error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
+                )
+            ),
+            attempt=attempt,
+            max_retries=max_retries,
         )
 
     @staticmethod
@@ -654,9 +678,10 @@ class ToolManager(Generic[AgentDepsT]):
                 if not wrap_validation_errors:
                     raise
                 name = call.tool_name
-                self._check_max_retries(name, validated.tool.max_retries, e)
+                max_retries = validated.tool.max_retries
+                attempt = self._check_max_retries(name, max_retries, e)
                 self.failed_tools.add(name)
-                raise self._wrap_error_as_retry(name, call, e) from e
+                raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
             except ToolFailed as e:
                 if not wrap_validation_errors:
                     raise
@@ -780,12 +805,18 @@ class ToolManager(Generic[AgentDepsT]):
         # leave the tool with nothing left when it is later called properly and fails for real.
         # Later refusals of the same tool charge normally, so a model that never takes the
         # correction still ends the run.
+        attempt: int | None = None
         if isinstance(error, _ToolUnavailable) and name not in self.availability_refused:
             self.availability_refused.add(name)
         else:
-            self._check_max_retries(name, max_retries, cause)
+            attempt = self._check_max_retries(name, max_retries, cause)
             self.failed_tools.add(name)
-        validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
+        charged_max_retries = max_retries if attempt is not None else None
+        validation_error = (
+            _record_attempt(error, attempt=attempt, max_retries=charged_max_retries)
+            if isinstance(error, ToolRetryError)
+            else self._wrap_error_as_retry(name, call, error, attempt=attempt, max_retries=charged_max_retries)
+        )
         return ValidatedToolCall(
             call=call,
             tool=tool,
@@ -1087,9 +1118,9 @@ class ToolManager(Generic[AgentDepsT]):
             )
         except ToolRetryError as e:
             cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
-            self._check_max_retries(name, tool.max_retries, cause)
+            attempt = self._check_max_retries(name, tool.max_retries, cause)
             self.failed_tools.add(name)
-            raise
+            raise _record_attempt(e, attempt=attempt, max_retries=tool.max_retries)
 
         # Gated like `failed_tools` above: raw-mode (streaming) callers leave retry-budget state untouched.
         if wrap_validation_errors:
@@ -1208,9 +1239,10 @@ class ToolManager(Generic[AgentDepsT]):
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise
-            self._check_max_retries(name, validated.tool.max_retries, e)
+            max_retries = validated.tool.max_retries
+            attempt = self._check_max_retries(name, max_retries, e)
             self.failed_tools.add(name)
-            raise self._wrap_error_as_retry(name, validated.call, e) from e
+            raise self._wrap_error_as_retry(name, validated.call, e, attempt=attempt, max_retries=max_retries) from e
 
         _usage_attribution.record_tool_call(usage)
 

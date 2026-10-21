@@ -51,6 +51,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -3610,7 +3611,7 @@ class TestModelRetryFromHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Response was bad, please try again',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3620,7 +3621,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good response')],
-                    usage=RequestUsage(input_tokens=57, output_tokens=4),
+                    usage=RequestUsage(input_tokens=76, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -3717,7 +3718,7 @@ class TestModelRetryFromHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Response was bad, please try again',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3853,7 +3854,7 @@ class TestModelRetryFromHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Short-circuit retry',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -3933,7 +3934,7 @@ class TestModelRetryFromHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Post-handler retry',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -4005,7 +4006,7 @@ class TestModelRetryFromHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Wrap says retry',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -4015,7 +4016,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='second attempt')],
-                    usage=RequestUsage(input_tokens=54, output_tokens=4),
+                    usage=RequestUsage(input_tokens=73, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4097,7 +4098,7 @@ class TestModelRetryFromHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Model failed, please try again',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -4107,7 +4108,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='recovered response')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=2),
+                    usage=RequestUsage(input_tokens=75, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4187,7 +4188,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4287,7 +4288,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4402,7 +4403,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4411,7 +4412,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
-                    usage=RequestUsage(input_tokens=83, output_tokens=4),
+                    usage=RequestUsage(input_tokens=76, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4429,7 +4430,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got: tool result')],
-                    usage=RequestUsage(input_tokens=85, output_tokens=7),
+                    usage=RequestUsage(input_tokens=78, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4511,7 +4512,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4520,7 +4521,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='my_tool', args='{}', tool_call_id='call-1')],
-                    usage=RequestUsage(input_tokens=83, output_tokens=4),
+                    usage=RequestUsage(input_tokens=76, output_tokens=4),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4538,7 +4539,7 @@ class TestModelRetryFromHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='got: tool result')],
-                    usage=RequestUsage(input_tokens=85, output_tokens=7),
+                    usage=RequestUsage(input_tokens=78, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -4622,7 +4623,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4699,7 +4700,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4775,7 +4776,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4851,7 +4852,7 @@ class TestModelRetryFromHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                         )
                     ],
                     timestamp=IsDatetime(),

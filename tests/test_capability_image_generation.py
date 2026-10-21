@@ -44,6 +44,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1805,7 +1806,7 @@ class TestImageGenerationCapability:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),

@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -1059,7 +1060,7 @@ class TestPrepareToolsCapability:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='unknown_tool',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),

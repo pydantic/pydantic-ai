@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -675,7 +676,7 @@ class TestConversationContext:
                     UserPromptPart(content=[ImageUrl(url='u')]),
                     ToolReturnPart(tool_name='reader', content='file body', tool_call_id='t1'),
                     ToolReturnPart(tool_name='reader', content='try again', tool_call_id='t3', outcome='retried'),
-                    RetryFeedbackPart(content='bad output', cause='model_retry'),
+                    RetryFeedbackPart(content='bad output', retry=RetryInfo(cause='model_retry')),
                     legacy_retry_prompt_part('legacy try again', tool_name='reader', tool_call_id='t7'),
                     legacy_retry_prompt_part('legacy bad output'),
                 ]
@@ -704,7 +705,10 @@ class TestConversationContext:
 user: look at this and this
 tool reader returned: file body
 retry (reader): try again
-retry (output): bad output
+retry (output): Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+&lt;retry_feedback&gt;
+bad output
+&lt;/retry_feedback&gt;
 retry (reader): legacy try again
 
 Fix the errors and try again.

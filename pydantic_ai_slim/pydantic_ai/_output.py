@@ -156,7 +156,11 @@ def build_retried_tool_return(
         cause = 'validation_error' if isinstance(error, ValidationError) else 'model_retry'
 
     part = _messages.ToolReturnPart(
-        tool_name=tool_name, content=content, tool_kind=tool_kind, outcome='retried', cause=cause
+        tool_name=tool_name,
+        content=content,
+        tool_kind=tool_kind,
+        outcome='retried',
+        retry=_messages.RetryInfo(cause=cause),
     )
     if tool_call_id:
         part.tool_call_id = tool_call_id
@@ -184,7 +188,7 @@ def retried_return_from_legacy(
         tool_call_id=tool_call_id,
         tool_kind=tool_kind,
         outcome='retried',
-        cause='model_retry' if isinstance(content, str) else 'validation_error',
+        retry=_messages.RetryInfo(cause='model_retry' if isinstance(content, str) else 'validation_error'),
     )
 
 
@@ -199,10 +203,13 @@ def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[
         if isinstance(e, ValidationError):
             return ToolRetryError(
                 _messages.RetryFeedbackPart(
-                    content=e.errors(include_url=False, include_context=False), cause='validation_error'
+                    content=e.errors(include_url=False, include_context=False),
+                    retry=_messages.RetryInfo(cause='validation_error'),
                 )
             )
-        return ToolRetryError(_messages.RetryFeedbackPart(content=e.message, cause='model_retry'))
+        return ToolRetryError(
+            _messages.RetryFeedbackPart(content=e.message, retry=_messages.RetryInfo(cause='model_retry'))
+        )
 
     return ToolRetryError(
         build_retried_tool_return(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
@@ -471,7 +478,9 @@ async def execute_output_function(
             # Only text, native and prompted output wrap here: an output *tool* call reaches this
             # with `wrap_validation_errors=False` and rebuilds the retry from its own call in
             # `_make_retry_signal`, so there is never a call for this one to answer.
-            raise ToolRetryError(_messages.RetryFeedbackPart(content=r.message, cause='model_retry')) from r
+            raise ToolRetryError(
+                _messages.RetryFeedbackPart(content=r.message, retry=_messages.RetryInfo(cause='model_retry'))
+            ) from r
         else:
             raise
 

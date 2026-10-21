@@ -25,6 +25,7 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -1253,7 +1254,9 @@ async def test_unrendered_retry_feedback_raises_user_error_not_assertion(allow_m
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='how many?')]),
         ModelResponse(parts=[TextPart(content='lots')]),
-        ModelRequest(parts=[RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')]),
+        ModelRequest(
+            parts=[RetryFeedbackPart(content='the answer has to be a number', retry=RetryInfo(cause='model_retry'))]
+        ),
     ]
 
     with pytest.raises(UserError, match=r'prepare_messages'):

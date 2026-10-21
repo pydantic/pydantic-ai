@@ -1983,7 +1983,7 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=datetime.datetime(...),

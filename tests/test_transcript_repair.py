@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -449,7 +450,7 @@ async def test_trailing_incomplete_tool_call_resumed_with_retry():
                         tool_call_id='call_1',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -879,7 +880,15 @@ async def test_plain_retry_prompt_does_not_answer_tool_call():
                 timestamp=TS,
                 outcome='interrupted',
             ),
-            UserPromptPart(content='<system>Response was not valid, try again.</system>', timestamp=TS),
+            UserPromptPart(
+                content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Response was not valid, try again.
+</retry_feedback>\
+""",
+                timestamp=TS,
+            ),
         ]
     )
 

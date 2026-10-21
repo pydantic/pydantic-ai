@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -613,7 +614,7 @@ class TestTranscript:
                 parts=[
                     ToolReturnPart(tool_name='lookup', content={'k': 'v'}, tool_call_id='c1'),
                     ToolReturnPart(tool_name='lookup', content='bad args', tool_call_id='c2', outcome='retried'),
-                    RetryFeedbackPart(content='not done yet', cause='model_retry'),
+                    RetryFeedbackPart(content='not done yet', retry=RetryInfo(cause='model_retry')),
                     legacy_retry_prompt_part('legacy bad args', tool_name='lookup', tool_call_id='c3'),
                     legacy_retry_prompt_part('legacy not done'),
                 ]
@@ -684,7 +685,10 @@ class TestTranscript:
                 [
                     ModelRequest(parts=[UserPromptPart('Fix the login bug only.')]),
                     ModelRequest(
-                        parts=[RetryFeedbackPart('bad output', cause='model_retry'), UserPromptPart('follow-up')]
+                        parts=[
+                            RetryFeedbackPart('bad output', retry=RetryInfo(cause='model_retry')),
+                            UserPromptPart('follow-up'),
+                        ]
                     ),
                 ],
                 'user: Fix the login bug only.\n[...]\n',

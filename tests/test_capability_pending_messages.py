@@ -51,6 +51,7 @@ from pydantic_ai.messages import (
     ModelResponseStreamEvent,
     PartStartEvent,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -1708,7 +1709,10 @@ async def test_enqueue_from_tool_renders_like_its_own_request():
         pytest.param([UserPromptPart('Then this.'), ToolReturnPart('tool_a', 'a', 'call-a')], id='prompt-first'),
         pytest.param([ToolReturnPart('tool_a', 'a', 'call-a'), UserPromptPart('Then this.')], id='prompt-last'),
         pytest.param(
-            [RetryFeedbackPart('Try again.', cause='model_retry'), ToolReturnPart('tool_a', 'a', 'call-a')],
+            [
+                RetryFeedbackPart('Try again.', retry=RetryInfo(cause='model_retry')),
+                ToolReturnPart('tool_a', 'a', 'call-a'),
+            ],
             id='plain-retry-first',
         ),
         pytest.param(

@@ -34,6 +34,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -405,7 +406,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5398,7 +5399,7 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5553,7 +5554,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -5678,7 +5679,7 @@ async def test_tool_use_failed_error_with_text(allow_model_requests: None, groq_
                                 'input': 'maybe',
                             }
                         ],
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5799,7 +5800,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                                 'input': 'maybe',
                             }
                         ],
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

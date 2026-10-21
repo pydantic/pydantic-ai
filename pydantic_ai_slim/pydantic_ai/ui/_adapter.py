@@ -16,7 +16,6 @@ from typing import (
     Protocol,
     Self,
     cast,
-    get_args,
     runtime_checkable,
 )
 
@@ -36,6 +35,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
     ToolRetryCause,
@@ -279,7 +279,7 @@ def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
     """Serialize a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] for a metadata channel.
 
     Both protocols dump harness retry feedback as a plain message, whose text is lossy — it says
-    nothing about the `cause` that chose its voice — and indistinguishable from a message the client
+    nothing about the `retry.cause` that chose its voice — and indistinguishable from a message the client
     wrote. So the part itself rides alongside it under a `retry_feedback` key in the metadata channel
     each protocol already uses for Pydantic AI continuity claims (Vercel AI's `providerMetadata`,
     AG-UI's `encrypted_value`), and that is what `load_messages` reconstructs from.
@@ -292,17 +292,25 @@ def retry_feedback_payload(part: RetryFeedbackPart) -> dict[str, Any]:
     return _RETRY_FEEDBACK_PART_ADAPTER.dump_python(part, mode='json', exclude={'content': {'__all__': {'ctx'}}})
 
 
-_RETRY_CAUSES: tuple[ToolRetryCause, ...] = get_args(ToolRetryCause)
+_TOOL_RETRY_INFO_ADAPTER: TypeAdapter[RetryInfo[ToolRetryCause]] = TypeAdapter(RetryInfo[ToolRetryCause])
 
 
-def parse_retry_cause(value: object) -> ToolRetryCause | None:
-    """Read a retried tool return's `cause` claim from a client-echoed metadata channel.
+def tool_retry_payload(retry: RetryInfo[ToolRetryCause]) -> dict[str, Any]:
+    """Serialize a retried tool return's [`retry`][pydantic_ai.messages.ToolReturnPart.retry] for a metadata channel."""
+    return _TOOL_RETRY_INFO_ADAPTER.dump_python(retry, mode='json', exclude_none=True)
 
-    The claim is untrusted coming back in, so anything that isn't one of the known causes reads as
-    `None`. It's metadata for the application only and never reaches the model, so a forged one can
-    mislead an audit but not the run.
+
+def parse_tool_retry(value: object) -> RetryInfo[ToolRetryCause] | None:
+    """Read a retried tool return's `retry` claim from a client-echoed metadata channel.
+
+    The claim is untrusted coming back in, so anything that doesn't validate, such as an unknown
+    cause, reads as `None`. It's metadata for the application only and never reaches the model, so a
+    forged one can mislead an audit but not the run.
     """
-    return next((cause for cause in _RETRY_CAUSES if cause == value), None)
+    try:
+        return _TOOL_RETRY_INFO_ADAPTER.validate_python(value)
+    except ValidationError:
+        return None
 
 
 def retry_feedback_from_payload(payload: object) -> RetryFeedbackPart | None:

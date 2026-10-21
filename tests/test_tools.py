@@ -27,6 +27,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     PrefixedToolset,
+    RetryInfo,
     RunContext,
     TextPart,
     Tool,
@@ -2109,7 +2110,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                             tool_call_id='output_call',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -2130,7 +2131,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                     parts=[
                         ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')
                     ],
-                    usage=RequestUsage(input_tokens=85, output_tokens=13),
+                    usage=RequestUsage(input_tokens=78, output_tokens=13),
                     model_name='function:llm:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -2548,7 +2549,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2563,7 +2564,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2650,7 +2651,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2665,7 +2666,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2688,7 +2689,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2703,7 +2704,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2735,7 +2736,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2750,7 +2751,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2816,7 +2817,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2831,7 +2832,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         content='Apples are not available',
@@ -2839,7 +2840,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2854,7 +2855,7 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -3327,7 +3328,7 @@ def test_retry_tool_until_last_attempt():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -3351,7 +3352,7 @@ def test_retry_tool_until_last_attempt():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=2, max_retries=2),
                     )
                 ],
                 timestamp=IsDatetime(),

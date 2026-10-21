@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -271,7 +272,7 @@ class TestOnOutputValidateError:
                                     'input': 'bad',
                                 }
                             ],
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -416,7 +417,7 @@ class TestOnOutputValidateErrorModelRetry:
                     parts=[
                         RetryFeedbackPart(
                             content='Please return a valid integer for value',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -426,7 +427,7 @@ class TestOnOutputValidateErrorModelRetry:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=58, output_tokens=7),
+                    usage=RequestUsage(input_tokens=77, output_tokens=7),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -483,7 +484,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Negative values are not allowed',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -493,7 +494,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=6),
+                    usage=RequestUsage(input_tokens=75, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -547,7 +548,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Zero is not a valid value',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -557,7 +558,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 42}')],
-                    usage=RequestUsage(input_tokens=57, output_tokens=6),
+                    usage=RequestUsage(input_tokens=76, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -610,7 +611,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Output too short, please elaborate',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -620,7 +621,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='this is long enough')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=5),
+                    usage=RequestUsage(input_tokens=75, output_tokens=5),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -684,7 +685,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Bad output, please try again',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -694,7 +695,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='good')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=2),
+                    usage=RequestUsage(input_tokens=75, output_tokens=2),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -749,7 +750,7 @@ class TestModelRetryFromOutputHooks:
                     parts=[
                         RetryFeedbackPart(
                             content='Cannot execute with zero value',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -759,7 +760,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"value": 5}')],
-                    usage=RequestUsage(input_tokens=56, output_tokens=6),
+                    usage=RequestUsage(input_tokens=75, output_tokens=6),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -828,7 +829,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -914,7 +915,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -998,7 +999,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1007,7 +1008,7 @@ class TestModelRetryFromOutputHooks:
                 ),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='final_result', args='{"value": 42}', tool_call_id='call-2')],
-                    usage=RequestUsage(input_tokens=84, output_tokens=9),
+                    usage=RequestUsage(input_tokens=77, output_tokens=9),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1087,7 +1088,7 @@ class TestModelRetryFromOutputHooks:
                             tool_call_id='call-1',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -2293,7 +2294,7 @@ class TestOutputHookErrorPaths:
                                     'input': 'not valid json',
                                 }
                             ],
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2452,7 +2453,7 @@ class TestOutputHookErrorPaths:
                                     'input': 'invalid',
                                 }
                             ],
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2604,7 +2605,7 @@ class TestOutputHookErrorPaths:
                                     'input': 'bad json',
                                 }
                             ],
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -2817,7 +2818,7 @@ class TestDefaultOutputErrorHooks:
                                     'input': 'not json',
                                 }
                             ],
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                             timestamp=IsDatetime(),
                         )
                     ],

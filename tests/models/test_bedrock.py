@@ -42,6 +42,7 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -1073,7 +1074,7 @@ The temperature in London on 1st January 2022 was 30°C.\
 """,
                             }
                         ],
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=5),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1260,7 +1261,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                     )
                 ],
                 instructions='You are a helpful chatbot.',

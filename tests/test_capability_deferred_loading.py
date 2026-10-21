@@ -43,6 +43,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryInfo,
     TextPart,
     ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
@@ -870,7 +871,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -883,7 +884,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=75, output_tokens=10),
+                usage=RequestUsage(input_tokens=68, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -907,7 +908,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='done')],
-                usage=RequestUsage(input_tokens=80, output_tokens=11),
+                usage=RequestUsage(input_tokens=73, output_tokens=11),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),

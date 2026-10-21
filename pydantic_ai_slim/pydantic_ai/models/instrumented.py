@@ -453,11 +453,11 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     keeps reading the role it was built for.
 
     `RetryFeedbackPart` sits on that same boundary, for the same reason. From version 6 on it takes
-    the voice it reaches the model in, which its `cause` decides: `user` for a `'validation_error'`,
-    which quotes back what the model wrote, and `system` for the causes carrying a message the
-    agent's author wrote. Earlier versions keep every cause on `user`, so a consumer written against
-    them keeps reading the role it was built for — and for a `'validation_error'` that is already the
-    role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
+    the voice it reaches the model in, which its `retry.cause` decides: `user` for a
+    `'validation_error'` or `'model_retry'`, either of which can quote back what the model wrote, and
+    `system` for `'no_output'`, whose text is the framework's own. Earlier versions keep every cause
+    on `user`, so a consumer written against them keeps reading the role it was built for — and for
+    every cause but `'no_output'` that is already the role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
     history after `prepare_messages` has already translated the part, except on a decision model,
     which is handed the part itself.
 

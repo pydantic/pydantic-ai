@@ -14,13 +14,14 @@ from typing_extensions import TypedDict
 from ..._utils import is_str_dict
 from ...messages import (
     RetryFeedbackPart,
+    RetryInfo,
     ThinkingPart,
     ToolPartKind,
     ToolRetryCause,
     parse_tool_kind,
     tool_return_content_ta,
 )
-from .._adapter import parse_retry_cause, retry_feedback_from_payload, retry_feedback_payload
+from .._adapter import parse_tool_retry, retry_feedback_from_payload, retry_feedback_payload, tool_retry_payload
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
@@ -175,7 +176,7 @@ def _namespaced_encrypted_value(payload: Mapping[str, object]) -> str:
 def tool_kind_encrypted_value(
     tool_kind: ToolPartKind | None,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
-    cause: ToolRetryCause | None = None,
+    retry: RetryInfo[ToolRetryCause] | None = None,
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -192,16 +193,16 @@ def tool_kind_encrypted_value(
     so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to
     `'success'` — and since `outcome` can affect how a return is serialized to a provider (e.g. a
     native error channel), that would silently change the request bytes and break the prompt-cache
-    prefix stability the repaired history is designed to keep. A retried return's `cause` rides along
+    prefix stability the repaired history is designed to keep. A retried return's `retry` rides along
     too, so an application auditing rejected calls still sees it after a round-trip.
     """
-    payload: dict[str, str] = {}
+    payload: dict[str, object] = {}
     if tool_kind is not None:
         payload['tool_kind'] = tool_kind
     if outcome is not None and outcome != 'success':
         payload['outcome'] = outcome
-    if cause is not None:
-        payload['cause'] = cause
+    if retry is not None:
+        payload['retry'] = tool_retry_payload(retry)
     if not payload:
         return None
     return _namespaced_encrypted_value(payload)
@@ -218,7 +219,7 @@ def tool_kind_encrypted_value_kwargs(
     *,
     supported: bool,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
-    cause: ToolRetryCause | None = None,
+    retry: RetryInfo[ToolRetryCause] | None = None,
 ) -> _EncryptedValueKwargs:
     """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
@@ -227,7 +228,7 @@ def tool_kind_encrypted_value_kwargs(
     has nothing to carry, so — like the streaming carrier — the field is only ever set when there's a
     claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
     """
-    value = tool_kind_encrypted_value(tool_kind, outcome, cause) if supported else None
+    value = tool_kind_encrypted_value(tool_kind, outcome, retry) if supported else None
     return {'encrypted_value': value} if value is not None else {}
 
 
@@ -317,12 +318,12 @@ def parse_encrypted_outcome(
     return None
 
 
-def parse_encrypted_retry_cause(
+def parse_encrypted_tool_retry(
     encrypted_value: str | None,
-) -> ToolRetryCause | None:
-    """Read a retried tool return's `cause` claim from the `pydantic_ai` namespace of an `encrypted_value` blob."""
+) -> RetryInfo[ToolRetryCause] | None:
+    """Read a retried tool return's `retry` claim from the `pydantic_ai` namespace of an `encrypted_value` blob."""
     namespaced = _parse_encrypted_namespace(encrypted_value)
-    return None if namespaced is None else parse_retry_cause(namespaced.get('cause'))
+    return None if namespaced is None else parse_tool_retry(namespaced.get('retry'))
 
 
 def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedbackPart | None:

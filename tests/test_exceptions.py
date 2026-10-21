@@ -37,7 +37,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryFeedbackPart, ToolReturnPart
+from pydantic_ai.messages import RetryFeedbackPart, RetryInfo, ToolReturnPart
 
 from ._inline_snapshot import snapshot
 from .conftest import legacy_retry_prompt_part
@@ -307,7 +307,7 @@ def test_tool_retry_error_pickle_round_trip_with_feedback():
     errors: list[ErrorDetails] = [
         {'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'country': 'FR'}}
     ]
-    part = RetryFeedbackPart(content=errors, cause='validation_error')
+    part = RetryFeedbackPart(content=errors, retry=RetryInfo(cause='validation_error'))
     exc = ToolRetryError(part)
     restored = pickle.loads(pickle.dumps(exc))
 
@@ -315,7 +315,7 @@ def test_tool_retry_error_pickle_round_trip_with_feedback():
     assert str(restored) == str(exc)
     assert isinstance(restored.tool_retry, RetryFeedbackPart)
     assert restored.tool_retry.content == errors
-    assert restored.tool_retry.cause == 'validation_error'
+    assert restored.tool_retry.retry.cause == 'validation_error'
     assert restored.tool_retry.timestamp == part.timestamp
 
 
@@ -347,7 +347,7 @@ def test_tool_failed_error_non_str_content():
 
 def test_tool_retry_error_str_with_string_content():
     """Test that ToolRetryError uses string content as message automatically."""
-    error = ToolRetryError(RetryFeedbackPart(content='error from tool', cause='model_retry'))
+    error = ToolRetryError(RetryFeedbackPart(content='error from tool', retry=RetryInfo(cause='model_retry')))
     assert str(error) == 'error from tool'
 
 
@@ -356,7 +356,9 @@ def test_tool_retry_error_str_with_error_details():
     validation_error = ValidationError.from_exception_data(
         'Test', [{'type': 'string_type', 'loc': ('name',), 'input': 123}]
     )
-    part = RetryFeedbackPart(content=validation_error.errors(include_url=False), cause='validation_error')
+    part = RetryFeedbackPart(
+        content=validation_error.errors(include_url=False), retry=RetryInfo(cause='validation_error')
+    )
     error = ToolRetryError(part)
 
     assert str(error) == (
@@ -432,7 +434,7 @@ def test_tool_retry_error_str_with_value_error_type():
             'input': 'foo',
         }
     ]
-    part = RetryFeedbackPart(content=error_details, cause='validation_error')
+    part = RetryFeedbackPart(content=error_details, retry=RetryInfo(cause='validation_error'))
     error = ToolRetryError(part)
 
     assert str(error) == (

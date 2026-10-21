@@ -39,6 +39,7 @@ from pydantic_ai import (
     PartStartEvent,
     RequestUsage,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1190,7 +1191,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -5158,7 +5159,7 @@ async def test_openai_previous_response_id_seed_auto_chains_through_retries(
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=3),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -10562,7 +10563,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10726,7 +10727,7 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text or include your response in a tool call.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -450,7 +451,11 @@ async def test_anthropic_foreign_thinking_roundtrip_wire_stable(
             ),
         ),
         pytest.param(
-            [UserPromptPart('A1'), RetryFeedbackPart('bad', cause='validation_error'), UserPromptPart('B1')],
+            [
+                UserPromptPart('A1'),
+                RetryFeedbackPart('bad', retry=RetryInfo(cause='validation_error')),
+                UserPromptPart('B1'),
+            ],
             '0.1.11',
             id='retry',
         ),
@@ -538,7 +543,7 @@ async def test_openai_retry_feedback_after_user_prompt_vercel_roundtrip_wire_sta
         ModelRequest(
             parts=[
                 UserPromptPart('how many?'),
-                RetryFeedbackPart('the answer has to be a number', cause='model_retry'),
+                RetryFeedbackPart('the answer has to be a number', retry=RetryInfo(cause='model_retry')),
             ]
         ),
         ModelResponse(parts=[TextPart('OK')]),

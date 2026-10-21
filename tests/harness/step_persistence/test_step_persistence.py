@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1568,7 +1569,7 @@ class TestRetryFeedback:
         messages: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content='hi')]),
             ModelResponse(parts=[TextPart(content='wrong shape')]),
-            ModelRequest(parts=[RetryFeedbackPart(content='try again', cause='validation_error')]),
+            ModelRequest(parts=[RetryFeedbackPart(content='try again', retry=RetryInfo(cause='validation_error'))]),
         ]
         assert is_provider_valid(messages) is True
 

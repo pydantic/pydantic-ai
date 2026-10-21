@@ -37,6 +37,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     RetryFeedbackPart,
+    RetryInfo,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -547,7 +548,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -5291,7 +5292,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

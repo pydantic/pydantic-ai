@@ -38,6 +38,7 @@ from pydantic_ai import (
     PromptedOutput,
     RequestUsage,
     RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     RunTimedOut,
     RunUsage,
@@ -2772,7 +2773,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "cause": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2800,7 +2801,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "cause": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2881,7 +2882,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "cause": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -3054,7 +3055,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "cause": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -3160,7 +3161,7 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                             tool_call_id='call_TtLEMpCeAhnG48btCDrw8lhl',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -5778,7 +5779,7 @@ async def test_durability_output_retry_feedback_survives_the_activity_and_a_resu
                         'input': 'lots',
                     }
                 ],
-                cause='validation_error',
+                retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 timestamp=IsDatetime(),
             )
         ]

@@ -11,6 +11,7 @@ from pydantic_ai import (
     ModelResponse,
     RequestUsage,
     RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -289,7 +290,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'input': 'Paris.',
                             }
                         ],
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

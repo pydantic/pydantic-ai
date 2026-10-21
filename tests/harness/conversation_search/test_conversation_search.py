@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -827,7 +828,7 @@ class TestSearchScope:
                     UserPromptPart(content='mango question'),
                     RetryFeedbackPart(
                         content=[{'type': 'missing', 'loc': ('mango',), 'msg': 'Field required', 'input': {}}],
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error'),
                     ),
                 ]
             ),
@@ -849,7 +850,7 @@ class TestSearchScope:
         ]
         errors.append({'type': 'missing', 'loc': ('rambutan',), 'msg': 'Field required', 'input': {}})
         messages: list[ModelMessage] = [
-            ModelRequest(parts=[RetryFeedbackPart(content=errors, cause='validation_error')]),
+            ModelRequest(parts=[RetryFeedbackPart(content=errors, retry=RetryInfo(cause='validation_error'))]),
         ]
         source = _StubSource({'r1': messages})
 

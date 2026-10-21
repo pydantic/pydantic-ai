@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -338,7 +339,7 @@ class TestCompactionTokenRetention:
         elif reply_kind == 'tool_retry':
             reply = ToolReturnPart('lookup', 'retry', tool_call_id='lookup-1', outcome='retried')
         elif reply_kind == 'generic_retry':
-            reply = RetryFeedbackPart('retry', cause='model_retry')
+            reply = RetryFeedbackPart('retry', retry=RetryInfo(cause='model_retry'))
         else:
             # TODO(v3): remove the legacy cases along with `RetryPromptPart`
             reply = legacy_retry_prompt_part(

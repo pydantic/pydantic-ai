@@ -29,6 +29,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -999,7 +1000,7 @@ def test_messages_to_otel_messages_request_roles_v6():
                 ToolReturnPart(tool_name='convert', content='11 USD', tool_call_id='call_1'),
                 legacy_retry_prompt_part(content='Unknown currency.', tool_name='convert', tool_call_id='call_2'),
                 legacy_retry_prompt_part(content='Output did not validate.'),
-                RetryFeedbackPart(content='Output did not validate.', cause='validation_error'),
+                RetryFeedbackPart(content='Output did not validate.', retry=RetryInfo(cause='validation_error')),
                 UserPromptPart(content='Thanks.'),
             ]
         ),
@@ -1081,8 +1082,8 @@ def test_messages_to_otel_messages_retry_feedback_across_versions():
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                RetryFeedbackPart(content=errors, cause='validation_error'),
-                RetryFeedbackPart(content='Answer in French.', cause='model_retry'),
+                RetryFeedbackPart(content=errors, retry=RetryInfo(cause='validation_error')),
+                RetryFeedbackPart(content='Answer in French.', retry=RetryInfo(cause='model_retry')),
             ]
         ),
     ]
@@ -1107,7 +1108,15 @@ Your previous response failed the application's validation (this is automated fe
 </validation_errors>\
 """,
                         },
-                        {'type': 'text', 'content': 'Answer in French.'},
+                        {
+                            'type': 'text',
+                            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in French.
+</retry_feedback>\
+""",
+                        },
                     ],
                 }
             ],
@@ -1123,15 +1132,20 @@ Your previous response failed the application's validation (this is automated fe
 [{"type":"missing","loc":["answer"],"msg":"Field required","input":{"answr":"oui"}},{"type":"string_type","loc":["answer","text"],"msg":"Input should be a valid string","input":42}]
 </validation_errors>\
 """,
-                        }
+                        },
+                        {
+                            'type': 'text',
+                            'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in French.
+</retry_feedback>\
+""",
+                        },
                     ],
-                },
-                {'role': 'system', 'parts': [{'type': 'text', 'content': 'Answer in French.'}]},
+                }
             ],
-            'v6 without content': [
-                {'role': 'user', 'parts': [{'type': 'text'}]},
-                {'role': 'system', 'parts': [{'type': 'text'}]},
-            ],
+            'v6 without content': [{'role': 'user', 'parts': [{'type': 'text'}, {'type': 'text'}]}],
         }
     )
 
@@ -1190,11 +1204,16 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                     {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
                     {
-                        'role': 'system',
+                        'role': 'user',
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': 'Answer in English.',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
                             }
                         ],
                     },
@@ -1202,7 +1221,20 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                 'run (pydantic_ai.all_messages)': [
                     {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
-                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
+                            }
+                        ],
+                    },
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
                 ],
             },
@@ -1215,7 +1247,12 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': '<system>Answer in English.</system>',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
                             }
                         ],
                     },
@@ -1223,7 +1260,20 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                 'run (pydantic_ai.all_messages)': [
                     {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
-                    {'role': 'user', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
+                            }
+                        ],
+                    },
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
                 ],
             },
@@ -1232,11 +1282,16 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                     {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
                     {
-                        'role': 'system',
+                        'role': 'user',
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': 'Answer in English.',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
                             }
                         ],
                     },
@@ -1244,7 +1299,20 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                 'run (pydantic_ai.all_messages)': [
                     {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
-                    {'role': 'system', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
+                            }
+                        ],
+                    },
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
                 ],
             },
@@ -1257,7 +1325,12 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                         'parts': [
                             {
                                 'type': 'text',
-                                'content': '<system>Answer in English.</system>',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
                             }
                         ],
                     },
@@ -1265,7 +1338,20 @@ async def test_run_records_retry_feedback_on_both_spans(capfire: CaptureLogfire)
                 'run (pydantic_ai.all_messages)': [
                     {'role': 'user', 'parts': [{'type': 'text', 'content': 'Convert 10 EUR.'}]},
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Non.'}]},
-                    {'role': 'system', 'parts': [{'type': 'text', 'content': 'Answer in English.'}]},
+                    {
+                        'role': 'user',
+                        'parts': [
+                            {
+                                'type': 'text',
+                                'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer in English.
+</retry_feedback>\
+""",
+                            }
+                        ],
+                    },
                     {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Ten euros.'}]},
                 ],
             },
@@ -1662,7 +1748,8 @@ def test_messages_without_content(document_content: BinaryContent):
         # model-visible prose, so both must honor `include_content=False` like every sibling part.
         ModelRequest(parts=[legacy_retry_prompt_part('retry_prompt_no_tool')], timestamp=IsDatetime()),
         ModelRequest(
-            parts=[RetryFeedbackPart(content='harness feedback', cause='model_retry')], timestamp=IsDatetime()
+            parts=[RetryFeedbackPart(content='harness feedback', retry=RetryInfo(cause='model_retry'))],
+            timestamp=IsDatetime(),
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart('simple text prompt')], timestamp=IsDatetime()),

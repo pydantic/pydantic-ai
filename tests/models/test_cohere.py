@@ -22,6 +22,7 @@ from pydantic_ai import (
     ModelRetry,
     ModelTimeoutError,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -476,7 +477,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),

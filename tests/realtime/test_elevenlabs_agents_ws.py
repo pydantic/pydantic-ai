@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     RealtimeSessionErrorEvent,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -241,7 +242,10 @@ async def test_tool_sync_off_hands_an_undefined_tool_call_to_the_tool_manager(
     assert len(results) >= 1
     for result in results:
         assert isinstance(result.part, ToolReturnPart)
-        assert (result.part.outcome, result.part.cause) == ('retried', 'unknown_tool')
+        assert (result.part.outcome, result.part.retry) == (
+            'retried',
+            RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
+        )
         assert 'Unknown tool name' in str(result.part.content) and 'get_weather' in str(result.part.content)
     # The tool manager's error text is what the agent received, as an ordinary result (the codec's
     # `ToolResult` carries no error flag).

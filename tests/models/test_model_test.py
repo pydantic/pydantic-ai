@@ -21,6 +21,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    RetryInfo,
     RunContext,
     StructuredDict,
     TextPart,
@@ -368,7 +369,7 @@ def test_tool_retry():
                         timestamp=IsNow(tz=UTC),
                         tool_call_id=IsStr(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),

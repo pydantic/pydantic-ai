@@ -1456,7 +1456,7 @@ Distinct from [`ToolDefinitionKind`][pydantic_ai.tools.ToolDefinitionKind] (invo
 """
 
 ToolRetryCause: TypeAlias = Literal['validation_error', 'model_retry', 'unknown_tool', 'unavailable_tool']
-"""Why a tool call has to be made again, recorded on a retried [`ToolReturnPart.cause`][pydantic_ai.messages.ToolReturnPart.cause].
+"""Why a tool call has to be made again, recorded as the [`cause`][pydantic_ai.messages.RetryInfo.cause] of a retried [`ToolReturnPart.retry`][pydantic_ai.messages.ToolReturnPart.retry].
 
 - `'validation_error'`: the call's arguments, or an output tool's result, failed validation.
 - `'model_retry'`: the tool, its `args_validator`, a tool hook, or a
@@ -1468,18 +1468,66 @@ ToolRetryCause: TypeAlias = Literal['validation_error', 'model_retry', 'unknown_
 """
 
 RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_retry']
-"""What made a response unusable, recorded on [`RetryFeedbackPart.cause`][pydantic_ai.messages.RetryFeedbackPart.cause].
+"""What made a response unusable, recorded as the [`cause`][pydantic_ai.messages.RetryInfo.cause] of [`RetryFeedbackPart.retry`][pydantic_ai.messages.RetryFeedbackPart.retry].
 
 - `'validation_error'`: the output failed validation against the expected schema. The feedback
   quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
   the user voice inside a `<validation_errors>` fence rather than in the harness's own.
 - `'no_output'`: the response carried nothing usable as output (e.g. thinking only).
 - `'model_retry'`: an output validator, output function, or model hook raised
-  [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
+  [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. Its message commonly interpolates the output it
+  rejects, so it goes in the user voice too, inside a `<retry_feedback>` fence.
 
-The last two carry text the agent's author wrote knowing it would be shown, so they reach the
-model in the system voice.
+Only `'no_output'` carries fixed framework text, so only it reaches the model in the system voice.
 """
+
+RetryCauseT_co = TypeVar(
+    'RetryCauseT_co', bound=str, covariant=True, default=Literal[ToolRetryCause, RetryFeedbackCause]
+)
+"""The cause a [`RetryInfo`][pydantic_ai.messages.RetryInfo] records: a
+[`ToolRetryCause`][pydantic_ai.messages.ToolRetryCause] or a
+[`RetryFeedbackCause`][pydantic_ai.messages.RetryFeedbackCause]."""
+
+
+@dataclass(frozen=True, repr=False)
+class RetryInfo(Generic[RetryCauseT_co]):
+    """Why a retry happened and how far into its budget it is.
+
+    Carried by a retried [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] as
+    [`retry`][pydantic_ai.messages.ToolReturnPart.retry], and by every
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] as
+    [`retry`][pydantic_ai.messages.RetryFeedbackPart.retry].
+
+    Metadata for your code only: it is never sent to the model, so it doesn't change the request or
+    the provider's prompt cache.
+    """
+
+    cause: RetryCauseT_co
+    """What made the retry necessary."""
+
+    _: KW_ONLY
+
+    attempt: int | None = None
+    """Which retry this is, counting from 1, on the counter that `max_retries` is checked against.
+
+    For a tool call that's the tool's own count, which `max_retries` on the tool (or the agent's
+    `tool_retries`) limits, so a tool that fails on two calls in one step uses one attempt for both. For
+    retry feedback it's the run's output-retry count, which output tool calls and
+    [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] from model hooks draw on too.
+
+    `None` when the retry isn't charged against a budget, or the producer can't know it: the first
+    [`'unavailable_tool'`][pydantic_ai.messages.ToolRetryCause] refusal of a tool (which is free), a
+    retry a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler
+    resolves a call with, a part you construct yourself, and a part loaded from a deprecated
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart].
+    """
+
+    max_retries: int | None = None
+    """The retry limit `attempt` was checked against: the run ends with
+    [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] rather than make a retry
+    past it. `None` whenever `attempt` is."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 ToolKindLike: TypeAlias = 'ToolKind | ToolPartKind'
@@ -2006,8 +2054,10 @@ class BaseToolReturnPart(Generic[ContentT_co]):
         items: list[ToolReturnContent]
         if isinstance(self.content, list):
             items = self.content  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            was_list = True
         else:
             items = [self.content]
+            was_list = False
 
         if mode == 'raw':
             return items
@@ -2015,6 +2065,15 @@ class BaseToolReturnPart(Generic[ContentT_co]):
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             wrapped = self.model_response_str() if mode == 'str' else self.model_response_object()
             return [wrapped, *self.files]
+
+        if self.outcome == 'retried' and was_list and not self.files:
+            # A retry's validation errors are one JSON array the model is shown whole, the same on every
+            # provider, not one content item (and so one text block) per error.
+            return [
+                self.model_response_str(wrap_if_error=False)
+                if mode == 'str'
+                else tool_return_ta.dump_python(items, mode='json', by_alias=True)
+            ]
 
         result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
         for item in items:
@@ -2047,7 +2106,18 @@ class BaseToolReturnPart(Generic[ContentT_co]):
             response = tool_return_ta.dump_json(value, by_alias=True).decode()
 
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:
-            return tool_return_ta.dump_json({'error': response}).decode()
+            return tool_return_ta.dump_json({'error': self._error_value(value, response)}).decode()
+        return response
+
+    def _error_value(self, value: Any, response: str) -> Any:
+        """What the `{"error": ...}` wrapper holds: the rendered text, or a retry's structured data as is.
+
+        A retried return's validation errors go in as the JSON array they are, rather than as a string
+        holding that array, which would reach the model with every quote escaped. A failed return's
+        structured content keeps the string it has always been sent as.
+        """
+        if self.outcome == 'retried' and value is not None and not isinstance(value, str):
+            return tool_return_ta.dump_python(value, mode='json', by_alias=True)
         return response
 
     def model_response_object(self, *, wrap_if_error: bool = True) -> dict[str, Any]:
@@ -2061,10 +2131,10 @@ class BaseToolReturnPart(Generic[ContentT_co]):
                 [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES]) in an `{"error": ...}` object.
                 Set this to `False` when the provider has a native error channel.
         """
-        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
-            return {'error': self.model_response_str(wrap_if_error=False)}
-
         value, _ = self._unwrap_data()
+        if wrap_if_error and self.outcome in ERROR_OUTCOMES:
+            return {'error': self._error_value(value, self.model_response_str(wrap_if_error=False))}
+
         if value is None:
             return {}
         json_content = tool_return_ta.dump_python(value, mode='json', by_alias=True)
@@ -2127,7 +2197,8 @@ class BaseToolReturnPart(Generic[ContentT_co]):
                 tool_content_parts.append(item)
 
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:
-            error = {'error': self.model_response_str(wrap_if_error=False)}
+            value, _ = self._unwrap_data()
+            error = {'error': self._error_value(value, self.model_response_str(wrap_if_error=False))}
             file_references = [f'See file {file.identifier}.' for file in files]
             return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
         if was_list:
@@ -2161,14 +2232,15 @@ class ToolReturnPart(BaseToolReturnPart[ContentT_co]):
 
     _: KW_ONLY
 
-    cause: ToolRetryCause | None = None
-    """Why the call has to be made again, when `outcome` is `'retried'`; `None` for any other outcome.
+    retry: RetryInfo[ToolRetryCause] | None = None
+    """Why the call has to be made again and which attempt this is, when `outcome` is `'retried'`; `None`
+    for any other outcome.
 
-    See [`ToolRetryCause`][pydantic_ai.messages.ToolRetryCause] for the values. `'unknown_tool'` and
+    See [`ToolRetryCause`][pydantic_ai.messages.ToolRetryCause] for the causes. `'unknown_tool'` and
     `'unavailable_tool'` are rejected before the tool is resolved or run, so this is how to tell them
     apart from a retry the tool itself asked for without matching on `content`. A retry loaded from a
-    history recorded before this field existed carries `None` unless its content says it was a
-    validation error.
+    deprecated [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] carries `None` unless its
+    content says it was a validation error, since a message alone can't say who asked for the retry.
 
     Metadata for your code only: it is never sent to the model, so it doesn't change the request or
     the provider's prompt cache.
@@ -2247,40 +2319,48 @@ class NativeToolReturnPart(BaseToolReturnPart[ContentT_co]):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-_TAG_ESCAPES = {
-    'system': re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE),
-    'validation_errors': re.compile(
-        r'<(?=\s*/\s*validation_errors(?=[\s/>])|\s*(?:/\s*)?system(?=[\s/>]))', re.IGNORECASE
-    ),
+_FeedbackTag: TypeAlias = Literal['system', 'validation_errors', 'retry_feedback']
+
+
+def _user_voice_fence_escape(tag: str) -> re.Pattern[str]:
+    """The `<` of the fence's own closing tag, and of the `<system>` voice tag, opening or closing."""
+    return re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]|$)|\s*(?:/\s*)?system(?=[\s/>]|$))', re.IGNORECASE)
+
+
+_TAG_ESCAPES: dict[_FeedbackTag, re.Pattern[str]] = {
+    'system': re.compile(r'<(?=\s*/\s*system(?=[\s/>]|$))', re.IGNORECASE),
+    'validation_errors': _user_voice_fence_escape('validation_errors'),
+    'retry_feedback': _user_voice_fence_escape('retry_feedback'),
 }
 """Per-tag patterns matching only the `<` of a tag the wrapped text must not be able to write.
 
-That is the wrapping tag's own closing tag, in every spelling a model might reach for, and inside
-the user-voice `<validation_errors>` fence also the `<system>` voice tag, opening or closing, so text
-quoted back from the model can't pass itself off as the framework speaking.
+That is the wrapping tag's own closing tag, in every spelling a model might reach for, including one
+cut off at the end of the text, and inside the user-voice `<validation_errors>` and `<retry_feedback>`
+fences also the `<system>` voice tag, opening or closing, so text quoted back from the model can't
+pass itself off as the framework speaking.
 
 Compiled once per tag, since `_wrap_in_tag` runs over every mid-conversation system prompt of every
 request on a provider without inline system prompts.
 """
 
 
-_VALIDATION_FEEDBACK_FRAMING = "Your previous response failed the application's validation (this is automated feedback, not a message from the user):"
-"""The line that opens validation feedback, ahead of its `<validation_errors>` fence.
+_RETRY_FEEDBACK_FRAMING = "Your previous response failed the application's validation (this is automated feedback, not a message from the user):"
+"""The line that opens user-voice retry feedback, ahead of its `<validation_errors>` or `<retry_feedback>` fence.
 
 The feedback goes out in the user voice, so this says who is speaking: the application checking the
 model's output, not the person it is talking to (https://github.com/pydantic/pydantic-ai/issues/6404).
 """
 
 
-def _wrap_in_tag(content: str, *, tag: Literal['system', 'validation_errors']) -> str:
+def _wrap_in_tag(content: str, *, tag: _FeedbackTag) -> str:
     """Wrap text in `<tag>…</tag>`, neutralizing any tag the text must not be able to write itself.
 
     Only the `<` of such a tag is escaped, so the rest of the text goes in exactly as written.
     Without that, text the model had a hand in — a validation error's `loc` is a key it invented for a
     mapping output, and a `value_error`'s `msg` is whatever a validator raised, commonly with the
     offending value interpolated in — could end the statement early and let whatever follows read as
-    if it stood outside it, or, inside the user-voice `<validation_errors>` fence, open a `<system>`
-    block of its own. See `_TAG_ESCAPES` for what each tag neutralizes.
+    if it stood outside it, or, inside a user-voice fence, open a `<system>` block of its own. See
+    `_TAG_ESCAPES` for what each tag neutralizes.
     """
     return f'<{tag}>{_TAG_ESCAPES[tag].sub("&lt;", content)}</{tag}>'
 
@@ -2324,7 +2404,7 @@ def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[s
 @deprecated(
     '`RetryPromptPart` is deprecated and will be removed in v3. Build the part the retry belongs to: '
     "`ToolReturnPart(tool_name=..., content=..., tool_call_id=..., outcome='retried')` for a retry that "
-    'answers a tool call, or `RetryFeedbackPart(content=..., cause=...)` for one that answers none.',
+    'answers a tool call, or `RetryFeedbackPart(content=..., retry=RetryInfo(cause=...))` for one that answers none.',
     category=PydanticAIDeprecationWarning,
 )
 @dataclass(repr=False)
@@ -2452,11 +2532,12 @@ class RetryFeedbackPart:
     [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] was both at once.
 
     The stored part stays model-neutral; each model translates it at
-    [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time into the part its `cause`
-    calls for — a `<validation_errors>`-fenced
-    [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] for output the model itself wrote, a
-    mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] for a message your
-    own code did. Either way the model can tell the feedback apart from something a person wrote,
+    [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] time into the part its `retry.cause`
+    calls for — a fenced [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] for validation
+    errors or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] message, either of which can quote
+    the model's output, and a mid-conversation
+    [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] for the framework's fixed
+    `'no_output'` text. Either way the model can tell the feedback apart from something a person wrote,
     which is what a retry rendered as bare user text never allowed
     (https://github.com/pydantic/pydantic-ai/issues/6404), and keeping the presentation out of the
     history keeps a cached prefix valid across providers.
@@ -2469,18 +2550,20 @@ class RetryFeedbackPart:
     list of error details, serialized into the fenced block the model is shown.
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
-    is rendered verbatim. Interpolating model output into that message puts the model's words in the
-    system voice, the same way interpolating them into `instructions` would; pass a fixed message and
-    let the errors carry the specifics.
+    goes out in the user voice inside a `<retry_feedback>` fence, since output validators commonly
+    interpolate the output they reject; or, for a `'no_output'` cause, it's the framework's own fixed
+    text.
     """
 
     _: KW_ONLY
 
-    cause: RetryFeedbackCause
-    """What made the response unusable, which decides the voice the feedback reaches the model in.
+    retry: RetryInfo[RetryFeedbackCause]
+    """What made the response unusable, which decides the voice the feedback reaches the model in, and
+    which output retry this is.
 
-    See [`RetryFeedbackCause`][pydantic_ai.messages.RetryFeedbackCause] for the values and the voice each
-    one takes.
+    See [`RetryFeedbackCause`][pydantic_ai.messages.RetryFeedbackCause] for the causes and the voice each
+    one takes. The agent loop fills in [`attempt`][pydantic_ai.messages.RetryInfo.attempt] and
+    [`max_retries`][pydantic_ai.messages.RetryInfo.max_retries] from the run's output-retry budget.
     """
 
     timestamp: datetime = field(default_factory=_now_utc)
@@ -2490,14 +2573,16 @@ class RetryFeedbackPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response(self) -> str:
-        """Return the text the model is shown, in the voice `cause` calls for.
+        """Return the text the model is shown, in the voice `retry.cause` calls for.
 
         Error details serialize the way an errored
         [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]'s content does, so a retry that
-        answers a tool call and one that answers none show the model the same JSON. Only a
-        `'validation_error'` is fenced, behind one line saying the application is speaking; the
-        wrapping tag is what marks the model's own words off from the harness's, and the other causes
-        carry no model text to mark off.
+        answers a tool call and one that answers none show the model the same JSON. A
+        `'validation_error'` goes in a `<validation_errors>` fence and a `'model_retry'` in a
+        `<retry_feedback>` fence, each behind one line saying the application is speaking: both can
+        carry the model's own words, a `ModelRetry` message because output validators routinely
+        interpolate the output they reject. Only `'no_output'` is left unfenced, as its text is fixed
+        and carries nothing the model wrote.
 
         What `prepare_messages` adds around this is the voice, not the wording: the part type it goes
         into, and the `<system>` tagging a provider without a mid-conversation system message needs.
@@ -2507,10 +2592,11 @@ class RetryFeedbackPart:
             if isinstance(self.content, str)
             else tool_return_ta.dump_json(_dump_error_details(self.content), by_alias=True).decode()
         )
-        if self.cause == 'validation_error':
-            fence = _wrap_in_tag(f'\n{content}\n', tag='validation_errors')
-            return f'{_VALIDATION_FEEDBACK_FRAMING}\n{fence}'
-        return content
+        if self.retry.cause == 'no_output':
+            return content
+        tag: _FeedbackTag = 'validation_errors' if self.retry.cause == 'validation_error' else 'retry_feedback'
+        fence = _wrap_in_tag(f'\n{content}\n', tag=tag)
+        return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Record the stored feedback as trace content.
@@ -2520,7 +2606,7 @@ class RetryFeedbackPart:
 
         Only `pydantic_ai.all_messages` on the run span reaches this method, because that attribute is
         built from the stored history. A model request span's `gen_ai.input.messages` is built after
-        `prepare_messages` has already replaced this part with the part its `cause` calls for, so it
+        `prepare_messages` has already replaced this part with the part its `retry.cause` calls for, so it
         shows the same text at every instrumentation version.
         """
         return [
@@ -2532,20 +2618,55 @@ class RetryFeedbackPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+_NO_OUTPUT_ALTERNATIVE_SLOTS: tuple[tuple[str, ...], ...] = (
+    ('return text',),
+    ('include your response in a tool call', 'call a tool'),
+    ('return an image',),
+)
+"""What the agent loop can ask for when a response held nothing usable, in the order it lists them."""
+
+
+def _no_output_feedback_text(alternatives: Sequence[str]) -> str:
+    """The fixed text of `'no_output'` feedback, naming what the response could have been instead."""
+    return f'Please {" or ".join(alternatives)}.'
+
+
+def _no_output_feedback_texts() -> frozenset[str]:
+    texts: set[str] = set()
+
+    def walk(slot: int, chosen: tuple[str, ...]) -> None:
+        if slot == len(_NO_OUTPUT_ALTERNATIVE_SLOTS):
+            texts.add(_no_output_feedback_text(chosen))
+            return
+        walk(slot + 1, chosen)
+        for alternative in _NO_OUTPUT_ALTERNATIVE_SLOTS[slot]:
+            walk(slot + 1, (*chosen, alternative))
+
+    walk(0, ())
+    return frozenset(texts)
+
+
+_NO_OUTPUT_FEEDBACK_TEXTS = _no_output_feedback_texts()
+"""Every text the agent loop writes into `'no_output'` feedback."""
+
+_NO_OUTPUT_FEEDBACK_FALLBACK = 'Please respond with something that can be used as output.'
+"""What client-returned `'no_output'` feedback is rendered with when its text isn't one the agent loop writes."""
+
+
 def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:  # pyright: ignore[reportUnusedFunction]
     """Whether this feedback reaches the model in the harness's voice rather than the user's.
 
-    A `'validation_error'` quotes back the output the model itself wrote, which may in turn quote
-    untrusted user input, so it goes in the user voice inside the `<validation_errors>` fence
+    A `'validation_error'` quotes back the output the model itself wrote, and a `'model_retry'`
+    message commonly interpolates it, either of which may in turn quote untrusted user input, so both
+    go in the user voice inside the fence
     [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] puts
-    it in — near enough to a person's turn in authority, and marked off from one by the tag. The
-    other causes carry a message the agent's author wrote knowing it would be shown, which is the
-    authority a system message already has.
+    them in — near enough to a person's turn in authority, and marked off from one by the tag. Only
+    `'no_output'` carries fixed framework text, which is the authority a system message already has.
 
     Every channel asks the same question and answers it here: `prepare_messages` picks the part,
     the realtime seeders pick whether to `<system>`-tag the text, the UI adapters pick the role.
     """
-    return part.cause != 'validation_error'
+    return part.retry.cause == 'no_output'
 
 
 # TODO(v3): remove `_LegacyRetryPromptFields` along with `RetryPromptPart`.
@@ -2603,11 +2724,11 @@ def _translate_legacy_retry_part(
             timestamp=timestamp,
             outcome='retried',
             # A message alone can't say whether the tool, a hook or the tool manager asked for the retry.
-            cause=None if isinstance(content, str) else 'validation_error',
+            retry=None if isinstance(content, str) else RetryInfo(cause='validation_error'),
         )
     return RetryFeedbackPart(
         content=content,
-        cause='model_retry' if isinstance(content, str) else 'validation_error',
+        retry=RetryInfo(cause='model_retry' if isinstance(content, str) else 'validation_error'),
         timestamp=timestamp,
     )
 
@@ -4806,15 +4927,16 @@ def sanitize_messages(
 
     By default it strips:
 
-    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and
-      [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s (disable with
-      `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
-      inject one can override the agent's behavior, and a client-submitted `RetryFeedbackPart` can
-      name the `cause` that reaches the model in the system voice. A tool-less legacy
-      [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is stripped on the same terms,
-      because it is translated into the feedback part it always meant before the model sees it. If
-      stripping leaves a `ModelRequest` with no parts, the request is dropped from history
-      entirely.
+    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and instruction records (disable
+      with `strip_system_prompts=False`). The system prompt is the server's to own; a client that
+      can inject one can override the agent's behavior. If stripping leaves a `ModelRequest` with no
+      parts, the request is dropped from history entirely.
+      [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still
+      sees why it corrected itself: feedback that reaches the model in the user voice is kept as
+      sent, since a client can write user text anyway, and `'no_output'` feedback, the one cause
+      rendered in the system voice, keeps its text only when it's one the agent loop writes. A
+      tool-less legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is translated into
+      the feedback part it always meant and takes the same rule.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
       cause the model provider to fetch the object using the server-side IAM role, so they should
@@ -4937,10 +5059,9 @@ def sanitize_messages(
     if stripped_system_prompt:
         warnings.warn(
             'Parts carrying the system voice were stripped from the client-submitted messages: system '
-            'prompts, and the retry feedback that renders as one — which a round-trip brings back after '
-            'Pydantic AI emitted it, and which a client can forge just as easily. Pass '
-            '`strip_system_prompts=False` only when the client is trusted to own the system prompt, or set '
-            "`manage_system_prompt='client'` on a UI adapter.",
+            'prompts and instruction records, which a client can forge as easily as a round-trip brings '
+            'them back. Pass `strip_system_prompts=False` only when the client is trusted to own the '
+            "system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
             UserWarning,
             stacklevel=2,
         )
@@ -5036,6 +5157,28 @@ def _strip_dangling_tail_tool_calls(
         sanitized.pop()
 
 
+def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
+    """Retry feedback a client sent back, in a form that can't give the client the system voice.
+
+    Kept rather than stripped, so the model still sees why it corrected itself and the request prefix
+    stays the same. `'validation_error'` and `'model_retry'` feedback reach the model in the user
+    voice, inside a fence, which a client could write anyway. `'no_output'` feedback is the one cause
+    rendered in the system voice, so its text is kept only when it's one the agent loop writes, and is
+    replaced with fixed framework text otherwise. A tool-less legacy `RetryPromptPart` is translated
+    into the feedback part it always meant first, so it takes the same rule.
+    """
+    # TODO(v3): remove `RetryPromptPart`
+    if isinstance(part, RetryPromptPart) and part.tool_name is None:  # pyright: ignore[reportDeprecated]
+        part = _translate_legacy_retry_part(part)
+    if (
+        isinstance(part, RetryFeedbackPart)
+        and part.retry.cause == 'no_output'
+        and part.content not in _NO_OUTPUT_FEEDBACK_TEXTS
+    ):
+        return replace(part, content=_NO_OUTPUT_FEEDBACK_FALLBACK)
+    return part
+
+
 def _sanitize_request_parts(
     parts: Sequence[ModelRequestPart],
     *,
@@ -5053,25 +5196,18 @@ def _sanitize_request_parts(
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
     uploaded file providers encountered.
     Returns the kept parts and whether any part carrying the system voice
-    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart],
-    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], or a tool-less legacy
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]) was stripped.
+    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or an instruction part) was
+    stripped. Retry feedback is kept, in a form that can't carry client-written system text; see
+    `_client_safe_retry_feedback`.
     """
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
-        # A `RetryFeedbackPart` naming `cause='model_retry'` or `'no_output'` becomes a
-        # `SystemPromptPart` before it reaches the model, and the client picks the `cause`, so
-        # honoring a client-submitted one would hand the client the system voice the strip exists to
-        # protect. Every cause goes with the system prompts, not through them.
-        if strip_system_prompts and (
-            isinstance(part, SystemPromptPart | RetryFeedbackPart | InstructionDeltaPart | InstructionBaselinePart)
-            # TODO(v3): remove `RetryPromptPart`. A tool-less one is the feedback part it always
-            # meant, not translated yet, so it goes with the system prompts on the same terms.
-            or (isinstance(part, RetryPromptPart) and part.tool_name is None)  # pyright: ignore[reportDeprecated]
-        ):
+        if strip_system_prompts and isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart):
             stripped_system_prompt = True
             continue
+        if strip_system_prompts:
+            part = _client_safe_retry_feedback(part)
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
             filtered_content = _filter_user_content(
                 part.content,

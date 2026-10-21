@@ -50,6 +50,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     TextPart,
     TextPartDelta,
@@ -2164,7 +2165,7 @@ async def test_empty_response():
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3737,7 +3738,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                             outcome='retried',
-                            cause='unknown_tool',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -3854,7 +3855,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                             outcome='retried',
-                            cause='unknown_tool',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -4182,7 +4183,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                     ],
                     timestamp=IsNow(tz=datetime.UTC),
@@ -4907,7 +4908,7 @@ async def test_unknown_tool_call_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
                     outcome='retried',
-                    cause='unknown_tool',
+                    retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                 ),
             ),
             FunctionToolResultEvent(
@@ -5019,7 +5020,7 @@ async def test_output_tool_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
                     outcome='retried',
-                    cause='validation_error',
+                    retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 )
             ),
             OutputToolCallEvent(
@@ -6153,7 +6154,7 @@ async def test_args_validator_failure_events():
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),
                     outcome='retried',
-                    cause='model_retry',
+                    retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                 ),
             ),
             PartStartEvent(

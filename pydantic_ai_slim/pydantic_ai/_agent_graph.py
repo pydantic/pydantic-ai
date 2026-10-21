@@ -452,6 +452,7 @@ class GraphAgentState:
         self,
         max_output_retries: int,
         error: BaseException | None = None,
+        feedback: _messages.ModelRequestPart | None = None,
     ) -> None:
         """Record one unit of output-retry budget consumption.
 
@@ -460,12 +461,19 @@ class GraphAgentState:
         and for `ToolRetryError`s from output-tool dispatch / empty-or-non-actionable
         responses; per-tool retry limits are still enforced separately by
         `ToolManager._check_max_retries`.
+
+        A `RetryFeedbackPart` passed as `feedback` is stamped with the attempt this consumed, so
+        its `retry.attempt` is the `ctx.retry` the next output validation sees.
         """
         self.output_retries_used += 1
         if self.output_retries_used > max_output_retries:
             self.check_incomplete_tool_call()
             message = f'Exceeded maximum output retries ({max_output_retries})'
             raise exceptions.UnexpectedModelBehavior(message) from error
+        if isinstance(feedback, _messages.RetryFeedbackPart):  # pragma: no branch
+            feedback.retry = dataclasses.replace(
+                feedback.retry, attempt=self.output_retries_used, max_retries=max_output_retries
+            )
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -2349,11 +2357,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
-        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
+        m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
+        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.
         _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
-        m = _messages.RetryFeedbackPart(content=error.message, cause='model_retry')
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -2520,7 +2528,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
                         )
                     except ToolRetryError as e:
-                        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                        ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                         self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                             _messages.ModelRequest(parts=[e.tool_retry])
                         )
@@ -2618,12 +2626,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # This can happen with models that support thinking mode when they don't provide
                 # actionable output alongside their thinking content. so we tell the model to try again.
                 m = _messages.RetryFeedbackPart(
-                    content=f'Please {" or ".join(alternatives)}.',
-                    cause='no_output',
+                    content=_messages._no_output_feedback_text(alternatives),  # pyright: ignore[reportPrivateUsage]
+                    retry=_messages.RetryInfo(cause='no_output'),
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:
-                ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e)
+                ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
         try:

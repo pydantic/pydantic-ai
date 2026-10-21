@@ -46,6 +46,7 @@ from pydantic_ai import (
     PrefixedToolset,
     RequestUsage,
     RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TemplateStr,
@@ -383,7 +384,7 @@ def test_result_pydantic_model_retry():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -392,7 +393,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=84, output_tokens=14),
+                usage=RequestUsage(input_tokens=77, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
@@ -504,7 +505,7 @@ def test_output_validator():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -684,7 +685,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=5),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -713,7 +714,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=2, max_retries=5),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -742,7 +743,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=3, max_retries=5),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -771,7 +772,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=4, max_retries=5),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -800,7 +801,7 @@ def test_tool_output_max_retries_overrides_agent_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=5, max_retries=5),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -916,7 +917,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -945,7 +946,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=3),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -974,7 +975,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=2, max_retries=3),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1003,7 +1004,7 @@ def test_tool_output_max_retries_per_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=3, max_retries=3),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1264,7 +1265,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     RetryFeedbackPart(
                         content='Please include your response in a tool call.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -1896,7 +1897,7 @@ def test_output_type_function_with_retry():
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -1983,7 +1984,7 @@ def test_output_type_text_output_function_with_retry():
                 parts=[
                     RetryFeedbackPart(
                         content='City not found, I only know Mexico City',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1993,7 +1994,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=RequestUsage(input_tokens=61, output_tokens=5),
+                usage=RequestUsage(input_tokens=80, output_tokens=5),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2543,7 +2544,7 @@ def test_output_type_union_text_fallback_invalid_data_retries():
                         'input': {'length': 12.0},
                     }
                 ],
-                cause='validation_error',
+                retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 timestamp=IsDatetime(),
             )
         ]
@@ -2588,7 +2589,7 @@ def test_output_type_union_text_fallback_invalid_kind_retries():
                         'input': 'Cherry',
                     }
                 ],
-                cause='validation_error',
+                retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 timestamp=IsDatetime(),
             )
         ]
@@ -2635,7 +2636,7 @@ def test_prompted_output_union_invalid_kind_retries():
                         'input': 'Cherry',
                     }
                 ],
-                cause='validation_error',
+                retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 timestamp=IsDatetime(),
             )
         ]
@@ -2688,7 +2689,7 @@ def test_native_and_prompted_output_union_invalid_data_retries(
                         'input': 'long',
                     }
                 ],
-                cause='validation_error',
+                retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                 timestamp=IsDatetime(),
             )
         ]
@@ -3138,7 +3139,7 @@ def test_native_output():
                                 input={'city': 'Mexico City'},
                             ),
                         ],
-                        cause='validation_error',
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3218,7 +3219,7 @@ def test_prompted_output_function_with_retry():
                 parts=[
                     RetryFeedbackPart(
                         content='City not found, I only know Mexico City',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3228,7 +3229,7 @@ def test_prompted_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=RequestUsage(input_tokens=61, output_tokens=11),
+                usage=RequestUsage(input_tokens=80, output_tokens=11),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3864,7 +3865,7 @@ def test_empty_response():
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3919,7 +3920,7 @@ def test_empty_response_exceeds_max_retries():
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text or include your response in a tool call.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -4479,7 +4480,7 @@ def test_unknown_tool():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='unknown_tool',
+                        retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -4581,7 +4582,7 @@ def test_unknown_tool_fix():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='unknown_tool',
+                        retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -4635,7 +4636,7 @@ def test_unknown_tool_multiple_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='unknown_tool',
+                        retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=2),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -4658,7 +4659,7 @@ def test_unknown_tool_multiple_retries():
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='unknown_tool',
+                        retry=RetryInfo(cause='unknown_tool', attempt=2, max_retries=2),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),
@@ -6184,7 +6185,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
-                            cause='unknown_tool',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -6306,7 +6307,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
-                            cause='unknown_tool',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='deferred_tool',
@@ -6474,7 +6475,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
@@ -6650,7 +6651,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=UTC),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                     ],
                     timestamp=IsNow(tz=UTC),
@@ -6817,7 +6818,7 @@ class TestMultipleToolCalls:
                             tool_call_id='first',
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='validation_error',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
@@ -7004,7 +7005,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
@@ -7110,7 +7111,7 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                             outcome='retried',
-                            cause='model_retry',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
@@ -9164,7 +9165,7 @@ def test_empty_final_response():
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text or call a tool.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -9420,7 +9421,7 @@ def test_tool_call_with_validation_value_error_serializable():
                     'metadata': None,
                     'timestamp': IsStr(),
                     'outcome': 'retried',
-                    'cause': 'validation_error',
+                    'retry': {'cause': 'validation_error', 'attempt': 1, 'max_retries': 1},
                     'part_kind': 'tool-return',
                 }
             ],
@@ -10866,7 +10867,7 @@ async def test_thinking_only_response_retry():
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10929,7 +10930,7 @@ async def test_retry_message_no_tools():
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -10991,7 +10992,7 @@ async def test_thinking_only_response_retry_with_tool_output():
                 parts=[
                     RetryFeedbackPart(
                         content='Please include your response in a tool call.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -11116,7 +11117,7 @@ async def test_thinking_only_response_after_tool_call_retries():
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text or call a tool.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -13178,7 +13179,7 @@ async def test_agent_blank_text_response_retries_without_none_output():
         [
             RetryFeedbackPart(
                 content='Please return text.',
-                cause='no_output',
+                retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                 timestamp=IsNow(tz=UTC),
             )
         ]
@@ -13514,7 +13515,7 @@ async def test_agent_allows_none_output_validator_retry():
                 parts=[
                     RetryFeedbackPart(
                         content='None not acceptable, please respond',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -13524,7 +13525,7 @@ async def test_agent_allows_none_output_validator_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=RequestUsage(input_tokens=56, output_tokens=1),
+                usage=RequestUsage(input_tokens=75, output_tokens=1),
                 model_name='function:model_then_text:',
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),

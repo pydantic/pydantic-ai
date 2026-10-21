@@ -114,9 +114,9 @@ try:
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
-        parse_encrypted_retry_cause,
         parse_encrypted_retry_feedback,
         parse_encrypted_tool_kind,
+        parse_encrypted_tool_retry,
         rehydrate_tool_return_content,
         retry_feedback_encrypted_value_kwargs,
         thinking_encrypted_metadata,
@@ -589,11 +589,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
                     )
-                    cause = None
+                    retry = None
                     if encrypted_outcome is not None:
                         outcome = encrypted_outcome
                         if outcome == 'retried':
-                            cause = parse_encrypted_retry_cause(tool_msg.encrypted_value)
+                            retry = parse_encrypted_tool_retry(tool_msg.encrypted_value)
                     elif tool_msg.error is not None:
                         outcome = 'failed'
 
@@ -622,7 +622,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_call_id=tool_call_id,
                                 tool_kind=tool_kind,
                                 outcome=outcome,
-                                cause=cause,
+                                retry=retry,
                             )
                         )
 
@@ -825,7 +825,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied'
                         else None,
                         **tool_kind_encrypted_value_kwargs(
-                            part.tool_kind, outcome=part.outcome, cause=part.cause, supported=use_encrypted_value
+                            part.tool_kind, outcome=part.outcome, retry=part.retry, supported=use_encrypted_value
                         ),
                     )
                 )
@@ -872,7 +872,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             **tool_kind_encrypted_value_kwargs(
                                 translated.tool_kind,
                                 outcome=translated.outcome,
-                                cause=translated.cause,
+                                retry=translated.retry,
                                 supported=use_encrypted_value,
                             ),
                         )

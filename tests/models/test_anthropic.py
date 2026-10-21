@@ -42,6 +42,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -2713,7 +2714,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
                         outcome='retried',
-                        cause='model_retry',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -13663,7 +13664,7 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryFeedbackPart(content='Retry the final output.', cause='model_retry'),
+                    RetryFeedbackPart(content='Retry the final output.', retry=RetryInfo(cause='model_retry')),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     UserPromptPart(content='Continue.'),
                 ]
@@ -16210,7 +16211,7 @@ I'm here to help! How can I assist you today?\
                 parts=[
                     RetryFeedbackPart(
                         content='Please return text.',
-                        cause='no_output',
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

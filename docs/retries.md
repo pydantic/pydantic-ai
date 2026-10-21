@@ -546,7 +546,9 @@ Because retries stay in the history, [reusing that history](message-history.md) 
 
 ### Auditing rejected tool calls
 
-A retried result also records why the call has to be made again, in its [`cause`][pydantic_ai.messages.ToolReturnPart.cause] (a [`ToolRetryCause`][pydantic_ai.messages.ToolRetryCause]): `'validation_error'`, `'model_retry'`, or, for a call the framework rejects before any tool runs, `'unknown_tool'` (the model invented the name) or `'unavailable_tool'` (the tool exists but can't be called at this step). No tool hook sees those last two, since there's no resolved tool to hand it, so match the recorded part instead. `cause` is never sent to the model, so recording it doesn't change the request.
+A retried result also records why the call has to be made again and how far into its budget it is, in its [`retry`][pydantic_ai.messages.ToolReturnPart.retry] (a [`RetryInfo`][pydantic_ai.messages.RetryInfo]). Its `cause` (a [`ToolRetryCause`][pydantic_ai.messages.ToolRetryCause]) is `'validation_error'`, `'model_retry'`, or, for a call the framework rejects before any tool runs, `'unknown_tool'` (the model invented the name) or `'unavailable_tool'` (the tool exists but can't be called at this step). No tool hook sees those last two, since there's no resolved tool to hand it, so match the recorded part instead. `attempt` is which retry of that tool this is, counting from 1, and `max_retries` the limit it was checked against, so `attempt == max_retries` marks the last retry the run will make before it raises; both are `None` for a retry that isn't charged to the budget, such as a tool's first `'unavailable_tool'` refusal. None of it is sent to the model, so recording it doesn't change the request.
+
+With [instrumentation](logfire.md) on, the tool's span carries the same facts as the `pydantic_ai.tool.retry.cause`, `pydantic_ai.tool.retry.attempt` and `pydantic_ai.tool.retry.max_retries` attributes, and an [output function](output.md#output-functions)'s span carries `pydantic_ai.output.retry.*` for a retry of output that answers no tool call.
 
 A capability can collect them from each request the run builds in [`after_node_run`](capabilities/custom.md#hooking-into-the-lifecycle), which doesn't move the run onto the streaming path the way [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] does:
 
@@ -566,13 +568,13 @@ from pydantic_ai import (
     ToolReturnPart,
 )
 from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult
-from pydantic_ai.messages import ToolRetryCause
+from pydantic_ai.messages import RetryInfo, ToolRetryCause
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
 @dataclass
 class AuditRejectedCalls(AbstractCapability[object]):
-    rejected: list[tuple[str, ToolRetryCause | None]] = field(default_factory=list)
+    rejected: list[tuple[str, RetryInfo[ToolRetryCause] | None]] = field(default_factory=list)
 
     async def after_node_run(
         self, ctx: RunContext[object], *, node: AgentNode[object], result: NodeResult[object]
@@ -580,7 +582,7 @@ class AuditRejectedCalls(AbstractCapability[object]):
         if isinstance(result, ModelRequestNode):
             for part in result.request.parts:
                 if isinstance(part, ToolReturnPart) and part.outcome == 'retried':
-                    self.rejected.append((part.tool_name, part.cause))
+                    self.rejected.append((part.tool_name, part.retry))
         return result
 
 
@@ -601,7 +603,7 @@ def lookup_order(id: int) -> str:
 
 agent.run_sync('Who is customer 7?')
 print(audit.rejected)
-#> [('lookup_customer', 'unknown_tool')]
+#> [('lookup_customer', RetryInfo(cause='unknown_tool', attempt=1, max_retries=1))]
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -671,7 +673,7 @@ print([p for m in result.all_messages() for p in m.parts if isinstance(p, RetryF
 [
     RetryFeedbackPart(
         content='answer with the number spelled out as a word',
-        cause='model_retry',
+        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
         timestamp=datetime.datetime(...),
     )
 ]
@@ -680,19 +682,18 @@ print([p for m in result.all_messages() for p in m.parts if isinstance(p, RetryF
 
 _(This example is complete, it can be run "as is")_
 
-The stored part carries no wording at all; each model turns it into a sendable part when the request is built, and its [`cause`][pydantic_ai.messages.RetryFeedbackPart.cause] decides which one. That is why the same history can be replayed against any model.
+The stored part carries no wording at all; each model turns it into a sendable part when the request is built, and its [`retry`][pydantic_ai.messages.RetryFeedbackPart.retry]'s `cause` decides which one. That is why the same history can be replayed against any model. The same [`RetryInfo`][pydantic_ai.messages.RetryInfo] records the `attempt` on the run's output-retry budget and the `max_retries` it was checked against; the attempt is the [`ctx.retry`][pydantic_ai.tools.RunContext.retry] the next output validation sees.
 
 | `cause` | What the model is sent | Why |
 |---|---|---|
 | `'validation_error'` | a user turn that opens with one line saying the application's validation is speaking, not the user, followed by the errors wrapped in `<validation_errors>…</validation_errors>` | The feedback quotes back the output the model itself wrote, which may in turn quote untrusted user input. The tag is what marks those words off from a person's turn. |
-| `'no_output'`, `'model_retry'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is a message your own code wrote knowing it would be shown — the same trust you already give [`instructions`][pydantic_ai.Agent]. |
+| `'model_retry'` | the same attributed user turn, with the `ModelRetry` message wrapped in `<retry_feedback>…</retry_feedback>` | Output validators routinely interpolate the output they reject into the message, so it can carry the model's own words just as validation errors do. |
+| `'no_output'` | a mid-conversation system prompt, degraded to `<system>`-tagged user text where the provider takes no system message mid-conversation | The text is the framework's own fixed request for usable output, and carries nothing the model wrote. |
 
-A closing tag inside either wrapper is escaped, so text the model had a hand in cannot end the statement that carries it, and inside `<validation_errors>` so is a `<system>` tag, opening or closing, so the model's own words cannot pass themselves off as the framework speaking.
+A closing tag inside any of these wrappers is escaped, so text the model had a hand in cannot end the statement that carries it, and inside the two user-voice fences so is a `<system>` tag, opening or closing, so the model's own words cannot pass themselves off as the framework speaking.
 
-!!! warning "What goes in the system voice"
-    The system channel is the highest-privilege text a model reads, and a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] message goes there verbatim. Interpolating model output into that message hands the model's words the system voice; pass a fixed message and let the validation errors carry the specifics — those go out in the user voice, inside the fence, precisely because they quote the model.
-
-    Feedback never joins the run's standing prompt, even when it opens the history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), [`ProcessHistory`](capabilities/process-history.md) filtering, or a model-request hook retrying the first request of a run with no user prompt. Only the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s the history was written with go to the provider's own system field; feedback in that position goes out as `<system>`-tagged user text, whatever the provider.
+!!! note "Feedback never joins the standing prompt"
+    Feedback never joins the run's standing prompt, even when it opens the history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), [`ProcessHistory`](capabilities/process-history.md) filtering, or a model-request hook retrying the first request of a run with no user prompt. Only the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s the history was written with go to the provider's own system field; `'no_output'` feedback in that position goes out as `<system>`-tagged user text, whatever the provider.
 
 !!! note "`RetryPromptPart` is deprecated"
     Both retries used to be a single [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which is deprecated and will be removed in v3. A stored history loads as the two parts above, so to read a retry from history, match [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` or `RetryFeedbackPart` instead. See the [upgrade guide](changelog.md#deprecated-in-v2-to-be-removed-in-v3) for the details.

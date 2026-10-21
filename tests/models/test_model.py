@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -660,7 +661,7 @@ def test_prepare_messages_orders_tool_results_by_call():
         ModelRequest(
             parts=[
                 ToolReturnPart('c', 'C', tool_call_id='cc'),
-                RetryFeedbackPart('output invalid', cause='model_retry'),
+                RetryFeedbackPart('output invalid', retry=RetryInfo(cause='model_retry')),
                 ToolReturnPart('b', 'bad args', tool_call_id='cb', outcome='retried'),
                 ToolReturnPart('z', 'Z', tool_call_id='not-a-call'),
                 ToolReturnPart('a', 'A', tool_call_id='ca'),
@@ -673,7 +674,11 @@ def test_prepare_messages_orders_tool_results_by_call():
 
     assert _request_parts(prepared)[1] == [
         ('ToolReturnPart', 'A'),
-        ('UserPromptPart', '<system>output invalid</system>'),
+        (
+            'UserPromptPart',
+            "Your previous response failed the application's validation (this is automated feedback, not a message "
+            'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
+        ),
         ('ToolReturnPart', 'bad args'),
         ('ToolReturnPart', 'Z'),
         ('ToolReturnPart', 'C'),

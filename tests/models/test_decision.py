@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolReturnPart,
     RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -966,7 +967,14 @@ async def test_a_legacy_retry_prompt_part_on_a_direct_request_is_judged_as_what_
                 {'user': 'Look it up.'},
                 {'tool_call': {'name': 'lookup', 'args': {}}},
                 {'tool_return': {'name': 'lookup', 'content': '{"error":"bad args"}'}},
-                {'retry': 'answer in one word'},
+                {
+                    'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in one word
+</retry_feedback>\
+"""
+                },
             ]
         }
     )
@@ -1936,7 +1944,7 @@ async def test_a_message_history_that_ends_mid_turn_is_split_at_its_latest_promp
                 ToolReturnPart('look_up_order', 'Order #1 shipped yesterday.', 'c1'),
                 UserPromptPart('Thanks. It arrived broken.'),
                 UserPromptPart('Please refund it.'),
-                RetryFeedbackPart('Pick something else.', cause='model_retry'),
+                RetryFeedbackPart('Pick something else.', retry=RetryInfo(cause='model_retry')),
             ]
         ),
         ModelResponse(parts=[ThinkingPart('A refund, then.'), ToolCallPart('issue_refund', {}, 'c2')]),
@@ -1957,7 +1965,14 @@ Thanks. It arrived broken.
 Please refund it.\
 """,
             'done': [
-                {'retry': 'Pick something else.'},
+                {
+                    'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Pick something else.
+</retry_feedback>\
+"""
+                },
                 {'thinking': 'A refund, then.'},
                 {'tool_call': {'name': 'issue_refund', 'args': {}}},
                 {'tool_return': {'name': 'issue_refund', 'content': 'Refunded.'}},
@@ -2090,7 +2105,7 @@ def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, 
                         {
                             'tool_return': {
                                 'name': 'final_result',
-                                'content': '{"error":"[{\\"type\\":\\"value_error\\",\\"loc\\":[\\"urgent\\"],\\"msg\\":\\"Value error, Check again.\\",\\"input\\":true}]"}',
+                                'content': '{"error":[{"type":"value_error","loc":["urgent"],"msg":"Value error, Check again.","input":true}]}',
                             }
                         },
                     ],
@@ -2163,7 +2178,14 @@ async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_m
             'text': 'Delete everything.',
             'done': [
                 {'assistant': 'Deleting.'},
-                {'retry': 'Answer with a tool call.'},
+                {
+                    'retry': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Answer with a tool call.
+</retry_feedback>\
+"""
+                },
             ],
         }
     )
