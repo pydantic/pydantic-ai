@@ -19,7 +19,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -49,7 +50,9 @@ def test_menu_selects_run_boundaries_and_sanitizes_preview(monkeypatch: pytest.M
         ModelRequest(parts=[ToolReturnPart('tool', 'done', 'call'), UserPromptPart('steer')], run_id='first'),
         ModelRequest(parts=[UserPromptPart('more steering')], run_id='first'),
         ModelResponse(parts=[TextPart('done')], run_id='first'),
-        ModelRequest(parts=[RetryPromptPart('retry'), UserPromptPart('not a boundary')]),
+        ModelRequest(
+            parts=[RetryFeedbackPart('retry', retry=RetryInfo(cause='model_retry')), UserPromptPart('not a boundary')]
+        ),
         ModelRequest(parts=[UserPromptPart('second')], run_id='second'),
         ModelResponse(parts=[TextPart('legacy answer')]),
     ]
@@ -255,7 +258,7 @@ async def test_shell_opens_rewind_between_turns_and_releases_input(
         return result
 
     monkeypatch.setattr(LivePrompt, 'read', request)
-    monkeypatch.setattr('pydantic_clai2._app.rewind', choose)
+    monkeypatch.setattr('pydantic_clai2.runtime.session_runtime.rewind', choose)
     output = StringIO()
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
         await chat(

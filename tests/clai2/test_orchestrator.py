@@ -33,7 +33,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.ask_user import AskUserAnswer
-from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.builtin_plugins.web import WebPlugin, workspace_tools as tools_module
 from pydantic_clai2.builtin_plugins.web.app import HEADER
 from pydantic_clai2.builtin_plugins.web.client import SessionView, WaitOutcome
@@ -56,6 +55,7 @@ from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.runtime.session_runtime import SessionRuntime, create_shell
 
 pytestmark = pytest.mark.anyio
 
@@ -129,7 +129,7 @@ def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
 class Child:
     """The workspace's CLAI, served in this process when the launcher starts it."""
 
-    shell: _Shell[None, str]
+    shell: SessionRuntime[None, str]
     web: WebPlugin
     blocked: anyio.Event = field(default_factory=anyio.Event)
 
@@ -210,14 +210,14 @@ async def child_serving(tmp_path: Path) -> AsyncGenerator[Child]:
 
 @dataclass
 class Parent:
-    shell: _Shell[None, str]
+    shell: SessionRuntime[None, str]
     web: WebPlugin
     tools: WorkspaceTools
     processes: InProcess
 
     @property
     def orchestrator(self) -> Orchestrator:
-        return self.web.remote.orchestrator
+        return self.web.service.orchestrator
 
 
 @asynccontextmanager
@@ -231,7 +231,7 @@ async def parent(
 ) -> AsyncGenerator[Parent]:
     """A shell with `web`, and `workspaces` unless told otherwise, whose launcher serves `child`.
 
-    `model` is the session's, which the orchestrator uses too.
+    `model` is the agent's own, which the orchestrator uses too while no default model is saved.
     """
     processes = InProcess(child)
     launcher = Launcher(processes=processes, python='python', interval=0.01, startup_timeout=10, stop_timeout=5)
@@ -250,6 +250,7 @@ async def parent(
         builtin_plugins=builtin,
         project=ProjectSettings(),
         headless=True,
+        workspace=tmp_path,
     )
     await shell.loader.load_all()
     [web] = [entry.loaded.plugin for entry in shell.loader.entries() if entry.name == 'web' and entry.loaded]
@@ -263,7 +264,8 @@ async def parent(
 
 
 async def created(tools: WorkspaceTools, repository: Path) -> str:
-    made = await tools.workspace_create(kind='local-worktree', repo=str(repository), ref='main')
+    """A relative `repo` is in the parent session's directory, not the process's."""
+    made = await tools.workspace_create(kind='local-worktree', repo=repository.name, ref='main')
     return made.split()[2].removesuffix('.')
 
 
@@ -445,7 +447,8 @@ async def test_the_orchestrator_runs_a_workspace_and_asks_before_destroying(
     model = orchestrating(repository)
     async with child_serving(tmp_path) as child, parent(tmp_path, child, monkeypatch, model=model) as made:
         orchestrator = made.orchestrator
-        with made.web.hub.subscribe() as queue:
+        with made.web.service.hub.subscribe() as client:
+            queue = client.queue
             await orchestrator.send('Say hi in a new workspace, then clean up.')
             seen = await converse(orchestrator, queue, [1, None, 0])
         end = seen[-1]

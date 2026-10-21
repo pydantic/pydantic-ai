@@ -14,7 +14,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -24,11 +23,12 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import DelegationEndEvent, DelegationStartEvent, DelegationTask, DelegationTaskEvent
-from pydantic_clai2._app import create_shell, create_stock_agent
+from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart, TaskEvent, TaskInfo
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.tasks import Tasks, resume_prompt
 from pydantic_clai2.ui.rendering.status import Status
 from tests.clai2.test_tasks import task
@@ -145,7 +145,7 @@ async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> N
         ModelRequest(
             parts=[
                 ToolReturnPart('shell', 'README.md', 'ls'),
-                RetryPromptPart('command is required', tool_name='shell', tool_call_id='bad'),
+                ToolReturnPart('shell', 'command is required', tool_call_id='bad', outcome='retried'),
             ]
         ),
     ]

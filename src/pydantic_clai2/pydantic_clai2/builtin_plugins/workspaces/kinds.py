@@ -22,7 +22,10 @@ class WorktreeKind(BaseModel):
     backend: Literal['local-worktree'] = 'local-worktree'
     repo: str = Field(
         default='',
-        description='The repository to use when none is given: a local path, or a URL to clone. Empty: always give one.',
+        description=(
+            "The repository to use when none is given: a local path (relative to the session's folder), "
+            'or a URL to clone. Empty: always give one.'
+        ),
     )
     ref: str = Field(
         default='',

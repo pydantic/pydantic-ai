@@ -15,6 +15,11 @@ on:
     workflows: ["CI"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
   # The installed `pydantic-docs` GitHub App has no repository permission.
   # `bots:` admits that exact app; `roles:` continues to gate human actors.
   #
@@ -103,6 +108,8 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md

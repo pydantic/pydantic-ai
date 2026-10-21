@@ -431,7 +431,7 @@ deployment:
 so their keys become BSON field names: keys containing `.` or starting with
 `$` need [MongoDB 5.0 or later](https://www.mongodb.com/docs/manual/core/dot-dollar-considerations/),
 and a key containing a NULL byte is rejected by the BSON encoder before it
-reaches the server. CI exercises both Mongo backends against `mongo:8`.
+reaches the server. CI exercises both Mongo backends against MongoDB 8.3.
 
 Install MongoDB support:
 
