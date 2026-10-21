@@ -2361,14 +2361,12 @@ class ProcessStreamDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
         result = await _process_durable_agent.run(prompt)
-        text_chunks = [
-            event.part.content
-            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
-            else event.delta.content_delta
-            for event in _process_events_collected
-            if (isinstance(event, PartStartEvent) and isinstance(event.part, TextPart))
-            or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta))
-        ]
+        text_chunks: list[str] = []
+        for event in _process_events_collected:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                text_chunks.append(event.part.content)
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                text_chunks.append(event.delta.content_delta)
         return result.output, _process_model_events_in_activity, text_chunks
 
 

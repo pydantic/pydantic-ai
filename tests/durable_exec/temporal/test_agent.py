@@ -4360,14 +4360,12 @@ class BufferedStreamDurableAgentWorkflow:
 
         async with _buffered_stream_agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        text_chunks = [
-            event.part.content
-            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
-            else event.delta.content_delta
-            for event in events
-            if (isinstance(event, PartStartEvent) and isinstance(event.part, TextPart))
-            or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta))
-        ]
+        text_chunks: list[str] = []
+        for event in events:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                text_chunks.append(event.part.content)
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                text_chunks.append(event.delta.content_delta)
         return chunks, output, text_chunks
 
 
