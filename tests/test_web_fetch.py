@@ -1049,6 +1049,13 @@ class TestMarkdownConverter:
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
+    def test_end_tag_attributes_spend_the_event_budget(self):
+        """Attribute-like text in end tags counts toward the event budget."""
+        html = '</div' + ' x' * 21 + '>'
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
     @pytest.mark.parametrize('prefix', ['<div ', '<div data-x=">" ', "<div data=x' "])
     def test_many_attributes_are_rejected_before_whole_tag_scan(self, prefix: str):
         """A tag's attributes are counted before the parser matches the whole tag."""
