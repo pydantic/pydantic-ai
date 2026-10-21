@@ -74,6 +74,7 @@ FILTERED_HEADERS = {
     'via',
     'set-cookie',
     'api-key',
+    'xi-api-key',
 }
 ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
@@ -94,6 +95,8 @@ ALLOWED_HEADERS = {
 }
 
 SCRUBBED_JSON_FIELDS = ('access_token', 'id_token', 'refresh_token', 'safety_identifier')
+# ElevenLabs `GET /v1/convai/agents/{id}` bodies carry the workspace owner's identity in `access_info`.
+SCRUBBED_NESTED_JSON_FIELDS = ('creator_email', 'creator_name')
 SCRUBBED_FORM_FIELDS = (
     'assertion',
     'client_id',
@@ -118,6 +121,9 @@ _VERTEX_HOST = re.compile(r'[a-z0-9-]+-aiplatform\.googleapis\.com')
 _VERTEX_LOCATION = re.compile(r'/locations/[a-z0-9-]+/')
 _VERTEX_PROJECT = re.compile(r'/projects/[a-z0-9-]+/')
 _SAFETY_IDENTIFIER = re.compile(r'("safety_identifier"\s*:\s*)"(?:\\.|[^"\\])*"')
+# ElevenLabs `GET /v1/convai/conversation/get-signed-url` bodies carry a short-lived conversation
+# token in the query string of `signed_url`.
+_SIGNED_URL_TOKEN = re.compile(r'(conversation_signature|token)=[^&]+')
 
 
 def scrub_aws_account_id(uri: str) -> str:
@@ -175,6 +181,19 @@ def _decompress(body: bytes, headers: dict[str, list[str]]) -> bytes:
     return body
 
 
+def _scrub_nested_fields(obj: Any) -> None:
+    """Blank the `SCRUBBED_NESTED_JSON_FIELDS` strings wherever they sit in a parsed JSON body."""
+    if isinstance(obj, dict):
+        for key, value in cast('dict[Any, Any]', obj).items():
+            if key in SCRUBBED_NESTED_JSON_FIELDS and isinstance(value, str):
+                obj[key] = 'scrubbed'
+            else:
+                _scrub_nested_fields(value)
+    elif isinstance(obj, list):
+        for item in cast('list[Any]', obj):
+            _scrub_nested_fields(item)
+
+
 def scrub_json_body(body: bytes) -> bytes:
     """Normalize smart characters and blank the credentials a JSON body may carry.
 
@@ -190,6 +209,9 @@ def scrub_json_body(body: bytes) -> bytes:
         for field in SCRUBBED_JSON_FIELDS:
             if parsed.get(field) is not None:
                 parsed[field] = 'scrubbed'
+        if isinstance(signed_url := parsed.get('signed_url'), str):
+            parsed['signed_url'] = _SIGNED_URL_TOKEN.sub(r'\1=scrubbed', signed_url)
+    _scrub_nested_fields(parsed)
     return json.dumps(parsed).encode('utf-8')
 
 

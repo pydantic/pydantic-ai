@@ -234,6 +234,10 @@ no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
 application's token files. Core owns inference and its telemetry; CLAI adds no
 login-specific spans. Bare `/login` asks which sign-in to run.
 
+Set `GITHUB_COPILOT_INTEGRATION_ID` to change the integration id CLAI sends with
+every Copilot request; [Integration id](../models/github-copilot.md#integration-id)
+covers what Copilot does with it.
+
 ## Settings and commands
 
 Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
@@ -256,7 +260,9 @@ settings on the left, details for the highlighted one on the right (current
 value, default, what it does). Type to filter. Enter edits: booleans and the
 model get a picker (the model list is searchable, with "Type a value..." for
 anything not listed), everything else a typed input that validates as you go.
-An empty value resets. `R` resets the highlighted setting. Esc closes. Every
+The input opens holding the current value unless it is the default or not
+set: Enter without changes saves nothing, and an empty input resets.
+`R` resets the highlighted setting. Esc closes. Every
 edit saves and applies immediately, the same as `/set KEY VALUE`. `/settings` is
 an alias of `/set` and accepts the same arguments.
 

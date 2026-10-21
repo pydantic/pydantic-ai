@@ -66,6 +66,8 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
+Many providers report how many of a response's output tokens were reasoning tokens. Pydantic AI reports that count as [`output_reasoning_tokens`][pydantic_ai.usage.RequestUsage.output_reasoning_tokens] on the response's usage, and sums it over the run in [`RunUsage`][pydantic_ai.usage.RunUsage]. It's included in `output_tokens`, and it's `0` when the model didn't reason or the provider doesn't report the count separately.
+
 ## Thinking in message history
 
 Pydantic AI sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from message history back to the model instead of dropping it. Reasoning is usually load-bearing for the turns that follow it, so dropping it would cost the model context it produced for itself. The one profile value that opts out of sending it is `False` on [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts], which no shipped model sets.
@@ -130,7 +132,7 @@ agent = Agent(model, model_settings=settings)
 
 The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI raises its [default](../models/anthropic.md#model-settings) as needed to leave at least 4096 tokens beyond the budget.
 
-Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
+Pydantic AI reports how many thinking tokens Anthropic used as `output_reasoning_tokens`, and also in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
 ### Carried-over thinking
 
@@ -141,7 +143,7 @@ Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking
 
     Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel].
 
-    Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags, with `model` and `provider` attributes read from the [`ModelResponse`][pydantic_ai.messages.ModelResponse] it came from: `<assistant_thinking model="claude-opus-4-5" provider="anthropic">` for Claude's own unsigned reasoning, `<assistant_thinking model="gpt-5.6" provider="openai">` for a `FallbackModel` chain that fell back from OpenAI, and either attribute left off when the response doesn't record it. The tag is rendered for each request and never stored in your message history, and a closing `</assistant_thinking>` inside the reasoning is escaped so it can't end the block early. The trade-off is that Claude describes the reasoning inaccurately anyway if you ask it who wrote it — measured on `claude-opus-4-5`, it claims the reasoning as its own whether or not the tag names a different source.
+    Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags. The tag carries no attributes, so a history that comes back through a [UI adapter](../ui/overview.md) renders the same and keeps the [prompt cache](../models/anthropic.md#prompt-caching). The tag is rendered for each request and never stored in your message history, and a closing `</assistant_thinking>` inside the reasoning is escaped so it can't end the block early. The trade-off is that Claude can't tell who wrote carried reasoning, and claims it as its own if you ask (measured on `claude-opus-4-5`).
 
     To send it in the assistant turn instead, turn the flag off for your model:
 

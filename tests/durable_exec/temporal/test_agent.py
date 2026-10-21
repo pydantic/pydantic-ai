@@ -41,7 +41,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     RunUsage,
     TextPart,
@@ -58,6 +58,7 @@ from pydantic_ai.capabilities import (
     Capability,
     ImageGeneration,
     ProcessHistory,
+    durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import (
@@ -70,6 +71,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
+from pydantic_ai.messages import InstructionBaselinePart, InstructionDeltaPart, ModelMessagesTypeAdapter
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -880,7 +882,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -908,7 +910,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -989,7 +991,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -1162,7 +1164,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2502,11 +2504,13 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Did you mean Mexico City?',
                             tool_name='get_weather_in_city',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -4513,3 +4517,76 @@ async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Cli
 
     in_process_result = await usage_delegation_agent.run('delegate please')
     assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))
+
+
+_instruction_values: list[str | None] = []
+_instruction_reads: list[str | None] = []
+
+
+class RecordedInstructions(Capability[None]):
+    def __init__(self) -> None:
+        super().__init__(id='recorded_instructions')
+        self.instructions(name='state', on_change='append')(self.read_state)
+
+    @durable_operation('read_state')
+    async def read_state(self, ctx: RunContext[None]) -> str | None:
+        assert activity.in_activity()
+        value = _instruction_values.pop(0)
+        _instruction_reads.append(value)
+        return value
+
+
+_instruction_update_agent = Agent(
+    TestModel(custom_output_text='ok'),
+    deps_type=type(None),
+    name='instruction_updates',
+    capabilities=[RecordedInstructions(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InstructionUpdatesWorkflow:
+    @workflow.run
+    async def run(self) -> list[ModelMessage]:
+        messages: list[ModelMessage] = []
+        for _ in range(6):
+            result = await _instruction_update_agent.run('Continue.', message_history=messages)
+            messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+        # Executed again on replay, so changed history shape cannot hide behind a cached model result.
+        assert [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, InstructionDeltaPart)
+        ] == ['B', 'A', None, 'C']
+        assert {message.instructions for message in messages if isinstance(message, ModelRequest)} == {'A'}
+        return messages
+
+
+async def test_instruction_updates_use_recorded_values_on_temporal_replay(client: Client) -> None:
+    _instruction_values[:] = ['A', 'B', 'B', 'A', None, 'C']
+    _instruction_reads.clear()
+    workflow_id = f'instruction-updates-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InstructionUpdatesWorkflow],
+        plugins=[AgentPlugin(_instruction_update_agent)],
+    ):
+        messages = await client.execute_workflow(
+            InstructionUpdatesWorkflow.run,
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _instruction_reads == ['A', 'B', 'B', 'A', None, 'C']
+    assert _instruction_values == []
+    assert isinstance(messages[0], ModelRequest)
+    assert any(isinstance(part, InstructionBaselinePart) for part in messages[0].parts)
+    await Replayer(
+        workflows=[InstructionUpdatesWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+    assert _instruction_reads == ['A', 'B', 'B', 'A', None, 'C']

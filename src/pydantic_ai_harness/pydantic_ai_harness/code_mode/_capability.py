@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchReturnPart,
     SystemPromptPart,
+    ToolSearchReturnPart,
     post_compaction_window,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
@@ -48,11 +49,11 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
     'New functions are now available inside `run_code`. Their signatures have been '
     'added to the available-functions catalog in the system prompt'
 )
-_DISCOVERY_ANNOUNCEMENT_RE = re.compile(
-    rf'{re.escape(_DISCOVERY_ANNOUNCEMENT_PREFIX)}: '
-    r'(?P<names>`[^`]+`(?:, `[^`]+`)*)\.'
-)
-_BACKTICKED_NAME_RE = re.compile(r'`([^`]+)`')
+_DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
+"""`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
+# TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
+# (https://github.com/pydantic/pydantic-ai/pull/10547); this matches its escaping.
+_CLOSING_SYSTEM_TAG_OPENER = re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE)
 
 
 @dataclass
@@ -368,23 +369,68 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         if not fresh:
             return
         self._in_flight_announcements.update(fresh)
-        listing = ', '.join(f'`{name}`' for name in fresh)
+        # A name can come from a remote MCP server, so one carrying `</system>` must not be able to end
+        # the `<system>` element that models without inline system prompts receive this in.
+        listing = ', '.join(f'`{_neutralize_closing_system_tag(name)}`' for name in fresh)
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
-        ctx.enqueue(SystemPromptPart(content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.'))
+        ctx.enqueue(
+            SystemPromptPart(
+                content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.',
+                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': fresh},
+            )
+        )
+
+
+def _neutralize_closing_system_tag(text: str) -> str:
+    """Escape the `<` of every closing `system` tag in `text` as `&lt;`, and leave everything else as written."""
+    return _CLOSING_SYSTEM_TAG_OPENER.sub('&lt;', text)
 
 
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
-    """Read authored discovery announcements after the latest compaction boundary."""
+    """Read the names announced after the latest compaction boundary.
+
+    An announcement is identified by its `SystemPromptPart.metadata`, never by its text: the text carries
+    names a remote server chose, so a system prompt that merely reads like one, or a name shaped like a
+    list of names, must not count. Part metadata survives serialization and the merging of adjacent
+    requests, and an announcement a history processor or a UI round trip dropped no longer counts, so the
+    tool is announced again when it's next discovered.
+
+    Histories recorded before announcements were marked hold unmarked ones, recognizable only by their
+    text. For those, the names discovered by the window's search returns count instead, as every search
+    return was announced as soon as it arrived. That reads `ToolSearchReturnPart` and
+    `NativeToolSearchReturnPart` by type, so an announcement-shaped system prompt can at most bring back
+    that reading, never add a name of its own.
+    """
+    window = post_compaction_window(messages)
     announced: set[str] = set()
-    for message in post_compaction_window(messages):
+    legacy = False
+    for message in window:
         for part in message.parts:
-            if isinstance(part, SystemPromptPart):
-                match = _DISCOVERY_ANNOUNCEMENT_RE.fullmatch(part.content)
-                if match:
-                    announced.update(_BACKTICKED_NAME_RE.findall(match.group('names')))
+            if not isinstance(part, SystemPromptPart):
+                continue
+            if part.metadata is None:
+                legacy = legacy or part.content.startswith(_DISCOVERY_ANNOUNCEMENT_PREFIX)
+            elif part.metadata.get('origin') == _DISCOVERY_ANNOUNCEMENT_ORIGIN:
+                announced.update(_announced_names(part.metadata.get('tools')))
+    if legacy:
+        for message in window:
+            for part in message.parts:
+                if isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart):
+                    announced.update(_extract_discovered_names(part.content))
     return announced
+
+
+_NAMES_ADAPTER = TypeAdapter(list[str])
+
+
+def _announced_names(tools: object) -> list[str]:
+    """Read an announcement's `metadata['tools']`, or `[]` if it isn't a list of names."""
+    try:
+        return _NAMES_ADAPTER.validate_python(tools)
+    except ValidationError:
+        return []
 
 
 class _DiscoveredCatalog(TypedDict):

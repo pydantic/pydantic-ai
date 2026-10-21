@@ -26,7 +26,8 @@ To help you get started with Pydantic AI Gateway, some code examples on the Pyda
 - **Gateway endpoints:** Configure [gateway endpoints](#gateway-endpoints) to fail over between providers serving the same model, or load-balance traffic across them by weight.
 - **Backend observability:** Log every request through [Pydantic Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend (_coming soon_).
 - **Zero translation**: Unlike traditional AI gateways that translate everything to one common schema, **Pydantic AI Gateway** allows requests to flow through directly in each provider's native format. This gives you immediate access to new model features as soon as they are released.
-- **Enterprise ready**: Inherits Logfire's enterprise features — including SSO, custom roles and permissions.
+- **Enterprise ready**: Inherits Logfire's enterprise features, including SSO, custom roles and permissions.
+- **Cloud or self-hosted**: Available on the Logfire Cloud plans and on self-hosted Logfire; see the [Logfire AI Gateway docs](https://pydantic.dev/docs/logfire/manage/ai-gateway/).
 
 ```python {title="hello_world.py"}
 from pydantic_ai import Agent

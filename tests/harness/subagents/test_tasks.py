@@ -17,7 +17,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -103,6 +102,34 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
         assert saved.messages == record.messages
 
 
+async def test_child_history_with_binary_tool_return_is_saved(tmp_path: Path) -> None:
+    """A child tool's raw bytes that aren't UTF-8 are saved as base64, like `ModelMessagesTypeAdapter` saves them."""
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='read_blob', json_args='{}', tool_call_id='blob')}
+        else:
+            yield 'child result'
+
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+
+    @child.tool_plain
+    def read_blob() -> bytes:
+        return b'\x80'
+
+    owner = DelegationTasks(directory=tmp_path)
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent = Agent(parent_model(), capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)])
+                result = await agent.run('go', conversation_id='parent')
+    assert result.output == 'parent finished'
+    async with DelegationTasks(directory=tmp_path).opened() as restored:
+        (saved,) = restored.records.values()
+    returns = [part.content for message in saved.messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    assert returns == ['gA==']
+
+
 async def test_owned_child_streams_to_the_event_stream_handler_and_the_observer() -> None:
     handled: list[AgentStreamEvent] = []
     observed: list[AgentStreamEvent] = []
@@ -164,7 +191,10 @@ async def test_background_and_resume_need_an_owner(background: bool, resume: str
     )
     result = await agent.run('go')
     retries = [
-        part.content for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
     assert retries == ['Background execution and resume require an open `DelegationTasks` owner']
 

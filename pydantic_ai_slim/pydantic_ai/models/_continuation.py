@@ -54,6 +54,7 @@ from ..messages import (
 from ..settings import ModelSettings
 from ..usage import RequestUsage, _add_usage_tokens  # pyright: ignore[reportPrivateUsage]
 from . import Model, ModelRequestContext, StreamedResponse
+from ._request_timeout import without_carried_deadline
 
 __all__ = [
     'MAX_BACKGROUND_POLLS',
@@ -216,6 +217,10 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
         merged = replace(merged, provider_details={**existing.provider_details, **(merged.provider_details or {})})
     if existing.metadata:
         merged = replace(merged, metadata={**existing.metadata, **(merged.metadata or {})})
+    # A segment that digested the whole response, like a retrieved background response, carries the turn's digest.
+    # Otherwise the first segment's is kept: it covers fewer parts than the turn has, so the next request resends
+    # the history rather than continuing from a response it can't vouch for.
+    merged = replace(merged, history_digest=new.history_digest or existing.history_digest)
     # Attempts that failed before an earlier segment (e.g. the models a `FallbackModel` moved on from
     # before the one that suspended) belong to the turn as a whole, so they are kept in order.
     if existing.failed_attempts:
@@ -228,6 +233,9 @@ def merge_responses(existing: ModelResponse, new: ModelResponse) -> ModelRespons
     stripped = _strip_replace_marker(merged.metadata)
     if stripped is not merged.metadata:
         merged = replace(merged, metadata=stripped)
+    # The `request_timeout` deadline a `FallbackModel` carries only matters to the segments that continue the turn.
+    if merged.state != 'suspended':
+        merged = without_carried_deadline(merged)
     return merged
 
 
@@ -399,7 +407,12 @@ class _ContinuationStreamedResponse(StreamedResponse):
         """
         if self._event_iterator is None:
             self._segment_stream = _utils.PeekableAsyncStream(self._get_event_iterator())
-            self._event_iterator = self._iterator_with_cancel_guard(self._segment_stream)
+            events: AsyncIterator[ModelResponseStreamEvent] = self._segment_stream
+            # The `request_timeout` deadline covers opening each segment, the waits between segments, and reading
+            # each segment's events.
+            if self._request_deadline is not None:
+                events = self._request_deadline.iterate(events)
+            self._event_iterator = self._iterator_with_cancel_guard(events)
         return self._event_iterator
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:

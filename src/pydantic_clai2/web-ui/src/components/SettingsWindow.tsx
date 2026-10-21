@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import type { MenuField } from '../protocol'
+import { McpSection } from './McpSection'
 import { MenuForm } from './MenuForm'
 import { PluginsPanel } from './PluginsPanel'
-import { BackIcon, BrainIcon, KeyIcon, PuzzleIcon, SlidersIcon } from './icons'
+import { BackIcon, BrainIcon, FileIcon, InfoIcon, KeyIcon, PuzzleIcon, ServerIcon, SlidersIcon } from './icons'
 
 interface Section {
   id: string
@@ -43,6 +44,27 @@ export const SECTIONS = [
     icon: KeyIcon,
     hint: 'Saved API keys and signed-in accounts, as /keys and /accounts manage them. Secrets never leave CLAI.',
     commands: ['keys', 'login', 'accounts'],
+  },
+  {
+    id: 'mcp',
+    label: 'MCP servers',
+    icon: ServerIcon,
+    hint: 'Connect MCP servers whose tools the agent can use, and manage them, as /mcp does.',
+    commands: ['mcp'],
+  },
+  {
+    id: 'system-prompt',
+    label: 'System prompt',
+    icon: FileIcon,
+    hint: "Your own instructions, sent after CLAI's, and the full prompt the model last received.",
+    commands: ['system_prompt'],
+  },
+  {
+    id: 'about',
+    label: 'About',
+    icon: InfoIcon,
+    hint: 'The CLAI running now, and the channel /update installs from.',
+    commands: ['update'],
   },
 ] as const satisfies readonly Section[]
 
@@ -181,6 +203,29 @@ export function SettingsWindow({
               onError={onError}
               onNotice={onNotice}
             />
+          )}
+          {section === 'mcp' && (
+            <McpSection version={settingsVersion} running={running} onError={onError} onNotice={onNotice} />
+          )}
+          {section === 'system-prompt' && (
+            <div className="settings-card">
+              <MenuForm
+                target={{ kind: 'commands', name: 'system_prompt' }}
+                version={settingsVersion}
+                onError={onError}
+                onNotice={onNotice}
+              />
+            </div>
+          )}
+          {section === 'about' && (
+            <div className="settings-card">
+              <MenuForm
+                target={{ kind: 'commands', name: 'update' }}
+                version={settingsVersion}
+                onError={onError}
+                onNotice={onNotice}
+              />
+            </div>
           )}
         </div>
       </main>

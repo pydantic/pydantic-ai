@@ -12,9 +12,11 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -34,7 +36,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 
-from ..conftest import try_import
+from .._inline_snapshot import snapshot
+from ..conftest import legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -658,8 +661,8 @@ def test_prepare_messages_orders_tool_results_by_call():
         ModelRequest(
             parts=[
                 ToolReturnPart('c', 'C', tool_call_id='cc'),
-                RetryPromptPart('output invalid'),
-                RetryPromptPart('bad args', tool_name='b', tool_call_id='cb'),
+                RetryFeedbackPart('output invalid', retry=RetryInfo(cause='model_retry')),
+                ToolReturnPart('b', 'bad args', tool_call_id='cb', outcome='retried'),
                 ToolReturnPart('z', 'Z', tool_call_id='not-a-call'),
                 ToolReturnPart('a', 'A', tool_call_id='ca'),
                 UserPromptPart(content='file from c'),
@@ -671,8 +674,12 @@ def test_prepare_messages_orders_tool_results_by_call():
 
     assert _request_parts(prepared)[1] == [
         ('ToolReturnPart', 'A'),
-        ('RetryPromptPart', 'output invalid'),
-        ('RetryPromptPart', 'bad args'),
+        (
+            'UserPromptPart',
+            "Your previous response failed the application's validation (this is automated feedback, not a message "
+            'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
+        ),
+        ('ToolReturnPart', 'bad args'),
         ('ToolReturnPart', 'Z'),
         ('ToolReturnPart', 'C'),
         ('UserPromptPart', 'file from c'),
@@ -688,6 +695,136 @@ def test_prepare_messages_keeps_history_identity_when_tool_results_are_in_call_o
     ]
 
     assert TestModel().prepare_messages(messages) is messages
+
+
+def _tool_call_ids(messages: list[ModelMessage]) -> list[tuple[str, str, str | None]]:
+    """Each call and return in history order, as `(type, tool_call_id, outcome)`; a retry is a return too."""
+    return [
+        (type(part).__name__, part.tool_call_id, part.outcome if isinstance(part, ToolReturnPart) else None)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart | ToolReturnPart)
+    ]
+
+
+def test_prepare_messages_fits_tool_call_ids_to_profile_length():
+    """IDs that aren't exactly `tool_call_id_length` ASCII alphanumerics are replaced, consistently per ID.
+
+    A unit test because the edge cases (an 8- or 10-character ID, a 9-character one with `_`, a non-ASCII
+    letter) are about which IDs count as fitting, which the Mistral VCR tests only sample. The hashes are
+    the same as on the wire there: `call_abc...` maps to `2pESUE4jw` in both.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart('a', {}, tool_call_id='aB3dE5gH9'),
+                ToolCallPart('b', {}, tool_call_id='aB3dE5gH'),
+                ToolCallPart('c', {}, tool_call_id='ab_cd_efg'),
+                ToolCallPart('d', {}, tool_call_id='aB3dE5gH9X'),
+                ToolCallPart('e', {}, tool_call_id='aB3dE5gHé'),
+                ToolCallPart('f', {}, tool_call_id='call_abc123def456ghi789jkl012'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('a', 'A', tool_call_id='aB3dE5gH9'),
+                # A legacy retry is translated into the retried return it always meant before IDs are fitted.
+                legacy_retry_prompt_part('bad args', tool_name='b', tool_call_id='aB3dE5gH'),
+                ToolReturnPart('c', 'C', tool_call_id='ab_cd_efg', outcome='retried'),
+                ToolReturnPart('d', 'D', tool_call_id='aB3dE5gH9X'),
+                ToolReturnPart('e', 'E', tool_call_id='aB3dE5gHé'),
+                ToolReturnPart('f', 'F', tool_call_id='call_abc123def456ghi789jkl012'),
+            ]
+        ),
+    ]
+    # Dumped rather than deep-copied: copying the deprecated part would construct it again, and warn.
+    stored = ModelMessagesTypeAdapter.dump_json(messages)
+    model = TestModel(profile=ModelProfile(tool_call_id_length=9))
+
+    prepared = model.prepare_messages(messages)
+
+    assert _tool_call_ids(prepared) == snapshot(
+        [
+            ('ToolCallPart', 'aB3dE5gH9', None),
+            ('ToolCallPart', 'BsnFb66F9', None),
+            ('ToolCallPart', '5ZoXBIVHV', None),
+            ('ToolCallPart', 'BgySIGZn7', None),
+            ('ToolCallPart', 'pFwy2hHZJ', None),
+            ('ToolCallPart', '2pESUE4jw', None),
+            ('ToolReturnPart', 'aB3dE5gH9', 'success'),
+            ('ToolReturnPart', 'BsnFb66F9', 'retried'),
+            ('ToolReturnPart', '5ZoXBIVHV', 'retried'),
+            ('ToolReturnPart', 'BgySIGZn7', 'success'),
+            ('ToolReturnPart', 'pFwy2hHZJ', 'success'),
+            ('ToolReturnPart', '2pESUE4jw', 'success'),
+        ]
+    )
+    # The same history prepares to the same IDs every time, and only the outgoing copy changes.
+    assert _tool_call_ids(model.prepare_messages(messages)) == _tool_call_ids(prepared)
+    assert ModelMessagesTypeAdapter.dump_json(messages) == stored
+
+
+def test_prepare_messages_keeps_history_identity_when_tool_call_ids_fit():
+    """With every ID already fitting, nothing is copied (the `_make_request` identity check relies on it)."""
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id='aB3dE5gH9')]),
+        ModelRequest(parts=[ToolReturnPart('a', 'A', tool_call_id='aB3dE5gH9')]),
+    ]
+
+    assert TestModel(profile=ModelProfile(tool_call_id_length=9)).prepare_messages(messages) is messages
+
+
+@pytest.mark.parametrize('foreign_first', [True, False], ids=['foreign-first', 'fitting-first'])
+def test_prepare_messages_resolves_tool_call_id_collisions_in_history_order(foreign_first: bool):
+    """A replacement that's already taken is rehashed, and the ID seen first in history keeps its value.
+
+    A unit test because a real collision needs two IDs to hash alike. A fitting ID that equals another
+    ID's hash collides just the same: `call_x` hashes to `nVlA23dIQ`. Whichever comes first keeps that
+    value, and the other is rehashed from itself plus a counter, so a growing history never renumbers an
+    earlier call.
+    """
+    foreign = [
+        ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id='call_x')]),
+        ModelRequest(parts=[ToolReturnPart('a', 'A', tool_call_id='call_x')]),
+    ]
+    fitting = [
+        ModelResponse(parts=[ToolCallPart('b', {}, tool_call_id='nVlA23dIQ')]),
+        ModelRequest(parts=[ToolReturnPart('b', 'B', tool_call_id='nVlA23dIQ')]),
+    ]
+    messages: list[ModelMessage] = [*foreign, *fitting] if foreign_first else [*fitting, *foreign]
+
+    prepared = TestModel(profile=ModelProfile(tool_call_id_length=9)).prepare_messages(messages)
+
+    # One `(tool, ID)` pair per tool: each call still pairs with its own return.
+    pairs = {
+        (part.tool_name, part.tool_call_id)
+        for message in prepared
+        for part in message.parts
+        if isinstance(part, ToolCallPart | ToolReturnPart)
+    }
+    expected = {('a', 'nVlA23dIQ'), ('b', 'Q30Sez398')} if foreign_first else {('a', 'heCJTQ2G1'), ('b', 'nVlA23dIQ')}
+    assert pairs == expected
+
+
+@pytest.mark.parametrize(
+    'length,message',
+    [
+        (0, '`tool_call_id_length` must be at least 1, got 0.'),
+        (1, 'The message history has more distinct tool call IDs than fit in 1 alphanumeric characters'),
+    ],
+)
+def test_prepare_messages_rejects_tool_call_id_length_without_room(length: int, message: str):
+    """A length that can't hold every distinct ID raises instead of rehashing forever.
+
+    A unit test because no real profile sets such a length; it guards a user-supplied profile.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart('a', {}, tool_call_id=f'call_{index}') for index in range(63)])
+    ]
+
+    with pytest.raises(UserError, match=re.escape(message)):
+        TestModel(profile=ModelProfile(tool_call_id_length=length)).prepare_messages(messages)
 
 
 async def test_model_default_async_context_returns_model() -> None:
