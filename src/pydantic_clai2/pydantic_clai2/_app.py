@@ -171,7 +171,7 @@ async def chat(
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
-    Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
+    Esc cancels the current turn; Ctrl+C also clears idle input. Ctrl+D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `resume_from` imports `resume` from Claude Code or Codex instead; an empty `resume` browses its sessions.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.

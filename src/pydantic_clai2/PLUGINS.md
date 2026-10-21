@@ -249,7 +249,7 @@ Pydantic AI device-flow implementation until its release.
 Login prints a code and `https://github.com/login/device`, then starts polling.
 Open the link on this or another device and approve only your own session's code.
 CLAI does not launch a browser, so a text browser cannot block login or take over
-an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
+an SSH terminal. Ctrl+C stops polling; GitHub controls expiry. There is no localhost callback.
 GitHub authorization does not establish Copilot access: the menu queries your
 account's catalog and keeps only picker-enabled `/chat/completions` models.
 The shared model menu includes details and `Ctrl+S` settings. Subscription and
@@ -1173,7 +1173,7 @@ visible. The question is pinned with its choices, so output streamed meanwhile (
 delegated task's, say) lands above it instead of between it and the picker. Up/Down moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
-several. Esc or Ctrl-C declines the whole request and lets the model continue.
+several. Esc or Ctrl+C declines the whole request and lets the model continue.
 The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel's alternate screen. The draft
@@ -1187,7 +1187,7 @@ Choose it to type your own answer instead of the suggested options, including fo
 multi-select questions. With `Other` highlighted, start typing; you do not need
 to press Enter first, and number keys type digits there instead of picking
 choices. Enter submits nonblank text. Esc returns to the choices
-and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
@@ -1468,7 +1468,7 @@ branch, with its own CLAI running there as `clai2 --web`.
 | `/workspaces` or `/workspaces list` | every workspace: its ID, status (`ready`, `running at URL`, `stopped`), kind, branch, and folder |
 | `/workspaces create KIND [REPO [REF]]` | check out REPO at REF on a new branch named after the workspace's ID; the kind's own repository and ref fill in what is left out; a relative REPO is in the session's folder |
 | `/workspaces open ID` | start the workspace's CLAI unless it runs, and open its page in your browser |
-| `/workspaces stop ID` | stop its CLAI as Ctrl-C would, killing it after ten seconds |
+| `/workspaces stop ID` | stop its CLAI as Ctrl+C would, killing it after ten seconds |
 | `/workspaces destroy ID` | stop its CLAI, remove the checkout (or keep it, as the kind says), and forget it; the branch is kept |
 
 **Kinds.** The settings are named kinds of workspace, each a backend with its options, edited in
@@ -2185,7 +2185,7 @@ Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
 search. Esc clears the search, or the matches Enter kept, including when nothing
 matches; with no filter, Esc closes. Changes apply immediately; there is no
-pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl-C just
+pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl+C just
 close.
 
 Turning a plugin on with Enter or Space opens its settings menu straight away when it
@@ -2405,7 +2405,7 @@ the text the command returned, which the shell printed (empty when it returned n
 menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the
 command printed itself, such as the history `/resume` replays, is not in it), and `error` the exception it failed with, which the shell showed
 instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
-with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
+with Esc or Ctrl+C fires nothing; a finished one fires after Esc stops reaching it, so a slow
 handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
 
@@ -2428,7 +2428,7 @@ its progress bars into plain lines, which CLAI still prints, so it does that onl
 has no terminal to watch. Nothing fires when there is nothing to install, or on Windows, where the
 install runs after CLAI exits.
 
-Ctrl-C during an agent run keeps the prompt and captured partial messages in
+Ctrl+C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
 tools for cleanup; it does not undo completed side effects or retry the run.
 Retained failed turns and restored interrupted sessions are marked interrupted so
@@ -2583,7 +2583,7 @@ something else.
 A command can start a turn with `self.host.submit_prompt(text)`: the text runs
 as the next prompt once the command returns, ahead of anything queued in the
 editor, and goes through `on_turn_start` like typed input, without being echoed.
-Cancelling the command, with Ctrl-C or Esc, discards the prompt. Call it only from a command handler, and not from a `during_turn` command opened
+Cancelling the command, with Ctrl+C or Esc, discards the prompt. Call it only from a command handler, and not from a `during_turn` command opened
 over a running turn: anywhere else it raises `RuntimeError`.
 It is always a prompt, even when it starts with `/` or `!`. The built-in skill
 commands use it to send a skill's instructions:
@@ -2646,7 +2646,7 @@ prompt the keyboard does:
   `Dialogs`; edits apply at once, as the terminal's menu applies them.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
   `False` when nothing was running. A menu open over the cancelled turn or command closes with
-  it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
+  it, as it does for Ctrl+C; a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
   for command names (with their descriptions), their arguments, and `@` paths. As in the
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
@@ -2797,12 +2797,12 @@ without starting another turn, interrupting the current response, or cancelling
 tools. Each press sends one message. Slash commands, `!` shell
 commands, and exit signals are never steered: such a draft, or any draft the run
 does not accept, is taken as Enter would take it, and such a queued message stays
-queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
-a newline when the terminal distinguishes it from Enter. Ctrl-J inserts a newline
+queued and is not skipped over. When idle, Enter starts a turn. Shift+Enter inserts
+a newline when the terminal distinguishes it from Enter. Ctrl+J inserts a newline
 on terminals that do not, including GNOME Terminal/VTE on Ubuntu. xterm and Kitty
 keyboard reporting is enabled only while the editor owns input and released for
 menus and on exit.
-Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl+W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
@@ -3412,7 +3412,7 @@ async def sign_in(host: PluginHost, authorization_url: str) -> str:
 
 The prompt and the typed answer are pinned under the transcript, the way
 `ask_user` shows its questions, so the URL stays on screen above them. It returns
-the answer when the user presses Enter, and `None` on Esc or Ctrl-C. Pasting
+the answer when the user presses Enter, and `None` on Esc or Ctrl+C. Pasting
 works, and pasted line breaks are dropped. Pass `hidden=True` to show how many
 characters were typed instead of the text, for an answer that carries a secret
 such as an authorization code. Cancelling the task that awaits it, because the
@@ -3700,7 +3700,7 @@ Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/
 
 ## openrouter connection
 
-Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. CLAI exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach CLAI (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl+C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -3716,12 +3716,12 @@ into `/keys` or replace a plugin's saved-key picker.
 Open `/keys` to browse and manage saved API keys in a full-screen menu.
 Use A to add, Enter to replace a value, R to rename, and D to delete with
 confirmation. Values are masked and are not shown in previews. Changes save
-immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+immediately; Esc or Ctrl+C closes the menu. Errors appear inside the menu.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
 numbers, and underscores, starting with a letter or underscore. Saving an existing
-name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
+name asks before replacing it. Ctrl+C or Ctrl+D cancels without saving. Do not put
 the secret on the command line.
 
 Consumers store a key's name, not its value, and look it up each time they
@@ -3797,7 +3797,7 @@ controls are never replayed as conversation text.
 `/theme` without arguments opens a searchable picker with a sample conversation,
 including Markdown, thinking, tool output, code, warnings, errors, and the input
 area. Browsing previews colours without applying them; Enter confirms, and Esc
-or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
+or Ctrl+C cancels. Choices are `default` and `termflow.themes.PALETTES`.
 `default` preserves CLAI's existing appearance without changing terminal colours
 on startup or exit. `/theme default` restores it after a palette selection.
 The picker, `/set`, project settings, and persisted `display.theme` values share
@@ -3834,7 +3834,7 @@ Esc again closes it. `/model settings PROVIDER:NAME` opens that model directly.
 Tab completes added models.
 `Ctrl+S` in `/model add` opens the same editor. Edits save immediately and apply
 from the model's next request, even in a running turn. `r` resets a field; Esc
-or Ctrl-C goes back. Fixed choices
+or Ctrl+C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
@@ -3992,7 +3992,7 @@ case-insensitive and includes text instructions in multimodal prompts.
 ## Image input
 
 Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
-API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
+API. Ctrl+V or Alt+V attaches clipboard images; bracketed paste of existing image
 paths attaches local files. See [Pasting images](docs/reference.md#pasting-images) for
 platform requirements and limits.
 

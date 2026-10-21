@@ -130,7 +130,7 @@ class WebPlugin(Plugin[WebSettings]):
             if self.url is None:
                 return 'The web UI is not running.'
             if not self.host.console.is_terminal:
-                raise ValueError('The browser is the only way to drive this CLAI. Press Ctrl-C where it runs to quit.')
+                raise ValueError('The browser is the only way to drive this CLAI. Press Ctrl+C where it runs to quit.')
             await self.stop()
             return 'Web UI stopped.'
         if args == ['status']:

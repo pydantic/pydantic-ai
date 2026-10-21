@@ -330,7 +330,7 @@ def test_only_opted_in_available_commands_run_live() -> None:
 async def test_live_command_keeps_the_editor_working_and_cancellable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A slow command such as `/compact` keeps the prompt on screen with the spinner and stops on Ctrl-C.
+    """A slow command such as `/compact` keeps the prompt on screen with the spinner and stops on Ctrl+C.
 
     The draft typed meanwhile shows while it runs and is still there once it stops.
     """

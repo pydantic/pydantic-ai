@@ -63,7 +63,7 @@ class _Output(io.StringIO):
         self.ready = anyio.Event()
 
     def write(self, s: str) -> int:
-        if 'Press Ctrl-C to quit.' in s:
+        if 'Press Ctrl+C to quit.' in s:
             self.ready.set()
         return super().write(s)
 

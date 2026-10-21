@@ -39,7 +39,7 @@ def question_input() -> Generator[Callable[[], QuestionKey]]:
     source = create_input()
 
     def feed(key: str, data: str) -> None:
-        # Inline questions keep Ctrl-J as confirmation, unlike the multiline editor.
+        # Inline questions keep Ctrl+J as confirmation, unlike the multiline editor.
         if key == 'ctrl-j':
             key = 'enter'
         if key in TRANSCRIPT_KEYS:

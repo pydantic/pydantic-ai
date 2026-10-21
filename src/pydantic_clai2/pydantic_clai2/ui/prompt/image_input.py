@@ -116,7 +116,7 @@ class ImageInput:
         self.pending = {marker: image for marker, image in self.pending.items() if marker in markers}
 
     def bindings(self, *, queued: Callable[[], Sequence[str]] = tuple) -> KeyBindings:
-        """Ctrl-V reads image data; bracketed text paste only recognizes whole paths."""
+        """Ctrl+V reads image data; bracketed text paste only recognizes whole paths."""
         keys = KeyBindings()
 
         @keys.add('c-v')

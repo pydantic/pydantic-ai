@@ -961,7 +961,7 @@ class PluginHost(Generic[DepsT]):
     def interrupt(self) -> bool:
         """Cancel the running turn or command, as Esc does; `False` when nothing was running.
 
-        A menu open over the cancelled turn or command closes with it, as it does for Ctrl-C; a
+        A menu open over the cancelled turn or command closes with it, as it does for Ctrl+C; a
         headless `-p` run is not cancelled.
         """
         return self._interrupt()

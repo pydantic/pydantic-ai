@@ -404,7 +404,7 @@ async def test_a_session_that_does_not_start(rig: Rig, repository: Path) -> None
 
 
 async def test_stopping(rig: Rig, repository: Path) -> None:
-    """Only the CLAI that answers with its token is signalled; one that ignores Ctrl-C is killed."""
+    """Only the CLAI that answers with its token is signalled; one that ignores Ctrl+C is killed."""
     workspaces = rig.workspaces()
     workspace = await workspaces.create(kind='local-worktree', repo=str(repository))
     assert await workspaces.stop(workspace.id) == workspace, 'nothing to stop'
@@ -433,7 +433,7 @@ async def test_stopping(rig: Rig, repository: Path) -> None:
 
 
 async def test_a_session_takes_its_time(rig: Rig, repository: Path) -> None:
-    """Starting waits for the first answer; stopping waits for the process to end after Ctrl-C."""
+    """Starting waits for the first answer; stopping waits for the process to end after Ctrl+C."""
     workspaces = rig.workspaces()
     workspace = await workspaces.create(kind='local-worktree', repo=str(repository))
     rig.probe.slow = 2

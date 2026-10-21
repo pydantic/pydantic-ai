@@ -41,7 +41,7 @@ async def run_web(
     token: str | None = None,
     restart: WebHandoff | None = None,
 ) -> None:
-    """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl-C.
+    """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl+C.
 
     `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
@@ -117,7 +117,7 @@ def _web_session(
         headless=True,
         workspace=workspace,
         process=process,
-        # Ctrl-C reaches the session CLAI started with, which ends CLAI; the others are interrupted from the browser.
+        # Ctrl+C reaches the session CLAI started with, which ends CLAI; the others are interrupted from the browser.
         signals=process is None,
     )
     SessionWorkspace(
@@ -177,7 +177,7 @@ async def _serve_web(
                     url = await web.start()
                     # A launcher keeps its token, so the address it reads leaves the token out.
                     console.print(f'Web UI running at {url if token is None else url.partition("?")[0]}', markup=False)
-                console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
+                console.print('Prompts entered in the browser run here. Press Ctrl+C to quit.', markup=False)
                 reason = await shell.run()
         except get_cancelled_exc_class():
             reason = 'exit'

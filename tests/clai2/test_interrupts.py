@@ -24,7 +24,7 @@ async def test_worker_thread_does_not_install_signals() -> None:
 
 
 async def test_overlapping_runs_give_ctrl_c_back_whichever_ends_first() -> None:
-    """Three runs take Ctrl-C in turn and the first ends first: Ctrl-C ends where it started, not with a finished run."""
+    """Three runs take Ctrl+C in turn and the first ends first: Ctrl+C ends where it started, not with a finished run."""
     original = signal.getsignal(signal.SIGINT)
     interrupts = Interrupts()
     started = [asyncio.Event() for _ in range(3)]
@@ -48,7 +48,7 @@ async def test_overlapping_runs_give_ctrl_c_back_whichever_ends_first() -> None:
 
 
 async def test_a_replaced_run_takes_ctrl_c_again_on_focus() -> None:
-    """The terminal moves back to a session whose Ctrl-C another took meanwhile: each gives it back once."""
+    """The terminal moves back to a session whose Ctrl+C another took meanwhile: each gives it back once."""
     original = signal.getsignal(signal.SIGINT)
     first, second = Interrupts(), Interrupts()
     started = [asyncio.Event(), asyncio.Event()]
@@ -101,7 +101,7 @@ async def test_interrupt_cleans_up_and_preserves_parent(double: bool) -> None:
 
 
 async def test_signal_cancels_from_the_loop() -> None:
-    """Ctrl-C can land inside an asyncio callback, such as `asyncio.shield` settling its result, which must finish first."""
+    """Ctrl+C can land inside an asyncio callback, such as `asyncio.shield` settling its result, which must finish first."""
 
     async def operation() -> None:
         current = asyncio.current_task()

@@ -18,7 +18,7 @@ def print_welcome(project: ProjectSettings, console: Console, *, worktree: Workt
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
     console.print(
-        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl-C interrupts a turn.',
+        '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl+C interrupts a turn.',
         style=theme.color(theme.MUTED),
     )
     _report_project(project, console)

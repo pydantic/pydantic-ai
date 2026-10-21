@@ -163,7 +163,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
 - **The terminal shows one live session at a time.** `Terminal` (`ui/prompt/terminal.py`)
   owns the terminal console, the `LivePrompt`, the line prompt, the transcript, input
   history, and pasted images. Only the session shown (`SessionRuntime.terminal`,
-  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl-C
+  `LiveRuntimes.focused`) reads the editor, prints to the console, and takes Ctrl+C
   (`Interrupts.focus`); the others print nowhere (`Terminal.session_console`) and read
   their inbox. `chat` sets `live.build`, so the web UI opens sessions beside the
   terminal's. `/resume` of a conversation another live session holds shows that one
@@ -283,9 +283,11 @@ one that is not.
   hotkey that does the action, or nothing; Esc closes.
 - Footer hints separate actions with ` - ` and capitalize named keys (`Enter`,
   `Esc`, `Space`); letter hotkeys stay as typed (`c configure`, `R reset`).
+  Modifier keys join with `+` (`Ctrl+C`, `Ctrl+X Ctrl+S`, `Cmd+Shift+Z`) in
+  footers, dialogs, help text, and docs alike; `ctrl-c` is only a key name in code.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
-- Esc and Ctrl-C close cleanly. They are not errors.
+- Esc and Ctrl+C close cleanly. They are not errors.
 - Make a new or changed menu searchable with `slash_search`
   (`ui/menus/slash_search.py`), not a bare `.searchable()`: plain letters stay
   hotkeys, `/` starts a search, Esc leaves it. Pass single-key actions as its

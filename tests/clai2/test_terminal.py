@@ -475,7 +475,7 @@ async def test_live_editor_interrupts_slow_turn_hooks(
     assert 'Goodbye.' in output.getvalue()
     if phase == 'start':
         assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
-        assert 'Press Ctrl-C again' not in output.getvalue()
+        assert 'Press Ctrl+C again' not in output.getvalue()
         assert 'completed' not in output.getvalue()
 
 

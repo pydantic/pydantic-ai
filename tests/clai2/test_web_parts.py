@@ -467,14 +467,14 @@ class _Output(io.StringIO):
         self.ready = anyio.Event()
 
     def write(self, s: str) -> int:
-        if 'Press Ctrl-C to quit.' in s:
+        if 'Press Ctrl+C to quit.' in s:
             self.ready.set()
         return super().write(s)
 
 
 @pytest.mark.parametrize('resume', [False, True])
 async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`clai2 --web` loads `web` for this launch unless it is enabled already, starts it, and quits on Ctrl-C."""
+    """`clai2 --web` loads `web` for this launch unless it is enabled already, starts it, and quits on Ctrl+C."""
     opened: list[str] = []
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.web.open_browser', opened.append)
 
@@ -503,7 +503,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
             group.cancel_scope.cancel()
     text = output.getvalue()
     assert len(opened) == 1
-    assert 'Web UI running at http://127.0.0.1:' in text and 'Press Ctrl-C to quit.' in text
+    assert 'Web UI running at http://127.0.0.1:' in text and 'Press Ctrl+C to quit.' in text
     assert ('Resumed Saved' in text) is resume
     assert [plugin.enabled for plugin in store.plugins() if plugin.id == 'web'] == ([True] if resume else []), (
         'nothing saved'
@@ -708,7 +708,7 @@ async def test_run_web_on_a_launchers_port_and_token(
                     token=token,
                 )
             )
-            while 'Press Ctrl-C' not in output.getvalue():
+            while 'Press Ctrl+C' not in output.getvalue():
                 await anyio.sleep(0.01)
             async with httpx.AsyncClient(trust_env=False) as client:
                 headers = {HEADER: token or 'wrong'}

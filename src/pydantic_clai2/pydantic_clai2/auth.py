@@ -340,7 +340,7 @@ class CodexAuth:
             await asyncio.gather(callback, paste, return_exceptions=True)
 
     async def _exchange_paste(self, flow: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
-        """Prompt until something is pasted; Esc or Ctrl-C abandons the login."""
+        """Prompt until something is pasted; Esc or Ctrl+C abandons the login."""
         while True:
             text = await self.read_line(_PASTE_PROMPT)
             if text is None:

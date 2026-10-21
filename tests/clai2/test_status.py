@@ -366,7 +366,7 @@ async def test_row_reserved_before_margins_and_again_on_resize() -> None:
         await asyncio.wait_for(painted.wait(), timeout=5)
         first = output.getvalue()
         assert first.count('\x1bD' * 4 + '\x1b[4A\x1b7\x1b[1;20r') == 1
-        assert '│> Working ⠋ Ctrl-C to interrupt' in first
+        assert '│> Working ⠋ Ctrl+C to interrupt' in first
         assert first.count('\x1b[24;1H') >= 2
         console.height = 30
         painted.clear()
@@ -382,7 +382,7 @@ async def test_row_reserved_before_margins_and_again_on_resize() -> None:
         console.height = 24
         painted.clear()
         await asyncio.wait_for(painted.wait(), timeout=5)
-        assert 'Ctrl-C to interrupt' in output.getvalue()[before:]
+        assert 'Ctrl+C to interrupt' in output.getvalue()[before:]
 
 
 async def test_tiny_terminal() -> None:

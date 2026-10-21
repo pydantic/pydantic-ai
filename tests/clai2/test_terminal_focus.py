@@ -84,7 +84,7 @@ def toolbar(runtime: SessionRuntime[None, str]) -> str:
 
 
 async def test_resume_of_a_session_live_in_the_browser_shows_it_without_forking(tmp_path: Path) -> None:
-    """Focus moves mid-turn: the terminal shows its history and the rest of its turn; Ctrl-C follows."""
+    """Focus moves mid-turn: the terminal shows its history and the rest of its turn; Ctrl+C follows."""
     started, release, calls = {'b': anyio.Event()}, {'b': anyio.Event()}, {'b': 0}
     desk = Desk(tmp_path)
     desk.agents['b'] = blocked('b', started, release, calls)
@@ -107,7 +107,7 @@ async def test_resume_of_a_session_live_in_the_browser_shows_it_without_forking(
         assert other.editor is terminal.editor and home.editor is None
         assert terminal.editor is not None and terminal.editor.interrupts.active, 'Esc interrupts the turn shown'
         assert other.interrupts.signals and not home.interrupts.signals
-        assert signal.getsignal(signal.SIGINT) is not original, 'the turn shown takes Ctrl-C'
+        assert signal.getsignal(signal.SIGINT) is not original, 'the turn shown takes Ctrl+C'
         assert other.session.conversation_id == conversation, 'no fork'
         assert [session.id for session in desk.live.listing()] == [home.live_session.id, b.id]
         assert ' 2 live' in toolbar(other)

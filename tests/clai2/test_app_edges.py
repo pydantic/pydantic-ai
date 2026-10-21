@@ -137,7 +137,7 @@ async def test_plugin_commands_wait_for_a_running_delegated_task(
 async def test_double_interrupt_during_a_background_report_turn_exits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A settled background report starts a turn on its own; pressing Ctrl-C twice there quits CLAI."""
+    """A settled background report starts a turn on its own; pressing Ctrl+C twice there quits CLAI."""
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'Reading the report'

@@ -208,7 +208,7 @@ class StatusLine:
             task.cancel()
             try:
                 # `asyncio.wait` never forwards our cancellation to the animation, so a
-                # `CancelledError` here is ours and propagates: Ctrl-C must still abort.
+                # `CancelledError` here is ours and propagates: Ctrl+C must still abort.
                 await asyncio.wait({task})
                 with contextlib.suppress(asyncio.CancelledError):
                     task.result()  # Surface an animation failure; its cancellation was ours.
@@ -248,7 +248,7 @@ class StatusLine:
         if rows == 4:
             inner_width = width - 3
             glyph = self.spinner().frame(self.clock())
-            hint = set_cell_size(f'> Working {glyph} Ctrl-C to interrupt', inner_width)
+            hint = set_cell_size(f'> Working {glyph} Ctrl+C to interrupt', inner_width)
             border = '─' * inner_width
             for row, line in enumerate((f'┌{border}┐', f'│{hint}│', f'└{border}┘'), start=height - 3):
                 prefix += f'\x1b[{row};1H\x1b[2K{theme.sgr(theme.MUTED)}{line}\x1b[0m'

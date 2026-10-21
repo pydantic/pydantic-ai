@@ -12,7 +12,7 @@ show it. The page follows `/theme`, and the sidebar's footer picks a theme too. 
 ends the web UI; `/web status` shows its address.
 
 To use only the browser, start CLAI with `--web` (also `uvx pydantic-clai2 --web`). It prints
-the address, opens it, and logs the session it started with to the terminal until Ctrl-C, which
+the address, opens it, and logs the session it started with to the terminal until Ctrl+C, which
 ends every session. There, each session you open is live in its own directory, with that
 directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
 there; CLAI's own working directory never changes. **New session** asks where the session runs: a

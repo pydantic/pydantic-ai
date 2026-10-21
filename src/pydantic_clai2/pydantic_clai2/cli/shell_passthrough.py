@@ -30,7 +30,7 @@ HELP = (
     '!!COMMAND: Give COMMAND the terminal from the start, for prompts and REPLs; save only its exit status'
 )
 
-# Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
+# Matches `subprocess.run`: a Ctrl+C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
 _OUTPUT_DRAIN_GRACE = 0.1
 _MAX_OUTPUT_CHARS = 100_000
@@ -82,8 +82,8 @@ class _ShellOutput(asyncio.SubprocessProtocol):
 
 
 def _interrupt(process: asyncio.SubprocessTransport) -> None:
-    """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
-    # The Windows console delivers Ctrl-C to every attached process.
+    """Forward Ctrl+C, which the terminal delivers to CLAI but not to a command in its own session."""
+    # The Windows console delivers Ctrl+C to every attached process.
     if sys.platform != 'win32':  # pragma: no branch
         signal_process_group(process.get_pid(), signal.SIGINT)
 
@@ -107,7 +107,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     Output streams to the transcript and is saved. On CLAI's terminal the command runs on a
     pseudo-terminal (`PtyRun`), and a full-screen program gets the terminal itself, saving only its
     exit status. A leading `!` (typed as `!!command`) gives the command the terminal from the start
-    (`run_in_terminal`). Ctrl-C cancels only this command, not CLAI; cancellation terminates the
+    (`run_in_terminal`). Ctrl+C cancels only this command, not CLAI; cancellation terminates the
     shell's process tree.
     """
     if command.startswith('!'):
@@ -132,7 +132,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
         nonlocal exit_code
         loop = asyncio.get_running_loop()
         # A new POSIX session gives the command a process group to kill; `start_new_session` is
-        # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
+        # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl+C
         # still reaches the command.
         # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
         spawn_task = asyncio.create_task(
@@ -211,7 +211,7 @@ async def run_in_terminal(command: str, *, console: Console, cwd: Path) -> str:
 
     The live panel leaves the screen, the command inherits CLAI's standard streams, and the panel
     repaints once it exits. The command stays in CLAI's process group, in the terminal's foreground,
-    so it gets Ctrl-C and window size changes itself. Its output is never captured.
+    so it gets Ctrl+C and window size changes itself. Its output is never captured.
     """
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print(
@@ -264,8 +264,8 @@ async def _wait_in_terminal(command: str, *, cwd: Path) -> int:
         return await process.wait()
     except asyncio.CancelledError:
         # Only the shell is killed, not a process tree: the command shares CLAI's process group, which
-        # keeps it in the terminal's foreground for Ctrl-C, Ctrl-Z, and resizes, so `killpg` would kill
-        # CLAI too. Ctrl-C is the command's, so this runs only when CLAI's own task is cancelled; a
+        # keeps it in the terminal's foreground for Ctrl+C, Ctrl+Z, and resizes, so `killpg` would kill
+        # CLAI too. Ctrl+C is the command's, so this runs only when CLAI's own task is cancelled; a
         # terminal hangup still signals the whole group. Nothing is left to kill when spawning failed
         # or the process was already reaped.
         with contextlib.suppress(OSError, ValueError):
@@ -291,12 +291,12 @@ def terminal_modes_kept(fd: int = 0) -> Generator[None]:
 
 
 def _ignore(signum: int, frame: FrameType | None) -> None:
-    """Ctrl-C belongs to the command that has the terminal."""
+    """Ctrl+C belongs to the command that has the terminal."""
 
 
 @contextlib.contextmanager
 def _ctrl_c_ignored() -> Generator[None]:
-    """Leave Ctrl-C to the command, which the terminal signals along with CLAI.
+    """Leave Ctrl+C to the command, which the terminal signals along with CLAI.
 
     A handler that does nothing, not `SIG_IGN`, which the command would inherit.
     """

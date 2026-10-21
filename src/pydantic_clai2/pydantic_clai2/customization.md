@@ -180,7 +180,7 @@ own async answerer; see PLUGINS.md.
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. Enter submits nonblank text. Esc returns to the choices
-and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
@@ -453,7 +453,7 @@ unique, including built-ins. Unknown command-shaped input such as `/missing`
 does not reach the model. Path-like input (a slash, dot, or backslash in the first
 token after `/`) is passed through as a prompt instead. Routing itself does not
 read files. Separately, the editor converts bracketed pastes of existing image
-paths into attachments. Ctrl-V or Alt-V attaches clipboard images. Attachment
+paths into attachments. Ctrl+V or Alt+V attaches clipboard images. Attachment
 markers are removed before host turn hooks run; those hooks receive the text
 caption, while core hooks receive the multimodal request. Quoted paths are also
 prompts.
@@ -571,7 +571,7 @@ class MyMenu(Plugin):
 
 Termflow owns the alternate screen. Do not print while it is open. Put errors and
 empty states in disabled rows or the preview. Use .on_key for single-key actions,
-apply changes immediately, then replace_items to redraw. Esc and Ctrl-C should
+apply changes immediately, then replace_items to redraw. Esc and Ctrl+C should
 close normally. menu_key and run_worker cooperate on cancellation, keeping the
 terminal owned until the worker restores its screen. Do not fire-and-forget a
 thread that is still reading input. If a menu key needs an async action, follow
@@ -588,7 +588,7 @@ mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
 as /plugins does.
 
 Pass live=True to Command for a slow handler that only prints, such as /compact,
-so the editor stays live while it runs: the working spinner shows, Esc or Ctrl-C
+so the editor stays live while it runs: the working spinner shows, Esc or Ctrl+C
 cancels it, and Enter queues a follow-up. Leave it off for anything that reads
 keys or opens a menu; those need the suspended editor.
 
