@@ -65,9 +65,13 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             raise CallDeferred
         request = AskUserRequest(questions=tuple(questions))
         await ctx.emit(AskUserRequestedEvent(request=request))
-        response = AskUserResponse(cancelled=True)  # What observers see if the answerer times out.
-        with anyio.move_on_after(self._timeout) as scope:
-            response = await self._answerer(request)
+        response = AskUserResponse(cancelled=True)  # What observers see if the answerer times out or fails.
+        try:
+            with anyio.move_on_after(self._timeout) as scope:
+                response = await self._answerer(request)
+        except Exception:
+            await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, failed=True))
+            raise
         # Observers waiting since the request event are released whether or not the response fits.
         await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, timed_out=scope.cancelled_caught))
         if scope.cancelled_caught:

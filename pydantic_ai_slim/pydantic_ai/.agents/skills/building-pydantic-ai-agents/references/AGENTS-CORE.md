@@ -105,9 +105,10 @@ Return `None` or an empty string to withdraw the block.
 Use the same decorator on an always-on capability with an explicit `id`.
 Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` from `get_instructions()` under their own `id`, or use `@toolset.instructions(name='state', on_change='append')` on a `FunctionToolset` with an `id`.
 Any instruction function (passed to `Agent(instructions=...)`, returned from a capability's `get_instructions()`, ...) can return `InstructionPart(..., name='state', on_change='append')` to opt in from inside the function.
+Per-run context passed to `agent.run(..., instructions=...)` appends when it's a named part: `instructions=InstructionPart(..., name='page', on_change='append')` is keyed `run:page`; unnamed runtime instructions always rewrite.
 A custom capability's `get_instructions()` can also return such an `InstructionPart` directly, for text that changes between runs when `for_run` returns a replacement carrying the new text (otherwise the construction-time result is reused).
 Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` and `FunctionToolset(instructions=...)` opts in with `InstructionPart('...', name='config', on_change='append')`.
-Run-level `instructions=` and template strings can't opt in; use a named instruction function instead.
+Template strings can't opt in; use an instruction function that returns an `InstructionPart` instead.
 Build instruction text from operator-controlled state, never from tool arguments, tool output, user input or retrieved content, even in append mode; send untrusted values in user messages or tool results.
 Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
 Compaction or loss of the baseline starts a new prefix from current instructions.
