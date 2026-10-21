@@ -303,6 +303,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return merge_capability_fields(capabilities)
 
+    def _derived_id_source(self) -> str | None:
+        """What this capability derived its `id` from, or `None` if it was given one or has none.
+
+        Two capabilities that derived one `id` from different sources are different things the
+        derivation couldn't tell apart, so a run rejects them rather than combining them or letting
+        the later layer override the earlier one, and the error asks for an explicit `id=`.
+        """
+        return None
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
@@ -1578,6 +1587,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
         # Only the last layer to state this id has a say; everything an earlier layer said under it
         # is overridden, not merged in. `combine` then settles what the survivors within that one
         # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+        _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
         last_layer = max(duplicate.layer_index for duplicate in duplicates)
         surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
         # Transparent wrappers name the same capability across layers, not the same mergeable class
@@ -1598,7 +1608,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
         if len(surviving) > 1:
             _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
             if not _declares_default_id(type(combined_duplicate)):
-                raise UserError(_repeated_id_message(capability_id))
+                raise UserError(_repeated_id_message(capability_id, surviving))
             combined_duplicate = combined_duplicate.combine(surviving)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
@@ -1621,16 +1631,39 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     return combined
 
 
-def _repeated_id_message(capability_id: str) -> str:
-    """Why an `id` the user chose for two capabilities cannot resolve to one.
+def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> str:
+    """Why an `id` two capabilities share cannot resolve to one.
 
     Shared by `Agent(...)` validation and the run's own resolution so the two report it the same
     way, whichever notices first.
     """
+    if any(capability._derived_id_source() is not None for capability in capabilities):  # pyright: ignore[reportPrivateUsage]
+        return (
+            f'Capability id {capability_id!r} is used by multiple capabilities that derived it from their '
+            'configuration, such as `MCP` capabilities for servers on the same host. Ids identify one '
+            'capability within a run, so pass an explicit `id=` to each: a distinct one for different '
+            'servers, or the same one where they configure one server, for example with a rotated '
+            'credential in the URL.'
+        )
     return (
         f'Capability id {capability_id!r} is used by multiple capabilities. '
         'Ids identify one capability within a run, so give each a distinct `id`.'
     )
+
+
+def _reject_derived_id_collision(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> None:
+    """Reject capabilities that derived one `id` from different sources, even across layers.
+
+    A run-level capability overrides an agent-level one under the same `id`, which is right for
+    the same server stated twice, but two servers a derivation couldn't tell apart are not one.
+    """
+    sources = {
+        source
+        for capability in capabilities
+        if (source := capability._derived_id_source()) is not None  # pyright: ignore[reportPrivateUsage]
+    }
+    if len(sources) > 1:
+        raise UserError(_repeated_id_message(capability_id, capabilities))
 
 
 def _declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
