@@ -4556,7 +4556,7 @@ async def test_bedrock_stream_closed_when_cancelled_while_opening(
         closed = False
 
         def __iter__(self) -> Iterator[dict[str, Any]]:
-            return iter([])  # pragma: no cover
+            return iter([])
 
         def close(self) -> None:
             self.closed = True
