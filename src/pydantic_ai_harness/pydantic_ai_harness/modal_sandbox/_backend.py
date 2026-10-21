@@ -328,7 +328,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                     logger.warning(
                         'Created Modal sandbox %s after every caller waiting for it was cancelled; it keeps '
                         'running until its `sandbox_timeout` ends it unless you terminate it with '
-                        '`ModalSandbox().destroy(...)`',
+                        "`ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`",
                         sandbox.object_id,
                     )
             self._sandbox = sandbox
@@ -361,19 +361,25 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             # Modal's filesystem read opens a FIFO in blocking mode and can stream a device without
             # end, and its FileInfo omits the file kind. Like the local backend, refuse anything but
             # a regular file before that unbounded SDK read; a missing path or a directory falls
-            # through to the SDK's own error. `test` follows links, as the read does.
+            # through to the SDK's own error. `test` follows links, as the read does. Only a clean
+            # pass reaches the read, so a probe Modal killed at its deadline fails closed.
             probe = await sandbox.exec.aio(
                 'sh',
                 '-c',
-                'test -e "$1" && ! test -f "$1" && ! test -d "$1"',
+                'test -f "$1" || test -d "$1" || ! test -e "$1"',
                 'modal-probe',
                 path,
                 timeout=_INTERNAL_EXEC_TIMEOUT,
                 workdir='/',
                 text=False,
             )
-            if await probe.wait.aio() == 0:
+            if (code := await probe.wait.aio()) == 1:
                 raise OSError(f'Not a regular file in the Modal sandbox: {path!r}')
+            if code != 0:
+                # A check killed because the sandbox died is the sandbox's failure, not this path's.
+                raise await _probe(sandbox, exec_probe=True) or WorkspaceError(
+                    f'Could not check what {path!r} is in the Modal sandbox: the check exited {code}.'
+                )
             return await sandbox.filesystem.read_bytes.aio(path)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
