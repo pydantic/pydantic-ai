@@ -41,7 +41,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
-from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
+from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, READINESS_WAIT_TIMEOUT, SlowBatchTestModel
 from ..conftest import try_import
 
 with try_import() as logfire_imports_successful:
@@ -563,6 +563,25 @@ async def test_exiting_the_capability_ends_its_queued_and_running_work() -> None
         with pytest.raises(UserError, match='exited while the request was waiting for its batch'):
             await run
     assert asyncio.all_tasks() - tasks_before == {asyncio.current_task()} - tasks_before
+
+
+async def test_closing_before_a_submission_starts_fails_its_requests() -> None:
+    """A submission cancelled before its first step still fails the requests whose queue it took, so none hangs."""
+    wrapped = SlowBatchTestModel()
+    model = _batched(wrapped, **FAST_POLLING, max_wait=None)
+    request = asyncio.create_task(_pending_response(model))
+    await wrapped.wait_until(lambda m: m.encoded == 1)
+    await asyncio.sleep(0)
+    flush = asyncio.create_task(model.pool.flush())
+    # The flush takes the queue and schedules its submission, which hasn't started when the pool closes.
+    await asyncio.sleep(0)
+    await model.pool.close()
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        with pytest.raises(UserError, match='exited while the request was waiting for its batch'):
+            await request
+        await flush
+    assert wrapped.created == []
 
 
 async def test_only_the_outermost_exit_ends_queued_work() -> None:

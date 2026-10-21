@@ -264,9 +264,19 @@ class BatchPool:
 
         The queue is taken off `queues` right away, so a request made before the submission runs starts the next batch.
         """
-        task = loop.create_task(self._submit(_take(queues, key)))
+        queue = _take(queues, key)
+        task = loop.create_task(self._submit(queue))
         self._submissions.add(task)
         task.add_done_callback(self._submissions.discard)
+        requests = list(queue.requests)
+
+        def settle(_: asyncio.Task[None]) -> None:
+            # A submission that was cancelled, for example by `close()` or as the event loop shuts down, leaves nothing
+            # to wait for, even one cancelled before it started.
+            for queued in requests:
+                queued.future.cancel()
+
+        task.add_done_callback(settle)
         return task
 
     async def enqueue(
@@ -343,10 +353,6 @@ class BatchPool:
             for queued in requests:
                 if queued.withdrawn:
                     self._withdraw(queue.model, batch, queued.request.custom_id)
-        finally:
-            # A submission that was itself cancelled, for example as the event loop shuts down, leaves nothing to wait for.
-            for queued in requests:
-                queued.future.cancel()
 
     def _withdraw(self, model: Model, batch: Batch, custom_id: str) -> None:
         """Abandon a request that was submitted without anyone left to wait on it, cancelling the batch if it's the last."""
