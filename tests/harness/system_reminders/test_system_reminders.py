@@ -140,8 +140,8 @@ _LLM_NOTE = (
 )
 
 _GOAL_NOTE = (
-    "The user's original request is in the accompanying `<original_request>` tag. Check that your next action "
-    'advances it. If it is already satisfied, produce the final answer.'
+    "Re-read the user's original request, their first message in this conversation, and check that your next "
+    'action advances it. If it is already satisfied, produce the final answer.'
 )
 
 
@@ -723,7 +723,7 @@ class TestLLMReminder:
         with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
             await agent.run('ship the durable fix')
 
-        assert 'Check that your next action advances it.' in _all_text(seen['messages'])
+        assert _GOAL_NOTE in _all_text(seen['messages'])
         assert operation in {name for name, _ in durability.calls}
         [record] = caplog.records
         assert record.levelno == logging.WARNING
@@ -759,7 +759,7 @@ class TestLLMReminder:
             await agent.run('ship the durable fix')
 
         assert operation in {name for name, _ in durability.calls}
-        assert 'Check that your next action advances it.' in _all_text(seen['messages'])
+        assert _GOAL_NOTE in _all_text(seen['messages'])
         # A misconfigured reminder model fails every turn; the operator sees why.
         [record] = caplog.records
         assert record.levelno == logging.WARNING
@@ -799,7 +799,7 @@ class TestLLMReminder:
 
         assert operation in {name for name, _ in durability.calls}
         assert generated == {}
-        assert 'Check that your next action advances it.' in _all_text(seen['messages'])
+        assert _GOAL_NOTE in _all_text(seen['messages'])
         assert caplog.records == []
 
     async def test_generates_from_transcript(self) -> None:
@@ -1036,7 +1036,7 @@ class TestLLMReminder:
         with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
             result = await reminder(_ctx(messages=messages))
         assert result is not None
-        assert 'ship the fix' in result  # GoalReanchor fallback text
+        assert result == _GOAL_NOTE  # GoalReanchor fallback text
         [record] = caplog.records
         assert record.levelno == logging.WARNING
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
@@ -1107,7 +1107,7 @@ class TestLLMReminder:
         with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
             result = await LLMReminder(model=_capture_model(store))(ctx)
         assert result is not None
-        assert 'ship the fix' in result  # GoalReanchor fallback, no nested request spent
+        assert result == _GOAL_NOTE  # GoalReanchor fallback, no nested request spent
         assert ctx.usage.requests == 1
         # Skipping generation on a spent budget is documented behavior, not a failure to warn about.
         assert caplog.records == []
@@ -1125,7 +1125,7 @@ class TestLLMReminder:
             result = await reminder(ctx)
 
         assert result is not None
-        assert 'ship the fix' in result
+        assert result == _GOAL_NOTE
         [record] = caplog.records
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None
