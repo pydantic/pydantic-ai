@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import warnings
 from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, Literal
 
@@ -1998,12 +1998,12 @@ def test_sanitize_messages_request_instructions_follow_manage_system_prompt(
         manage_system_prompt=manage_system_prompt,
     )
 
-    if manage_system_prompt == 'server':
-        with pytest.warns(UserWarning, match=r'Client-submitted request-level `instructions` were stripped'):
-            sanitized = adapter.sanitize_messages(adapter.messages)
-        assert message(sanitized, ModelRequest).instructions is None
-    else:
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         sanitized = adapter.sanitize_messages(adapter.messages)
+    if manage_system_prompt == 'server':
+        assert sanitized == [replace(request, instructions=None)]
+    else:
         assert sanitized == [request]
 
 

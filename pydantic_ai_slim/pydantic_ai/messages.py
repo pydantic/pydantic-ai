@@ -4447,7 +4447,8 @@ def sanitize_messages(
     - [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest.instructions], resetting it to
       `None` (disable with `strip_instructions=False`). An agent run sends the agent's own
       instructions instead, but a direct [`Model.request`][pydantic_ai.models.Model.request] call
-      without `instruction_parts` falls back to the instructions recorded in history.
+      without `instruction_parts` falls back to the instructions recorded in history. Every request an
+      agent run records carries them, so this doesn't warn.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
       cause the model provider to fetch the object using the server-side IAM role, so they should
@@ -4521,7 +4522,6 @@ def sanitize_messages(
     resolved_ids = set(resolved_tool_call_ids)
 
     stripped_system_prompt = False
-    stripped_instructions = False
     disallowed_url_schemes: set[str] = set()
     reset_force_download_values: set[ForceDownloadMode] = set()
     dropped_uploaded_file_providers: set[str] = set()
@@ -4541,11 +4541,10 @@ def sanitize_messages(
                 dropped_uploaded_file_providers=dropped_uploaded_file_providers,
             )
             stripped_system_prompt = stripped_system_prompt or request_stripped_system_prompt
-            instructions = message.instructions
-            if strip_instructions and instructions is not None:
-                stripped_instructions = True
-                instructions = None
             if new_request_parts:
+                # Reset silently: every request an agent run records carries the agent's own instructions, so
+                # a warning would fire on every turn of a normal round trip, and agent runs never send them.
+                instructions = None if strip_instructions else message.instructions
                 sanitized.append(replace(message, parts=new_request_parts, instructions=instructions))
             # Otherwise drop the request entirely so we don't leave an empty
             # `ModelRequest(parts=[])` in history.
@@ -4573,17 +4572,9 @@ def sanitize_messages(
     # check the end of the history once that end is final. See `_strip_dangling_tail_tool_calls`.
     _strip_dangling_tail_tool_calls(sanitized, resolved_ids, dangling_tool_call_names)
 
-    if stripped_system_prompt or stripped_instructions:
-        stripped = [
-            *(['system prompts'] if stripped_system_prompt else []),
-            *(['request-level `instructions`'] if stripped_instructions else []),
-        ]
-        flags = [
-            *(['`strip_system_prompts=False`'] if stripped_system_prompt else []),
-            *(['`strip_instructions=False`'] if stripped_instructions else []),
-        ]
+    if stripped_system_prompt:
         warnings.warn(
-            f'Client-submitted {" and ".join(stripped)} were stripped. Pass {" and ".join(flags)} only when the '
+            'Client-submitted system prompts were stripped. Pass `strip_system_prompts=False` only when the '
             "client is trusted to own the system prompt, or set `manage_system_prompt='client'` on a UI adapter.",
             UserWarning,
             stacklevel=2,
