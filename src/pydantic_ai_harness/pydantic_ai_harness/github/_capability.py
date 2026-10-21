@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -21,8 +20,8 @@ except ImportError as exc:  # pragma: no cover
 
 GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/'
 _ID = 'github'
-# One tool group name, such as `repos` or `code_security`: no commas, spaces, or control characters.
-_GROUP = re.compile(r'[\w-]+', re.ASCII)
+# A token sent to these never crosses the network, so a local server may use plain `http://`.
+_LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '::1'})
 
 
 @dataclass(kw_only=True)
@@ -36,8 +35,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
     two with the same `id` but different settings raise. Give each its own `id` to keep both. `None` or `''` means
     the default, `github`.
     """
-    description: str | None = None
-    """Describes the capability when the agent loads it on demand. Unset, it says whether the tools can make changes."""
+    description: str | None = 'Use GitHub repositories, issues, and pull requests.'
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
     """A GitHub token or a function of the run context that returns one.
 
@@ -54,7 +52,7 @@ class GitHub(AbstractCapability[AgentDepsT]):
     It cannot be combined with `auth`, `url`, or `toolsets`.
     """
     url: str = GITHUB_MCP_URL
-    """The `https://` MCP server URL, for example a GitHub Enterprise Cloud endpoint."""
+    """The MCP server URL, for example a GitHub Enterprise Cloud endpoint. It must be `https://` unless it is local."""
     toolsets: list[str] | None = None
     """GitHub tool groups to offer, such as `'repos'`. `None` keeps the server's defaults."""
 
@@ -66,29 +64,22 @@ class GitHub(AbstractCapability[AgentDepsT]):
         ):
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`, `url`, or `toolsets`.')
         parts = urlsplit(self.url)
-        if parts.scheme != 'https' or not parts.hostname:
-            # The token travels in a header, so a plain `http://` URL would send it unencrypted.
-            raise UserError('`url` must be an `https://` URL; pass `client` to connect another way.')
-        if self.toolsets is not None:
-            # A copy, so later changes to the caller's list cannot bypass the checks below.
-            self.toolsets = list(self.toolsets)
-            # GitHub reads an empty toolsets header as its defaults, which include write tools.
-            if not self.toolsets:
-                raise UserError('`toolsets` must name at least one tool group; use `None` for the defaults.')
-            # The header joins groups with commas, so one entry holding a comma would enable several groups.
-            if not all(_GROUP.fullmatch(group) for group in self.toolsets):
-                raise UserError('Each `toolsets` entry must name one tool group, such as `repos`.')
+        if not parts.hostname or not (
+            parts.scheme == 'https' or (parts.scheme == 'http' and parts.hostname in _LOOPBACK_HOSTS)
+        ):
+            # The token travels in a header, so plain `http://` to another host would send it unencrypted.
+            raise UserError(f'`url` must be an `https://` URL, or `http://` on a loopback host; got {self.url!r}.')
+        # GitHub reads an empty toolsets header as its defaults, which include write tools.
+        if self.toolsets == []:
+            raise UserError('`toolsets` must name at least one tool group; use `None` for the defaults.')
+        # The header joins groups with commas, so one entry holding a comma would enable several groups.
+        if self.toolsets is not None and any(not group.strip() or ',' in group for group in self.toolsets):
+            raise UserError('Each `toolsets` entry must name one tool group, such as `repos`.')
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
         return one_connection(capabilities)
-
-    def get_description(self) -> str:
-        """Return `description`, or one that says whether the tools can make changes when it is unset."""
-        if self.description is not None:
-            return self.description
-        return 'Read GitHub resources.' if self.read_only else 'Read and change GitHub resources.'
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the GitHub tools."""
