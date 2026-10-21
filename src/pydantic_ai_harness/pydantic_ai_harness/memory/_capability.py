@@ -351,7 +351,8 @@ class Memory(AbstractCapability[AgentDepsT]):
             # Best-effort injection must not inherit an engine's retry policy and stall a
             # workflow. Return content-safe failure metadata as the durable result instead.
             return None, [], False, type(exc).__name__
-        return main, subfiles, files_truncated, None
+        # Injection uses only the content, so write metadata, which can name a user, stays out of the journal.
+        return None if main is None else replace(main, metadata=None), subfiles, files_truncated, None
 
     def _remove_previous_injection(self, messages: list[ModelMessage], marker: str) -> None:
         for index, message in enumerate(messages):

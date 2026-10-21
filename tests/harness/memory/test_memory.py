@@ -741,6 +741,22 @@ class TestWriteMetadata:
         assert alice is not None
         assert alice.content == '- prefers tea\n- switched to coffee\n'
 
+    async def test_snapshot_journals_content_without_write_metadata(self) -> None:
+        store = InMemoryStore()
+        await store.write_with_metadata(
+            'main/MEMORY.md', '- prefers tea', expected_version=None, metadata={'user_id': 'alice'}
+        )
+        durability = RecordingDurability()
+        agent = Agent(TestModel(call_tools=[]), name='memory', capabilities=[Memory(store=store), durability])
+
+        await agent.run('continue')
+
+        bound = RecordingDurability.from_agent(agent)
+        assert bound is not None
+        journaled = repr(next(result for name, result in bound.results if name.endswith('.load_snapshot')))
+        assert '- prefers tea' in journaled
+        assert 'alice' not in journaled
+
     async def test_agent_edit_without_write_metadata_clears_the_ui_provenance(self, tmp_path: Path) -> None:
         store = SqliteMemoryStore(database=tmp_path / 'memory.db')
         await store.write_with_metadata(
