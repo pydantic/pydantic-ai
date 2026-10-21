@@ -34,7 +34,8 @@ class PanicException(BaseException):
 class FakeBox:
     """One box: `status` is what `BoxStateInfo.status` reports, `processes` its running commands."""
 
-    name: str
+    id: str
+    name: str | None
     options: Any
     status: str = 'configured'
     removing: bool = False
@@ -50,6 +51,7 @@ class FakeBoxLite:
         self.root = root
         """Where a command with no `cwd` runs, standing in for the box's own working directory."""
         self.boxes: dict[str, FakeBox] = {}
+        """Every box by its name, or by its id if it has none."""
         self.commands: list[tuple[str, list[str], dict[str, str], str | None]] = []
         """`(program, args, env, cwd)` for every exec, the backend's own included."""
         self.spawned: list[subprocess.Popen[bytes]] = []
@@ -88,9 +90,14 @@ class FakeBoxLite:
             ConfigError=boxlite.ConfigError,
         )
 
-    def stop(self, name: str) -> None:
+    def find(self, id_or_name: str) -> FakeBox | None:
+        """The box the real runtime finds by `id_or_name`, which is either its name or its id."""
+        return next((box for box in self.boxes.values() if id_or_name in (box.name, box.id)), None)
+
+    def stop(self, id_or_name: str) -> None:
         """Stop a box from outside the backend, ending its commands like the real runtime."""
-        box = self.boxes[name]
+        box = self.find(id_or_name)
+        assert box is not None
         box.status = 'stopped'
         box.stops += 1
         _end(box)
@@ -121,26 +128,27 @@ class FakeRuntime:
     async def create(self, options: Any, name: str | None = None) -> FakeHandle:
         if self.control.create_error is not None:
             raise self.control.create_error
-        # The backend always names its boxes.
-        assert name is not None and name not in self.control.boxes
-        box = self.control.boxes[name] = FakeBox(name=name, options=options)
+        # The backend always names its boxes; a test creates an unnamed one for the backend's `sandbox`.
+        assert name is None or self.control.find(name) is None
+        box = FakeBox(id=f'box{len(self.control.boxes)}', name=name, options=options)
+        self.control.boxes[name or box.id] = box
         return FakeHandle(self.control, box)
 
     async def get(self, id_or_name: str) -> FakeHandle | None:
-        box = self.control.boxes.get(id_or_name)
+        box = self.control.find(id_or_name)
         return None if box is None else FakeHandle(self.control, box)
 
     async def get_info(self, id_or_name: str) -> Any:
         if self.control.get_info_error is not None:
             raise self.control.get_info_error
-        box = self.control.boxes.get(id_or_name)
+        box = self.control.find(id_or_name)
         return None if box is None else types.SimpleNamespace(state=types.SimpleNamespace(status=box.status))
 
     async def remove(self, id_or_name: str, force: bool = False) -> None:
         assert force
         if self.control.remove_error is not None:
             raise self.control.remove_error
-        box = self.control.boxes.get(id_or_name)
+        box = self.control.find(id_or_name)
         if box is None:
             raise boxlite.NotFoundError(f'box not found: {id_or_name}')
         # Like the real box, it reports itself running while its commands end, and refuses new ones.
@@ -150,7 +158,7 @@ class FakeRuntime:
         if self.control.remove_gate is not None:
             await self.control.remove_gate.wait()
         # A removal running alongside this one may have deleted it first.
-        self.control.boxes.pop(id_or_name, None)
+        self.control.boxes.pop(box.name or box.id, None)
 
 
 class FakeHandle:
@@ -162,7 +170,11 @@ class FakeHandle:
         self._stops = box.stops
 
     @property
-    def name(self) -> str:
+    def id(self) -> str:
+        return self._box.id
+
+    @property
+    def name(self) -> str | None:
         return self._box.name
 
     async def start(self) -> None:
@@ -188,7 +200,7 @@ class FakeHandle:
             await self._control.exec_gate.wait()
         if self._control.exec_error is not None:
             raise self._control.exec_error
-        if self._control.boxes.get(self._box.name) is not self._box:
+        if self._control.find(self._box.id) is not self._box:
             raise boxlite.UpstreamUnavailableError('gRPC/tonic error: status: Unavailable')
         if self._box.stops != self._stops:
             raise boxlite.StoppedError(

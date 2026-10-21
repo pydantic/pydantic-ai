@@ -72,7 +72,8 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
             raise UserError(str(error)) from error
 
     def backend(self, ref: WorkspaceRef) -> BoxLiteSandboxBackend:
-        """Attach lazily to an existing box."""
+        """Attach lazily to an existing box, one `BoxLiteSandbox` created."""
+        _backend.check_ref(ref)
         return BoxLiteSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -91,6 +92,9 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
         del ctx
         if ref is not None and ref.provider != 'boxlite':
             return None
+        if ref is not None:
+            # A ref from message history only reaches boxes `BoxLiteSandbox` created.
+            _backend.check_ref(ref)
         return self._new_backend(ref)
 
     def _new_backend(self, ref: WorkspaceRef | None) -> BoxLiteSandboxBackend:

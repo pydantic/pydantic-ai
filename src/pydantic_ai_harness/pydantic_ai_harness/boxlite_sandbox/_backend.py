@@ -103,7 +103,9 @@ class _Box(Protocol):
     """`boxlite.Box`: a handle on one box."""
 
     @property
-    def name(self) -> str: ...
+    def id(self) -> str: ...
+    @property
+    def name(self) -> str | None: ...
     async def start(self) -> None: ...
     async def exec(
         self, command: str, args: list[str], env: list[tuple[str, str]] | None = None, cwd: str | None = None
@@ -214,13 +216,26 @@ def runtime() -> _Runtime:
 
 
 def check_ref(ref: WorkspaceRef) -> None:
-    """Raise `ValueError` unless `ref` names a box this backend could have created."""
-    if ref.provider != 'boxlite':
-        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxlite'")
+    """Raise `ValueError` unless `ref` names a box this backend could have created.
+
+    For refs from message history and for deletion: `get` opens any box of this BoxLite home by name or
+    id, so such a ref could otherwise reach a box made by another tool, with host mounts or published ports.
+    """
+    _check_provider(ref)
     if _NAME.fullmatch(ref.id) is None:
         raise ValueError(
             f'BoxLiteSandbox only uses boxes it created, named {_NAME_PREFIX!r} and 32 hex digits, got {ref.id!r}'
         )
+
+
+def _check_provider(ref: WorkspaceRef) -> None:
+    if ref.provider != 'boxlite':
+        raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'boxlite'")
+
+
+def _key(box: _Box) -> str:
+    """The name the runtime finds `box` by: its name, or its id if it has none."""
+    return box.name or box.id
 
 
 def _network(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) -> Any:
@@ -329,14 +344,15 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
     [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
-    Building one does no I/O. The first operation creates and boots a new box, or attaches to the one
-    `ref` names, and `get_sandbox()` returns the SDK's `boxlite.Box`. `ref` is set as soon as a
-    creation starts, and only names boxes the backend creates, `pydantic-ai-` and 32 hex digits. The
-    backend never deletes the box; whoever holds the ref does. The box stops when this process lets go of
-    it or exits, keeping its disk, and the next use of the ref boots it again.
+    Building one does no I/O. The first operation creates and boots a new box, or boots the one `sandbox`
+    is or `ref` names, and `get_sandbox()` returns the SDK's `boxlite.Box`. `ref` is set as soon as a
+    creation starts; a box the backend creates is named `pydantic-ai-` and 32 hex digits. The backend
+    never deletes the box; whoever holds the ref does. The box stops when this process lets go of it or
+    exits, keeping its disk, and the next use of the ref boots it again.
 
     Args:
-        ref: Identity of an existing box to attach to on first use, one this backend created.
+        sandbox: A `boxlite.Box` you already have. Whoever created it owns deleting it.
+        ref: Identity of an existing box to attach to on first use: its name, or its id if it has none.
         image: OCI image a new box runs, such as `'python:3.12-slim'`; BoxLite's default, Alpine Linux, when
             `None`.
         cpus: vCPUs for a new box; BoxLite's default when `None`.
@@ -356,6 +372,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
     def __init__(
         self,
         *,
+        sandbox: Any = None,
         ref: WorkspaceRef | None = None,
         image: str | None = None,
         cpus: int | None = None,
@@ -367,7 +384,9 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         box_options: Mapping[str, Any] | None = None,
     ) -> None:
         if ref is not None:
-            check_ref(ref)
+            _check_provider(ref)
+        if sandbox is not None and ref is not None:
+            raise ValueError('pass either `sandbox` or `ref`, not both')
         check_env(env)
         if reserved := sorted(_RESERVED_OPTIONS.intersection(box_options or {})):
             raise ValueError(f'box_options must not set {", ".join(reserved)}; use the named argument instead')
@@ -380,7 +399,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             # Kept after it stops, so the ref can boot it again.
             auto_delete=0,
         )
-        self._ref = ref
+        self._given: _Box | None = sandbox
+        self._ref = ref if sandbox is None else WorkspaceRef(provider='boxlite', id=_key(sandbox))
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env or {})
         self._box: _Box | None = None
@@ -441,7 +461,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                         self._ref = None
                     raise
             else:
-                box = await boxes.get(name)
+                # A box passed in is booted like an attached one; after that, the runtime finds it by `ref`.
+                box, self._given = self._given or await boxes.get(name), None
                 if box is None:
                     raise WorkspaceUnavailableError(_gone_message(name))
                 await _boot(box)
@@ -500,7 +521,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             try:
                 return await self._exec(box, argv, env=env, working_dir=self._working_dir, timeout=timeout)
             except _StaleHandle as error:
-                raise WorkspaceUnavailableError(f'The BoxLite box {box.name!r} was stopped while starting.') from error
+                raise WorkspaceUnavailableError(f'The BoxLite box {_key(box)!r} was stopped while starting.') from error
 
     async def _exec(
         self,
@@ -562,7 +583,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 raise _StaleHandle from error
             if 'spawn_failed' in str(error):
                 raise WorkspaceError(
-                    f'Could not start the command in BoxLite box {box.name}: {error}. '
+                    f'Could not start the command in BoxLite box {_key(box)}: {error}. '
                     f'The working_dir {working_dir!r} or `/bin/sh` is missing in the box.'
                 ) from error
             raise
@@ -577,7 +598,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 await (await box.exec('/bin/sh', ['-c', ':'])).wait()
         except (boxlite.BoxliteError, TimeoutError) as error:
             raise WorkspaceUnavailableError(
-                f'The BoxLite box {box.name!r} stopped during the command: {error}'
+                f'The BoxLite box {_key(box)!r} stopped during the command: {error}'
             ) from error
 
     async def _unavailable(self, box: _Box) -> WorkspaceUnavailableError | None:
@@ -587,17 +608,17 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         leaves the original error to propagate rather than ending the run on a guess.
         """
         # Not while acquiring: an operation queued behind the acquisition waits for it to finish.
-        if (pending := lifecycle.get(box.name)) is not None and asyncio.current_task() is not self._acquisition:
+        if (pending := lifecycle.get(_key(box))) is not None and asyncio.current_task() is not self._acquisition:
             await asyncio.wait([pending])
         try:
-            info = await runtime().get_info(box.name)
+            info = await runtime().get_info(_key(box))
         except (boxlite.BoxliteError, WorkspaceUnavailableError):
             return None
         if info is None:
-            return WorkspaceUnavailableError(_gone_message(box.name))
+            return WorkspaceUnavailableError(_gone_message(_key(box)))
         if info.state.status != 'running':
             return WorkspaceUnavailableError(
-                f'The BoxLite box {box.name!r} is {info.state.status}: it was stopped during the command.'
+                f'The BoxLite box {_key(box)!r} is {info.state.status}: it was stopped during the command.'
             )
         return None
 

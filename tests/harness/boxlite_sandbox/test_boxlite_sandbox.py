@@ -103,6 +103,8 @@ def test_invalid_settings_fail_at_construction(
 async def test_invalid_backend_arguments_fail_before_any_box(fake_boxlite: FakeBoxLite) -> None:
     with pytest.raises(ValueError, match="expected 'boxlite'"):
         BoxLiteSandboxBackend(ref=WorkspaceRef(provider='e2b', id='sbx'))
+    with pytest.raises(ValueError, match='pass either `sandbox` or `ref`, not both'):
+        BoxLiteSandboxBackend(sandbox=object(), ref=WorkspaceRef(provider='boxlite', id='dev'))
     with pytest.raises(ValueError, match='working_dir must be an absolute workspace path'):
         BoxLiteSandboxBackend(working_dir='relative')
     with pytest.raises(ValueError, match='box_options must not set auto_delete; use the named argument instead'):
@@ -123,7 +125,7 @@ def test_capability_declines_foreign_reference(fake_boxlite: FakeBoxLite) -> Non
 
 
 @pytest.mark.parametrize('box_id', ['dev', 'ItPP9M8DStN7', '../../etc/passwd', 'pydantic-ai-' + 'A' * 32])
-async def test_refs_to_boxes_it_did_not_create_are_refused(fake_boxlite: FakeBoxLite, box_id: str) -> None:
+async def test_the_capability_refuses_refs_to_boxes_it_did_not_create(fake_boxlite: FakeBoxLite, box_id: str) -> None:
     # `get` opens any box of this BoxLite home by name or id, so a ref from history could otherwise
     # reach a box made by another tool, with host mounts or published ports.
     ref = WorkspaceRef(provider='boxlite', id=box_id)
@@ -151,9 +153,9 @@ async def test_capability_forwards_creation_options(fake_boxlite: FakeBoxLite, w
     backend = capability.get_workspace(None, ref=None)  # pyright: ignore[reportArgumentType]
     assert isinstance(backend, BoxLiteSandboxBackend)
     await backend.run(['true'])
-    (box,) = fake_boxlite.boxes.values()
-    assert backend.ref == WorkspaceRef(provider='boxlite', id=box.name)
-    assert re.fullmatch('pydantic-ai-[0-9a-f]{32}', box.name)
+    ((name, box),) = fake_boxlite.boxes.items()
+    assert backend.ref == WorkspaceRef(provider='boxlite', id=name)
+    assert re.fullmatch('pydantic-ai-[0-9a-f]{32}', name)
     options = box.options
     assert (options.image, options.cpus, options.memory_mib, options.disk_size_gb, options.user) == (
         'python:3.12-slim',
@@ -222,9 +224,9 @@ async def test_failed_working_dir_creation_keeps_the_ref(fake_boxlite: FakeBoxLi
     backend = BoxLiteSandboxBackend(working_dir=str(tmp_path / 'file' / 'workspace'))
     with pytest.raises(WorkspaceError, match='Could not create working_dir'):
         await backend.get_sandbox()
-    (box,) = fake_boxlite.boxes.values()
+    (name,) = fake_boxlite.boxes
     # The box exists, so its ref stays available to delete it; a retry attaches instead of creating another.
-    assert backend.ref == WorkspaceRef(provider='boxlite', id=box.name)
+    assert backend.ref == WorkspaceRef(provider='boxlite', id=name)
     with pytest.raises(WorkspaceError, match='Could not create working_dir'):
         await backend.get_sandbox()
     assert len(fake_boxlite.boxes) == 1
@@ -318,10 +320,8 @@ async def test_failed_start_deletes_the_box_and_can_retry(
     with pytest.raises(boxlite.StorageError):
         await backend.get_sandbox()
     # The box couldn't be deleted, so its ref stays for the caller to delete it, and a retry attaches to it.
-    (box,) = fake_boxlite.boxes.values()
-    assert 'Could not delete BoxLite box' in caplog.text and backend.ref == WorkspaceRef(
-        provider='boxlite', id=box.name
-    )
+    ((name, box),) = fake_boxlite.boxes.items()
+    assert 'Could not delete BoxLite box' in caplog.text and backend.ref == WorkspaceRef(provider='boxlite', id=name)
     fake_boxlite.start_error = fake_boxlite.remove_error = None
     await backend.get_sandbox()
     assert len(fake_boxlite.boxes) == 1 and box.status == 'running'
@@ -486,6 +486,27 @@ async def test_attach_uses_the_ref_not_the_creation_options(fake_boxlite: FakeBo
     assert len(fake_boxlite.boxes) == 1 and box.status == 'running'
 
 
+async def test_the_backend_attaches_to_a_box_of_any_name(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+    await fake_boxlite.module.Boxlite.default().create(None, name='dev')
+    backend = BoxLiteSandboxBackend(ref=WorkspaceRef(provider='boxlite', id='dev'), working_dir=working_dir)
+    assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+    assert backend.ref == WorkspaceRef(provider='boxlite', id='dev')
+
+
+@pytest.mark.parametrize('name', ['dev', None])
+async def test_a_box_passed_in_is_used_and_kept(fake_boxlite: FakeBoxLite, working_dir: str, name: str | None) -> None:
+    box = await fake_boxlite.module.Boxlite.default().create(None, name=name)
+    backend = BoxLiteSandboxBackend(sandbox=box, working_dir=working_dir)
+    # Named by its name, or its id if it has none, so the runtime finds it again.
+    assert backend.ref == WorkspaceRef(provider='boxlite', id=name or box.id)
+    assert await backend.get_sandbox() is box
+    assert (await backend.run(['pwd'])).stdout == f'{working_dir}\n'
+    fake_boxlite.stop(box.id)
+    # A stop invalidates the handle passed in; the backend finds the box again by its ref.
+    assert (await backend.run(['echo', 'again'])).stdout == 'again\n'
+    assert len(fake_boxlite.boxes) == 1
+
+
 async def test_destroy_deletes_by_ref_and_ignores_a_missing_box(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
@@ -606,11 +627,11 @@ async def test_a_deletion_ending_a_command_is_unavailable(fake_boxlite: FakeBoxL
 async def test_a_box_stopped_during_a_command_is_unavailable(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
-    (box,) = fake_boxlite.boxes.values()
+    ((name, box),) = fake_boxlite.boxes.items()
     command = asyncio.create_task(backend.run(['sleep', '3']))
     await _command_started(fake_boxlite)
-    fake_boxlite.stop(box.name)
-    with pytest.raises(WorkspaceUnavailableError, match=f"The BoxLite box '{box.name}' is stopped"):
+    fake_boxlite.stop(name)
+    with pytest.raises(WorkspaceUnavailableError, match=f"The BoxLite box '{name}' is stopped"):
         await command
     # Its handle is no longer valid, so the next command boots the box through a new one.
     assert (await backend.run(['true'])).exit_code == 0
@@ -678,8 +699,8 @@ async def test_agent_history_attaches_same_box(fake_boxlite: FakeBoxLite, workin
     first = await agent.run('go')
     second = await agent.run('go', message_history=first.all_messages())
     assert tool_results == ['created', 'persisted']
-    (box,) = fake_boxlite.boxes.values()
-    assert first.workspace.ref == second.workspace.ref == WorkspaceRef(provider='boxlite', id=box.name)
+    (name,) = fake_boxlite.boxes
+    assert first.workspace.ref == second.workspace.ref == WorkspaceRef(provider='boxlite', id=name)
 
 
 async def test_coder_works_in_the_box(fake_boxlite: FakeBoxLite, working_dir: str) -> None:

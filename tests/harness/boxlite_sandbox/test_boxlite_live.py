@@ -184,6 +184,22 @@ async def test_box_options_reach_the_box(owned: list[BoxLiteSandboxBackend], tmp
     assert (await backend.run(['touch', '/data/new.txt'])).exit_code != 0
 
 
+async def test_a_box_passed_in_is_found_again_after_a_stop() -> None:
+    """Validates the fake's assumptions that a box created without a name has `name=None` and is found by
+    its id, and that stopping it invalidates the handle the application passed in."""
+    runtime = cast(Any, boxlite).Boxlite.default()
+    box = await runtime.create(cast(Any, boxlite).BoxOptions(image='alpine:3.20', auto_delete=0))
+    try:
+        assert box.name is None
+        backend = BoxLiteSandboxBackend(sandbox=box)
+        assert backend.ref is not None and backend.ref.id == box.id
+        assert (await backend.run(['pwd'])).stdout == '/workspace\n'
+        await box.stop()
+        assert (await backend.run(['echo', 'again'])).stdout == 'again\n'
+    finally:
+        await runtime.remove(box.id, force=True)
+
+
 # The README's Python blocks are the same as this page's.
 _DOCS_BLOCKS = python_blocks('docs/harness/boxlite-sandbox.md')
 

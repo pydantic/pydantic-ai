@@ -116,6 +116,8 @@ A box stops when nothing in this process uses it any more, or when the process e
 
 A ref is trusted input: whoever passes one runs commands in that box. `BoxLiteSandbox` names the boxes it creates `pydantic-ai-` and 32 hex digits, and raises `ValueError` for a ref with any other id, so a ref can't reach boxes other tools make under their own names, which may mount your files. The name isn't proof of origin, though: any process running as your OS user can create a box under such a name, so only pass refs your application stored itself.
 
+Already have a `boxlite.Box`? Pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to a run, with `BoxLiteSandboxBackend` from `pydantic_ai_harness.boxlite_sandbox`, or `ref=WorkspaceRef(provider='boxlite', id=...)` with the box's name, or its id if it has none. Your code chooses that box, so any name works. `BoxLiteSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the box, and the message history only reattaches boxes `BoxLiteSandbox` created, so pass the backend again for a later run.
+
 ## Other BoxLite options
 
 `box_options` passes any other [`boxlite.BoxOptions`](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python#boxliteboxoptions) argument to a new box. This one mounts the current directory into the box read-only:
