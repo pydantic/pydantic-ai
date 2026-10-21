@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import AbstractNativeTool, XSearchTool
+from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool, XSearchTool
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
@@ -645,7 +645,17 @@ async def test_rotating_out_every_visible_tool_establishes_the_newcomers(
     ] == [[('unlock', False)], [('later', False)], [('later', False)]]
 
 
-async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainly(allow_model_requests: None):
+@pytest.mark.parametrize(
+    'native_tools',
+    [
+        pytest.param([], id='no-native-tools'),
+        # Anthropic sends an MCP server in `mcp_servers`, not `tools`, so it doesn't keep the newcomer company.
+        pytest.param([MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp')], id='native-mcp-server'),
+    ],
+)
+async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainly(
+    allow_model_requests: None, native_tools: list[AbstractNativeTool]
+):
     """A `tool_choice` naming only the newcomer filters out the tool that kept it deferred, so it is declared plainly.
 
     Anthropic restricts tools by leaving the others out of the request, which would leave the newcomer as
@@ -678,7 +688,8 @@ async def test_anthropic_tool_choice_restricted_to_a_newcomer_declares_it_plainl
         toolset.add_function(_later, name='later')
         return 'unlocked'
 
-    result = await Agent(model, toolsets=[toolset], capabilities=[RestrictToLater()]).run('go')
+    capabilities: list[AbstractCapability[Any]] = [RestrictToLater(), *(NativeTool(tool) for tool in native_tools)]
+    result = await Agent(model, toolsets=[toolset], capabilities=capabilities).run('go')
 
     assert result.output == 'done'
     assert [

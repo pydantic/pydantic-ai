@@ -144,6 +144,17 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
+def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
+    """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
+
+    An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
+    `search_tools` function tool, which `function_tools` already carries.
+    """
+    if isinstance(tool, MCPServerTool):
+        return False
+    return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
+
+
 def _revealed_deferred_tool_order(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> list[str]:
@@ -2299,7 +2310,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         blocks are dropped along with its `defer_loading` flag.
         """
         tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
-        return _declare_lone_newcomers(model_request_parameters, tool_defs.keys())
+        return _declare_lone_newcomers(
+            model_request_parameters,
+            tool_defs.keys(),
+            wire_native_tools=[
+                tool for tool in model_request_parameters.native_tools if _native_tool_is_a_tools_entry(tool)
+            ],
+        )
 
     def _prepare_tools_and_tool_choice(
         self,

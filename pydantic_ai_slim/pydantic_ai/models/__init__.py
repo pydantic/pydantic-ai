@@ -2685,7 +2685,10 @@ def resolve_request_tools(
 
 
 def _declare_lone_newcomers(
-    params: ModelRequestParameters, declared_names: Collection[str] | None = None
+    params: ModelRequestParameters,
+    declared_names: Collection[str] | None = None,
+    *,
+    wire_native_tools: Sequence[AbstractNativeTool] | None = None,
 ) -> ModelRequestParameters:
     """Declare mid-run newcomers plainly when the request has no other plainly declared tool.
 
@@ -2694,10 +2697,12 @@ def _declare_lone_newcomers(
     keeps an Anthropic request from carrying only deferred tools.
 
     `declared_names` narrows the declarations to the ones a provider still sends after its own filtering,
-    such as Anthropic's `tool_choice` restriction; by default every resolved tool counts.
+    such as Anthropic's `tool_choice` restriction; by default every resolved tool counts. `wire_native_tools`
+    narrows the native tools to the ones that become entries in the request's tools, leaving out one a
+    provider sends elsewhere, such as Anthropic's `mcp_servers`; by default every native tool counts.
     """
     tool_visibility = params.tool_visibility
-    if tool_visibility is None or params.native_tools:
+    if tool_visibility is None or (params.native_tools if wire_native_tools is None else wire_native_tools):
         return params
 
     def declared(name: str) -> bool:
