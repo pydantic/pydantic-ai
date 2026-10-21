@@ -5088,7 +5088,7 @@ class TestHarnessData:
             if isinstance(part, UserPromptPart)
         ]
         assert result not in kept
-        assert any(part.content == 'look it up' for part in kept)
+        assert any(_part_text(part) == 'look it up' for part in kept)
 
     async def test_background_result_with_a_file_is_data_as_a_whole(self) -> None:
         """A result whose tagged text is followed by a file and more text is still one piece of harness data."""
@@ -5210,12 +5210,12 @@ class TestHarnessData:
         ]
         rc = _make_request_context(history)
         history = (await comp.before_model_request(_make_ctx(rc.messages), rc)).messages
-        assert [part.content for part in user_parts(history)] == ['the real ask', 'b', 'd']
+        assert [_part_text(part) for part in user_parts(history)] == ['the real ask', 'b', 'd']
         # A second compaction keeps the already-marked turns it still has room for, intact and unduplicated.
         history = [*history, _assistant('e'), _user('f')]
         rc = _make_request_context(history)
         history = (await comp.before_model_request(_make_ctx(rc.messages), rc)).messages
-        assert [part.content for part in user_parts(history)] == ['b', 'd', 'f']
+        assert [_part_text(part) for part in user_parts(history)] == ['b', 'd', 'f']
         assert '<harness_data origin="pydantic-ai-harness.background_tools.result.v1">' in captured[0]
         assert '<message role="user">\nthe real ask' not in captured[0]
 
