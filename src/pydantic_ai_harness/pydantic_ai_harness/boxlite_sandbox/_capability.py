@@ -88,9 +88,9 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
         del ctx
-        if ref is not None and ref.provider != 'boxlite':
-            return None
         if ref is not None:
+            if ref.provider != 'boxlite':
+                return None
             # A ref from message history only reaches boxes `BoxLiteSandbox` created.
             _backend.check_ref(ref)
         return self._new_backend(ref)

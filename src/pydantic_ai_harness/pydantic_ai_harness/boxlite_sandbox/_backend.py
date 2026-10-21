@@ -37,7 +37,7 @@ import re
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager, suppress
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 import anyio
 
@@ -68,12 +68,15 @@ if TYPE_CHECKING:
 __all__ = ('BoxLiteSandboxBackend',)
 
 try:
-    import boxlite
+    import boxlite as _boxlite
 except ImportError as _import_error:
     raise ImportError(
         'Install `pydantic-ai-harness[boxlite]` to use BoxLiteSandbox. BoxLite has wheels for macOS 14 or newer on '
         'Apple silicon and for Linux on x86_64 and aarch64 (glibc 2.28 or newer).'
     ) from _import_error
+
+boxlite: Any = _boxlite
+"""The SDK, untyped: it ships no type information."""
 
 logger = logging.getLogger(__name__)
 
@@ -206,17 +209,13 @@ ended that way waits for the deletion before checking the box.
 ASYNCIO_ONLY = '`BoxLiteSandbox` needs the asyncio event loop: the BoxLite SDK returns asyncio futures.'
 
 
-def _sdk() -> Any:
-    """The `boxlite` module, untyped: the SDK ships no type information."""
-    return boxlite
-
-
 def runtime() -> _Runtime:
     """This process's BoxLite runtime, opened on first use."""
     try:
-        return cast(_Runtime, _sdk().Boxlite.default())
+        return boxlite.Boxlite.default()
     except BaseException as error:
-        # The runtime reports failing to open, such as on a home directory another process holds, as a Rust panic.
+        # The runtime reports failing to open, such as on a home directory another process holds, as a Rust panic:
+        # a `BaseException` that an application's `except Exception` would miss.
         if type(error).__name__ != 'PanicException':
             raise
         raise WorkspaceUnavailableError(f'Could not open the BoxLite runtime: {error}') from error
@@ -256,8 +255,10 @@ def _network(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) -
             # BoxLite reads an empty allow-list as no restriction.
             raise ValueError('allowed_hosts needs allow_internet_access=True and at least one host')
     if not allow_internet_access:
-        return _sdk().NetworkSpec(outbound=_sdk().OutboundNetworkSpec(mode='disabled'))
-    return _sdk().NetworkSpec(outbound=_sdk().OutboundNetworkSpec(mode='enabled', allow_net=list(allowed_hosts or ())))
+        return boxlite.NetworkSpec(outbound=boxlite.OutboundNetworkSpec(mode='disabled'))
+    return boxlite.NetworkSpec(
+        outbound=boxlite.OutboundNetworkSpec(mode='enabled', allow_net=list(allowed_hosts or ()))
+    )
 
 
 async def _finish(call: Awaitable[_T], action: str, undo: Callable[[_T], Awaitable[object]] | None = None) -> _T:
@@ -319,10 +320,12 @@ async def delete(name: str) -> None:
     if (acquiring := _acquiring.get(name)) is not None:
         await acquiring.wait()
     with _marking(_deleting, name):
-        try:
-            await _finish(runtime().remove(name, force=True), f'deleting box {name!r}')
-        except boxlite.NotFoundError:
-            pass
+        await _remove(runtime(), name)
+
+
+async def _remove(boxes: _Runtime, name: str) -> None:
+    with suppress(boxlite.NotFoundError):
+        await _finish(boxes.remove(name, force=True), f'deleting box {name!r}')
 
 
 class _StaleHandle(Exception):
@@ -438,7 +441,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_env(env)
         if reserved := sorted(_RESERVED_OPTIONS.intersection(box_options or {})):
             raise ValueError(f'box_options must not set {", ".join(reserved)}; use the named argument instead')
-        self._options: Any = _sdk().BoxOptions(
+        self._options: Any = boxlite.BoxOptions(
             **(box_options or {}),
             image=image,
             cpus=cpus,
@@ -480,22 +483,16 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         async with self._lock:
             if self._box is not None:
                 return self._box
+            boxes = runtime()
             if (ref := self._ref) is not None:
-                return await self._acquire(ref.id, create=False)
+                return await self._acquire(boxes, ref.id, create=False)
             # Named and recorded before the creation starts, so cleanup has the ref whatever ends the run.
             ref = self._ref = WorkspaceRef(provider='boxlite', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
             logger.info('Creating BoxLite box %s', ref.id)
-            return await self._acquire(ref.id, create=True)
+            return await self._acquire(boxes, ref.id, create=True)
 
-    async def _acquire(self, name: str, *, create: bool) -> _Box:
+    async def _acquire(self, boxes: _Runtime, name: str, *, create: bool) -> _Box:
         with _marking(_acquiring, name):
-            try:
-                boxes = runtime()
-            except BaseException:
-                if create:
-                    # No box was created, so a retry creates one under a new name.
-                    self._ref = None
-                raise
             if create:
                 try:
                     box = await _finish(boxes.create(self._options, name=name), f'creating box {name!r}')
@@ -505,9 +502,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                     # retry creates another under a new name. If the deletion fails, the ref stays so its
                     # holder can delete the box later.
                     try:
-                        await _finish(boxes.remove(name, force=True), f'deleting box {name!r}')
-                    except boxlite.NotFoundError:
-                        self._ref = None
+                        await _remove(boxes, name)
                     except boxlite.BoxliteError:
                         logger.warning('Could not delete BoxLite box %s after it failed to start', name, exc_info=True)
                     else:
@@ -664,17 +659,18 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         Checked only after a failure, to keep the round trip off successful commands; a check that fails
         leaves the original error to propagate rather than ending the run on a guess.
         """
-        if (deleting := _deleting.get(_key(box))) is not None:
+        name = _key(box)
+        if (deleting := _deleting.get(name)) is not None:
             await deleting.wait()
         try:
-            info = await runtime().get_info(_key(box))
+            info = await runtime().get_info(name)
         except (boxlite.BoxliteError, WorkspaceUnavailableError):
             return None
         if info is None:
-            return WorkspaceUnavailableError(_gone_message(_key(box)))
+            return WorkspaceUnavailableError(_gone_message(name))
         if info.state.status != 'running':
             return WorkspaceUnavailableError(
-                f'The BoxLite box {_key(box)!r} is {info.state.status}: it was stopped during the command.'
+                f'The BoxLite box {name!r} is {info.state.status}: it was stopped during the command.'
             )
         return None
 
