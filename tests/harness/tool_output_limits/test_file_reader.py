@@ -142,4 +142,6 @@ class TestReaderKept:
         recorder, output = await _run(tmp_path, PrefixTools(_limits(), prefix='limits'))
         assert recorder.marker is not None
         assert f'Read it with limits_{READ_TOOL_NAME}(handle=' in recorder.marker
+        # The prefixed reader is exempt from reduction by its kind.
         assert 'line 100' in output
+        assert 'Tool output too large' not in output
