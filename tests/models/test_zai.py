@@ -13,7 +13,6 @@ from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, RequestCapture, try_import
-from .conftest import get_weather, json_objects, weather_tool_calls_without_thinking
 
 with try_import() as imports_successful:
     from openai.types import chat
@@ -588,26 +587,3 @@ async def test_zai_sensitive_without_content_raises_content_filter_error(allow_m
 
     with pytest.raises(ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'sensitive'")):
         await Agent(model).run('Tell me something.')
-
-
-async def test_zai_field_mode_thinking_backfill(
-    allow_model_requests: None, zai_api_key: str, request_capture: RequestCapture
-):
-    """Z.AI accepts the empty `reasoning_content` a thinking request sends on tool calls no step thought on.
-
-    `ZaiProvider` uses `'field'` mode. The history holds no `ThinkingPart`, and its tool calls sit before and
-    after the last user message, as a step that didn't think leaves them. With `thinking=True`, both go out
-    with `reasoning_content` empty; the run completing is Z.AI accepting the request.
-    """
-    provider = ZaiProvider(api_key=zai_api_key, http_client=request_capture.client)
-    agent = Agent(ZaiModel('glm-5.3', provider=provider), tools=[get_weather])
-
-    result = await agent.run(
-        message_history=weather_tool_calls_without_thinking(), model_settings=ZaiModelSettings(thinking=True)
-    )
-
-    assert result.output == snapshot("It's sunny in Paris and rainy in London.")
-    messages = request_capture.body('/chat/completions')['messages']
-    assert [
-        message.get('reasoning_content') for message in json_objects(messages) if message['role'] == 'assistant'
-    ] == ['', '']

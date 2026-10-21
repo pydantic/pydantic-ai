@@ -60,7 +60,7 @@ def normalize_body(obj: Any) -> Any:
     return obj
 
 
-FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'msh-', 'x-']
+FILTERED_HEADER_PREFIXES = ['anthropic-', 'cf-', 'x-']
 FILTERED_HEADERS = {
     'authorization',
     'chatgpt-account-id',

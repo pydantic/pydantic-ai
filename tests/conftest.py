@@ -1241,11 +1241,6 @@ def zai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
-def moonshotai_api_key() -> str:
-    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
-
-
-@pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
 

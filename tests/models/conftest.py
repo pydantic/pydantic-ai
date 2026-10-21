@@ -9,8 +9,6 @@ import pytest
 from pydantic import JsonValue
 from pytest_mock import MockerFixture
 
-from pydantic_ai import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
-
 from ..conftest import RequestCapture, try_import
 
 if TYPE_CHECKING:
@@ -85,32 +83,6 @@ def json_objects(value: JsonValue) -> list[dict[str, JsonValue]]:
         assert isinstance(item, dict)
         objects.append(item)
     return objects
-
-
-def weather_tool_calls_without_thinking() -> list[ModelMessage]:
-    """A history whose `get_weather` calls no step thought on, before and after the last user message.
-
-    A `'field'`-mode provider's test runs a thinking request on it to record the provider accepting the
-    thinking field sent empty on both calls.
-    """
-    return [
-        ModelRequest(parts=[UserPromptPart('What is the weather in Paris? Use the get_weather tool.')]),
-        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_paris')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart('get_weather', 'sunny', tool_call_id='call_paris'),
-                UserPromptPart('And in London? Use the tool again, then answer for both in one short sentence.'),
-            ]
-        ),
-        ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'London'}, tool_call_id='call_london')]),
-        ModelRequest(parts=[ToolReturnPart('get_weather', 'rainy', tool_call_id='call_london')]),
-    ]
-
-
-# The tool `weather_tool_calls_without_thinking` calls; its docstring is the description the model sees.
-def get_weather(city: str) -> str:
-    """Get the weather for a city."""
-    return 'rainy'  # pragma: no cover
 
 
 def message_shape(body: dict[str, JsonValue]) -> list[tuple[str, list[str]]]:

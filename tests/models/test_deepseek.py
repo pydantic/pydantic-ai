@@ -31,6 +31,7 @@ from pydantic_ai.messages import ModelMessage, NativeToolSearchCallPart, NativeT
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import NativeOutput
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.usage import RequestUsage
 
@@ -212,11 +213,14 @@ DeepSeekModelFactory = Callable[[bool], 'OpenAIChatModel']
 """Builds a `DeepSeekProvider` model: `False` turns thinking off, `True` leaves the model's default."""
 
 
-def _deepseek_model_factory(model_name: str, *, api_key: str, http_client: httpx2.AsyncClient) -> DeepSeekModelFactory:
+def _deepseek_model_factory(
+    model_name: str, *, api_key: str, http_client: httpx2.AsyncClient, profile: OpenAIModelProfile | None = None
+) -> DeepSeekModelFactory:
     def build(thinking: bool) -> OpenAIChatModel:
         return OpenAIChatModel(
             model_name,
             provider=DeepSeekProvider(api_key=api_key, http_client=http_client),
+            profile=profile,
             settings=None if thinking else OpenAIChatModelSettings(thinking=False),
         )
 
@@ -310,6 +314,7 @@ class FieldBackfillCase:
     run: Callable[[DeepSeekModelFactory], Awaitable[object]]
     sent_reasoning: list[str | None]
     model_name: str = 'deepseek-v4-flash'
+    profile: OpenAIModelProfile | None = None
 
 
 FIELD_BACKFILL_CASES = [
@@ -323,6 +328,13 @@ FIELD_BACKFILL_CASES = [
     FieldBackfillCase(id='thinking_off', run=partial(_fallback, thinking=False), sent_reasoning=[None]),
     # `DeepSeekProvider` turns thinking on by default only for the V4 models and `deepseek-reasoner`.
     FieldBackfillCase(id='default_thinking_off', run=_fallback, sent_reasoning=[None], model_name='deepseek-chat'),
+    # Without the flag, as on the other `'field'`-mode providers, only a `ThinkingPart` in the history backfills.
+    FieldBackfillCase(
+        id='flag_off',
+        run=_fallback,
+        sent_reasoning=[None],
+        profile=OpenAIModelProfile(openai_chat_thinking_requires_field_on_tool_calls=False),
+    ),
 ]
 
 
@@ -333,10 +345,11 @@ async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
 ):
     """A thinking request sends `reasoning_content` empty on every tool call that lacks it, before any step has thought.
 
-    `DeepSeekProvider` uses `'field'` mode. Each path reaches DeepSeek with thinking on and no `ThinkingPart`
-    in the history, carrying a tool call from a step that didn't think, which DeepSeek 400s on without the
-    field when it follows the last user message. The controls pin what stays unchanged: a request with
-    thinking turned off, and a model that doesn't think by default. DeepSeek accepting the empty field after
+    `DeepSeekProvider` uses `'field'` mode and sets `openai_chat_thinking_requires_field_on_tool_calls`. Each
+    path reaches DeepSeek with thinking on and no `ThinkingPart` in the history, carrying a tool call from a
+    step that didn't think, which DeepSeek 400s on without the field when it follows the last user message.
+    The controls pin what stays unchanged: a request with thinking turned off, a model that doesn't think by
+    default, and a profile without the flag. DeepSeek accepting the empty field after
     and before the last user message is recorded by `test_deepseek_field_mode_thinking_backfill`; these cases
     only pin which paths send it, so a mock transport stands in for a recording per path, which would add no
     evidence about acceptance.
@@ -358,7 +371,9 @@ async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
         return httpx2.Response(200, json=completion_message(message).model_dump(mode='json'))
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-        await case.run(_deepseek_model_factory(case.model_name, api_key='test', http_client=client))
+        await case.run(
+            _deepseek_model_factory(case.model_name, api_key='test', http_client=client, profile=case.profile)
+        )
 
     assert [
         message.get('reasoning_content')

@@ -48,7 +48,6 @@ from pydantic_ai.profiles import ModelProfile
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsStr, RequestCapture, message, try_import
-from .conftest import get_weather, json_objects, weather_tool_calls_without_thinking
 from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
@@ -2494,27 +2493,3 @@ async def test_eager_input_streaming_sent_to_openrouter(
     assert ('eager_input_streaming' in tool_param) is expected_eager_key
     if expected_eager_key:
         assert tool_param['eager_input_streaming'] is True
-
-
-async def test_openrouter_field_mode_thinking_backfill(
-    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
-):
-    """OpenRouter accepts the empty `reasoning` a thinking request sends on tool calls no step thought on.
-
-    `OpenRouterProvider` uses `'field'` mode. The history holds no `ThinkingPart`, and its tool calls sit before
-    and after the last user message, as a step that didn't think leaves them. With `thinking=True`, both go
-    out with `reasoning` empty; the run completing is OpenRouter accepting the request. Routing is pinned to
-    Together, so a re-record reaches the same upstream.
-    """
-    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
-    agent = Agent(OpenRouterModel('deepseek/deepseek-v4.1-flash', provider=provider), tools=[get_weather])
-    settings = OpenRouterModelSettings(thinking=True, openrouter_provider={'only': ['together']})
-
-    result = await agent.run(message_history=weather_tool_calls_without_thinking(), model_settings=settings)
-
-    assert result.output == snapshot("It's sunny in Paris and rainy in London.")
-    messages = request_capture.body('/chat/completions')['messages']
-    assert [message.get('reasoning') for message in json_objects(messages) if message['role'] == 'assistant'] == [
-        '',
-        '',
-    ]
