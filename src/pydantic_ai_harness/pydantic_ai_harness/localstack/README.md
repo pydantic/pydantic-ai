@@ -200,8 +200,13 @@ runs them again, which rebuilds the container's state. Temporal and Prefect
 record every tool call, so there recovery replays the recorded output and the
 new container lacks the resources the earlier commands created. Point
 `endpoint_url` at an external LocalStack instance for durable runs on those
-engines. Runs that share one container inside `async with agent:` also share its
-state when one of them recovers.
+engines.
+
+Runs that share one container inside `async with agent:` also share its state.
+If one of them recovers on DBOS while that container is still up, the commands
+it runs again meet the resources it and its sibling runs already created, so
+commands that are not idempotent, such as `s3 mb` or `sqs create-queue`, can
+fail. For durable runs, use an external instance, or keep commands idempotent.
 
 The records are named after the capability's `id`, which defaults to
 `localstack`, so durable execution needs no configuration.

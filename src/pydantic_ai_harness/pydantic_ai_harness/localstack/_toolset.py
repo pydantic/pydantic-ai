@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import shlex
 import subprocess
@@ -11,11 +10,12 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import IO, Any, Self
+from typing import IO, Annotated, Any, Self
 
 import anyio
 import anyio.to_thread
 import httpx
+from pydantic import Field
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -63,9 +63,9 @@ def validate_settings(
 ) -> None:
     """Reject settings that `LocalStack` and `LocalStackToolset` cannot run with."""
     if allowed_services and denied_services:
-        raise ValueError('Specify allowed_services or denied_services, not both.')
+        raise ValueError('Specify `allowed_services` or `denied_services`, not both.')
     if max_output_chars <= 0:
-        raise ValueError('max_output_chars must be a positive integer.')
+        raise ValueError('`max_output_chars` must be a positive integer.')
 
 
 def _resolve_global_option(name: str) -> str | None:
@@ -361,7 +361,9 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         env['AWS_ENDPOINT_URL'] = self._endpoint_url
         return env
 
-    async def aws_cli(self, command: str, *, timeout_seconds: float | None = None) -> str:
+    async def aws_cli(
+        self, command: str, *, timeout_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] | None = None
+    ) -> str:
         """Run an AWS CLI command against the emulated AWS environment.
 
         Pass the command without the leading `aws` and without `--endpoint-url`;
@@ -375,8 +377,6 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Labelled stdout/stderr output, with an exit code on non-zero exit.
         """
-        if timeout_seconds is not None and not 0 < timeout_seconds < math.inf:
-            raise ModelRetry('`timeout_seconds` must be a finite number of seconds greater than zero.')
         if self._operations is not None:
             return raise_retry(await self._operations.aws_cli(self._endpoint_url, command, timeout_seconds))
         tokens = self._normalize_command(command)

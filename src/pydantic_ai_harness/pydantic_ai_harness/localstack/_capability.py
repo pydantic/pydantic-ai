@@ -147,7 +147,8 @@ class LocalStack(AbstractCapability[AgentDepsT]):
         """Build and return the LocalStack toolset."""
         # A managed container starts empty in the process that recovers a run, so its commands run
         # again there to rebuild its state, rather than replaying recorded output into an empty one.
-        # Runs that share one container inside `async with agent:` also share its state on recovery.
+        # Runs that share one container inside `async with agent:` share its state too, so a run that
+        # recovers on DBOS while it is up re-runs its commands against resources that already exist.
         operations = (
             None
             if self.manage_container
