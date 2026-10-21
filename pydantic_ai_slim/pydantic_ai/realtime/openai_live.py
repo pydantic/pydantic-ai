@@ -610,7 +610,7 @@ class _Delegation:
     The continuation waits for its terminal, then goes out from the receive loop.
     """
     stalled: bool = False
-    """A call it asked for settled without a result (the tool raised), so it can never be continued.
+    """A call it asked for settled without a result (a usage limit stopped it), so it can never be continued.
 
     The backend resumes only from every output of its round, so it is given up as one that failed would be,
     at once or, while a response is still running, at that response's terminal.
@@ -797,6 +797,12 @@ class OpenAILiveConnection(RealtimeConnection):
     @property
     def _answers_tool_calls_per_response(self) -> bool:
         # The delegated backend resumes from all of a round's results together, with one `response.create`.
+        return True
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
+        # delegates nothing more for the rest of the session (checked live).
         return True
 
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
