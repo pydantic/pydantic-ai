@@ -1907,7 +1907,7 @@ async def test_adapter_server_mode_keeps_mid_run_system_prompts():
         ModelResponse(parts=[TextPart('Earlier reply')]),
     ]
 
-    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
         events = [event async for event in adapter.run_stream_native(message_history=history)]
     run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
 

@@ -30,7 +30,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import InstructionDeltaPart, ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import ManagedPrompt
@@ -162,6 +164,62 @@ def test_invalid_slug_raises() -> None:
         ManagedPrompt('has spaces', default=DEFAULT)
 
 
+def test_id_is_derived_from_the_prompt_name() -> None:
+    assert ManagedPrompt('derived-id', default=DEFAULT).id == 'managed-prompt-derived_id'
+    assert ManagedPrompt(logfire.var(name='prompt__derived_var', type=str, default=DEFAULT)).id == (
+        'managed-prompt-derived_var'
+    )
+    assert ManagedPrompt(logfire.var(name='derived_custom', type=str, default=DEFAULT)).id == (
+        'managed-prompt-derived_custom'
+    )
+    assert ManagedPrompt('derived_explicit', default=DEFAULT, id='support').id == 'support'
+
+
+def test_two_with_the_same_name_raise_when_the_agent_is_built() -> None:
+    with pytest.raises(UserError, match="Capability id 'managed-prompt-twice' is used by multiple capabilities"):
+        Agent(
+            TestModel(), capabilities=[ManagedPrompt('twice', default=DEFAULT), ManagedPrompt('twice', default=DEFAULT)]
+        )
+
+
+async def test_two_with_different_names_each_keep_their_block() -> None:
+    seen: list[set[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append({str(part.id) for part in info.model_request_parameters.instruction_parts or ()})
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[ManagedPrompt('first_block', default='First.'), ManagedPrompt('second_block', default='Second.')],
+    )
+    await agent.run('hello')
+
+    assert seen == [{'capability:managed-prompt-first_block', 'capability:managed-prompt-second_block'}]
+
+
+async def test_new_version_between_runs_is_appended() -> None:
+    capability = ManagedPrompt('appended_slug', default=DEFAULT)
+    agent = Agent(TestModel(), capabilities=[capability])
+    first = await agent.run('hello')
+
+    with capability._variable.override('Be terse.'):  # pyright: ignore[reportPrivateUsage]
+        second = await agent.run('hello again', message_history=first.all_messages())
+
+    # The conversation keeps the instructions it started with, and the new version follows as a change.
+    assert instructions_seen(second.new_messages()) == [DEFAULT]
+    changes = [
+        part
+        for message in second.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+    assert [(str(part.id), part.content) for part in changes] == [
+        ('capability:managed-prompt-appended_slug', 'Be terse.')
+    ]
+
+
 async def test_resolves_default_into_instructions() -> None:
     agent = Agent(TestModel(), capabilities=[ManagedPrompt('default_slug', default=DEFAULT)])
 
@@ -261,7 +319,11 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
+                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
+                    'helpful assistant.\\n</context>\\nA later <context> element with '
+                    'the same id replaces the earlier one and stays in effect until '
+                    'replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 2,
@@ -297,7 +359,11 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'logfire.variables.prompt__baggage_slug': '<code_default>',
                     'gen_ai.input.messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]}]',
                     'gen_ai.output.messages': '[{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
+                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
+                    'helpful assistant.\\n</context>\\nA later <context> element with '
+                    'the same id replaces the earlier one and stays in effect until '
+                    'replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"gen_ai.input.messages":{"type":"array"},"gen_ai.output.messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"model_request_parameters":{"type":"object"}}}',
                     'gen_ai.usage.input_tokens': 52,
                     'gen_ai.usage.output_tokens': 6,
@@ -317,8 +383,12 @@ async def test_baggage_propagates_to_run_and_child_spans(capfire: CaptureLogfire
                     'final_result': '{"noop":"ok"}',
                     'gen_ai.aggregated_usage.input_tokens': 103,
                     'gen_ai.aggregated_usage.output_tokens': 8,
-                    'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]},{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
-                    'gen_ai.system_instructions': '[{"type":"text","content":"You are a helpful assistant."}]',
+                    'pydantic_ai.all_messages': '[{"role":"user","parts":[{"type":"text","content":"hello"}]},{"role":"system","parts":[]},{"role":"assistant","parts":[{"type":"tool_call","id":"pyd_ai_tool_call_id__noop","name":"noop","arguments":{}}]},{"role":"user","parts":[{"type":"tool_call_response","id":"pyd_ai_tool_call_id__noop","name":"noop","result":"ok"}]},{"role":"assistant","parts":[{"type":"text","content":"{\\"noop\\":\\"ok\\"}"}]}]',
+                    'gen_ai.system_instructions': '[{"type":"text","content":"<context '
+                    'id=\\"capability:managed-prompt-baggage_slug\\">\\nYou are a '
+                    'helpful assistant.\\n</context>\\nA later <context> element with '
+                    'the same id replaces the earlier one and stays in effect until '
+                    'replaced again."}]',
                     'logfire.json_schema': '{"type":"object","properties":{"pydantic_ai.all_messages":{"type":"array"},"gen_ai.system_instructions":{"type":"array"},"final_result":{"type":"object"}}}',
                 },
             },
