@@ -32,6 +32,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextPart,
@@ -402,6 +404,52 @@ async def test_native_support_sends_every_reminder():
             'Reminder: be terse. This is request 3.',
         ],
     ]
+
+
+async def test_native_support_leaves_out_a_reminder_no_user_message_clears():
+    """A `no_output` retry adds only system-voice feedback, so nothing would clear the previous reminder.
+
+    A model that clears request-scoped prompts does so at the next user message, and the retry request has
+    none, so the previous step's reminder is left out of it, and of every later request so the history's
+    bytes stay append-only. One followed by a user message, here a tool result, is still sent for the API
+    to clear. https://github.com/pydantic/pydantic-ai/issues/10935; the append-only property test pins the
+    same case as `retry:no-output-retry+request-scoped`.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[TextPart('')])
+        if len(seen) == 2:
+            return ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+    agent = weather_agent(FunctionModel(respond, profile=profile))
+
+    await agent.run(PROMPT)
+
+    assert [request_scoped_texts(messages) for messages in seen] == [
+        ['Reminder: be terse. This is request 1.'],
+        ['Reminder: be terse. This is request 2.'],
+        ['Reminder: be terse. This is request 2.', 'Reminder: be terse. This is request 3.'],
+    ]
+    retry_request = seen[1][-1]
+    assert isinstance(retry_request, ModelRequest)
+    assert [type(part).__name__ for part in retry_request.parts] == ['SystemPromptPart', 'SystemPromptPart']
+
+    # A request left with nothing but the reminder is left out with it.
+    model = FunctionModel(respond, profile=profile)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=PROMPT)]),
+        ModelRequest(parts=[SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[TextPart('')]),
+        ModelRequest(parts=[RetryFeedbackPart(content='Please return text.', retry=RetryInfo(cause='no_output'))]),
+    ]
+    prepared = model.prepare_messages(history, ModelRequestParameters())
+    assert [type(message).__name__ for message in prepared] == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+    assert request_scoped_texts(prepared) == []
 
 
 async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
