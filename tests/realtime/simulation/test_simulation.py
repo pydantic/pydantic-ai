@@ -2553,6 +2553,18 @@ def test_scenario_gemini_tool_result_sent_on_a_dropped_connection() -> None:
     )
 
 
+@known('8763c #3')
+def test_known_live_text_sent_while_an_unread_reply_speaks() -> None:
+    """Text sent while a reply the client hasn't read yet is under way: that reply is taken for the text's own."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak(deliver=False)
+        sim.send_text(respond=True)
+        sim.settle()
+
+    reproduce('8763c #3', LiveSimulation(), scenario)
+
+
 def test_live_delegation_during_a_tool_round_joins_the_reply() -> None:
     """A delegation the model starts while a delegated tool round is owed its answer is the reply's (8763c #3, once).
 
