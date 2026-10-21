@@ -68,8 +68,8 @@ def _context_responses(sim: Simulation, violation: InvariantViolation) -> list[T
     return [response for response in found if response is not None]
 
 
-ALL = frozenset({'openai', 'azure', 'xai', 'gemini', 'gpt-live', 'elevenlabs-agents'})
-OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai'})
+ALL = frozenset({'openai', 'azure', 'xai', 'elevenlabs', 'gemini', 'gpt-live', 'elevenlabs-agents'})
+OPENAI_PROTOCOL = frozenset({'openai', 'azure', 'xai', 'elevenlabs'})
 GEMINI = frozenset({'gemini'})
 
 
@@ -87,28 +87,18 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
     tracked_by='per-response-id state: a cancel targets a response id, and is a no-op once that response is done; found by this simulator',
     evidence='simulated',
     codes=frozenset(
-        {'response.truncated', 'response.missing', 'usage.attribution', 'wait.hang', 'wait.early', 'history.order'}
+        {
+            'response.truncated',
+            'response.missing',
+            'usage.attribution',
+            'wait.hang',
+            'wait.early',
+            'turn_complete.while_owed',
+            'history.order',
+        }
     ),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
-)
-
-
-LOST_RESPONSE_RESERVATION = Finding(
-    id='SIM-1',
-    title=(
-        'a reply lost with a dropped connection keeps its reservation: the reconnect does not ask for it again (it '
-        'had started, or the provider resumes without it) and the session does not settle it, so `wait_for_reply()` hangs'
-    ),
-    tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
-    evidence='simulated',
-    codes=frozenset({'wait.hang'}),
-    # Fixed for Gemini and GPT-Live by their lifecycle tracker: a drop loses every reply still owed.
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: (
-        any(response.lost and response.answers for response in sim.truth.responses.values())
-        or any(input_.answer_lost for input_ in sim.truth.inputs)
-    ),
 )
 
 
@@ -187,6 +177,20 @@ UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY = Finding(
 )
 
 
+def _cut_off_where_speech_is_unreported(sim: Simulation, violation: InvariantViolation) -> bool:
+    """On Vertex's half-cascade model, the input cut off a reply: it reports no speech, so nothing says it wasn't speech."""
+    behavior = getattr(sim, 'behavior', None)
+    input_ = sim.truth.input(violation.context.get('input', ''))
+    return (
+        bool(getattr(behavior, 'closes_tool_turn_separately', False))
+        and input_ is not None
+        and any(
+            response.status == 'cancelled' and response.seq_end is not None and response.seq_end > input_.seq
+            for response in sim.truth.responses.values()
+        )
+    )
+
+
 def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolation) -> bool:
     """A response already under way when the input arrived ended the wait for the input's own reply.
 
@@ -226,15 +230,22 @@ def _tool_round_reply_taken(sim: Simulation, violation: InvariantViolation) -> b
 RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     id='8763c #3',
     title=(
-        "a response already under way when a turn was sent (server VAD, a GPT-Live delegation) takes that turn's "
-        "reservation, so `wait_for_reply()` returns when it ends, before the turn's own reply (likewise a response "
-        'the provider starts on its own while a tool round is owed its answer)'
+        'where the provider gives no signal, a response it started before an input arrived, but that the client '
+        "hadn't read yet, is taken for that input's reply, so `wait_for_reply()` returns when it ends: on a Gemini "
+        'native-audio model (which finishes its reply rather than cutting it off for the input), on Vertex '
+        "`gemini-live-2.5-flash` (which cuts it off, but doesn't report speech that could have), on ElevenLabs "
+        'Agents, and on GPT-Live for a delegation the model starts on its own while a delegated tool round is owed '
+        'its answer (fixed where the provider says: the OpenAI protocol asks again for a request server VAD '
+        'overtook, Gemini 3.x hands an input that cut a reply off to the next, GPT-Live answers text '
+        'in the reply under way, and ElevenLabs Agents names the typed turns a reply answers)'
     ),
-    tracked_by='reply obligations resolved only by the response that answers them',
-    evidence='recorded',
-    codes=frozenset({'wait.early'}),
-    providers=ALL,
-    matches=_reply_taken_by_earlier_response,
+    tracked_by='a provider signal that tells which reply answers an input sent as another started',
+    evidence='simulated',
+    codes=frozenset({'wait.early', 'turn_complete.while_owed'}),
+    providers=frozenset({'gpt-live', 'gemini', 'elevenlabs-agents'}),
+    matches=lambda sim, violation: (
+        _cut_off_where_speech_is_unreported(sim, violation) or _reply_taken_by_earlier_response(sim, violation)
+    ),
 )
 
 KNOWN_FINDINGS: list[Finding] = [
@@ -243,39 +254,6 @@ KNOWN_FINDINGS: list[Finding] = [
     RECEIVE_LOOP_SEND_FAILURE,
 ]
 """Checked in order: the more specific findings for a code come before the more general ones."""
-
-
-def _gemini_behavior(sim: Simulation, name: str) -> bool:
-    return bool(getattr(getattr(sim, 'behavior', None), name, False))
-
-
-def _cut_off_by_the_input(sim: Simulation, violation: InvariantViolation) -> bool:
-    """The input the wait was owed a reply for cut off a model turn (or one the model hadn't started on yet)."""
-    if any(call.cancelled_by_server for call in sim.truth.tool_calls.values()):
-        return True  # It cut off a turn waiting on tool results: Gemini cancelled the calls.
-    input_ = sim.truth.input(violation.context.get('input', ''))
-    return input_ is not None and any(
-        response.status == 'cancelled' and response.seq_end is not None and response.seq_end > input_.seq
-        for response in sim.truth.responses.values()
-    )
-
-
-CUT_OFF_TURN_COMPLETE = Finding(
-    id='SIM-13',
-    title=(
-        'a typed turn that cuts off a model turn (one waiting on tool results, whose calls Gemini cancels, or one '
-        "the model hadn't started on yet) gets its `wait_for_reply()` ended by the cut-off turn's `turn_complete`, "
-        'before its own reply'
-    ),
-    tracked_by=(
-        'turn boundaries mapped to the exchange they close, and obligations resolved only by their answer; '
-        'the cut-off-turn case #8766 left; found by this simulator'
-    ),
-    evidence='simulated',
-    codes=frozenset({'wait.early'}),
-    providers=GEMINI,
-    matches=_cut_off_by_the_input,
-)
 
 
 def _continued_after_calling(sim: Simulation, responses: Iterable[TruthResponse] | None = None) -> bool:
@@ -298,21 +276,22 @@ def _reply_continued_across_a_round(sim: Simulation, violation: InvariantViolati
     return _continued_after_calling(sim, _context_responses(sim, violation) or [])
 
 
-def _spoke_after_calling(sim: Simulation, violation: InvariantViolation) -> bool:
-    """The model kept going after an asynchronous tool call it made (before or after the result came back)."""
-    return _gemini_behavior(sim, 'talks_through_tool_calls') and _continued_after_calling(sim)
-
-
 def _in_flight_at_the_result(sim: Simulation, violation: InvariantViolation) -> bool:
-    """Something the calling response said before its result reached the server hadn't reached the client yet."""
+    """Something the calling response said (or called) before its result reached the server hadn't reached the client yet."""
     truth = sim.truth
-    responses = _context_responses(sim, violation) or []
-    for response in responses:
+    for response in _context_responses(sim, violation) or []:
         outputs = [truth.input(call_id) for call_id in response.tool_calls]
-        arrived = [output.seq for output in outputs if output is not None and output.kind == 'tool_output']
-        if arrived and any(
-            truth.word_seq[word] < min(arrived) and truth.word_read.get(word, min(arrived) + 1) > min(arrived)
-            for word in response.words
+        first = min(
+            (output.seq for output in outputs if output is not None and output.kind == 'tool_output'), default=None
+        )
+        if first is not None and (
+            any(
+                truth.word_seq[word] < first and truth.word_read.get(word, first + 1) > first for word in response.words
+            )
+            or any(
+                (call := truth.tool_calls[call_id]).seq < first and (call.read_seq is None or call.read_seq > first)
+                for call_id in response.tool_calls
+            )
         ):
             return True
     return False
@@ -321,11 +300,14 @@ def _in_flight_at_the_result(sim: Simulation, violation: InvariantViolation) -> 
 ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT = Finding(
     id='8760-accepted',
     title=(
-        'with asynchronous Gemini tool calls, speech the model said before the result went out, but which the '
-        'session had not received yet, goes after the tool return: the calling response is recorded when the '
-        'result is sent, so an `asap` message can still go out ahead of it'
+        'with asynchronous Gemini tool calls, speech (or another call) the model made before the result went out, but '
+        'which the session had not received yet, goes after the tool return: the calling response is recorded when '
+        'the result is sent, so an `asap` message can still go out ahead of it'
     ),
-    tracked_by="#8760's documented trade-off: speech under way when the result goes out is split there",
+    tracked_by=(
+        'the documented trade-off of recording asynchronous Gemini tool rounds in order: the calling response ends '
+        'as the result goes out, so speech still on its way then is a response of its own'
+    ),
     evidence='simulated',
     codes=frozenset({'response.duplicated', 'history.tool_round_order'}),
     providers=GEMINI,
@@ -334,42 +316,30 @@ ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT = Finding(
 )
 
 
-GEMINI_ASYNC_TOOL_ROUND = Finding(
-    id='8760',
+def _spoke_between_results(sim: Simulation, violation: InvariantViolation) -> bool:
+    """A response the violation names went on talking after the first of its tool calls' results reached the server."""
+    truth = sim.truth
+    for response in _context_responses(sim, violation) or []:
+        outputs = [truth.input(call_id) for call_id in response.tool_calls]
+        arrived = [output.seq for output in outputs if output is not None and output.kind == 'tool_output']
+        if arrived and any(truth.word_seq[word] > min(arrived) for word in response.words):
+            return True
+    return False
+
+
+ASYNC_SPEECH_BETWEEN_RESULTS = Finding(
+    id='8760-accepted-between-results',
     title=(
-        'with asynchronous (`NON_BLOCKING`) Gemini tool calls, what the model says (or calls) after the call, in the '
-        "same turn, is recorded as a response of its own after the tool's result, as if it had the result in hand"
+        'with several asynchronous Gemini tool calls in one response, what the model says after the first result '
+        'went out, while the others still run, is a response of its own after all of their returns: each return '
+        'directly follows the response with its call'
     ),
-    tracked_by='#8760 (parked: per-response-id state, so a response the session already recorded can be continued)',
-    evidence='recorded',
-    codes=frozenset({'response.duplicated', 'history.tool_round_order', 'wait.hang'}),
+    tracked_by='the tool-result adjacency request-response APIs (Anthropic, OpenAI Chat) require',
+    evidence='simulated',
+    codes=frozenset({'response.duplicated'}),
     providers=GEMINI,
-    matches=_spoke_after_calling,
-)
-
-
-def _parked_error(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
-
-    from ._invariants import SimulatedToolError
-
-    parked = (SimulatedToolError, UsageLimitExceeded, UnexpectedModelBehavior)
-    errors = [sim.consumer_error, *(operation.error for operation in sim.operations)]
-    return 'error' in sim.tools.settled.values() or any(isinstance(error, parked) for error in errors)
-
-
-PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
-    id='SIM-15',
-    title=(
-        'the session ends on a parked error (a tool that raised, or a tool result over `request_limit`) while '
-        'another request is still owed (deferred behind the tool round), so `wait_for_reply()` hangs: the part '
-        'of OR8 that #8765 left'
-    ),
-    tracked_by='every reply reservation settled when the session parks an error; found by this simulator',
-    evidence='recorded',
-    codes=frozenset({'wait.hang'}),
-    providers=ALL,
-    matches=_parked_error,
+    matches=_spoke_between_results,
+    accepted=True,
 )
 
 
@@ -438,9 +408,9 @@ PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL = Finding(
 )
 
 
-def _hand_commit_raced_by_vad(sim: Simulation) -> bool:
-    """Under server VAD, a turn `commit_audio()` committed whose acknowledgement the client hadn't read when the
-    session ended or the connection dropped."""
+def _unacknowledged_commit_under_vad(sim: Simulation, violation: InvariantViolation) -> bool:
+    """Under server VAD, every turn missing is one `commit_audio()` committed whose acknowledgement the client never
+    read, the session having ended or the connection dropped first."""
     options = getattr(sim, 'openai', None)
     truth = sim.truth
     ended = bool(truth.connection_losses) or sim.close_requested is not None or sim.receive_ended
@@ -449,39 +419,37 @@ def _hand_commit_raced_by_vad(sim: Simulation) -> bool:
         and options is not None
         and options.turn_detection != 'manual'
         and any(
-            input_.kind == 'speech' and input_.committed_by_client and input_.committed_read is None
+            input_.kind == 'speech'
+            and input_.committed_by_client
+            and input_.committed_read is None
+            and input_.key in violation.context.get('inputs', ())
             for input_ in truth.inputs
         )
     )
 
 
-HAND_COMMIT_RACED_BY_VAD = Finding(
-    id='SIM-40',
+UNACKNOWLEDGED_COMMIT_UNDER_VAD = Finding(
+    id='SIM-42',
     title=(
-        'under server VAD, a turn `commit_audio()` committed after VAD committed the turn before it is lost when the '
-        "session ends or the connection drops before its acknowledgement is read: VAD's acknowledgement is taken for "
-        "the hand commit's, and a commit still unacknowledged once VAD stopped can't be told from one that committed "
-        'nothing'
+        'under server VAD, a `commit_audio()` whose acknowledgement never arrives (the session ends or the connection '
+        'drops first) makes a turn only if the client heard the speech it commits start: OpenAI and Azure commit only '
+        'speech their VAD heard and refuse anything else as empty, so a commit of speech whose `speech_started` the '
+        "client hadn't read yet can't be told from a commit of silence, which would be a phantom turn"
     ),
-    tracked_by='telling VAD commits from hand commits by their acknowledgement; found by this simulator on #10652',
+    tracked_by=(
+        "the OpenAI-protocol lifecycle's documented choice for an unacknowledged commit under server VAD; found by "
+        'this simulator on #10722'
+    ),
     evidence='simulated',
     codes=frozenset({'history.turn_missing'}),
-    providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: _hand_commit_raced_by_vad(sim),
+    providers=frozenset({'openai', 'azure'}),
+    matches=_unacknowledged_commit_under_vad,
+    accepted=True,
 )
 
 
 def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation) -> bool:
-    from pydantic_ai.realtime import RealtimeError
-
-    if violation.code == 'send.failed_across_reconnect':
-        return violation.context.get('operation') != 'send_audio'
-    error = sim.consumer_error
-    return (
-        isinstance(error, RealtimeError)
-        and error.message.startswith('Realtime connection failed while sending')
-        and sim.truth.connections > 1
-    )
+    return violation.context.get('operation') != 'send_audio'
 
 
 def _request_deferred_behind_an_answer_to_speech(sim: Simulation) -> bool:
@@ -525,13 +493,12 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
         'a send other than audio (a typed turn, context, an image, `clear_audio`) that hits the dropped socket raises '
-        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else. '
-        'When it is a tool result the session sends, the error ends the event stream over a re-dialed connection, '
-        'and a reply asked for afterwards is waited on forever'
+        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else '
+        '(a tool result the session sends that way is raised from `async for`, and the session goes on)'
     ),
     tracked_by='an ordered outbox that holds sends across a re-dial (#8806 covered audio only)',
     evidence='live-stress',
-    codes=frozenset({'send.failed_across_reconnect', 'wait.hang'}),
+    codes=frozenset({'send.failed_across_reconnect'}),
     providers=OPENAI_PROTOCOL | GEMINI,
     matches=_send_failed_across_reconnect,
 )
@@ -579,15 +546,16 @@ PROVIDER_REPLY_BEFORE_ANY_ECHO = Finding(
     id='SIM-24',
     title=(
         'until the server has echoed the metadata of one of our `response.create`s, the connection takes a response '
-        'it started on its own (server VAD) for the one we asked for, if ours is outstanding: it answers our input, '
-        "so the input is recorded before it and a wait for the input's reply ends with it"
+        'it started on its own (server VAD) for the one we asked for, if ours is outstanding and adds no item of its '
+        'own (a bare `create_response()`): it answers our input, so the input is recorded before it and a wait for '
+        "the input's reply ends with it"
     ),
     tracked_by=(
         "the OpenAI-protocol lifecycle tracker's documented inference: whether a server echoes request metadata is "
         'learned from its first echo, not assumed per provider'
     ),
     evidence='simulated',
-    codes=frozenset({'history.order', 'wait.early'}),
+    codes=frozenset({'history.order', 'wait.early', 'turn_complete.while_owed'}),
     providers=OPENAI_PROTOCOL,
     matches=_provider_reply_before_any_echo,
     accepted=True,
@@ -632,6 +600,29 @@ UNCOMMITTED_STOP_RECORDED_AS_A_TURN = Finding(
 )
 
 
+def _turn_xai_reopened(sim: Simulation, violation: InvariantViolation) -> bool:
+    """The violation names a turn xAI heard stop, then start again under the same item before committing it."""
+    return any(f"'item_{key}'" in violation.detail for key in sim.truth.speech_reopened)
+
+
+XAI_REOPENED_TURN = Finding(
+    id='SIM-41',
+    title=(
+        'under server VAD, xAI takes back its own stop: speech resumed before it commits the turn reopens the same '
+        'item (a second `speech_started` for it, then another `speech_stopped`, then `committed`). The lifecycle '
+        'already placed the turn at the first stop, so it starts the same turn again'
+    ),
+    tracked_by=(
+        "placing an xAI spoken turn at its commit rather than at VAD's stop; recorded live "
+        '(`xai_race_then_speech` probe, October 2026)'
+    ),
+    evidence='recorded',
+    codes=frozenset({'lifecycle.turn_started_twice'}),
+    providers=frozenset({'xai'}),
+    matches=_turn_xai_reopened,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
         FRAME_CUT_OFF_BY_CLOSE,
@@ -639,18 +630,15 @@ KNOWN_FINDINGS.extend(
         PUSH_TO_TALK_AUDIO_AFTER_A_REPEATED_TERMINAL,
         DEFERRED_REQUEST_DROPPED_AFTER_SPEECH,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
-        PARKED_ERROR_LEAVES_REQUEST_OWED,
         LIVE_REPLY_SPLIT_BY_TOOL_ROUND,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
-        GEMINI_ASYNC_TOOL_ROUND,
-        CUT_OFF_TURN_COMPLETE,
-        # The general reservation leaks last: a more specific finding explains a hang better.
-        LOST_RESPONSE_RESERVATION,
+        ASYNC_SPEECH_BETWEEN_RESULTS,
         PROVIDER_REPLY_BEFORE_ANY_ECHO,
         CLEARED_TURN_LOSES_ITS_TRANSCRIPT,
         UNCOMMITTED_STOP_RECORDED_AS_A_TURN,
         UNACKNOWLEDGED_INPUT_PLACED_AFTER_THE_REPLY,
-        HAND_COMMIT_RACED_BY_VAD,
+        UNACKNOWLEDGED_COMMIT_UNDER_VAD,
+        XAI_REOPENED_TURN,
     ]
 )
 

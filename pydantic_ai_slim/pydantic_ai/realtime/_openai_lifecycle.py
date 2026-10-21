@@ -44,6 +44,7 @@ from ._lifecycle import (
     UserTurnStarted,
 )
 from ._openai_protocol import (
+    ACTIVE_RESPONSE_ERROR_CODE,
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     CONVERSATION_ITEM_ADDED_EVENTS,
     ProtocolResponse,
@@ -96,19 +97,33 @@ class AudioCommit:
     join the conversation before the turn the commit makes."""
     has_audio: bool
     """Whether audio went out since the buffer was last committed or cleared: a commit of nothing makes no turn."""
-    raced_vad: bool = False
-    """Whether server VAD reported a stop while it was waiting for its acknowledgement: VAD then committed the buffer
-    too, so which of the two committed the audio (and whether this one committed anything) is unknown."""
+    event_id: str | None = None
+    """The `event_id` it went out under: the `error` refusing it echoes it."""
 
 
 class OpenAILifecycle:
     """Turns an OpenAI-protocol connection's frames and sends into lifecycle events."""
 
-    def __init__(self, *, transcribes: bool = True, commits_need_speech: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        transcribes: bool = True,
+        server_vad: bool = False,
+        commits_need_speech: bool = False,
+        acknowledges_commits: bool = True,
+    ) -> None:
         self._transcribes = transcribes
-        self._commits_need_speech = commits_need_speech
-        """Whether a commit makes a turn only of speech the provider heard start (xAI, which ignores a commit of
-        silence): one not acknowledged makes none then, unless a turn is under way."""
+        self._server_vad = server_vad
+        """Whether server VAD commits the speech it hears on its own. Its commit always comes right after the
+        `speech_stopped` for its item, which a commit of ours never has (checked live on OpenAI and Azure), so
+        that is how the two acknowledgements are told apart."""
+        self._commits_need_speech = commits_need_speech or server_vad
+        """Whether a commit makes a turn only of speech the provider heard start (under server VAD, OpenAI and Azure
+        refuse a commit of anything else as empty; xAI ignores a commit of silence): one not acknowledged makes
+        none then, unless a turn is under way."""
+        self._acknowledges_commits = acknowledges_commits
+        """Whether the provider acknowledges or refuses each commit of ours: xAI under server VAD ignores them
+        (no acknowledgement, no error; checked live), so they aren't waited for."""
         self._leading: list[LifecycleEvent] = []
         """Events that precede the codec events of the frame being decoded: a response it starts."""
         self._pending: list[LifecycleEvent] = []
@@ -143,15 +158,16 @@ class OpenAILifecycle:
         """Our tool outputs awaiting their `conversation.item.added`, by call id."""
         self._carried_over: set[InputId] = set()
         """Inputs an old socket never acknowledged, which join the conversation once a reconnect succeeds."""
+        self._items_acknowledged = False
+        """Whether the server reports the items it adds (`conversation.item.added`), as every recorded one does."""
         self._idle_items: set[str] = set()
         """Audio items the server committed for an idle timeout: a nudge to the model, not a user turn."""
-        self._refused_while_active: tuple[InputId, ...] = ()
-        """Inputs whose request the provider refused because a response it started on its own was active, which
-        answers them instead, once it is reported started."""
         self._untranscribed: set[str] = set()
         """Spoken turns that joined the conversation and are waiting for their transcript."""
         self._committed: set[str] = set()
         """Spoken turns already committed, so a repeated commit doesn't make a second turn of one, or cleared."""
+        self._vad_stopped: set[str] = set()
+        """Spoken turns server VAD reported stopped and hasn't acknowledged committing yet: its own commits."""
         self._commits: deque[AudioCommit] = deque()
         """Our audio commits not acknowledged yet, in the order they went out."""
         self._audio_uncommitted = False
@@ -177,12 +193,16 @@ class OpenAILifecycle:
         """A clear of the input audio buffer is going out: the next commit commits only audio sent after it."""
         self._audio_uncommitted = False
 
-    def audio_commit_sent(self) -> AudioCommit:
-        """An audio commit of ours is going out, after everything sent before it: what it notes, for `audio_commit_failed`."""
+    def audio_commit_sent(self, event_id: str | None = None) -> AudioCommit:
+        """An audio commit of ours is going out, after everything sent before it: what it notes, for `audio_commit_failed`.
+
+        `event_id` is the one it goes out under, if any.
+        """
         sent_before = [*(input_id for input_id in self._messages if input_id is not None), *self._tool_outputs.values()]
-        commit = AudioCommit(sent_before=sent_before, has_audio=self._audio_uncommitted)
+        commit = AudioCommit(sent_before=sent_before, has_audio=self._audio_uncommitted, event_id=event_id)
         self._audio_uncommitted = False
-        self._commits.append(commit)
+        if self._acknowledges_commits:
+            self._commits.append(commit)
         return commit
 
     def audio_commit_failed(self, commit: AudioCommit) -> None:
@@ -209,7 +229,7 @@ class OpenAILifecycle:
                 # conversation here, unless it already had (xAI adds it at speech start).
                 events += self._place(speaking)
                 self._speaking.pop(speaking)
-            elif not self._commits_need_speech and not commit.raced_vad:
+            elif not self._commits_need_speech:
                 self._unacknowledged_turns += 1
                 events += self._place(f'pydantic_ai_audio_commit_{self._unacknowledged_turns}')
         return events
@@ -270,10 +290,14 @@ class OpenAILifecycle:
             self._requests = {
                 event_id: request for event_id, request in self._requests.items() if not set(request[0]) & set(answers)
             }
-        elif outstanding is not None and not (
-            # Once the server echoes metadata, a response without ours is not the one ours asked for, unless
-            # ours carried none.
-            self._metadata_echoed and self._requests.get(outstanding[0], ((), True))[1]
+        elif (
+            outstanding is not None
+            and not (
+                # Once the server echoes metadata, a response without ours is not the one ours asked for, unless
+                # ours carried none.
+                self._metadata_echoed and self._requests.get(outstanding[0], ((), True))[1]
+            )
+            and not self._unacknowledged(outstanding[1])
         ):
             event_id, answers = outstanding
             basis = 'inferred'
@@ -282,20 +306,25 @@ class OpenAILifecycle:
             answers = ()
         user_turn_id = None
         if not answers:
-            # Started by the provider on its own: with server VAD, that is the reply to the spoken turn it
-            # just committed, and to the inputs whose request it refused because it was starting this one.
+            # Started by the provider on its own: with server VAD, that is the reply to the spoken turn it just
+            # committed.
             user_turn_id, self._unclaimed_turn = self._unclaimed_turn, None
-            if self._refused_while_active:
-                answers, basis = self._refused_while_active, 'inferred'
-                self._refused_while_active = ()
-        events = self._refusals_unanswered()
-        events.append(self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id))
-        return events
+        return [self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id)]
 
-    def _refusals_unanswered(self) -> list[LifecycleEvent]:
-        """The inputs refused for a response the provider started on its own, which the next one wasn't after all."""
-        refused, self._refused_while_active = self._settle(self._refused_while_active), ()
-        return [ResponseRequestRefused(input_ids=refused)] if refused else []
+    def _unacknowledged(self, answers: Sequence[InputId]) -> bool:
+        """Whether an item of ours that a request answers isn't in the conversation yet, on a server that says so.
+
+        The server adds an item before it starts the response a later `response.create` asks for, so a response
+        that starts before it is none of that request's: one the provider started on its own (server VAD).
+        """
+        if not self._items_acknowledged:
+            return False
+        waiting = {*self._messages, *self._tool_outputs.values()}
+        return any(input_id in waiting for input_id in answers)
+
+    def request_outstanding(self, event_id: str) -> bool:
+        """Whether a `response.create` of ours is neither started nor refused yet."""
+        return event_id in self._requests
 
     def response_done(
         self,
@@ -365,6 +394,14 @@ class OpenAILifecycle:
         """The input audio buffer was committed: the spoken turn joins the conversation here, if it hadn't."""
         item_id = InputAudioBufferCommittedEvent.model_validate(data).item_id
         self._vad_committed()
+        if item_id in self._vad_stopped:
+            # Server VAD's own commit, not the acknowledgement of one of ours, which still waits for its own. What
+            # went out ahead of ours and isn't acknowledged yet reached the provider after this commit (it would have
+            # been acknowledged first otherwise), so it is placed after this turn, as its acknowledgement comes.
+            self._vad_stopped.discard(item_id)
+            events = self._place(item_id)
+            self._speaking.pop(item_id, None)
+            return events
         events = self._place_sent_before_commit()
         events += self._place(item_id)
         self._speaking.pop(item_id, None)
@@ -399,8 +436,8 @@ class OpenAILifecycle:
         if not item_id:
             return []
         self._vad_committed()
-        for commit in self._commits:
-            commit.raced_vad = True
+        if self._server_vad:
+            self._vad_stopped.add(item_id)
         events = self._place(item_id)
         self._speaking.pop(item_id, None)
         return events
@@ -439,6 +476,7 @@ class OpenAILifecycle:
 
     def item_added(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """An item joined the conversation: if it is one of our inputs, that input is placed here."""
+        self._items_acknowledged = True
         item = CONVERSATION_ITEM_ADDED_EVENT_ADAPTER.validate_python(data).item
         if item.type == 'function_call_output' and item.call_id is not None:
             input_id = self._tool_outputs.pop(item.call_id, None)
@@ -467,22 +505,28 @@ class OpenAILifecycle:
         """An `error` frame: a refused request for a response settles every input it was made for."""
         error = RealtimeErrorEvent.model_validate(data).error
         if error.code == 'input_audio_buffer_commit_empty' and self._commits:
-            # The provider refused our oldest commit it hadn't acknowledged (it handles frames in order): no turn.
-            self._commits.popleft()
+            # The provider refused a commit of ours as empty: no turn. The one the error names, or (if it names none
+            # of ours) the oldest one not acknowledged, since the provider handles frames in order.
+            refused = next((commit for commit in self._commits if commit.event_id == error.event_id), self._commits[0])
+            self._commits.remove(refused)
         for rejected in rejected_inputs(error):
             if rejected.refused == 'content' and rejected.input_index in self._messages:
                 # Refused content never joins the conversation, so no `conversation.item.added` will place it.
                 self._messages.remove(rejected.input_index)
         if error.event_id is None or (request := self._requests.pop(error.event_id, None)) is None:
             return []
-        if error.code == 'conversation_already_has_active_response' and not self._open:
-            # Refused because the provider already started a response of its own, reported next: that one
-            # answers these inputs, which reached the conversation before it.
-            self._refused_while_active = (*self._refused_while_active, *request[0])
+        if error.code == ACTIVE_RESPONSE_ERROR_CODE:
+            # Refused only for the moment, as a response the provider started on its own was under way: the
+            # connection asks again once it's over, or gives up on it (`requests_refused`).
             return []
         return [ResponseRequestRefused(input_ids=answers)] if (answers := self._settle(request[0])) else []
 
     # --- the connection's own transitions ----------------------------------------------------------
+
+    def requests_refused(self, answers: Sequence[InputId]) -> None:
+        """The connection gave up asking for a response for `answers`, which the provider kept refusing."""
+        if refused := self._settle(answers):
+            self._pending.append(ResponseRequestRefused(input_ids=refused))
 
     def requests_dropped(self, answers: Sequence[InputId]) -> None:
         """The connection dropped requests it was holding, so nothing will answer `answers`."""
@@ -498,6 +542,7 @@ class OpenAILifecycle:
         self._pending.extend(self.unacknowledged_commits())
         # The new socket's buffer is empty.
         self._audio_uncommitted = False
+        self._vad_stopped.clear()
         placed = [input_id for input_id in self._messages if input_id is not None]
         placed += self._tool_outputs.values()
         # Placed once a reconnect succeeds, not before: a connection that never comes back placed nothing.
@@ -513,7 +558,6 @@ class OpenAILifecycle:
         self._pending.extend(InputAdded(input_id=input_id) for input_id in sorted(self._carried_over))
         self._carried_over.clear()
         self.requests_dropped(lost_inputs)
-        self._pending.extend(self._refusals_unanswered())
         # Whatever the connection still thought of it, a request the old socket neither started nor
         # refused, and that isn't asked for again, will never be answered.
         self.requests_dropped(
@@ -533,7 +577,6 @@ class OpenAILifecycle:
         )
         self._requests.clear()
         self._carried_over.clear()
-        self._pending.extend(self._refusals_unanswered())
         self._lose_everything_open()
 
     def _lose_everything_open(self) -> None:

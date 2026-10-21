@@ -58,6 +58,7 @@ from ..messages import (
     BinaryImage,
     CachePoint,
     DocumentUrl,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -98,7 +99,7 @@ from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, RealtimeFrame
+from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
@@ -137,6 +138,7 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
+        CommentaryAppendedEvent,
         DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
@@ -240,6 +242,7 @@ _ActedOnEvent = Annotated[
     OutputAudioDeltaEvent
     | OutputTranscriptDeltaEvent
     | InputTranscriptDeltaEvent
+    | CommentaryAppendedEvent
     | DelegationCreatedEvent
     | ResponseEvent
     | SessionUsageUpdatedEvent
@@ -254,6 +257,7 @@ _ACTED_ON_EVENT_TYPES = frozenset(
         'session.output_audio.delta',
         'session.output_transcript.delta',
         'session.input_transcript.delta',
+        'session.commentary.appended',
         'session.delegation.created',
         'response.event',
         'session.usage.updated',
@@ -605,6 +609,12 @@ class _Delegation:
 
     The continuation waits for its terminal, then goes out from the receive loop.
     """
+    stalled: bool = False
+    """A call it asked for settled without a result (a usage limit stopped it), so it can never be continued.
+
+    The backend resumes only from every output of its round, so it is given up as one that failed would be,
+    at once or, while a response is still running, at that response's terminal.
+    """
 
 
 class _LiveLifecycle(InferredLifecycle):
@@ -613,6 +623,10 @@ class _LiveLifecycle(InferredLifecycle):
     Live transcribes the user as they speak, so words over a reply are reported while it goes on, and its output is
     a continuous audio track, silent between replies: the connection says where the model takes the turn instead
     (`turn_taken`).
+
+    Text reaches Live as commentary, which it places on its timeline (`session.commentary.appended`) and answers in
+    the speech under way, if any, rather than in a reply of its own: text placed while a reply goes on is answered by
+    that reply once it says anything more (`AnswersRevised.claimed`), and by the next reply otherwise.
     """
 
     transcripts_lag_replies = False
@@ -622,10 +636,41 @@ class _LiveLifecycle(InferredLifecycle):
         super().__init__()
         self.turn_taken = False
         """The provider message being mapped has the model take the turn (see `_open_response()`)."""
+        self._placed_text: list[InputId] = []
+        """Text placed on Live's timeline while the reply under way goes on, which its next output answers."""
 
     def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         took_turn, self.turn_taken = self.turn_taken, False
         return took_turn
+
+    def calls_abandoned(self, call_ids: Sequence[str]) -> None:
+        """The delegated backend that asked for these calls gave up: no reply will answer their results."""
+        self._pending.append(ToolCallsAbandoned(tool_call_ids=tuple(call_ids)))
+
+    def text_placed(self, input_id: InputId) -> None:
+        """Live acknowledged a text input, placing it on its timeline where the conversation now is."""
+        if self._open is not None and input_id in self._unanswered:
+            self._placed_text.append(input_id)
+
+    def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        super()._output(event, before, after)
+        if (response_id := self._open) is not None and (claimed := tuple(self._placed_text)):
+            # The reply goes on past the text: Live speaks to it here, not in a reply of its own.
+            self._placed_text.clear()
+            self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
+            before.append(AnswersRevised(response_id=response_id, claimed=claimed))
+
+    def _end(
+        self,
+        events: list[LifecycleEvent],
+        *,
+        status: ResponseStatus,
+        finish_reason: FinishReason | None = None,
+        provider_details: dict[str, Any] | None = None,
+    ) -> None:
+        # Text the reply never spoke past is the next reply's to answer.
+        self._placed_text.clear()
+        super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
 
 
 class OpenAILiveConnection(RealtimeConnection):
@@ -727,6 +772,8 @@ class OpenAILiveConnection(RealtimeConnection):
         # Which response, user turn, and input each frame is about (see `frames()`). Live always
         # transcribes, and closes the user's turn as the model's reply starts.
         self._lifecycle = _LiveLifecycle()
+        # The text inputs sent as commentary that Live hasn't acknowledged yet, by the `event_id` they went out under.
+        self._unacknowledged_text: dict[str, InputId] = {}
 
     @property
     def model_name(self) -> str | None:
@@ -747,6 +794,27 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         return False
 
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        # The delegated backend resumes from all of a round's results together, with one `response.create`.
+        return True
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
+        # delegates nothing more for the rest of the session (checked live).
+        return True
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        self._open_calls.discard(tool_call_id)
+        delegation_id = self._call_delegations.pop(tool_call_id, None)
+        if (delegation := self._delegations.get(delegation_id) if delegation_id is not None else None) is None:
+            return
+        delegation.pending_tool_calls.discard(tool_call_id)
+        delegation.stalled = True
+        if not delegation.response_in_flight:
+            self._settle_delegation(delegation, gave_up=True)
+
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
 
@@ -763,7 +831,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
         with self._lifecycle.sending(content) as input_index:
-            delivered = await self._send_input(content)
+            delivered = await self._send_input(content, input_index)
         if not delivered:
             # A tool result whose backend gave up on the call: nothing will reply to it.
             self._lifecycle.input_unanswerable(input_index)
@@ -771,13 +839,27 @@ class OpenAILiveConnection(RealtimeConnection):
         # known now.
         return self._lifecycle.take_pending()
 
-    async def _send_input(self, content: RealtimeInput) -> bool:
+    async def _send_input(self, content: RealtimeInput, input_index: InputId) -> bool:
         """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
             # A soliciting text turn. Live has no user-message event, so this goes in as speakable
             # context: the model relays or answers it rather than hearing it as the user's own words.
             await _check_context_length(content)
-            await self._send_event({'type': 'session.commentary.append', 'delegation_id': None, 'content': content})
+            # Live acknowledges it under this id once it places it on the timeline (`session.commentary.appended`).
+            event_id = f'pydantic_ai.commentary.{input_index}'
+            self._unacknowledged_text[event_id] = input_index
+            try:
+                await self._send_event(
+                    {
+                        'type': 'session.commentary.append',
+                        'event_id': event_id,
+                        'delegation_id': None,
+                        'content': content,
+                    }
+                )
+            except BaseException:
+                del self._unacknowledged_text[event_id]
+                raise
             return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
@@ -1126,6 +1208,8 @@ class OpenAILiveConnection(RealtimeConnection):
         self._last_input_end_ms = None
         self._abandoned_calls.update(self._open_calls)
         self._open_calls.clear()
+        # (The connection's own drop handling settles the replies they asked for.)
+        self._unacknowledged_text.clear()
         self._delegations.clear()
         self._call_delegations.clear()
         self._continuations_due.clear()
@@ -1284,6 +1368,13 @@ class OpenAILiveConnection(RealtimeConnection):
             self._input_open = True
             self._heard_voice()
             return [InputTranscript(self._fragment('input', event.delta))]
+        if isinstance(event, CommentaryAppendedEvent):
+            if (
+                event.client_event_id is not None
+                and (input_index := self._unacknowledged_text.pop(event.client_event_id, None)) is not None
+            ):
+                self._lifecycle.text_placed(input_index)
+            return []
         if isinstance(event, DelegationCreatedEvent):
             return self._map_delegation(event)
         if isinstance(event, ResponseEvent):
@@ -1523,10 +1614,12 @@ class OpenAILiveConnection(RealtimeConnection):
         it just as a completed one does.
         """
         delegation.response_in_flight = False
-        if gave_up:
+        if gave_up or delegation.stalled:
             # Nothing further is coming for this delegation — no continuation, and no answer to any
             # call it had asked for — so it must not hold the clock open waiting for one.
             self._abandoned_calls.update(delegation.pending_tool_calls)
+            if delegation.pending_tool_calls:
+                self._lifecycle.calls_abandoned(sorted(delegation.pending_tool_calls))
             delegation.pending_tool_calls.clear()
             delegation.continuation_due = False
         if delegation.pending_tool_calls:

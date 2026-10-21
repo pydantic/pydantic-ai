@@ -36,9 +36,14 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability may have tools; they stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
 ```
+
+The catalog is tagged so that when it changes between runs of a conversation, for example because a capability was added, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the cached prompt.
 
 The model does not receive the refund instructions or the `refund_status` tool definition yet, so it has no reason to call the tool. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool definition until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
 

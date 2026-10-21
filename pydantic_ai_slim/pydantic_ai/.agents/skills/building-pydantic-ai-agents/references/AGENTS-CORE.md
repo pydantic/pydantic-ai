@@ -98,6 +98,24 @@ def add_user_name(ctx: RunContext[str]) -> str:
 
 Use `@agent.tool` when the tool needs `RunContext`. Use `@agent.tool_plain` when it does not.
 
+For instructions built from operator-controlled state that changes mid-conversation (todo lists, memory, per-run context), use `on_change='append'` to preserve the instruction prefix and the cache behind it; the cost is the block's complete new text added to history per change.
+Use `@agent.instructions(name='state', on_change='append')` on the agent.
+The callback still runs before each request; changed values become full replacements in history, sent as a diff when that's shorter.
+Return `None` or an empty string to withdraw the block.
+Use the same decorator on an always-on capability with an explicit `id`.
+Toolsets can return `InstructionPart(content=..., name='state', on_change='append')` from `get_instructions()` under their own `id`, or use `@toolset.instructions(name='state', on_change='append')` on a `FunctionToolset` with an `id`.
+Any instruction function (passed to `Agent(instructions=...)`, returned from a capability's `get_instructions()`, ...) can return `InstructionPart(..., name='state', on_change='append')` to opt in from inside the function.
+A custom capability's `get_instructions()` can also return such an `InstructionPart` directly, for text that changes between runs when `for_run` returns a replacement carrying the new text (otherwise the construction-time result is reused).
+Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` and `FunctionToolset(instructions=...)` opts in with `InstructionPart('...', name='config', on_change='append')`.
+Run-level `instructions=` and template strings can't opt in; use a named instruction function instead.
+Build instruction text from operator-controlled state, never from tool arguments, tool output, user input or retrieved content, even in append mode; send untrusted values in user messages or tool results.
+Keep serialized message history in trusted server storage, including its `InstructionBaselinePart`s and `InstructionDeltaPart`s.
+Compaction or loss of the baseline starts a new prefix from current instructions.
+Use a durable operation for instruction callbacks that read external state during durable execution.
+Deferred capabilities and realtime sessions do not support this update policy.
+Leave the default `on_change='rewrite'` when prefix preservation is unnecessary.
+The deferred capability catalog and Harness `SubAgents` and `RepoContext` instructions already append their changes.
+
 ## Define Agents Declaratively with Specs
 
 Use YAML or JSON specs when configuration should live outside Python code.
@@ -239,6 +257,8 @@ The answering response's `failed_attempts` lists the attempts the fallback moved
 `FallbackExceptionGroup.attempts`. A rejected response's tokens and cost count in `RunUsage` and towards token and
 cost limits, but not in the answering response's `usage`. Neither they nor failed attempts count towards
 `UsageLimits.request_limit`, which bounds the model responses the agent acts on, not requests sent to the provider.
+
+To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelQuotaExceededError` (exhausted quota or billing, only when the provider says so; waiting won't help), `ModelUnavailableError` and its `ModelOverloadedError` (only when the provider says overloaded, e.g. HTTP 529), `ModelServerError` (other 5xx), `ModelConnectionError` (and its `ModelTimeoutError`), or `ModelContextWindowExceededError`. All are `ModelAPIError`s, so `FallbackModel` falls back on them by default; one that came with an HTTP status is also a `ModelHTTPError`, and a custom model can raise such a combined error with `ModelHTTPError.for_category(category, status_code=..., model_name=...)`. An error inside an already open stream gets the status the same error has before the stream opens, with `in_stream=True`, so errors don't depend on whether the request was streamed. Provider details are on `provider_error_code`, `provider_error_type`, and `body`; `retry_after` is on every `ModelAPIError`, `ModelHTTPError.provider_retry_hint` reads `x-should-retry`, and `ModelConnectionError.phase` (`'pool'`, `'connect'`, `'write'`, `'read'`) says whether the request may have reached the provider. Embedding models (`Embedder`) raise the same errors.
 
 When a completed model response omits usage, configured token or cost limits emit `UsageLimitUnavailableWarning` and return the result with known totals as lower bounds. Promote the warning to an error when the application must abort if a limit cannot be fully checked:
 

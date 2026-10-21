@@ -441,8 +441,9 @@ def _agent_instruction_source(instruction: _instructions.AgentInstruction[Any]) 
     """The source to attribute one of the agent's configured instructions to.
 
     Only the literal instructions the agent was built with are addressed by the agent's own key: an
-    instruction function becomes addressable when `@agent.instructions(name=...)` names it, so a bare
-    callable speaks for nobody and stays unidentified.
+    instruction function becomes addressable when `@agent.instructions(name=...)` names it, or when it
+    returns an `InstructionPart` with a `name`, so a bare callable speaks for nobody and stays
+    unidentified.
     """
     return _messages.AgentInstructionSource() if isinstance(instruction, (str, _messages.InstructionPart)) else None
 
@@ -773,7 +774,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The agent's own literal instructions are one addressable part; instruction functions are
         # only addressable if `@agent.instructions(name=...)` names them.
         self._instructions = [
-            _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+            _instructions.sourced_instruction(
+                instruction, _agent_instruction_source(instruction), name_source=_messages.AgentInstructionSource()
+            )
             for instruction in _instructions.normalize_instructions(instructions)
         ]
 
@@ -1643,6 +1646,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 resolved_models=resolved_models_by_selection,
                 run_built_models=run_built_models,
             )
+
+        # Build the initial state before the step-one model selector runs (but after the default model is
+        # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
+        # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
+        # default ids, so a re-execution of this code gets the same ones.
+        resolved_run_id = _agent_graph.resolve_run_id(
+            run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
+            message_history,
+        )
+        state = _agent_graph.GraphAgentState(
+            message_history=list(message_history) if message_history else [],
+            usage=usage,
+            output_retries_used=0,
+            run_step=0,
+            run_id=resolved_run_id,
+            conversation_id=_agent_graph.resolve_conversation_id(
+                conversation_id,
+                message_history,
+                default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
+            ),
+        )
+
+        # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
+        # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
+        # the deadline it started with. A run started inside another run can only shorten its deadline, and
+        # without a clock of its own measures it against the clock the outer run set it with.
+        run_clock = bootstrap_capability._run_clock() or current_run_clock()  # pyright: ignore[reportPrivateUsage]
+        deadline = inherited_run_deadline()
+        if timeout is not None:
+            start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]
+            own_deadline = start + timedelta(seconds=timeout)
+            deadline = own_deadline if deadline is None else min(own_deadline, deadline)
+        usage_limits = usage_limits or _usage.UsageLimits()
+
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
                 message_history, user_prompt, has_deferred_tool_results=deferred_tool_results is not None
@@ -1655,6 +1692,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 prompt=selection_prompt,
                 messages=selection_messages,
                 usage=usage,
+                usage_limits=usage_limits,
+                deadline=deadline,
+                run_id=state.run_id,
+                conversation_id=state.conversation_id,
             )
             model_used, model_id = await self._evaluate_model_contribution(
                 model_contribution,
@@ -1702,35 +1743,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build the graph
         graph = _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
 
-        # Build the initial state. Inside a durable workflow or flow, the durability capability supplies
-        # the default ids, so a re-execution of this code gets the same ones.
-        resolved_run_id = _agent_graph.resolve_run_id(
-            run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
-            message_history,
-        )
-        state = _agent_graph.GraphAgentState(
-            message_history=list(message_history) if message_history else [],
-            usage=usage,
-            output_retries_used=0,
-            run_step=0,
-            run_id=resolved_run_id,
-            conversation_id=_agent_graph.resolve_conversation_id(
-                conversation_id,
-                message_history,
-                default=bootstrap_capability._default_conversation_id(resolved_run_id),  # pyright: ignore[reportPrivateUsage]
-            ),
-        )
-
-        # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
-        # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
-        # the deadline it started with. A run started inside another run can only shorten its deadline, and
-        # without a clock of its own measures it against the clock the outer run set it with.
-        run_clock = bootstrap_capability._run_clock() or current_run_clock()  # pyright: ignore[reportPrivateUsage]
-        deadline = inherited_run_deadline()
-        if timeout is not None:
-            start = await bootstrap_capability._run_start_time(resolved_run_id) or run_clock()  # pyright: ignore[reportPrivateUsage]
-            own_deadline = start + timedelta(seconds=timeout)
-            deadline = own_deadline if deadline is None else min(own_deadline, deadline)
         historical_response = next(
             (message for message in reversed(state.message_history) if isinstance(message, _messages.ModelResponse)),
             None,
@@ -1773,8 +1785,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         f"return a callable from a capability's `get_model_settings()` to vary `tool_choice` per "
                         f'step, or use `pydantic_ai.direct.model_request` for single-shot model calls.'
                     )
-
-        usage_limits = usage_limits or _usage.UsageLimits()
 
         # Resolve instrumentation: an explicit `InstrumentedModel` (passed by the user
         # to `Agent(model=...)`, e.g. by `logfire.instrument_pydantic_ai(model)`) wins,
@@ -2429,16 +2439,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @overload
     def instructions(
-        self, /, *, name: str | None = None
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+        self, func: Callable[[RunContext[AgentDepsT]], str | _messages.InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | _messages.InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | _messages.InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | _messages.InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | _messages.InstructionPart | None], /
+    ) -> Callable[[], str | _messages.InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | _messages.InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | _messages.InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, /, *, name: str | None = None, on_change: _messages.InstructionChangePolicy = 'rewrite'
+    ) -> Callable[[_instructions.InstructionFunc[AgentDepsT]], _instructions.InstructionFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
-        func: SystemPromptFunc[AgentDepsT] | None = None,
+        func: _instructions.InstructionFunc[AgentDepsT] | None = None,
         /,
         *,
         name: str | None = None,
-    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
+        on_change: _messages.InstructionChangePolicy = 'rewrite',
+    ) -> (
+        Callable[[_instructions.InstructionFunc[AgentDepsT]], _instructions.InstructionFunc[AgentDepsT]]
+        | _instructions.InstructionFunc[AgentDepsT]
+    ):
         """Decorator to register an instructions function.
 
         Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
@@ -2470,6 +2504,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 `'agent:<name>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
                 application can address this part specifically, where the bare `'agent'` key addresses
                 the agent's literal instructions. See [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
+                Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
         """
         if name is not None:
             _instructions.validate_instruction_name(name)
@@ -2478,10 +2518,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         def decorator(
-            func_: SystemPromptFunc[AgentDepsT],
-        ) -> SystemPromptFunc[AgentDepsT]:
+            func_: _instructions.InstructionFunc[AgentDepsT],
+        ) -> _instructions.InstructionFunc[AgentDepsT]:
             self._instructions.append(
-                _instructions.SourcedInstruction(func_, name=name, id=instruction_id, dynamic=True)
+                _instructions.SourcedInstruction(
+                    func_,
+                    name=name,
+                    id=instruction_id,
+                    source=_messages.AgentInstructionSource(),
+                    dynamic=True,
+                    on_change=on_change,
+                )
             )
             return func_
 
@@ -3550,7 +3597,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Override replaces all instructions, including capability contributions, so what it
             # provides takes the place of (and the id of) the agent's own instructions.
             instructions = [
-                _instructions.sourced_instruction(instruction, _agent_instruction_source(instruction))
+                _instructions.sourced_instruction(
+                    instruction, _agent_instruction_source(instruction), name_source=_messages.AgentInstructionSource()
+                )
                 for instruction in override_instructions.value
             ]
         else:
@@ -4019,6 +4068,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
             instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
+            if appended := _instructions.explicitly_appended_blocks(sourced_instructions, instruction_parts):
+                warnings.warn(
+                    "`on_change='append'` is not supported by realtime sessions, so instruction blocks "
+                    f'{", ".join(map(repr, appended))} are sent as session instructions and their changes are not '
+                    'appended.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            # Nothing appends here, so an empty append-mode block has no withdrawal to record.
+            instruction_parts = [part for part in instruction_parts if part.content]
             resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
             request_messages = [
                 *(message_history or ()),
