@@ -1,19 +1,33 @@
 ---
 emoji: "🔎"
 name: "CI Review"
-description: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered once CI succeeds on the PR's current head: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "AI-driven PR review on the Pydantic AI gh-aw shim, triggered when the PR's current head is approved and has passed CI, by the `final-review` label, or by dispatch: inline comments + a single review verdict. Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
-  # Review once, after CI has passed — not on every push. `synchronize` used to
-  # start a review that the next push cancelled mid-flight after its tokens were
-  # already spent (#6766 measured 4.1 runs per PR, 96% of cancelled runs emitting
-  # nothing). CI completion is both a cheaper cadence and a better signal: there is
-  # no point reviewing a diff that does not compile or pass its tests.
+  # Review a PR once it is about to merge, not on every push. One agent slot serves
+  # every PR (see `queue: max` in `.github/workflows/AGENTS.md`), so a review per
+  # passing push queued for hours. Each of these is a request:
   #
-  # No `branches:` filter — the head branch here is the PR's branch, not a release
-  # branch, so restricting it would suppress every review.
+  # - an APPROVED review of the current head from a user with write access or
+  #   higher (`pull_request_review`);
+  # - `CI` passing on a head that already has such an approval (`workflow_run`),
+  #   for an approval submitted before `CI` finished;
+  # - the `final-review` label, which gh-aw removes so it can be applied again;
+  # - a manual dispatch.
+  #
+  # `eligibility` skips every other event before inference, and every request
+  # still waits for the required `check` to pass on the head. A merge group's `CI`
+  # run is not a `pull_request` run, so the merge queue never starts a review.
+  #
+  # No `branches:` filter on `workflow_run` — the head branch here is the PR's
+  # branch, not a release branch, so restricting it would suppress every review.
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+  pull_request_review:
+    types: [submitted]
+  label_command:
+    name: final-review
+    events: [pull_request]
   workflow_dispatch:
     inputs:
       recovery_issue:
@@ -43,15 +57,21 @@ concurrency:
   # any job runs, so it cannot use the PR number the `eligibility` job resolves —
   # only the `github` context is in scope there.
   #
-  # Keyed on the head branch AND the head SHA. The branch alone made a CI
+  # Keyed on the PR's head branch AND head SHA, read from `workflow_run` or from
+  # the PR an approval or label event carries. The branch alone made a CI
   # completion for an OLDER head cancel an in-flight review of a NEWER one, and
   # the older run then skipped itself under current-head authority below, so
   # nothing replaced the review it cancelled (#6904). The SHA alone would let two
   # branches sitting on the same commit, each with its own open PR, cancel each
   # other. Together they name exactly what must not be reviewed twice at once —
-  # and a CI re-run of one head still supersedes an in-flight review of it, which
-  # is the one cancellation worth keeping.
-  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}
+  # and a later request for one head still supersedes an in-flight review of it,
+  # which is the one cancellation worth keeping.
+  #
+  # A review that is not an approval, and a label other than `final-review`, is
+  # not a request: each gets a group of its own, so it cannot cancel a review
+  # queued for the same head.
+  group: >-
+    ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request_review' && github.event.review.state != 'approved') || (github.event_name == 'pull_request' && github.event.label.name != 'final-review')) && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 # Deterministic, pre-inference gate: unless `eligibility` says so, no model runs.
 #
@@ -243,6 +263,10 @@ jobs:
           RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
           # Must match gh-aw's GH_AW_CALLER_WORKFLOW_ID for this workflow.
           REVIEW_MARKER: "<!-- gh-aw-workflow-call-id: ${{ github.repository }}/pydantic-ai-pr-review -->"
@@ -252,11 +276,14 @@ jobs:
           # The commit this run is deciding about, once it is known to be one this
           # reviewer is responsible for. Left empty — and the step below then
           # no-ops — for the skips where a marker would claim a reviewer that was
-          # never going to run: a CI run that is not a PR run or did not pass, and
-          # a fork, which `douwebot` covers instead. A fork head is not unmarkable
-          # (it resolves in this repository through `refs/pull/<n>/head`, so the
-          # check run would post and show); it is deliberately unmarked.
+          # never going to run: a CI run that is not a PR run or did not pass, a
+          # review or label that is not a request, and a fork, which `douwebot`
+          # covers instead. A fork head is not unmarkable (it resolves in this
+          # repository through `refs/pull/<n>/head`, so the check run would post
+          # and show); it is deliberately unmarked.
           MARKER_SHA=''
+          # Set when the event asks for a review outright, so no approval is needed.
+          EXPLICIT_REQUEST=''
 
           skip() {
             echo "eligible=false" >> "$GITHUB_OUTPUT"
@@ -267,15 +294,31 @@ jobs:
           }
 
           # --- Resolve the PR -------------------------------------------------
-          # `workflow_run` carries no `github.event.pull_request`, so the PR, its
-          # current head and its refs are resolved here and handed to every later
-          # step and to the agent's safe outputs as explicit values.
+          # `workflow_run` and `workflow_dispatch` carry no
+          # `github.event.pull_request`, so the PR, its current head and its refs
+          # are resolved here and handed to every later step and to the agent's
+          # safe outputs as explicit values.
           if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
             CONTEXT_JSON="${AW_CONTEXT:-}"
             [ -n "$CONTEXT_JSON" ] || CONTEXT_JSON='{}'
             PR_NUMBER=$(printf '%s' "$CONTEXT_JSON" | jq -r 'select(.item_type == "pull_request") | .item_number // empty')
             [ -n "$PR_NUMBER" ] || skip 'workflow_dispatch without a pull_request in aw_context'
             # A manual dispatch is an explicit ask to review whatever is on the PR now.
+            TRIGGER_SHA=''
+            EXPLICIT_REQUEST=true
+          elif [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
+            # `pull_request` is `label_command`'s `labeled` event, which fires for every
+            # label. Neither event's head is checked here: the approval gate below
+            # requires an approval of the current head, and a label asks for a review
+            # of whatever is on the PR now.
+            if [ "$EVENT_NAME" = 'pull_request_review' ]; then
+              [ "$REVIEW_STATE" = 'approved' ] || skip "a ${REVIEW_STATE} review is not a review request"
+            else
+              [ "$LABEL_NAME" = 'final-review' ] || skip "label ${LABEL_NAME} is not a review request"
+              EXPLICIT_REQUEST=true
+            fi
+            [ "$EVENT_HEAD_REPO" = "$REPO" ] || skip "PR head is on ${EVENT_HEAD_REPO}, not ${REPO}"
+            PR_NUMBER="$EVENT_PR_NUMBER"
             TRIGGER_SHA=''
           else
             [ "$RUN_EVENT" = 'pull_request' ] || skip "triggering CI run was a ${RUN_EVENT} run, not a pull_request run"
@@ -329,9 +372,9 @@ jobs:
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
 
-          # A manual dispatch has no triggering CI run, so the PR's current head is
-          # the commit it is deciding about — set only past the fork gate, so a
-          # dispatch on a fork PR skips as silently as the `workflow_run` path does.
+          # Only `workflow_run` has a triggering CI run; every other request decides
+          # about the PR's current head — set only past the fork gate, so a request
+          # on a fork PR skips as silently as the `workflow_run` path does.
           [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
 
           # --- Current-head authority ----------------------------------------
@@ -342,10 +385,37 @@ jobs:
             skip "CI ran on ${TRIGGER_SHA}, but PR #${PR_NUMBER} has since moved to ${HEAD_SHA}"
           fi
 
+          REVIEWS=$(gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews" | jq 'add // []')
+
+          # --- An approval of the current head --------------------------------
+          # Unless a label or dispatch asked outright, the request is an approval
+          # of this exact head from a user with write access or higher. Only each
+          # user's latest verdict counts, so a later request for changes or a
+          # dismissal withdraws an approval. Bot reviews, this reviewer's own
+          # `APPROVE` included, never count.
+          if [ -z "$EXPLICIT_REQUEST" ]; then
+            APPROVERS=$(printf '%s' "$REVIEWS" | jq -r --arg sha "$HEAD_SHA" '
+              [ .[] | select(.user.type == "User" and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")) ]
+              | group_by(.user.login) | map(last)
+              | .[] | select(.state == "APPROVED" and .commit_id == $sha) | .user.login')
+            APPROVED_BY=''
+            for login in $APPROVERS; do
+              # `.permission`, not `.role_name`: it maps `maintain` and custom roles
+              # onto their base level. An unreadable permission does not count.
+              permission=$(gh api "repos/${REPO}/collaborators/${login}/permission" --jq .permission 2>/dev/null || true)
+              if [ "$permission" = 'admin' ] || [ "$permission" = 'write' ]; then
+                APPROVED_BY="$login"
+                break
+              fi
+            done
+            [ -n "$APPROVED_BY" ] || skip "${HEAD_SHA} has no approval from a user with write access"
+          fi
+
           # --- Required checks -------------------------------------------------
-          # Note: this is currently vacuous — `main` has no checks marked required,
-          # so the list comes back empty. It is here so that marking a check
-          # required starts gating reviews on it without another workflow change.
+          # `check`, which aggregates `CI`, is required on `main`, so every request
+          # waits here for `CI` to pass on the head. An approval submitted earlier
+          # is picked up again by the `workflow_run` of the `CI` run that passes; a
+          # label or dispatch has to be repeated.
           FAILING=$(printf '%s' "$PR_JSON" | jq -r '
             [ .commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]
               | select(.isRequired)
@@ -360,13 +430,12 @@ jobs:
             || skip "PR #${PR_NUMBER} already has changes requested"
 
           # --- Deduplicate reruns ----------------------------------------------
-          # A rerun of the same CI run re-fires this workflow. Match our own marker,
-          # not the bot account: every gh-aw reviewer here posts as
-          # `github-actions[bot]`, so an actor match would let a UI Security Review
-          # on this head suppress this review entirely.
-          ALREADY=$(gh api --paginate --slurp "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
-            | jq --arg sha "$HEAD_SHA" --arg marker "$REVIEW_MARKER" \
-              '[add[] | select(.commit_id == $sha and ((.body // "") | contains($marker)))] | length')
+          # A rerun of the same CI run, a second approval or a repeated label
+          # re-fires this workflow. Match our own marker, not the bot account: every
+          # gh-aw reviewer here posts as `github-actions[bot]`, so an actor match
+          # would let a UI Security Review on this head suppress this review entirely.
+          ALREADY=$(printf '%s' "$REVIEWS" | jq --arg sha "$HEAD_SHA" --arg marker "$REVIEW_MARKER" \
+            '[.[] | select(.commit_id == $sha and ((.body // "") | contains($marker)))] | length')
           [ "$ALREADY" -eq 0 ] || skip "already reviewed ${HEAD_SHA}"
 
           {
@@ -462,9 +531,9 @@ jobs:
 
 ## The pull request under review
 
-You were started by the `CI` workflow finishing successfully, not by a push, so the
-event carries no pull request. These values were resolved before you started and are
-authoritative — do not re-derive them:
+You were started by a request to review this pull request before it merges: an
+approval of its head, the `final-review` label, or a manual dispatch. These values were
+resolved before you started and are authoritative — do not re-derive them:
 
 - Pull request number: `${{ needs.eligibility.outputs.pr_number }}`
 - Head commit: `${{ needs.eligibility.outputs.head_sha }}`

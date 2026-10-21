@@ -1,4 +1,13 @@
 rules:
+  # gh-aw annotates a lockfile's `workflow_run` trigger with this ignore, but v0.86.2 drops the
+  # annotation when `label_command` shares the `on:` block with other triggers. `CI Review`'s
+  # `workflow_run` is gated as before: `roles:`, gh-aw's own `workflow_run` repository check,
+  # and the fork rejection in its `eligibility` job (see "What confines `CI Review` to
+  # same-repo PRs" in `.github/workflows/AGENTS.md`).
+  dangerous-triggers:
+    ignore:
+      - pydantic-ai-pr-review.lock.yml
+
   # setup-uv and setup-node use integrity-checked package registries (PyPI, npm) with
   # lockfile hash-based cache keys. The HuggingFace model cache lacks integrity checks but
   # is only used in test jobs that don't publish artifacts to external systems.
