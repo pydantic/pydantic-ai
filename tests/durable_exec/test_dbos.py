@@ -36,7 +36,7 @@ from pydantic_ai import (
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     RunUsage,
     TextPart,
@@ -509,7 +509,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -518,7 +518,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -572,7 +572,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                    content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                 ),
                             ],
                         ),
@@ -730,7 +730,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
-                                    content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                    content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                 ),
                             ],
                         ),
@@ -981,7 +981,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         ],
     )
     # Previously raised `UserError` from the DBOS id-less-MCP guard because the contributed MCP leaf
-    # had `id=None`; it now derives `mcp.example.com-api` from the URL, so construction succeeds.
+    # had `id=None`; it now derives `mcp.example.com` from the URL's hostname, so construction succeeds.
     dbos_agent = DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
 
     leaves: list[AbstractToolset[object]] = []
@@ -989,14 +989,14 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id; the `billing` function toolset carries the
     # capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """Two genuinely different MCP servers whose URLs derive the same id are rejected by `Agent`.
 
-    Both would key their steps on `a.com-api` under DBOS, the second server returning the first's
+    Both would key their steps on `a.com` under DBOS, the second server returning the first's
     cached tools. DBOS used to be what caught it, because `MCP(url=...)` left the capability
     anonymous and only its toolset carried the derived id, so the agent-level capability-id
     uniqueness check had nothing to compare. Now the capability takes the same derived id, and a
@@ -1011,7 +1011,10 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """
     with pytest.raises(
         match=re.escape(
-            "Capability id 'a.com-api' is used by multiple capabilities. Ids identify one capability within a run, so give each a distinct `id`."
+            "Capability id 'a.com' is used by multiple capabilities that derived it from their configuration, "
+            'such as `MCP` capabilities for servers on the same host. Ids identify one capability within a run, '
+            'so pass an explicit `id=` to each: a distinct one for different servers, or the same one where '
+            'they configure one server, for example with a rotated credential in the URL.'
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]
@@ -2028,11 +2031,13 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Did you mean Mexico City?',
                         tool_name='get_weather_in_city',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsNow(tz=UTC),

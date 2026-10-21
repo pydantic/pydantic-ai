@@ -48,7 +48,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -114,7 +115,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, legacy_retry_prompt_part, try_import
 from ..realtime_connections import lifecycle_events
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
@@ -1700,8 +1701,13 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='weather', content='sunny', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='lookup', content='invalid id', tool_call_id='call-2'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    retry=RetryInfo(cause='validation_error'),
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -1774,7 +1780,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 'item': {
                     'type': 'function_call_output',
                     'call_id': 'call-2',
-                    'output': 'invalid id\n\nFix the errors and try again.',
+                    'output': '{"error":"invalid id"}',
                 },
             },
             {
@@ -1785,7 +1791,48 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     'content': [
                         {
                             'type': 'input_text',
-                            'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            },
+            {
+                'type': 'conversation.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+""",
                         }
                     ],
                 },

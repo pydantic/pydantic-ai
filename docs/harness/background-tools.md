@@ -120,15 +120,19 @@ frame early. A failed call is framed the same way with `outcome="failed"`, wrapp
 
 Text and files returned by the tool are sent to the model. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
 is discarded.
-`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
-other tool exception ends the run with the original exception, as it does for a sequential tool.
-Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`
-to stop the run and the other background tools.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
+when a `before_tool_execute` or `after_tool_execute` hook raises them. A `ValidationError` from
+such a hook is reported too, as a sequential tool retries it. Any other tool exception ends the
+run with the original exception, as it does for a sequential tool.
+Running out of retries or raising `CancelledError` also ends the run. The run ends at its next step, so
+a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
+the other background tools.
 
 A normal run waits for its background tools to finish. A pending call counts toward
-`tool_calls_limit`. If the run pauses or stops early, unfinished tools are cancelled and their
-results are not delivered. Async tools must allow cancellation; ignoring it can prevent the run from
-stopping.
+`tool_calls_limit`. If the run pauses for deferred tools or stops early, unfinished tools are
+cancelled, and results that have not been delivered yet are dropped, even from tools that finished.
+Resuming the run does not deliver them. Async tools must allow cancellation; ignoring it can prevent
+the run from stopping.
 
 !!! warning
     Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for
@@ -145,13 +149,25 @@ stopping.
 - A sequential tool can overlap background work that started earlier. Tools that must not overlap
   should protect their shared data or should not run in the background.
 - Realtime sessions already run tools concurrently, so `BackgroundTools` leaves them unchanged.
-- The later result message does not pass through tool-result or tool-error hooks. Validate or limit
-  the result inside the tool when this matters.
+- A `ModelRetry` from a background tool, or from its execute hooks, counts against the tool's
+  `retries` only when the tool finishes before the agent's next step. A slower tool's retries are
+  not counted, so `UsageLimits.request_limit` is what bounds a model that keeps retrying it.
+- `after_tool_execute`, `on_tool_execute_error`, and the `wrap_tool_execute` hooks of capabilities
+  listed after `BackgroundTools` run inside the background task and see the real result.
+  `wrap_tool_execute` hooks of capabilities listed before it, and tool result events, see the
+  started message.
+- The result reaches the model as a user message, in plain text that names the tool and task. A
+  tool that returns untrusted content, such as a fetched web page, can make that content look like
+  another task's result. Delimit or sanitize such output inside the tool.
+- List `RepairToolArguments`, or `Coder`, which includes it, before `BackgroundTools`. Otherwise a
+  malformed call that sets `run_in_background` is retried instead of repaired. A repaired call runs
+  in the foreground.
 
 ## Tracing
 
-`BackgroundTools` does not add tracing spans. Pydantic AI records the tool call and its immediate
-"started" result. The completed result remains in the agent's message history.
+`BackgroundTools` does not add tracing spans. Pydantic AI's tool span ends when the started message
+is returned, so it does not cover the tool's work or record a failure. The completed result remains in
+the agent's message history.
 
 ## Durable execution
 
