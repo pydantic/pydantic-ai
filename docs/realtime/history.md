@@ -62,7 +62,9 @@ documents, uploaded-file references, and model-generated files cannot be seeded.
     As in a standard run, `message_history` is treated as trusted server-side state: its system
     prompts become session instructions, and its image URLs are downloaded by your server
     according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
-    carries. If the history came from a browser or another untrusted client, pass it through
+    carries. Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
+    seeded history are ignored in favor of the agent's own.
+    If the history came from a browser or another untrusted client, pass it through
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see
     [Loading untrusted history](../message-history.md#loading-untrusted-history).
 
