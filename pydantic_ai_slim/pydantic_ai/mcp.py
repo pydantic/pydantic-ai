@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import copy
 import functools
-import logging
 import os
 import re
 import ssl
@@ -99,7 +98,6 @@ from ._unsupported_settings import suppress_warnings as suppress_unsupported_set
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2()
-_logger = logging.getLogger(__name__)
 _JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, Any])
 _STOP_SEQUENCES_ADAPTER = TypeAdapter(list[str])
 _EXTENSIONS_ADAPTER = TypeAdapter(dict[str, dict[str, Any]])
@@ -849,9 +847,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change]: if a later connection
     brings different instructions, the new text is appended to the conversation rather than
     rewriting the cached instruction prefix. They're keyed `toolset:<id>`, or `toolset:<host>` by
-    the server URL's hostname on a toolset without an [`id`][pydantic_ai.toolsets.AbstractToolset.id],
-    and the model sees that key with them. A server with neither, such as a stdio or in-process
-    server without an `id`, has nothing to key them by, so changed instructions rewrite the prefix.
+    the server URL's hostname (with `-` for the `:`s of an IPv6 address) on a toolset without an
+    [`id`][pydantic_ai.toolsets.AbstractToolset.id], and the model sees that key with them. A server
+    with neither, such as a stdio or in-process server without an `id`, has nothing to key them by,
+    so changed instructions rewrite the prefix.
     """
 
     include_return_schema: bool | None
@@ -896,7 +895,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
     _telemetry_url_derived_id: str | None
-    _reported_unkeyed_instructions: bool
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1012,7 +1010,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # the process into that extension and a pre-built but not-yet-entered Client still sees it.
         self._call_tool_task = _load_call_tool_task() if _MCP_SDK_V2 else None
         self._telemetry_url_derived_id = None
-        self._reported_unkeyed_instructions = False
 
         # Names the options whose handlers a modern session can never call, so `__aenter__` can warn.
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
@@ -1323,13 +1320,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # which appends as a change rather than rewriting the prefix. Appending addresses the block by
         # its key, so a server with neither an `id` nor a URL to key it by keeps rewriting.
         if self._instruction_source() is None:
-            if not self._reported_unkeyed_instructions:
-                self._reported_unkeyed_instructions = True
-                _logger.debug(
-                    '%s has no `id` or URL to key its server instructions by, so a change to them rewrites the '
-                    'instruction prefix. Pass `id=` to append changes instead.',
-                    self.label,
-                )
             return messages.InstructionPart(content=self._instructions, dynamic=False)
         return messages.InstructionPart(content=self._instructions, dynamic=False, on_change='append')
 
@@ -1344,11 +1334,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return self.id
         url = getattr(getattr(self.client, 'transport', None), 'url', None)
         host = urlparse(url).hostname if isinstance(url, str) else None
-        # An IPv6 literal can't be an id segment, which `:` delimits, so it leaves the block unkeyed.
-        return host if host is not None and ':' not in host else None
+        # `:` delimits id segments, so an IPv6 literal such as `::1` is spelled with `-` instead.
+        return host.replace(':', '-') if host else None
 
     def _framework_appended_instruction_ids(self) -> frozenset[messages.InstructionId]:
-        if self.include_instructions and (source := self._instruction_source()) is not None:
+        # Only the instructions this class returns append by the framework's choice. A subclass that
+        # overrides `get_instructions` decides for itself, and gets the same warnings any author does.
+        if (
+            self.include_instructions
+            and type(self).get_instructions is MCPToolset.get_instructions
+            and (source := self._instruction_source()) is not None
+        ):
             return frozenset({messages.InstructionId(source)})
         return frozenset()
 

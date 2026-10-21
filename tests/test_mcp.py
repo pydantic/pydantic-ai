@@ -875,9 +875,7 @@ A later <context> element with the same id replaces the earlier one and stays in
         for previous, current in zip(sent, sent[1:]):
             assert current[: len(previous)] == previous
 
-    async def test_server_instructions_without_an_id_or_url_rewrite_the_prefix(
-        self, fastmcp_server: FastMCP[None], caplog: pytest.LogCaptureFixture
-    ):
+    async def test_server_instructions_without_an_id_or_url_rewrite_the_prefix(self, fastmcp_server: FastMCP[None]):
         """An in-process server without an `id` has nothing to key its instructions by, so they keep rewriting."""
         prefixes: list[str | None] = []
 
@@ -888,18 +886,11 @@ A later <context> element with the same id replaces the earlier one and stays in
         agent = Agent(FunctionModel(model_fn), toolsets=[MCPToolset(fastmcp_server, include_instructions=True)])
 
         history: list[ModelMessage] = []
-        with caplog.at_level('DEBUG', logger='pydantic_ai.mcp'):
-            for instructions in ['First instructions.', 'Second instructions.']:
-                fastmcp_server.instructions = instructions
-                history = (await agent.run('Continue.', message_history=history)).all_messages()
+        for instructions in ['First instructions.', 'Second instructions.']:
+            fastmcp_server.instructions = instructions
+            history = (await agent.run('Continue.', message_history=history)).all_messages()
 
         assert prefixes == ['First instructions.', 'Second instructions.']
-        # Suggested once per toolset, not on every request.
-        assert [record.getMessage() for record in caplog.records if record.name == 'pydantic_ai.mcp'] == [
-            IsStr(
-                regex=r'.* has no `id` or URL to key its server instructions by, .* Pass `id=` to append changes instead\.'
-            )
-        ]
         assert not any(
             isinstance(part, InstructionDeltaPart)
             for message in history
@@ -984,8 +975,10 @@ A later <context> element with the same id replaces the earlier one and stays in
         first = make_contribution(MCPToolset('https://mcp.example.com/a'), part)
         second = make_contribution(MCPToolset('https://mcp.example.com/b'), part)
         assert first.parts[0].id == InstructionId(ToolsetInstructionSource('mcp.example.com'))
-        # An IPv6 literal can't be an id segment, so its instructions stay unkeyed rather than failing the run.
-        assert make_contribution(MCPToolset('http://[::1]:8000/mcp'), part).parts[0].id is None
+        # `:` delimits id segments, so an IPv6 literal host is spelled with `-`.
+        assert make_contribution(MCPToolset('http://[::1]:8000/mcp'), part).parts[0].id == InstructionId(
+            ToolsetInstructionSource('--1')
+        )
         with pytest.raises(
             UserError,
             match=re.escape("instructions keyed 'toolset:mcp.example.com', at least one of them without an `id`"),
@@ -1025,11 +1018,18 @@ A later <context> element with the same id replaces the earlier one and stays in
         assert load_return.content == {'instructions': 'You are an MCP test server.'}
 
     async def test_framework_appended_instruction_ids(self, fastmcp_server: FastMCP[None]):
+        class AppendingToolset(MCPToolset[None]):
+            """Chooses `on_change='append'` itself, so its own opt-in gets the usual warnings."""
+
+            async def get_instructions(self, ctx: RunContext[None]) -> InstructionPart | None:
+                return InstructionPart(content='Own instructions.', on_change='append')  # pragma: no cover
+
         toolset = CombinedToolset(
             [
                 MCPToolset(fastmcp_server, id='docs', include_instructions=True),
                 MCPToolset(fastmcp_server, id='excluded'),
                 MCPToolset(fastmcp_server, include_instructions=True),
+                AppendingToolset(fastmcp_server, id='own', include_instructions=True),
             ]
         )
         assert framework_appended_instruction_ids(toolset) == {InstructionId(ToolsetInstructionSource('docs'))}
