@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 from pydantic import TypeAdapter
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
 from pydantic_ai.models._continuation import (
     billed_beyond,
@@ -141,10 +141,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
     on_unpriced: Literal['zero', 'raise'] = 'zero'
     """What to do when a response cannot be priced.
 
-    `'zero'` counts it as free and increments `Spent.unpriced_requests`, so the
-    gap shows up instead of disappearing. `'raise'` fails the run with
-    `UnpricedModelError`. Tokens are counted either way, so a token ceiling
-    still holds for a model the registry does not know.
+    When usage is incomplete, any known cost is still counted and the response
+    is marked unpriced because its full cost is unknown. Otherwise, `'zero'`
+    counts an unpriced response as free and increments `Spent.unpriced_requests`,
+    so the gap shows up instead of disappearing. `'raise'` fails the run with
+    `UnpricedModelError`. Token totals still accumulate either way; when usage is
+    incomplete, they are lower bounds.
     """
 
     expose_tools: bool = False
@@ -366,7 +368,20 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         One failure must not stop the other responses of the lifecycle from accruing.
         """
         try:
-            return await self._accrue_response(ctx, response, token, boundaries, failed_attempt=failed_attempt)
+            error = await self._accrue_response(ctx, response, token, boundaries, failed_attempt=failed_attempt)
+            if (
+                error is None
+                and response.usage.unmeasured_requests
+                and any(budget.tokens is not None for budget in self.budgets)
+            ):
+                warnings.warn(
+                    'Some responses omitted usage information, so `SpendLimits` token totals are lower bounds '
+                    'and token ceilings cannot be fully enforced. A custom price does not restore missing tokens; '
+                    'check the provider usage reporting or promote `UsageLimitUnavailableWarning` to an error.',
+                    UsageLimitUnavailableWarning,
+                    stacklevel=3,
+                )
+            return error
         except Exception as exc:
             return exc
 
@@ -497,37 +512,47 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             if error is None:
                 error = UserError(f'`SpendLimits.price` {price_error} for a response.')
 
-        if (
-            not priced
-            and self.on_unpriced == 'zero'
-            and error is None
-            and any(budget.usd is not None for budget in self.budgets)
-        ):
-            # Only this combination is silent: the response adds nothing in dollars, so a
-            # USD ceiling can never be reached by requests the registry cannot price. A
-            # token ceiling still holds, so it is not warned about.
-            model = response.model_name or '<unnamed>'
-            if model not in self._warned_unpriced:
-                self._warned_unpriced.add(model)
-                warnings.warn(
-                    f'No price for model {model}, so it counts as $0 against a USD budget. '
-                    "Supply `SpendLimits.price` to price it, or set `on_unpriced='raise'` to "
-                    'stop the run instead. Token ceilings are unaffected.',
-                    UnpricedModelWarning,
-                    stacklevel=2,
-                )
-
-        if not priced and self.on_unpriced == 'raise' and error is None:
-            # Raised last, after the store is updated and `on_spend` has seen the
-            # response. The request happened and its tokens were really spent, so
-            # dropping them would leave a token ceiling understating what the
-            # model was asked to do, and an audit that skipped exactly the
-            # unpriced responses would be missing the ones worth knowing about.
-            error = UnpricedModelError(
-                f'No price for model {response.model_name or "<unnamed>"}. Supply `SpendLimits.price`, '
-                "or set on_unpriced='zero' to count the request as free."
-            )
+        if not priced and error is None:
+            error = self._handle_unpriced(response, usd)
         return error
+
+    def _handle_unpriced(self, response: ModelResponse, usd: Decimal) -> Exception | None:
+        """Apply `on_unpriced` to a response whose full price is unknown, returning the error to raise, if any."""
+        model = response.model_name or '<unnamed>'
+        if self.on_unpriced == 'zero':
+            if any(budget.usd is not None for budget in self.budgets) and model not in self._warned_unpriced:
+                # A response without a registered price adds nothing in dollars. Incomplete
+                # usage can add a known subtotal, but still leaves the USD total understated.
+                self._warned_unpriced.add(model)
+                if response.usage.unmeasured_requests:
+                    warning_message = (
+                        f'Usage was incomplete for model {model}; only the known subtotal ${usd} was recorded '
+                        'against USD budgets, and known token totals are lower bounds. Supply `SpendLimits.price` '
+                        "for the complete price, or set `on_unpriced='raise'` to stop the run."
+                    )
+                else:
+                    warning_message = (
+                        f'No price for model {model}, so it counts as $0 against a USD budget. '
+                        "Supply `SpendLimits.price` to price it, or set `on_unpriced='raise'` to "
+                        'stop the run instead. Token ceilings are unaffected.'
+                    )
+                warnings.warn(warning_message, UnpricedModelWarning, stacklevel=3)
+            return None
+        # Raised last, after the store is updated and `on_spend` has seen the
+        # response. The request happened and its tokens were really spent, so
+        # dropping them would leave a token ceiling understating what the
+        # model was asked to do, and an audit that skipped exactly the
+        # unpriced responses would be missing the ones worth knowing about.
+        if response.usage.unmeasured_requests:
+            return UnpricedModelError(
+                f'Usage was incomplete for model {model}; only the known subtotal ${usd} was recorded, and known '
+                'token totals are lower bounds. Supply `SpendLimits.price` for the complete price, or set '
+                "`on_unpriced='zero'` to continue with the known subtotal."
+            )
+        return UnpricedModelError(
+            f'No price for model {model}. Supply `SpendLimits.price`, '
+            "or set on_unpriced='zero' to count the request as free."
+        )
 
     async def status(
         self,
@@ -772,12 +797,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         return [(budget, self._key(budget, ctx, now, None)) for budget in self.budgets]
 
     def _price_of(self, response: ModelResponse, *, failed_attempt: bool = False) -> tuple[Decimal, bool, str | None]:
-        """What the response cost, whether that number is real, and why it was rejected.
+        """What cost to record, whether it prices the whole response, and why it was rejected.
 
         A rejected amount is reported rather than raised so the caller can finish
         accruing the response first. The request happened and its tokens were really
         spent, so dropping them would leave a token ceiling understating what the model
-        was asked to do -- the same reasoning `on_unpriced='raise'` already follows.
+        was asked to do -- the same reasoning `on_unpriced='raise'` already follows. A
+        response with incomplete usage can still carry a known cost subtotal; that amount
+        is recorded while `on_unpriced` handles the missing portion.
 
         A failed attempt's response only summarizes the rejected one, so the `usage.cost` core
         put on it is used when `price` gives none: core priced it with the provider URL the
@@ -802,8 +829,12 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                     # closes. Corrections belong in the store, not here.
                     return Decimal(0), False, f'returned a negative amount ({supplied})'
                 return supplied, True, None
-        known_cost = response.usage.cost if failed_attempt else None
-        if known_cost is not None and known_cost.is_finite() and known_cost >= 0:
+        known_cost = response.usage.cost
+        if known_cost is not None and not (known_cost.is_finite() and known_cost >= 0):
+            known_cost = None
+        if response.usage.unmeasured_requests:
+            return known_cost or Decimal(0), False, None
+        if failed_attempt and known_cost is not None:
             return known_cost, True, None
         if response.model_name:
             try:

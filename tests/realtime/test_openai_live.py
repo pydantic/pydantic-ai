@@ -12,6 +12,7 @@ import asyncio
 import base64
 import itertools
 import json
+import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import UTC
@@ -25,7 +26,7 @@ from genai_prices.data_snapshot import DataSnapshot, get_snapshot, set_custom_sn
 from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UsageLimitUnavailableWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -45,7 +46,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -88,7 +90,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -645,7 +647,12 @@ async def test_text_is_sent_as_context_not_a_user_turn() -> None:
 
     assert sent == snapshot(
         [
-            {'type': 'session.commentary.append', 'delegation_id': None, 'content': 'Say this out loud.'},
+            {
+                'type': 'session.commentary.append',
+                'event_id': 'pydantic_ai.commentary.0',
+                'delegation_id': None,
+                'content': 'Say this out loud.',
+            },
             {'type': 'session.thinking.append', 'delegation_id': None, 'content': 'Know this quietly.'},
         ]
     )
@@ -791,11 +798,11 @@ def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
 
     events = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
-    assert events[0] == SessionUsage(RequestUsage())
+    assert events[0] == SessionUsage(RequestUsage(unmeasured_requests=1))
     # Every backend response is reported exactly once, calls or not: each is a request the backend made.
     # A backend that gave up closed its delegation, so a later terminal isn't one of its responses.
     later = connection._map_response_event(_backend_terminal(nested_type), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
-    expected = [SessionUsage(RequestUsage())] if nested_type == 'response.completed' else []
+    expected = [SessionUsage(RequestUsage(unmeasured_requests=1))] if nested_type == 'response.completed' else []
     assert [event for event in later if isinstance(event, SessionUsage)] == expected
 
 
@@ -828,8 +835,8 @@ def test_a_backend_that_gives_up_is_reported(nested: dict[str, Any], code: str, 
     events = connection._map_response_event(nested, delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
 
     assert events == [
-        # Reported without usage, it is still a request the backend made.
-        SessionUsage(RequestUsage()),
+        # The terminal proves a request occurred even when its token usage is missing.
+        SessionUsage(RequestUsage(unmeasured_requests=1)),
         RealtimeSessionErrorEvent(
             message=f'The delegated OpenAI Responses backend did not finish ({reason}).', code=code
         ),
@@ -904,6 +911,45 @@ async def test_a_late_completion_does_not_end_a_delegation_mid_continuation() ->
     # The continuation itself is what ends the delegation.
     await connection.terminal()
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_call_that_raised_gives_up_its_round() -> None:
+    """The backend resumes only from every output of its round, so a call whose tool raised leaves none to continue.
+
+    The round is given up as a failed backend would be: no `response.create`, a sibling's result goes nowhere, and the
+    delegation no longer suspends the turn clock.
+    """
+    connection = _Recorder()
+    _open_delegation(connection, call_ids=('c1', 'c2'))
+    await connection.terminal()
+
+    connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+    # Settled outside any provider message: no usage report follows, so a later one can't be taken for its settling.
+    assert not connection._lifecycle._settles  # pyright: ignore[reportPrivateUsage]
+    await connection.send(ToolResult('c2', output='rainy'))
+    assert connection.sent == []
+
+
+async def test_a_call_that_raised_while_its_response_runs_gives_up_the_round_at_its_terminal() -> None:
+    """The response that asked for the calls may still be running: the round is given up once it ends."""
+    connection = _Recorder()
+    _open_delegation(connection, call_ids=('c1', 'c2'))
+    await connection.send(ToolResult('c2', output='rainy'))
+    connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
+    assert connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+    await connection.terminal()
+    assert connection.sent == ['response.item.create']
+    assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_call_from_no_delegation_left_unanswered_changes_nothing() -> None:
+    connection = _connection()
+    _open_delegation(connection, call_ids=('c1',))
+    connection._tool_call_unanswered('unknown')  # pyright: ignore[reportPrivateUsage]
+    assert connection._delegations['d1'].pending_tool_calls == {'c1'}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_tool_result_text_content_reaches_the_backend() -> None:
@@ -1122,7 +1168,7 @@ def test_unknown_events_are_ignored() -> None:
 
 def test_events_the_connection_does_not_act_on_are_ignored_even_if_malformed() -> None:
     """An acknowledgement or notice changes nothing the session has said or heard, whatever its shape."""
-    assert _connection()._map_frame('{"type": "session.commentary.appended"}') == []  # pyright: ignore[reportPrivateUsage]
+    assert _connection()._map_frame('{"type": "session.thinking.appended"}') == []  # pyright: ignore[reportPrivateUsage]
     # A `type` that isn't a string names no event at all.
     assert _connection()._map_frame('{"type": []}') == []  # pyright: ignore[reportPrivateUsage]
 
@@ -1846,13 +1892,20 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
     """A retry carries the outcome of the call before it.
 
     Dropping it seeds the `ToolCallPart` as a call that was never answered, so the backend reads a
-    round that failed as one that succeeded and does not try again.
+    round that failed as one that succeeded and does not try again. A legacy `RetryPromptPart` a
+    caller built by hand seeds exactly like the part it is translated into.
     """
     messages = [
         ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Utrecht'}, tool_call_id='1')]),
-        ModelRequest(parts=[RetryPromptPart(content='unknown city', tool_name='weather', tool_call_id='1')]),
-        # A retry with no tool name is output validation rather than a tool round.
-        ModelRequest(parts=[RetryPromptPart(content='not a number')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='weather', content='unknown city', tool_call_id='1', outcome='retried')]
+        ),
+        # Feedback that answers no call is output validation rather than a tool round.
+        ModelRequest(parts=[RetryFeedbackPart(content='not a number', retry=RetryInfo(cause='model_retry'))]),
+        ModelRequest(parts=[RetryFeedbackPart(content='not an int', retry=RetryInfo(cause='validation_error'))]),
+        ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Delft'}, tool_call_id='2')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('still unknown', tool_name='weather', tool_call_id='2')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('still not a number')]),
     ]
 
     assert seed_input_items(messages, provider_name='openai') == snapshot(
@@ -1863,8 +1916,20 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
             },
             {
                 'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"unknown city"}'}],
+            },
+            {
+                'role': 'user',
                 'content': [
-                    {'type': 'input_text', 'text': '`weather` failed: unknown city\n\nFix the errors and try again.'}
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+not a number
+</retry_feedback>\
+""",
+                    }
                 ],
             },
             {
@@ -1872,7 +1937,34 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
                 'content': [
                     {
                         'type': 'input_text',
-                        'text': 'The previous attempt failed: Validation feedback:\nnot a number\n\nFix the errors and try again.',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+not an int
+</validation_errors>\
+""",
+                    }
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Called `weather` with {"city":"Delft"}.'}],
+            },
+            {
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"still unknown"}'}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+still not a number
+</retry_feedback>\
+""",
                     }
                 ],
             },
@@ -2094,7 +2186,7 @@ def test_a_top_level_error_ends_the_delegation_it_interrupted() -> None:
 
     assert events == [
         # The call's response waits for usage from a terminal that will never come.
-        SessionUsage(RequestUsage()),
+        SessionUsage(RequestUsage(unmeasured_requests=1)),
         RealtimeSessionErrorEvent(
             message=(
                 'The delegated OpenAI Responses backend did not finish '
@@ -2274,19 +2366,23 @@ def _live_frames(*frames: dict[str, Any]) -> list[str]:
     return [json.dumps(frame) for frame in (started, *frames)]
 
 
-def _backend_completion(delegation_id: str) -> dict[str, Any]:
-    usage = {
-        'input_tokens': 10,
-        'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
-        'output_tokens': 2,
-        'output_tokens_details': {'reasoning_tokens': 0},
-        'total_tokens': 12,
-    }
+def _backend_completion(
+    delegation_id: str, *, usage: dict[str, Any] | None = None, include_usage: bool = True
+) -> dict[str, Any]:
+    if include_usage and usage is None:
+        usage = {
+            'input_tokens': 10,
+            'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+            'output_tokens': 2,
+            'output_tokens_details': {'reasoning_tokens': 0},
+            'total_tokens': 12,
+        }
+    terminal = _backend_terminal(usage=usage) if include_usage else _backend_terminal()
     return {
         'type': 'response.event',
         'event_id': 'e',
         'delegation_id': delegation_id,
-        'event': _backend_terminal(usage=usage),
+        'event': terminal,
     }
 
 
@@ -2332,6 +2428,118 @@ async def test_requests_count_backend_responses_not_spoken_replies() -> None:
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
     assert len(responses) == 2
     assert session.usage.requests == 1
+
+
+@pytest.mark.parametrize('reported_zero', [False, True], ids=['missing-usage', 'reported-zero'])
+async def test_backend_missing_usage_survives_realtime_session(
+    reported_zero: bool,
+) -> None:
+    """Only a terminal delegated response can report usage; omission must survive session accumulation."""
+    zero_usage = {
+        'input_tokens': 0,
+        'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+        'output_tokens': 0,
+        'output_tokens_details': {'reasoning_tokens': 0},
+        'total_tokens': 0,
+    }
+    intermediate = {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': 'd1',
+        'event': {
+            'type': 'response.created',
+            'sequence_number': 0,
+            'response': _backend_response(status='in_progress'),
+        },
+    }
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            intermediate,
+            _backend_completion('d1', usage=zero_usage if reported_zero else None, include_usage=reported_zero),
+            {'type': 'session.output_transcript.delta', 'delta': 'Done.', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e'},
+        )
+    )
+    realtime = Agent().realtime(
+        OpenAILiveModel(
+            'gpt-live-1',
+            provider='openai',
+            settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10),
+        ),
+        usage_limits=UsageLimits(input_tokens_limit=100, cost_limit=Decimal('1')),
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('default', UsageLimitUnavailableWarning)
+        with _patched_connect(ws):
+            async with realtime.session() as session:
+                with anyio.fail_after(5):
+                    async for event in session:  # pragma: no branch
+                        if isinstance(event, RealtimeTurnCompleteEvent):
+                            break
+
+    availability_warnings = [item for item in caught if issubclass(item.category, UsageLimitUnavailableWarning)]
+    if reported_zero:
+        assert availability_warnings == []
+    else:
+        assert len(availability_warnings) == 1
+        assert all('Some responses omitted usage information' in str(item.message) for item in availability_warnings)
+    assert session.usage.requests == 1
+    assert session.usage.unmeasured_requests == int(not reported_zero)
+    assert session.usage.input_tokens == 0
+    assert session.usage.output_tokens == 0
+
+
+@pytest.mark.parametrize(
+    ('usage_limits', 'warning_expected'),
+    [
+        pytest.param(UsageLimits(input_tokens_limit=100), True, id='input-token-limit'),
+        pytest.param(UsageLimits(cost_limit=Decimal('1')), True, id='cost-limit'),
+        pytest.param(UsageLimits(request_limit=1), False, id='request-only-limit'),
+    ],
+)
+async def test_failed_handoff_without_usage_is_unmeasured_in_realtime_session(
+    usage_limits: UsageLimits, warning_expected: bool
+) -> None:
+    """An in-flight backend request that fails before usage arrives is counted as unmeasured."""
+    ws = _FakeWebSocket(
+        _live_frames(
+            _delegation_created('d1'),
+            {'type': 'session.output_transcript.delta', 'delta': 'Done.', 'start_ms': 0, 'end_ms': 1, 'event_id': 'e'},
+            _HANDOFF_INCOMPLETE,
+        )
+    )
+    realtime = Agent().realtime(
+        OpenAILiveModel(
+            'gpt-live-1',
+            provider='openai',
+            settings=OpenAILiveModelSettings(openai_live_turn_silence_ms=10),
+        ),
+        usage_limits=usage_limits,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('default', UsageLimitUnavailableWarning)
+        with _patched_connect(ws):
+            async with realtime.session() as session:
+                with anyio.fail_after(5):
+                    async for event in session:  # pragma: no branch
+                        if isinstance(event, RealtimeTurnCompleteEvent):
+                            break
+
+    availability_warnings = [item for item in caught if issubclass(item.category, UsageLimitUnavailableWarning)]
+    if warning_expected:
+        assert len(availability_warnings) == 1
+        assert all('Some responses omitted usage information' in str(item.message) for item in availability_warnings)
+    else:
+        assert availability_warnings == []
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert len(responses) == 1
+    assert session.usage.requests == 1
+    assert responses[0].usage.unmeasured_requests == 1
+    assert session.usage.unmeasured_requests == 1
+    assert session.usage.input_tokens == 0
+    assert session.usage.output_tokens == 0
 
 
 async def test_request_limit_is_checked_as_backend_responses_arrive() -> None:

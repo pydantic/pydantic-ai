@@ -20,16 +20,21 @@ from pydantic_ai import (
     Choices,
     CompactionPart,
     FilePart,
-    ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelRateLimitError,
     ModelRequest,
     ModelResponse,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     NativeOutput,
     NativeToolCallPart,
     NativeToolReturnPart,
     PromptedOutput,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -56,7 +61,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsStr, RequestCapture, TestEnv, try_import
+from ..conftest import IsStr, RequestCapture, TestEnv, decode_request_body, try_import
 
 with try_import() as evals_imports_successful:
     from pydantic_evals import Case, Dataset
@@ -741,7 +746,7 @@ async def test_a_tool_with_supported_arguments_is_chosen_then_filled(allow_model
         return 'Configured.'
 
     def record(request: httpx2.Request) -> httpx2.Response:
-        body = json.loads(request.content)
+        body = json.loads(decode_request_body(request.content, request.headers))
         seen.append(body)
         if len(seen) == 1:
             return answers(
@@ -2126,7 +2131,9 @@ async def test_the_none_option_stays_clear_of_an_option_named_none(allow_model_r
 
 def none_of_these(request: httpx2.Request) -> httpx2.Response:
     """Jev answering "None of these." to every question that offers it, and the first option to any other."""
-    questions: dict[str, dict[str, Any]] = json.loads(request.content)['questions']
+    questions: dict[str, dict[str, Any]] = json.loads(decode_request_body(request.content, request.headers))[
+        'questions'
+    ]
     return answers(
         **{
             name: tool_answers_for('none' if 'none' in question['criteria'] else next(iter(question['criteria'])))
@@ -2247,7 +2254,7 @@ async def test_none_of_these_leaves_a_nested_model_default_to_apply_in_a_union_m
     """The fill of a union member Jev picked leaves out a nested model's default the same way."""
 
     def handle(request: httpx2.Request) -> httpx2.Response:
-        if list(json.loads(request.content)['questions']) == ['route']:
+        if list(json.loads(decode_request_body(request.content, request.headers))['questions']) == ['route']:
             return tool_answers('Escalated', 0.9)
         return none_of_these(request)
 
@@ -2434,13 +2441,7 @@ async def test_output_validator_retry_gets_the_same_answer(allow_model_requests:
             'text': 'Delete everything.',
             'done': [
                 {'tool_call': {'name': 'final_result', 'args': {'response': True}}},
-                {
-                    'retry': """\
-Be sure.
-
-Fix the errors and try again.\
-"""
-                },
+                {'tool_return': {'name': 'final_result', 'content': '{"error":"Be sure."}'}},
             ],
         }
     )
@@ -2467,7 +2468,7 @@ async def test_history_from_another_model(allow_model_requests: None):
         ),
         ModelRequest(parts=[ToolReturnPart('get_weather', 'Rainy', tool_call_id='call_2')]),
         ModelResponse(parts=[TextPart('Rain.'), CompactionPart(content=None)]),
-        ModelRequest(parts=[RetryPromptPart('Say more.')]),
+        ModelRequest(parts=[RetryFeedbackPart('Say more.', retry=RetryInfo(cause='model_retry'))]),
         ModelResponse(parts=[TextPart('It is raining.'), CompactionPart(content='Weather was discussed.')]),
     ]
     agent = Agent(mock_model(record), output_type=bool, instructions='Was the user told the weather?')
@@ -2486,10 +2487,10 @@ async def test_history_from_another_model(allow_model_requests: None):
                 {'assistant': 'Rain.'},
                 {
                     'retry': """\
-Validation feedback:
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
 Say more.
-
-Fix the errors and try again.\
+</retry_feedback>\
 """
                 },
                 {'assistant': 'It is raining.'},
@@ -2736,6 +2737,37 @@ async def test_fallback_does_not_skip_a_user_error(allow_model_requests: None, t
         await agent.run('anything')
 
 
+@pytest.mark.parametrize(
+    ('status', 'category'),
+    [(429, ModelRateLimitError), (503, ModelUnavailableError), (500, ModelServerError)],
+)
+async def test_http_error_category(
+    allow_model_requests: None,
+    status: int,
+    category: type[ModelRateLimitError | ModelUnavailableError | ModelServerError],
+):
+    """A rate limit or outage is raised in its error category, as for any other provider."""
+    model = mock_model(lambda _: httpx2.Response(status, json={'error': 'not now'}))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(category, status_code=status, model_name='jev-latest')
+    )
+    assert exc_info.value.status_code == status
+
+
+async def test_timeout_error(allow_model_requests: None):
+    """A request that times out is raised as `ModelTimeoutError`."""
+
+    def time_out(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout('slow')
+
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await Agent(mock_model(time_out), output_type=bool, instructions='Is this fine?').run('anything')
+    assert exc_info.value.phase == 'read'
+
+
 async def test_connection_error(allow_model_requests: None):
     """A transport failure is raised as `ModelAPIError`, which `FallbackModel` falls back on by default."""
 
@@ -2744,8 +2776,9 @@ async def test_connection_error(allow_model_requests: None):
 
     model = mock_model(refuse)
 
-    with pytest.raises(ModelAPIError, match='refused'):
+    with pytest.raises(ModelConnectionError, match='refused') as exc_info:
         await Agent(model, output_type=bool, instructions='Is this fine?').run('anything')
+    assert not isinstance(exc_info.value, ModelTimeoutError)
 
     agent = Agent(FallbackModel(model, TestModel()), output_type=bool, instructions='Is this fine?')
     result = await agent.run('anything')
