@@ -13,10 +13,14 @@ from uuid import UUID, uuid4
 
 import httpx2
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_initial_input_tokens
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    UserError,
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -421,7 +425,8 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
-        return ModelAPIError(model_name=model_name, message=transport_error_message(e))
+        timeout = isinstance(e, httpx2.TimeoutException)
+        return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -434,12 +439,19 @@ def _map_api_error(
                 and message.startswith(f'models/{model_name} is not found ')
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        return ModelHTTPError(
+        status = e.status if isinstance(e.status, str) else None
+        category = _model_errors.google_status_category(status, e.message)
+        # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
+        response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        return ModelHTTPError.for_category(
+            category or _model_errors.http_status_category(status_code, e.message),
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
             suggested_model_id=suggested_model_id,
+            provider_error_code=status,
+            in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 

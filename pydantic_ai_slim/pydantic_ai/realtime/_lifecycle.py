@@ -155,6 +155,21 @@ class ResponseRequestRefused(LifecycleEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ToolCallsAbandoned(LifecycleEvent):
+    """The provider gave up on these tool calls: no response will answer their results.
+
+    Eleven Realtime gives up on a finished response's calls once another response starts before their results are in,
+    and GPT-Live on the calls its delegated backend asked for when that backend fails. The calls still run, and each
+    result is recorded in history (and still sent, where the provider takes it), but nothing waits for a reply to it:
+    the exchange is over once nothing else is owed. Unlike a
+    [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled], it doesn't stop them.
+    """
+
+    tool_call_ids: tuple[str, ...]
+    """The calls, as their [`ToolCall`][pydantic_ai.realtime.codec.ToolCall]s named them."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class OutputItemDetails(LifecycleEvent):
     """What the provider says about one item of a response's output, to keep on the part that item makes.
 

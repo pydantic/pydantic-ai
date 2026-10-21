@@ -33,6 +33,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    ModelServerError,
     PartDeltaEvent,
     PartEndEvent,
     RetryPromptPart,
@@ -2212,7 +2213,8 @@ _STREAM_ERROR_SSE_ERROR = b'data: {"error":{"message":"upstream model failed","t
     ],
 )
 async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, content: bytes) -> None:
-    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
+    """An error object inside a 200 SSE stream surfaces as the `ModelHTTPError` the same error gets before a stream
+    opens, with `in_stream` set.
 
     A mock transport stands in for a cassette because no real provider returns such a stream on demand.
     https://github.com/pydantic/pydantic-ai/issues/8722
@@ -2229,8 +2231,13 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
             async with Agent(model).run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == 'upstream model failed'
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert isinstance(exc_info.value, ModelServerError)
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.in_stream is True
+    assert exc_info.value.body == {'message': 'upstream model failed', 'type': 'server_error', 'code': 500}
+    assert exc_info.value.provider_error_code == '500'
+    assert exc_info.value.provider_error_type == 'server_error'
     cause = exc_info.value.__cause__
     assert isinstance(cause, APIError)
     assert cause.body == snapshot({'message': 'upstream model failed', 'type': 'server_error', 'code': 500})
@@ -6395,6 +6402,77 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
 
     with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
         agent.run_sync('bad prompt')
+
+
+_AZURE_PROMPT_BLOCKED_MESSAGE = (
+    "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. "
+    'Please modify your prompt and retry.'
+)
+
+
+@pytest.mark.parametrize(
+    ('body', 'provider_details'),
+    [
+        pytest.param(
+            {
+                'message': _AZURE_PROMPT_BLOCKED_MESSAGE,
+                'type': 'invalid_request_error',
+                'param': 'prompt',
+                'code': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+                'innererror': {'code': 'ContentFiltered'},
+            },
+            {
+                'finish_reason': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+            },
+            id='reported-body',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter', 'message': _AZURE_PROMPT_BLOCKED_MESSAGE, 'innererror': {}}},
+            {'finish_reason': 'content_filter'},
+            id='innererror-without-code',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter'}},
+            {'finish_reason': 'content_filter'},
+            id='code-only',
+        ),
+    ],
+)
+def test_responses_azure_prompt_filter_error_without_filter_result(
+    allow_model_requests: None, body: dict[str, Any], provider_details: dict[str, Any]
+) -> None:
+    """Azure's Responses API can send an `innererror` without `content_filter_result` for a blocked prompt."""
+    mock_client = MockOpenAIResponses.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
+            body=body,
+        )
+    )
+
+    m = OpenAIResponsesModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+
+    with pytest.raises(
+        ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+    ) as exc_info:
+        Agent(m).run_sync('bad prompt')
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == provider_details
 
 
 async def test_openai_response_filter_error(allow_model_requests: None):
