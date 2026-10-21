@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
@@ -49,10 +49,20 @@ class SchemaValidatorProt(Protocol):
     ) -> Any: ...
 
 
-_RELAYED_CONTRIBUTIONS: ContextVar[dict[int, InstructionContribution[Any]] | None] = ContextVar(
-    '_RELAYED_CONTRIBUTIONS', default=None
-)
-"""The child contributions collected while an authoring container's `get_instructions` runs, by part identity."""
+@dataclass(frozen=True)
+class _RelayedPart:
+    """A part a child contributed while an authoring container's `get_instructions` ran."""
+
+    source: AbstractToolset[Any]
+    source_id: ToolsetInstructionSource | None
+    part: InstructionPart
+    """The part object itself, held so its identity can't be reused by another object meanwhile."""
+    snapshot: InstructionPart
+    """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
+
+
+_RELAYED_PARTS: ContextVar[dict[int, _RelayedPart] | None] = ContextVar('_RELAYED_PARTS', default=None)
+"""The parts children contributed while an authoring container's `get_instructions` runs, by part identity."""
 
 
 @dataclass(kw_only=True)
@@ -196,37 +206,28 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         A toolset that only passes its children along is walked; anything that speaks for itself is
         asked once. That covers a leaf and a container whose subclass took `get_instructions` over
-        with the same path, because the difference between them is only what they own: a returned
-        key owned below is relayed unchanged and stays attributed to its owner, and everything else
-        is the caller's own text, resolved against the caller's own key.
+        with the same path, because the difference between them is only what they own: a part one of
+        its children contributed, passed on as it was, stays attributed to that child, and everything
+        else is the caller's own text, resolved against the caller's own key.
         """
         if not self._authors_own_instructions():
             return await self._collect_child_instruction_contributions(ctx)
 
-        relayed: dict[int, InstructionContribution[Any]] = {}
-        token = _RELAYED_CONTRIBUTIONS.set(relayed)
+        relayed: dict[int, _RelayedPart] = {}
+        token = _RELAYED_PARTS.set(relayed)
         try:
             result = await self.get_instructions(ctx)
         finally:
-            _RELAYED_CONTRIBUTIONS.reset(token)
-        sources_by_key = self._instruction_sources_by_key()
+            _RELAYED_PARTS.reset(token)
         contributions: list[InstructionContribution[AgentDepsT]] = []
         for part in normalize_toolset_instruction_parts(result):
-            # A part this container's children contributed, which `get_instructions` passed along as it
-            # got it (from `super().get_instructions()`, say), stays attributed to its author, with or
-            # without an id.
-            if (relay := relayed.get(id(part))) is not None:
+            # Only the part object a child contributed, unchanged since, is relayed: a part this
+            # container built or edited is its own text even when it carries a child's id, so it can't
+            # speak under a key it doesn't own.
+            if (relay := relayed.get(id(part))) is not None and relay.part is part and part == relay.snapshot:
                 contributions.append(InstructionContribution(relay.source, relay.source_id, (part,)))
-                continue
-            # A key names the toolset that owns it, so a part arriving under one below this
-            # container is being relayed and stays attributed there. Everything else this container
-            # wrote itself, and is resolved against its own key like any other author's.
-            owner = (
-                sources_by_key.get(part.id.source)
-                if part.id is not None and isinstance(part.id.source, ToolsetInstructionSource)
-                else None
-            )
-            contributions.append(make_contribution(owner if owner is not None else self, part))
+            else:
+                contributions.append(make_contribution(self, part))
         return contributions
 
     async def _collect_child_instruction_contributions(
@@ -238,9 +239,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         )
         contributions = [contribution for contributions in child_contributions for contribution in contributions]
         # Called from inside an authoring container's `get_instructions`, record what each part came
-        # from, so the container can tell the parts it relays from the ones it writes.
-        if (relayed := _RELAYED_CONTRIBUTIONS.get()) is not None:
-            relayed.update((id(part), contribution) for contribution in contributions for part in contribution.parts)
+        # from and what it said, so the container can tell the parts it relays from the ones it writes.
+        if (relayed := _RELAYED_PARTS.get()) is not None:
+            relayed.update(
+                (id(part), _RelayedPart(contribution.source, contribution.source_id, part, replace(part)))
+                for contribution in contributions
+                for part in contribution.parts
+            )
         return contributions
 
     def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -255,27 +260,6 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         taken the method over, or it is still the inherited implementation that just relays.
         """
         return True
-
-    def _instruction_source(self) -> ToolsetInstructionSource | None:
-        """Read this toolset's source without validating an id that contributes no instructions."""
-        if self.id is None or ':' in self.id:
-            return None
-        return ToolsetInstructionSource(self.id)
-
-    def _instruction_sources_by_key(self) -> dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]]:
-        """Map every source key at or below this toolset to the toolset that owns it.
-
-        Children are inserted first and the container is inserted last without overwriting them, so
-        a child remains the owner when a malformed tree repeats its key at a container boundary.
-        The duplicate contribution check reports the ambiguity if both sources actually contribute.
-        """
-        sources: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
-        for child in self._instruction_children():
-            for source_id, source in child._instruction_sources_by_key().items():
-                sources.setdefault(source_id, source)
-        if source := self._instruction_source():
-            sources.setdefault(source, self)
-        return sources
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

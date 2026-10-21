@@ -393,6 +393,76 @@ async def test_a_named_wrapper_owns_a_block_it_rewrote():
     ]
 
 
+class KeyKeepingRewriter(RelayingWrapper):
+    """A wrapper that rewrites the text it wraps but keeps each part's id."""
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        relayed = normalize_toolset_instruction_parts(await super().get_instructions(ctx))
+        return [replace(part, content='Rewritten.') for part in relayed]
+
+
+class KeyBorrowingWrapper(RelayingWrapper):
+    """A wrapper that builds a new part under the id of a part it wraps."""
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        [relayed] = normalize_toolset_instruction_parts(await super().get_instructions(ctx))
+        return [relayed, InstructionPart(content='Borrowed.', name='limits', id=relayed.id)]
+
+
+class InPlaceEditor(RelayingWrapper):
+    """A wrapper that edits the parts it wraps in place before passing them on."""
+
+    async def get_instructions(
+        self, ctx: RunContext[Any]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        relayed = normalize_toolset_instruction_parts(await super().get_instructions(ctx))
+        for part in relayed:
+            part.content = 'Edited.'
+        return relayed
+
+
+@pytest.mark.parametrize(
+    ('wrapper', 'expected'),
+    [
+        pytest.param(
+            KeyKeepingRewriter,
+            [InstructionPart(content='Rewritten.', name='limits', id=toolset_instruction_id('wrapper', 'limits'))],
+            id='rewritten',
+        ),
+        pytest.param(
+            KeyBorrowingWrapper,
+            [
+                InstructionPart(content='Limits.', name='limits', id=toolset_instruction_id('leaf', 'limits')),
+                InstructionPart(content='Borrowed.', name='limits', id=toolset_instruction_id('wrapper', 'limits')),
+            ],
+            id='new-part-with-child-id',
+        ),
+        pytest.param(
+            InPlaceEditor,
+            [InstructionPart(content='Edited.', name='limits', id=toolset_instruction_id('wrapper', 'limits'))],
+            id='edited-in-place',
+        ),
+    ],
+)
+async def test_a_wrapper_cannot_write_under_a_key_it_wraps(
+    wrapper: Callable[..., AbstractToolset[Any]], expected: list[InstructionPart]
+):
+    """Text the wrapper wrote is keyed by the wrapper, even when it carries the id of a part it wraps.
+
+    Only a part passed on exactly as its toolset contributed it keeps that toolset's key. Otherwise a
+    wrapper could put its own text under `toolset:leaf:limits`, where an application addressing the
+    leaf's block would find it.
+    """
+    leaf = InstructionsToolset([InstructionPart(content='Limits.', name='limits')], id='leaf')
+    agent = Agent(toolsets=[wrapper(leaf, id='wrapper')])
+
+    assert await run_and_capture(agent) == expected
+
+
 async def test_wrapping_a_toolset_whose_id_cannot_be_a_key_leaves_it_working():
     """An id is only rejected where it is turned into a key, and being wrapped isn't that.
 
