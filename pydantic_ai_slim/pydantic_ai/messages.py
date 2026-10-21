@@ -2587,16 +2587,12 @@ class RetryFeedbackPart:
         What `prepare_messages` adds around this is the voice, not the wording: the part type it goes
         into, and the `<system>` tagging a provider without a mid-conversation system message needs.
         """
-        content = (
-            self.content
-            if isinstance(self.content, str)
-            else tool_return_ta.dump_json(_dump_error_details(self.content), by_alias=True).decode()
-        )
+        content = _retry_feedback_text(self)
         if self.retry.cause == 'no_output':
             return content
-        tag: _FeedbackTag = 'validation_errors' if self.retry.cause == 'validation_error' else 'retry_feedback'
-        fence = _wrap_in_tag(f'\n{content}\n', tag=tag)
-        return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
+        return _fenced_retry_feedback(
+            content, tag='validation_errors' if self.retry.cause == 'validation_error' else 'retry_feedback'
+        )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Record the stored feedback as trace content.
@@ -2618,39 +2614,17 @@ class RetryFeedbackPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-_NO_OUTPUT_ALTERNATIVE_SLOTS: tuple[tuple[str, ...], ...] = (
-    ('return text',),
-    ('include your response in a tool call', 'call a tool'),
-    ('return an image',),
-)
-"""What the agent loop can ask for when a response held nothing usable, in the order it lists them."""
+def _retry_feedback_text(part: RetryFeedbackPart) -> str:
+    """The feedback's content as text: a `ModelRetry` message as is, error details as JSON."""
+    if isinstance(part.content, str):
+        return part.content
+    return tool_return_ta.dump_json(_dump_error_details(part.content), by_alias=True).decode()
 
 
-def _no_output_feedback_text(alternatives: Sequence[str]) -> str:
-    """The fixed text of `'no_output'` feedback, naming what the response could have been instead."""
-    return f'Please {" or ".join(alternatives)}.'
-
-
-def _no_output_feedback_texts() -> frozenset[str]:
-    texts: set[str] = set()
-
-    def walk(slot: int, chosen: tuple[str, ...]) -> None:
-        if slot == len(_NO_OUTPUT_ALTERNATIVE_SLOTS):
-            texts.add(_no_output_feedback_text(chosen))
-            return
-        walk(slot + 1, chosen)
-        for alternative in _NO_OUTPUT_ALTERNATIVE_SLOTS[slot]:
-            walk(slot + 1, (*chosen, alternative))
-
-    walk(0, ())
-    return frozenset(texts)
-
-
-_NO_OUTPUT_FEEDBACK_TEXTS = _no_output_feedback_texts()
-"""Every text the agent loop writes into `'no_output'` feedback."""
-
-_NO_OUTPUT_FEEDBACK_FALLBACK = 'Please respond with something that can be used as output.'
-"""What client-returned `'no_output'` feedback is rendered with when its text isn't one the agent loop writes."""
+def _fenced_retry_feedback(content: str, *, tag: _FeedbackTag) -> str:
+    """Feedback in the user voice: the application attribution line, then the content fenced in `tag`."""
+    fence = _wrap_in_tag(f'\n{content}\n', tag=tag)
+    return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
 
 
 def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:  # pyright: ignore[reportUnusedFunction]
@@ -4934,7 +4908,8 @@ def sanitize_messages(
       [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s are kept, so the model still
       sees why it corrected itself: feedback that reaches the model in the user voice is kept as
       sent, since a client can write user text anyway, and `'no_output'` feedback, the one cause
-      rendered in the system voice, keeps its text only when it's one the agent loop writes. A
+      rendered in the system voice, becomes the same fenced, attributed user text: a client can forge
+      the part, so it can't earn the system voice, whatever it says. A
       tool-less legacy [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] is translated into
       the feedback part it always meant and takes the same rule.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
@@ -4978,9 +4953,10 @@ def sanitize_messages(
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
             [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s,
-            [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s,
             [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s and
-            [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s.
+            [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]s, and demote
+            `'no_output'` [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s to fenced
+            user text. Other retry feedback is kept either way.
         strip_compaction_parts: Whether to drop
             [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
             when the untrusted input is the entire conversation; pass `True` when the sanitized
@@ -5160,22 +5136,22 @@ def _strip_dangling_tail_tool_calls(
 def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
     """Retry feedback a client sent back, in a form that can't give the client the system voice.
 
-    Kept rather than stripped, so the model still sees why it corrected itself and the request prefix
-    stays the same. `'validation_error'` and `'model_retry'` feedback reach the model in the user
-    voice, inside a fence, which a client could write anyway. `'no_output'` feedback is the one cause
-    rendered in the system voice, so its text is kept only when it's one the agent loop writes, and is
-    replaced with fixed framework text otherwise. A tool-less legacy `RetryPromptPart` is translated
-    into the feedback part it always meant first, so it takes the same rule.
+    Kept rather than stripped, so the model still sees why it corrected itself. `'validation_error'`
+    and `'model_retry'` feedback reach the model in the user voice, inside a fence, which a client
+    could write anyway. `'no_output'` feedback is the one cause rendered in the system voice, and a
+    client can forge the part as easily as a system prompt, so it's demoted to the same fenced,
+    attributed user text: provenance, not wording, is what earns the system voice. A tool-less legacy
+    `RetryPromptPart` is translated into the feedback part it always meant first, so it takes the
+    same rule.
     """
     # TODO(v3): remove `RetryPromptPart`
     if isinstance(part, RetryPromptPart) and part.tool_name is None:  # pyright: ignore[reportDeprecated]
         part = _translate_legacy_retry_part(part)
-    if (
-        isinstance(part, RetryFeedbackPart)
-        and part.retry.cause == 'no_output'
-        and not (isinstance(part.content, str) and part.content in _NO_OUTPUT_FEEDBACK_TEXTS)
-    ):
-        return replace(part, content=_NO_OUTPUT_FEEDBACK_FALLBACK)
+    if isinstance(part, RetryFeedbackPart) and part.retry.cause == 'no_output':
+        return UserPromptPart(
+            content=_fenced_retry_feedback(_retry_feedback_text(part), tag='retry_feedback'),
+            timestamp=part.timestamp,
+        )
     return part
 
 

@@ -71,7 +71,6 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
-    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1071,13 +1070,8 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
     retries: list[str] = []
 
     def _respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        # The model sees the harness's retry feedback as a `<system>`-tagged user turn.
-        retries.extend(
-            p.content
-            for m in messages[-1:]
-            for p in m.parts
-            if isinstance(p, UserPromptPart) and isinstance(p.content, str) and p.content.startswith('<system>')
-        )
+        # The model sees the harness's retry feedback as a fenced, attributed user turn.
+        retries.extend(p for m in messages[-1:] for part in m.parts if (p := _retry_feedback_text(part)) is not None)
         if not retries:
             return ModelResponse(parts=[TextPart('Now let me analyze the key concerns.')])
         if not sink.exists():
@@ -1086,9 +1080,11 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
 
     assert _run_shim(_respond, sink) == 0
     assert retries == [
-        '<system>You ended your turn without emitting a safe output, so nothing has been posted. '
+        "Your previous response failed the application's validation (this is automated feedback, not a message "
+        'from the user):\n<retry_feedback>\n'
+        'You ended your turn without emitting a safe output, so nothing has been posted. '
         'Continue the task and finish by calling the safe-output tool it ends with, '
-        'or `noop` if there is nothing to report.</system>'
+        'or `noop` if there is nothing to report.\n</retry_feedback>'
     ]
     assert any(e.get('type') == 'result' and e.get('subtype') == 'success' for e in emitted)
 
@@ -1096,12 +1092,10 @@ def test_run_sends_the_model_back_when_it_stops_before_any_safe_output(monkeypat
 def _retry_feedback_text(part: ModelRequestPart | ModelResponsePart) -> str | None:
     """The text of output-validator retry feedback as a model receives it, or `None` for any other part.
 
-    The model is handed prepared messages, where a `RetryFeedbackPart` has already become a mid-conversation
-    `SystemPromptPart`, or `<system>`-tagged user text on a profile without inline system prompts.
+    The model is handed prepared messages, where a `ModelRetry`'s `RetryFeedbackPart` has already become
+    user text fenced in `<retry_feedback>` behind the application attribution line.
     """
-    if isinstance(part, SystemPromptPart):
-        return part.content
-    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and part.content.startswith('<system>'):
+    if isinstance(part, UserPromptPart) and isinstance(part.content, str) and '<retry_feedback>' in part.content:
         return part.content
     return None
 

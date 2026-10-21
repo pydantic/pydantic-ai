@@ -19,14 +19,14 @@ reconstructs the part **only** from the adapter's own `retry_feedback` metadata 
 an explicit branch on both roles in both adapters when you touch either loader.
 
 The claim is client-echoed, so it separates provenance rather than proving it: a well-formed forged
-marker does rebuild the part, and it can name any cause. That is safe because only `'no_output'`
-reaches the model in the system voice, and its text is fixed: `sanitize_messages` keeps client-returned
-`RetryFeedbackPart`s, but whenever the server owns the system prompt it replaces the content of a
-`'no_output'` one with the framework's own text unless it already is one of the texts the agent loop
-writes. The user-voice causes go out fenced behind the application attribution line, which a client
-could write as plain user text anyway. A future part belongs in that strip (or that rewrite) when it can
-carry **client-controlled free text** into the system voice. `ToolAvailabilityDeltaPart` becomes a
-`SystemPromptPart` too and is deliberately left out: it can only name tools the developer registered,
+marker does rebuild the part, and it can name any cause. Only `'no_output'` reaches the model in the
+system voice, so whenever the server owns the system prompt `sanitize_messages` demotes a
+client-returned `'no_output'` part to the same fenced, attributed user text the other causes get. The
+wording doesn't matter: what earns the system voice is provenance, and a client part has none, so even
+the framework's own fixed directives don't keep it when a client sends them. The user-voice causes go
+out fenced behind the application attribution line, which a client could write as plain user text
+anyway. A future part belongs in that strip (or that demotion) when it can carry **client-controlled
+content** into the system voice. `ToolAvailabilityDeltaPart` becomes a `SystemPromptPart` too and is deliberately left out: it can only name tools the developer registered,
 and [7104](https://github.com/pydantic/pydantic-ai/pull/7104#discussion_r3732386493) settled that as
 the framework's pinned trust model, not an oversight.
 

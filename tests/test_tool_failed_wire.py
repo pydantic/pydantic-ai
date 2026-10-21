@@ -186,7 +186,12 @@ _CHANNEL_LESS_CASES = [
                 },
                 {
                     'role': 'user',
-                    'content': '<system>Disk full</system>',
+                    'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+""",
                 },
             ]
         ),
@@ -206,7 +211,12 @@ _CHANNEL_LESS_CASES = [
                 },
                 {
                     'role': 'user',
-                    'content': '<system>Disk full</system>',
+                    'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+""",
                 },
             ]
         ),
@@ -226,7 +236,12 @@ _CHANNEL_LESS_CASES = [
                 },
                 {
                     'role': 'user',
-                    'content': '<system>Disk full</system>',
+                    'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+""",
                 },
             ]
         ),
@@ -245,7 +260,12 @@ _CHANNEL_LESS_CASES = [
                     'tool_call_id': _MISTRAL_CALL_ID,
                 },
                 {
-                    'content': '<system>Disk full</system>',
+                    'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+""",
                     'role': 'user',
                 },
             ]
@@ -269,7 +289,16 @@ _CHANNEL_LESS_CASES = [
                     'tool_call_id': 'call_1',
                 },
                 {
-                    'content': [{'text': '<system>Disk full</system>'}],
+                    'content': [
+                        {
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+"""
+                        }
+                    ],
                     'role': 'ROLE_USER',
                 },
             ]
@@ -286,7 +315,12 @@ _CHANNEL_LESS_CASES = [
                 {'role': 'tool', 'content': '{"error":"Disk full"}', 'tool_call_id': 'call_1'},
                 {
                     'role': 'user',
-                    'content': '<system>Disk full</system>',
+                    'content': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+""",
                 },
             ]
         ),
@@ -300,7 +334,12 @@ _CHANNEL_LESS_CASES = [
         legacy_retry_wire=snapshot(
             [
                 '{"error":"Disk full"}',
-                '<system>Disk full</system>',
+                """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+""",
             ]
         ),
         marks=(pytest.mark.skipif(not cohere_imports_successful(), reason='cohere not installed'),),
@@ -339,9 +378,8 @@ async def test_legacy_retry_prompt_part_framing(case: ChannelLessCase) -> None:
     before this release — carries one, and `prepare_messages` translates it before any adapter sees
     it. Both shapes are pinned: the tool-bound one, which arrives as its call's own retried result,
     and the tool-less one, which no longer arrives as the bare user text
-    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end. Each part is mapped
-    as a history of its own, so the tool-less one opens the first request and takes the
-    `<system>`-tagged form that keeps feedback out of the standing prompt on every provider.
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] exists to end: its message goes out
+    fenced in `<retry_feedback>` behind the application attribution line, on every provider.
     """
     parts: list[ModelRequestPart] = [
         legacy_retry_prompt_part(content=_TOOL_CONTENT, tool_name='tool', tool_call_id='call_1'),
@@ -589,7 +627,12 @@ async def test_anthropic_legacy_retry_prompt_part_framing() -> None:
                     },
                     {
                         'type': 'text',
-                        'text': '<system>Disk full</system>',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+""",
                     },
                 ],
             }
@@ -620,7 +663,14 @@ async def test_bedrock_legacy_retry_prompt_part_framing(bedrock_provider: Bedroc
                             'status': 'error',
                         }
                     },
-                    {'text': '<system>Disk full</system>'},
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+"""
+                    },
                 ],
             }
         ]
@@ -653,7 +703,16 @@ async def test_google_legacy_retry_prompt_part_framing() -> None:
             },
             {
                 'role': 'user',
-                'parts': [{'text': '<system>Disk full</system>'}],
+                'parts': [
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+Disk full
+</retry_feedback>\
+"""
+                    }
+                ],
             },
         ]
     )
