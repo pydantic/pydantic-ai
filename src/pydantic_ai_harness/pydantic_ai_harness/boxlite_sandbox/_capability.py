@@ -6,8 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-import boxlite
-
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -79,13 +77,13 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a box by ref; one that is already gone returns quietly.
 
-        A creation of it still in progress in this process finishes first, and the deletion isn't abandoned
-        when the caller is cancelled.
+        It waits for a creation of the box still in progress in this process. Once the deletion has started,
+        a cancelled caller waits for it to end.
         """
         _backend.check_ref(ref)
         if not running_on_asyncio():
             raise UserError(_backend.ASYNCIO_ONLY)
-        await _backend.settled(_backend.start_lifecycle(ref.id, lambda: _delete(ref.id)))
+        await _backend.delete(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
@@ -109,10 +107,3 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
             env=self.env,
             box_options=self.box_options,
         )
-
-
-async def _delete(name: str) -> None:
-    try:
-        await _backend.runtime().remove(name, force=True)
-    except boxlite.NotFoundError:
-        pass

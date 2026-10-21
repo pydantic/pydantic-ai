@@ -19,6 +19,7 @@ Run locally:
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import subprocess
 import sys
@@ -143,6 +144,23 @@ async def test_a_released_box_stops_and_its_ref_boots_it_again(owned: list[BoxLi
         while await anyio.to_thread.run_sync(_status, ref.id) != 'stopped':
             await anyio.sleep(0.2)
     assert (await attached.run(['cat', 'kept.txt'])).stdout == 'kept\n'
+
+
+async def test_a_creation_cancelled_mid_boot_leaves_no_box() -> None:
+    """Validates the fake's assumptions that a cancelled `start()` stops the boot, and that the box a create
+    made can be deleted once the create returns, so a cancelled first use leaves nothing behind."""
+    runtime = cast(Any, boxlite).Boxlite.default()
+    backend = BoxLiteSandboxBackend()
+    caller = asyncio.create_task(backend.get_sandbox())
+    with anyio.fail_after(30):
+        while backend.ref is None or await runtime.get_info(backend.ref.id) is None:
+            await anyio.sleep(0.01)
+    name = backend.ref.id
+    caller.cancel()  # A native cancel, as core sends to a tool call.
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert backend.ref is None
+    assert await runtime.get_info(name) is None
 
 
 @pytest.mark.subprocess(reason='opens a second BoxLite runtime on the same home directory')

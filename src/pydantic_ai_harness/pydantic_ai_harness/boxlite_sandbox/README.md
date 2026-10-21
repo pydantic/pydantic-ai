@@ -200,7 +200,7 @@ Deleting a box that is already gone returns quietly. Once started, a deletion fi
 
 Nothing deletes a box for you. Creating one logs its id (see [Telemetry](#telemetry)), so you can find one left behind without a stored ref, for example by a durable execution worker that crashed after creating it, with `await boxlite.Boxlite.default().list_info()`.
 
-`backend.ref` is set as soon as the box starts being created, and `destroy` waits for a creation still in progress in this process, so the `finally` in [Prepare a box before the run](#prepare-a-box-before-the-run) deletes the box even when the run is cancelled mid-creation. A failed run returns no result, so there is no ref to store: delete the box in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up), or create the backend yourself as in [Prepare a box before the run](#prepare-a-box-before-the-run).
+`backend.ref` is set as soon as the box starts being created, so the `finally` in [Prepare a box before the run](#prepare-a-box-before-the-run) deletes the box whatever ends the run. A run cancelled before its box has booted deletes that box itself, before the cancellation ends the run. A failed run returns no result, so there is no ref to store: delete the box in an `on_run_error` hook, as shown for [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/#clean-up), or create the backend yourself as in [Prepare a box before the run](#prepare-a-box-before-the-run).
 
 ## How commands run
 

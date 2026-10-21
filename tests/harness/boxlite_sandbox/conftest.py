@@ -28,7 +28,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     pytest.skip('requires PYDANTIC_AI_HARNESS_BOXLITE_LIVE=1 on a host that can run BoxLite VMs')
 
 
-_BOXLITE_MODULES = ('pydantic_ai_harness.boxlite_sandbox._backend', 'pydantic_ai_harness.boxlite_sandbox._capability')
+_BOXLITE_MODULES = ('pydantic_ai_harness.boxlite_sandbox._backend',)
 """The modules that call the BoxLite SDK, each patched to the fake."""
 
 

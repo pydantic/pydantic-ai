@@ -248,42 +248,73 @@ async def test_concurrent_first_use_creates_once(fake_boxlite: FakeBoxLite, work
     assert await backend.get_sandbox() is first
 
 
-async def test_cancelled_creation_keeps_the_box_it_made(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
-    fake_boxlite.start_gate = gate = asyncio.Event()
+async def test_a_creation_cancelled_mid_create_waits_for_it_and_deletes_the_box(
+    fake_boxlite: FakeBoxLite, working_dir: str
+) -> None:
+    # BoxLite finishes a create after its caller is cancelled, so the backend waits for it, then deletes the box.
+    fake_boxlite.create_gate = gate = asyncio.Event()
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    tasks = asyncio.all_tasks()
     caller = asyncio.create_task(backend.get_sandbox())
-    await fake_boxlite.start_started.wait()
+    await fake_boxlite.create_started.wait()
     caller.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await caller
-    gate.set()
-    box = await backend.get_sandbox()
-    assert backend.ref == WorkspaceRef(provider='boxlite', id=box.name)
-    assert len(fake_boxlite.boxes) == 1
-
-
-async def test_cleanup_of_a_cancelled_creation_deletes_the_box(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
-    # The documented cleanup: whatever ends the run, delete the ref if there is one.
-    fake_boxlite.start_gate = gate = asyncio.Event()
-    backend = BoxLiteSandboxBackend(working_dir=working_dir)
-    caller = asyncio.create_task(backend.get_sandbox())
-    await fake_boxlite.start_started.wait()
-    caller.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await caller
-    ref = backend.ref
-    assert ref is not None
-    cleanup = asyncio.create_task(BoxLiteSandbox[None]().destroy(ref))
     await asyncio.sleep(0)
-    # The deletion waits for the creation, so it can't overtake it and leave the box behind.
-    assert len(fake_boxlite.boxes) == 1
+    assert not caller.done()
     gate.set()
-    with anyio.fail_after(5):
-        await cleanup
-    assert fake_boxlite.boxes == {}
+    with anyio.fail_after(5), pytest.raises(asyncio.CancelledError):
+        await caller
+    assert len(fake_boxlite.removed) == 1 and fake_boxlite.boxes == {}
+    # Nothing is left for cleanup to delete, and nothing runs on without its caller.
+    assert backend.ref is None
+    assert asyncio.all_tasks() == tasks
 
 
-async def test_cancelled_destroy_still_deletes(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+@pytest.mark.parametrize('cancelled', [False, True])
+async def test_a_create_boxlite_never_answers_is_given_up_on(
+    fake_boxlite: FakeBoxLite,
+    working_dir: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    cancelled: bool,
+) -> None:
+    # Waited for even by a cancelled caller, but not forever: a hung BoxLite can't hold the run.
+    monkeypatch.setattr('pydantic_ai_harness.boxlite_sandbox._backend._SDK_TIMEOUT', 0.1)
+    fake_boxlite.create_gate = asyncio.Event()  # Never set.
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    caller = asyncio.create_task(backend.get_sandbox())
+    await fake_boxlite.create_started.wait()
+    if cancelled:
+        caller.cancel()
+    with anyio.fail_after(5), pytest.raises(asyncio.CancelledError if cancelled else WorkspaceUnavailableError):
+        await caller
+    assert 'did not finish creating box' in caplog.text and 'it may still finish' in caplog.text
+    assert backend.ref is None
+
+
+async def test_a_create_the_sdk_cancels_itself_is_unavailable(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+    fake_boxlite.create_error = asyncio.CancelledError()
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    with pytest.raises(WorkspaceUnavailableError, match='BoxLite cancelled creating box'):
+        await backend.get_sandbox()
+    assert backend.ref is None and fake_boxlite.boxes == {}
+
+
+async def test_a_creation_cancelled_mid_boot_deletes_the_box(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+    # Never set: a cancelled boot stops, as BoxLite's does.
+    fake_boxlite.start_gate = asyncio.Event()
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    caller = asyncio.create_task(backend.get_sandbox())
+    await fake_boxlite.start_started.wait()
+    caller.cancel()
+    with anyio.fail_after(5), pytest.raises(asyncio.CancelledError):
+        await caller
+    assert backend.ref is None and fake_boxlite.boxes == {}
+    fake_boxlite.start_gate = None
+    await backend.get_sandbox()
+    assert len(fake_boxlite.boxes) == 1
+
+
+async def test_a_cancelled_destroy_waits_for_the_deletion(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
     assert backend.ref is not None
@@ -291,13 +322,11 @@ async def test_cancelled_destroy_still_deletes(fake_boxlite: FakeBoxLite, workin
     caller = asyncio.create_task(BoxLiteSandbox[None]().destroy(backend.ref))
     await fake_boxlite.remove_started.wait()
     caller.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await caller
-    # A second deletion of the same box waits for the first, which goes on without its caller.
-    second = asyncio.create_task(BoxLiteSandbox[None]().destroy(backend.ref))
+    await asyncio.sleep(0)
+    assert not caller.done()
     gate.set()
-    with anyio.fail_after(5):
-        await second
+    with anyio.fail_after(5), pytest.raises(asyncio.CancelledError):
+        await caller
     assert fake_boxlite.boxes == {}
     # Nothing is left waiting: a new box with the same capability is created and deleted as usual.
     fresh = BoxLiteSandboxBackend(working_dir=working_dir)
@@ -305,6 +334,24 @@ async def test_cancelled_destroy_still_deletes(fake_boxlite: FakeBoxLite, workin
     assert fresh.ref is not None
     await BoxLiteSandbox[None]().destroy(fresh.ref)
     assert fake_boxlite.boxes == {}
+
+
+async def test_two_deletions_of_one_box_both_return(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    await backend.get_sandbox()
+    ref = backend.ref
+    assert ref is not None
+    fake_boxlite.remove_gate = gate = asyncio.Event()
+    first = asyncio.create_task(BoxLiteSandbox[None]().destroy(ref))
+    await fake_boxlite.remove_started.wait()
+    fake_boxlite.remove_started.clear()
+    second = asyncio.create_task(BoxLiteSandbox[None]().destroy(ref))
+    await fake_boxlite.remove_started.wait()
+    gate.set()
+    with anyio.fail_after(5):
+        await first
+        await second
+    assert fake_boxlite.removed == [ref.id] and fake_boxlite.boxes == {}
 
 
 async def test_failed_start_deletes_the_box_and_can_retry(
@@ -331,6 +378,7 @@ async def test_failed_start_deletes_the_box_and_can_retry(
 async def test_a_command_started_after_its_caller_was_cancelled_is_stopped(
     fake_boxlite: FakeBoxLite, working_dir: str, opened: bool
 ) -> None:
+    # BoxLite starts a command after its caller is cancelled, so the backend waits for it, then stops it.
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
     fake_boxlite.exec_started.clear()
@@ -340,35 +388,39 @@ async def test_a_command_started_after_its_caller_was_cancelled_is_stopped(
     caller = asyncio.create_task(backend.run(['sleep', '30']))
     await fake_boxlite.exec_started.wait()
     caller.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await caller
+    await asyncio.sleep(0)
+    assert not caller.done()
     started = len(fake_boxlite.spawned)
     gate.set()
+    with anyio.fail_after(5), pytest.raises(asyncio.CancelledError):
+        await caller
     if opened:
-        with anyio.fail_after(5):
-            while len(fake_boxlite.spawned) == started:
-                await asyncio.sleep(0.01)
-            # Without a timeout, nothing but the backend stopping the late command ends it.
-            assert await asyncio.to_thread(fake_boxlite.spawned[started].wait) != 0
+        # Without a timeout, nothing but the backend stopping the command ends it.
+        (command,) = fake_boxlite.spawned[started:]
+        assert await asyncio.to_thread(command.wait) != 0
     else:
-        await asyncio.sleep(0)
         assert len(fake_boxlite.spawned) == started
 
 
 async def test_a_timeout_while_the_command_starts_still_stops_it(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
-    # The deadline covers starting the command, and a command that starts after it is stopped.
+    # The deadline covers starting the command; one that starts after it is waited for and stopped.
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
+    fake_boxlite.exec_started.clear()
     fake_boxlite.exec_gate = gate = asyncio.Event()
     started = len(fake_boxlite.spawned)
-    with anyio.fail_after(5), pytest.raises(WorkspaceTimeoutError) as caught:
-        await backend.run(['sleep', '30'], timeout=0.2)
-    assert (caught.value.stdout, caught.value.stderr) == ('', '')
+    deadline = anyio.current_time() + 0.2
+    # Output read before the stop would show up: the command is stopped as soon as it starts.
+    running = asyncio.create_task(backend.run(['sh', '-c', 'echo started; exec sleep 30'], timeout=0.2))
+    await fake_boxlite.exec_started.wait()
+    await anyio.sleep_until(deadline + 0.05)
+    assert not running.done()
     gate.set()
-    with anyio.fail_after(5):
-        while len(fake_boxlite.spawned) == started:
-            await asyncio.sleep(0.01)
-        assert await asyncio.to_thread(fake_boxlite.spawned[started].wait) != 0
+    with anyio.fail_after(5), pytest.raises(WorkspaceTimeoutError) as caught:
+        await running
+    assert (caught.value.stdout, caught.value.stderr) == ('', '')
+    (command,) = fake_boxlite.spawned[started:]
+    assert await asyncio.to_thread(command.wait) != 0
 
 
 async def test_a_failed_setup_does_not_wait_for_an_operation_queued_behind_it(

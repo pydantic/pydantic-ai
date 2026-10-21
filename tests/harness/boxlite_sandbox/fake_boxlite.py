@@ -57,7 +57,8 @@ class FakeBoxLite:
         self.spawned: list[subprocess.Popen[bytes]] = []
         self.runtime_error: BaseException | None = None
         """When set, `Boxlite.default()` raises it, like a runtime that can't open."""
-        self.create_error: boxlite.BoxliteError | None = None
+        self.create_error: BaseException | None = None
+        """When set, `create` raises it; a `CancelledError` stands in for the SDK cancelling its own call."""
         self.start_error: boxlite.BoxliteError | None = None
         self.remove_error: boxlite.BoxliteError | None = None
         self.get_info_error: boxlite.BoxliteError | None = None
@@ -69,12 +70,17 @@ class FakeBoxLite:
         """When set, every exec's stdout raises it, like the SDK losing a command's output stream."""
         self.wait_error: boxlite.BoxliteError | None = None
         """When set, the next `wait()` raises it, like the SDK losing a command's exit status."""
+        self.removed: list[str] = []
+        """The names, or ids, of the boxes `remove` deleted, in order."""
+        self.create_started = asyncio.Event()
+        self.create_gate: asyncio.Event | None = None
+        """When set, `create` waits for it before recording the box, to cancel a caller mid-create."""
         self.start_started = asyncio.Event()
         self.start_gate: asyncio.Event | None = None
+        """When set, `start()` waits for it, to cancel a caller mid-boot."""
         self.exec_started = asyncio.Event()
         self.exec_gate: asyncio.Event | None = None
         """When set, `exec` waits for it before starting the command, to cancel a caller mid-start."""
-        """When set, `start()` waits for it, to cancel a caller mid-creation."""
         self.remove_started = asyncio.Event()
         self.remove_gate: asyncio.Event | None = None
         """When set, `remove` ends the box's commands, then waits for it before the box is gone."""
@@ -128,6 +134,9 @@ class FakeRuntime:
     async def create(self, options: Any, name: str | None = None) -> FakeHandle:
         if self.control.create_error is not None:
             raise self.control.create_error
+        self.control.create_started.set()
+        if self.control.create_gate is not None:
+            await self.control.create_gate.wait()
         # The backend always names its boxes; a test creates an unnamed one for the backend's `sandbox`.
         assert name is None or self.control.find(name) is None
         box = FakeBox(id=f'box{len(self.control.boxes)}', name=name, options=options)
@@ -158,7 +167,8 @@ class FakeRuntime:
         if self.control.remove_gate is not None:
             await self.control.remove_gate.wait()
         # A removal running alongside this one may have deleted it first.
-        self.control.boxes.pop(box.name or box.id, None)
+        if self.control.boxes.pop(box.name or box.id, None) is not None:
+            self.control.removed.append(box.name or box.id)
 
 
 class FakeHandle:

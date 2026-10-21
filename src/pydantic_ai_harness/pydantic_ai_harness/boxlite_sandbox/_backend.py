@@ -22,6 +22,9 @@ command, or error handling:
   `timeout_secs` reach only that process, not its children.
 - An exec'd process killed by a signal exits negative, and signalling one that has exited raises
   `InternalError`.
+- `Boxlite.create`, `Box.exec` and `Boxlite.remove` finish after their caller is cancelled: a box being
+  created appears after a deletion of it found nothing, and a command being started runs. A cancelled
+  `start()` stops the boot, leaving the box created but not running.
 - Removing a box mid-command ends the command with `-15` rather than an error, and later calls on its
   handle raise `UpstreamUnavailableError`. `Box.stop()` invalidates every handle to the box: later calls
   on one raise `StoppedError`, and a new handle from `get` boots it again.
@@ -29,12 +32,11 @@ command, or error handling:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import suppress
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 import anyio
@@ -56,7 +58,6 @@ from pydantic_ai_harness._workspace_provider import (
     check_timeout,
     command_argv,
     running_on_asyncio,
-    stop_shielded,
 )
 
 if TYPE_CHECKING:
@@ -140,6 +141,13 @@ _RESERVED_OPTIONS = frozenset(
 _SETUP_TIMEOUT = 60.0
 """Seconds the backend's own commands in the box get: `mkdir -p`, `pwd -P`, and the check that the box still runs."""
 
+_SDK_TIMEOUT = 60.0
+"""Seconds the backend waits for BoxLite to create or delete a box, or to start or stop a command.
+
+BoxLite finishes those calls after their caller is cancelled, so a cancelled caller waits for them rather
+than leave them running with no owner. Past this, the backend gives up and logs that the call may still finish.
+"""
+
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
@@ -185,16 +193,15 @@ exit "$r"
 _DROPPED = re.compile(r'\[boxlite\] (?:stdout|stderr) output dropped \d+ bytes\r\n')
 """The line BoxLite sends in place of output its guest buffer dropped."""
 
-lifecycle: dict[str, asyncio.Task[object]] = {}
-"""This process's latest unfinished creation, attachment or deletion of each box, by name.
+_acquiring: dict[str, anyio.Event] = {}
+"""The boxes this process is creating or attaching to, by name: a deletion waits for them."""
 
-Each one waits for the one started before it, so the latest finishing means they all have, and none
-stops when its callers are cancelled. A box reports itself running for a moment after a deletion has
-ended its commands, so a command that ended that way waits for the deletion before checking the box.
+_deleting: dict[str, anyio.Event] = {}
+"""The boxes this process is deleting, by name.
+
+A box reports itself running for a moment after a deletion has ended its commands, so a command that
+ended that way waits for the deletion before checking the box.
 """
-
-_late_stops: set[asyncio.Task[None]] = set()
-"""Stops of commands that started after their caller was cancelled, held until they end."""
 
 ASYNCIO_ONLY = '`BoxLiteSandbox` needs the asyncio event loop: the BoxLite SDK returns asyncio futures.'
 
@@ -253,30 +260,69 @@ def _network(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) -
     return _sdk().NetworkSpec(outbound=_sdk().OutboundNetworkSpec(mode='enabled', allow_net=list(allowed_hosts or ())))
 
 
-def start_lifecycle(name: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
-    """Run `work` on box `name` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
-    previous = lifecycle.get(name)
+async def _finish(call: Awaitable[_T], action: str, undo: Callable[[_T], Awaitable[object]] | None = None) -> _T:
+    """Await an SDK call for up to `_SDK_TIMEOUT` seconds, even if the caller is cancelled meanwhile.
 
-    async def run() -> _T:
-        if previous is not None:
-            # A deletion that overtook a creation would find nothing, and the creation would then leave its box behind.
-            await asyncio.wait([previous])
-        return await work()
+    The caller's cancellation is raised once the call has ended, after `undo` has run on its result.
+    The call runs as a shielded task-group child, which a native `Task.cancel()` of the caller doesn't
+    reach, unlike a shield in the caller's own task. `action` names the call in the error and warning
+    raised when BoxLite doesn't answer in time.
+    """
+    done: list[_T] = []
+    failed: list[BaseException] = []
 
-    task = asyncio.create_task(run(), name=f'boxlite-sandbox-{name}')
-    # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
-    # when every caller was cancelled first.
-    task.add_done_callback(lambda done: done.cancelled() or done.exception())
-    lifecycle[name] = task
-    task.add_done_callback(lambda done: lifecycle.pop(name) if lifecycle.get(name) is done else None)
-    return task
+    async def run() -> None:
+        with anyio.move_on_after(_SDK_TIMEOUT, shield=True) as scope:
+            try:
+                done.append(await call)
+            except anyio.get_cancelled_exc_class():
+                raise
+            except BaseException as error:
+                # Raised as itself below, not in an `ExceptionGroup`, a Rust panic included.
+                failed.append(error)
+        if scope.cancelled_caught:
+            logger.warning('BoxLite did not finish %s within %g seconds; it may still finish', action, _SDK_TIMEOUT)
+            failed.append(
+                WorkspaceUnavailableError(f'BoxLite did not finish {action} within {_SDK_TIMEOUT:g} seconds.')
+            )
+
+    try:
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+    except BaseException:
+        if done and undo is not None:
+            await _finish(undo(done[0]), f'cleaning up after {action}')
+        raise
+    if failed:
+        raise failed[0]
+    if not done:
+        # The SDK cancelled the call itself, as when its runtime shuts down.
+        raise WorkspaceUnavailableError(f'BoxLite cancelled {action}.')
+    return done[0]
 
 
-async def settled(task: asyncio.Task[_T]) -> _T:
-    # `asyncio.wait`, not `asyncio.shield`: on 3.14 a shield cancelled before its task fails reports
-    # that failure to the loop exception handler even though it is retrieved here.
-    await asyncio.wait([task])
-    return task.result()
+@contextmanager
+def _marking(registry: dict[str, anyio.Event], name: str) -> Generator[None]:
+    """Record box `name` in `registry` until the block ends, for operations that wait for it."""
+    registry[name] = event = anyio.Event()
+    try:
+        yield
+    finally:
+        event.set()
+        if registry.get(name) is event:
+            del registry[name]
+
+
+async def delete(name: str) -> None:
+    """Delete box `name` once this process has finished creating or attaching to it; quiet if it's gone."""
+    # A deletion that overtook a creation would find nothing, and the creation would then leave its box behind.
+    if (acquiring := _acquiring.get(name)) is not None:
+        await acquiring.wait()
+    with _marking(_deleting, name):
+        try:
+            await _finish(runtime().remove(name, force=True), f'deleting box {name!r}')
+        except boxlite.NotFoundError:
+            pass
 
 
 class _StaleHandle(Exception):
@@ -406,7 +452,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         self._working_dir = absolute_path('working_dir', working_dir)
         self._env = dict(env or {})
         self._box: _Box | None = None
-        self._acquisition: asyncio.Task[_Box] | None = None
+        self._lock = anyio.Lock()
         self._resolved_working_dir: str | None = None
 
     @property
@@ -430,21 +476,19 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise UserError(ASYNCIO_ONLY)
         if self._box is not None:
             return self._box
-        task = self._acquisition
-        if task is None:
-            # Concurrent first uses share this task, so they create one box; it runs on when they are cancelled.
-            if (ref := self._ref) is None:
-                # Named and recorded before the creation starts, so cleanup has the ref whatever ends the run.
-                ref = self._ref = WorkspaceRef(provider='boxlite', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
-                logger.info('Creating BoxLite box %s', ref.id)
-                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=True))
-            else:
-                task = start_lifecycle(ref.id, lambda: self._acquire(ref.id, create=False))
-            self._acquisition = task
-        return await settled(task)
+        # Concurrent first uses wait for each other, so they create one box.
+        async with self._lock:
+            if self._box is not None:
+                return self._box
+            if (ref := self._ref) is not None:
+                return await self._acquire(ref.id, create=False)
+            # Named and recorded before the creation starts, so cleanup has the ref whatever ends the run.
+            ref = self._ref = WorkspaceRef(provider='boxlite', id=f'{_NAME_PREFIX}{uuid.uuid4().hex}')
+            logger.info('Creating BoxLite box %s', ref.id)
+            return await self._acquire(ref.id, create=True)
 
     async def _acquire(self, name: str, *, create: bool) -> _Box:
-        try:
+        with _marking(_acquiring, name):
             try:
                 boxes = runtime()
             except BaseException:
@@ -454,13 +498,14 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                 raise
             if create:
                 try:
-                    box = await boxes.create(self._options, name=name)
+                    box = await _finish(boxes.create(self._options, name=name), f'creating box {name!r}')
                     await _boot(box)
                 except BaseException:
-                    # A box that never booted is no use: delete it, and a retry creates another under a new
-                    # name. If the deletion fails, the ref stays so its holder can delete the box later.
+                    # A box that never booted, cancelled while booting included, is no use: delete it, and a
+                    # retry creates another under a new name. If the deletion fails, the ref stays so its
+                    # holder can delete the box later.
                     try:
-                        await boxes.remove(name, force=True)
+                        await _finish(boxes.remove(name, force=True), f'deleting box {name!r}')
                     except boxlite.NotFoundError:
                         self._ref = None
                     except boxlite.BoxliteError:
@@ -497,8 +542,6 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                     )
             self._box = box
             return box
-        finally:
-            self._acquisition = None
 
     async def working_dir(self) -> str:
         """The canonical absolute directory commands start in."""
@@ -553,7 +596,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         output = _Output()
         execution: _Execution | None = None
         try:
-            # The deadline covers starting the command too; one that starts after it is stopped by `_start`.
+            # The deadline covers starting the command too, but can't cut a start short: `_start` waits for the
+            # command to start, up to `_SDK_TIMEOUT`, and stops it.
             with anyio.move_on_after(timeout):
                 execution = await self._start(box, argv, env=env, working_dir=working_dir)
                 async with anyio.create_task_group() as group:
@@ -570,8 +614,7 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         except BaseException as error:
             if execution is not None:
                 # Timed out, cancelled, over the output cap, or the SDK failed during the command.
-                started = execution
-                await stop_shielded(lambda: _stop(started), grace=_STOP_GRACE)
+                await _finish(_stop(execution), f'stopping a command in box {_key(box)!r}')
             if isinstance(error, boxlite.BoxliteError) and (unavailable := await self._unavailable(box)) is not None:
                 raise unavailable from error
             raise
@@ -585,17 +628,13 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
     async def _start(self, box: _Box, argv: list[str], *, env: dict[str, str], working_dir: str | None) -> _Execution:
-        opening = asyncio.ensure_future(
-            box.exec('/bin/sh', ['-c', _EXEC_SCRIPT, 'sh', *argv], env=list(env.items()), cwd=working_dir)
-        )
         try:
-            await asyncio.wait([opening])
-        except asyncio.CancelledError:
-            # The SDK starts the command even when its caller is cancelled first; stop it once it has.
-            opening.add_done_callback(_stop_late)
-            raise
-        try:
-            return opening.result()
+            # BoxLite starts the command even when its caller is cancelled first: wait for it, then stop it.
+            return await _finish(
+                box.exec('/bin/sh', ['-c', _EXEC_SCRIPT, 'sh', *argv], env=list(env.items()), cwd=working_dir),
+                f'starting a command in box {_key(box)!r}',
+                undo=_stop,
+            )
         except boxlite.BoxliteError as error:
             if isinstance(error, boxlite.StoppedError):
                 raise _StaleHandle from error
@@ -625,9 +664,8 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
         Checked only after a failure, to keep the round trip off successful commands; a check that fails
         leaves the original error to propagate rather than ending the run on a guess.
         """
-        # Not while acquiring: an operation queued behind the acquisition waits for it to finish.
-        if (pending := lifecycle.get(_key(box))) is not None and asyncio.current_task() is not self._acquisition:
-            await asyncio.wait([pending])
+        if (deleting := _deleting.get(_key(box))) is not None:
+            await deleting.wait()
         try:
             info = await runtime().get_info(_key(box))
         except (boxlite.BoxliteError, WorkspaceUnavailableError):
@@ -642,21 +680,11 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
 
 
 async def _stop(execution: _Execution) -> None:
-    """Stop a command and the processes it started, and wait for it to end."""
+    """Stop a command and the processes it started, and wait up to `_STOP_GRACE` seconds for it to end."""
     # A command that exits as it is stopped can't be signalled any more.
-    with suppress(boxlite.BoxliteError):
+    with anyio.move_on_after(_STOP_GRACE), suppress(boxlite.BoxliteError):
         await execution.signal(_STOP)
-        with anyio.move_on_after(_STOP_GRACE):
-            await execution.wait()
-
-
-def _stop_late(opening: asyncio.Future[_Execution]) -> None:
-    """Stop a command that started after its caller was cancelled."""
-    if opening.cancelled() or opening.exception() is not None:
-        return
-    stop = asyncio.ensure_future(_stop(opening.result()))
-    _late_stops.add(stop)
-    stop.add_done_callback(_late_stops.discard)
+        await execution.wait()
 
 
 async def _boot(box: _Box) -> None:
