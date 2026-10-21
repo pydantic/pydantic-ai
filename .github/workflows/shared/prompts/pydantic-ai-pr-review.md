@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that writes a tag into prompt text:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -82,6 +82,17 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   it. Ask for placement that reaches only the reproduced surfaces, not for more
   recordings. Rate it **HIGH** when the PR body or tests show a reached surface
   already works on `main` without the change; otherwise **MEDIUM**.
+- **Framing tags.** When the diff writes an XML-style tag into text a model
+  receives (a `<name ...>` or `</name>` in an f-string or string literal),
+  check that it's rendered with `wrap()`: `_framing.wrap()`
+  (or `open_tag`/`close_tag`) inside `pydantic_ai_slim/pydantic_ai/`, and the
+  public `pydantic_ai.framing.wrap()` everywhere else, Pydantic AI Harness
+  included. A tag defined outside core must also be registered once at module
+  level with `pydantic_ai.framing.register_tag()`, or core's own data frames
+  won't neutralize it. Flag a hand-rolled escaper, especially one that escapes
+  only the frame's own closing tag: that leaves its opener and `<system>` free
+  to forge structure. Rate it **HIGH** when content the model or a third party
+  controls reaches the body; otherwise **MEDIUM**.
 
 ## Review process
 
