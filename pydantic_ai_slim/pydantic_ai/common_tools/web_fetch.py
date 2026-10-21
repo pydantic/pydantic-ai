@@ -58,6 +58,9 @@ _MAX_HTML_CONVERSION_COST = 20_000_000
 # before building the tree. A 2.9 MB Wikipedia article has ~100k events and converts in ~3 s;
 # 500k events of `<p>x</p>` take ~20 s.
 _MAX_HTML_MARKUP_EVENTS = 500_000
+# `html.parser` loops once per `<` or `&`, including ones that produce no event (`< `, `</>`).
+# The same Wikipedia article has ~50k of them.
+_MAX_HTML_MARKUP_DELIMITERS = 500_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
@@ -251,6 +254,8 @@ class _HTMLMarkupBudget(HTMLParser):
 
 def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
+    if html.count('<') + html.count('&') > _MAX_HTML_MARKUP_DELIMITERS:
+        raise ModelRetry('the document is too complex')
     budget = _HTMLMarkupBudget()
     budget.feed(html)
     budget.close()
