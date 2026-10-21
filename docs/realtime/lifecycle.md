@@ -232,11 +232,19 @@ is removed from history, and a refused request for a response stops
 that doesn't identify an input changes neither, because the reply can still come: on OpenAI and xAI,
 a request for a response sent after a refused item is still answered.
 
+One refusal only means "not yet": OpenAI Realtime and Azure OpenAI refuse a request for a response while
+another is under way, as when server-side voice activity detection starts answering the user's speech just
+as you send text. That response never saw the text, so the session asks for the text's reply again once it
+ends, and reports nothing. It asks up to three times in a row; if the provider refuses the request a fourth
+time, the refusal is reported like any other, and `wait_for_reply()` stops waiting for that reply.
+
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being
-iterated. Otherwise the audio and transcript views end, and the failure is raised when the `async
-with` block exits (from [`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side
-has already failed, the next outbound session method raises that failure instead; it is delivered
-only once.
+iterated. A receive-loop failure ends the session; a tool failure ends only the exchange it was part
+of, so a consumer that catches it and iterates again keeps a working session (see
+[Tools](tools.md#function-tools)). Without an active iterator, the session stops receiving, the audio
+and transcript views end, and the failure is raised when the `async with` block exits (from
+[`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side has already failed, the
+next outbound session method raises that failure instead; it is delivered only once.
 
 For symptom-first debugging, see [Troubleshooting](troubleshooting.md).
