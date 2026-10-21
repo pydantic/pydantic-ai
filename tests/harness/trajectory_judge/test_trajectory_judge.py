@@ -662,8 +662,8 @@ class TestSteering:
             return _steer_response(f'correction {judged}') if judged <= 2 else _all_good_response()
 
         def on_verdict(_: TrajectoryVerdict) -> None:
-            if judged <= 2:
-                verdicts[judged - 1].set()
+            for verdict in verdicts[:judged]:
+                verdict.set()
 
         calls = 0
 
@@ -773,16 +773,19 @@ class TestSteering:
         calls = 0
 
         def request_parts(messages: list[ModelMessage]) -> list[tuple[str, str]]:
-            """Every request part the model received, as its kind and text: system prompts included."""
+            """Every request part the model received, as its kind and text.
+
+            `FunctionModel` can't take a mid-conversation system message, so the judge's note arrives
+            as `<system>`-tagged user text.
+            """
             parts: list[tuple[str, str]] = []
             for message in messages:
                 if isinstance(message, ModelRequest):
                     for part in message.parts:
-                        if isinstance(part, SystemPromptPart):
-                            parts.append(('system', part.content))
-                        elif isinstance(part, UserPromptPart):
+                        if isinstance(part, UserPromptPart):
                             parts.append(('user', _all_user_text([ModelRequest(parts=[part])])))
-                        elif isinstance(part, ToolReturnPart):
+                        else:
+                            assert isinstance(part, ToolReturnPart)
                             parts.append(('tool', part.model_response_str()))
             return parts
 
