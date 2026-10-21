@@ -324,7 +324,9 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
                 logger.info('Created Modal sandbox %s', sandbox.object_id)
                 if not self._waiters:
                     # Every caller was cancelled while Modal created it, so no `finally` or error hook
-                    # saw a ref to terminate; this log is the only record of a sandbox that bills.
+                    # saw a ref to terminate; this log is the only record of a sandbox that bills. A
+                    # caller still counted here resumes only after the ref below is recorded, as nothing
+                    # in between awaits, so its own cleanup finds it.
                     logger.warning(
                         'Created Modal sandbox %s after every caller waiting for it was cancelled; it keeps '
                         'running until its `sandbox_timeout` ends it unless you terminate it with '

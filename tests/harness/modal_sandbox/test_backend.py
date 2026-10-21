@@ -772,6 +772,35 @@ class TestCreate:
             "until its `sandbox_timeout` ends it unless you terminate it with `ModalSandbox().destroy(WorkspaceRef(provider='modal', id=...))`"
         ]
 
+    async def test_a_caller_cancelled_as_the_create_returns_finds_the_ref(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A caller still counted when the create returns resumes only after the ref is recorded, since
+        # nothing between the count check and recording the ref awaits; its own cleanup can terminate it.
+        backend = ModalSandboxBackend()
+        fake_modal.create_gate = anyio.Event()
+        seen: list[WorkspaceRef | None] = []
+
+        async def caller() -> None:
+            try:
+                await backend.get_sandbox()
+            except asyncio.CancelledError:
+                seen.append(backend.ref)
+                raise
+
+        with caplog.at_level(logging.WARNING, logger=_backend.__name__):
+            task = asyncio.create_task(caller())
+            with anyio.fail_after(5):
+                while not fake_modal.create_started:
+                    await anyio.sleep(0)
+            # In one tick: the create's reply wakes the acquisition first, then the caller's cancellation.
+            fake_modal.create_gate.set()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert seen == [WorkspaceRef(provider='modal', id='sb-owned')]
+        assert caplog.records == []
+
     @pytest.mark.parametrize('operation', ['run', 'write_bytes'])
     async def test_ref_is_recorded_by_the_first_operation(self, fake_modal: FakeModal, operation: str) -> None:
         backend = ModalSandboxBackend()
