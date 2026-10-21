@@ -42,6 +42,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -52,7 +53,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
+from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model, infer_model_profile
 from pydantic_ai.models.decision import (
     ChoiceQuestion,
     DecisionQuestion,
@@ -67,7 +68,7 @@ from pydantic_ai.models.decision import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.profiles.decision import DecisionModelProfile
+from pydantic_ai.profiles.decision import DecisionModelProfile, decision_model_profile
 from pydantic_ai.tools import ObjectJsonSchema, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -79,9 +80,11 @@ with try_import() as imports_successful:
     from openai import APIConnectionError, APIError, APIStatusError, AsyncOpenAI
     from openai.types.decision_create_params import DecisionCreateParams
 
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel, OpenAIDecisionsModelSettings
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider  # pyright: ignore[reportDeprecated]
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -90,14 +93,14 @@ READINESS_WAIT_TIMEOUT = 10
 
 @pytest.fixture
 def capture_model(openai_api_key: str, request_capture: RequestCapture) -> OpenAIDecisionsModel:
-    provider = OpenAIDecisionsProvider(api_key=openai_api_key, http_client=request_capture.client)
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     return OpenAIDecisionsModel('gpt-6-luna', provider=provider)
 
 
 def mock_model(handler: Handler) -> OpenAIDecisionsModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     client = AsyncOpenAI(api_key='test', max_retries=0, http_client=http_client)
-    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(openai_client=client))
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(openai_client=client))
 
 
 def decisions(*answers: Mapping[str, object]) -> httpx2.Response:
@@ -161,24 +164,120 @@ def test_init(env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     model = OpenAIDecisionsModel('gpt-6-luna')
     assert model.model_name == 'gpt-6-luna'
+    assert isinstance(model._provider, OpenAIProvider)  # pyright: ignore[reportPrivateUsage]
     assert model.system == 'openai-decisions'
     assert model.base_url == 'https://api.openai.com/v1/'
     assert isinstance(model.client, AsyncOpenAI)
     # The ID round-trips, where `openai:gpt-6-luna` would be a Responses API model.
     assert model.model_id == 'openai-decisions:gpt-6-luna'
-    assert isinstance(infer_model(model.model_id), OpenAIDecisionsModel)
+    inferred = infer_model(model.model_id)
+    assert isinstance(inferred, OpenAIDecisionsModel)
+    assert type(inferred._provider) is OpenAIProvider  # pyright: ignore[reportPrivateUsage]
 
 
-def test_missing_api_key_names_this_provider(env: TestEnv):
+DECISION_PROFILE = {
+    'supports_json_schema_output': False,
+    'supports_json_object_output': False,
+    'supports_thinking': False,
+    'supports_cache': False,
+    'supports_image_output': False,
+    'json_schema_transformer': None,
+    'tool_deferral_mode': None,
+    'default_structured_output_mode': 'tool',
+}
+
+
+def test_profile_is_the_decision_endpoints_not_the_providers():
+    """`OpenAIProvider` profiles `gpt-6-luna` as a Responses API model; the Decisions API has none of its features."""
+    model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='test'))
+    assert {key: model.profile.get(key) for key in DECISION_PROFILE} == DECISION_PROFILE
+    assert (OpenAIProvider.model_profile('gpt-6-luna') or {}).get('supports_json_schema_output') is True
+
+    # Without a model to ask, as for a durable run's unregistered model string, the ID resolves the same profile.
+    profile = dict(infer_model_profile('openai-decisions:gpt-6-luna'))
+    profile.pop('context_window', None)
+    assert profile == decision_model_profile('gpt-6-luna')
+
+    # The user's `profile=` still wins over it.
+    custom = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIProvider(api_key='test'), profile={'context_window': 1})
+    assert custom.profile.get('context_window') == 1
+
+
+def test_missing_api_key_names_the_openai_provider(env: TestEnv):
     env.remove('OPENAI_API_KEY')
     env.remove('OPENAI_BASE_URL')
-    with pytest.raises(UserError, match=r'`OpenAIDecisionsProvider\(api_key=\.\.\.\)`'):
-        OpenAIDecisionsProvider()
+    with pytest.raises(UserError, match=r'`OpenAIProvider\(api_key=\.\.\.\)`'):
+        OpenAIDecisionsModel('gpt-6-luna')
 
 
 def test_infer_model_refuses_another_provider():
-    with pytest.raises(UserError, match='require an `OpenAIDecisionsProvider`'):
-        infer_model('openai-decisions:gpt-6-luna', provider_factory=lambda _: OpenAIProvider(api_key='test'))
+    with pytest.raises(UserError, match='require an `OpenAIProvider`'):
+        infer_model('openai-decisions:gpt-6-luna', provider_factory=lambda _: DeepSeekProvider(api_key='test'))
+
+
+def test_openai_decisions_provider_deprecated():
+    """`OpenAIDecisionsModel` takes `OpenAIProvider` itself, so its dedicated provider is deprecated."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`OpenAIDecisionsProvider` is deprecated.*Use `OpenAIProvider` with `OpenAIDecisionsModel`',
+    ):
+        provider = OpenAIDecisionsProvider(api_key='test')  # pyright: ignore[reportDeprecated]
+
+    # It keeps working, as before.
+    model = OpenAIDecisionsModel('gpt-6-luna', provider=provider)
+    assert model.system == 'openai-decisions'
+    assert {key: model.profile.get(key) for key in DECISION_PROFILE} == DECISION_PROFILE
+
+
+async def test_decision_response_does_not_end_a_responses_chain(allow_model_requests: None):
+    """A decision response in the history is not the Responses API's, so it doesn't stand in for the latest one.
+
+    Both models share `OpenAIProvider`, so it is `OpenAIDecisionsModel.system` that keeps the decision response
+    apart. Named `'openai'`, it would be the latest response `openai_previous_response_id='auto'` continues from,
+    and having no Responses ID, would send the whole history again and lose the prompt cache comparison.
+    """
+    bodies: list[dict[str, JsonValue]] = []
+
+    def responses(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
+
+    decision_response = await Agent(mock_model(boolean_answers), output_type=bool, instructions='Harmful?').run(
+        'Is that harmful?',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart('Find the latest release.')]),
+            ModelResponse(parts=[TextPart('v2.59.0')], provider_name='openai', provider_response_id='resp_1'),
+        ],
+    )
+    client = AsyncOpenAI(
+        api_key='test', max_retries=0, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(responses))
+    )
+    responses_model = OpenAIResponsesModel('gpt-6-luna', provider=OpenAIProvider(openai_client=client))
+    with pytest.raises(ModelHTTPError):
+        await Agent(responses_model).run(
+            'Now summarise it.',
+            message_history=decision_response.all_messages(),
+            model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+        )
+
+    assert bodies[0]['previous_response_id'] == 'resp_1'
+    assert bodies[0]['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Is that harmful?'},
+            {
+                'name': 'final_result',
+                'arguments': '{"response":true}',
+                'call_id': IsStr(),
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': IsStr(),
+                'output': 'Final result processed.',
+            },
+            {'role': 'user', 'content': 'Now summarise it.'},
+        ]
+    )
 
 
 @pytest.mark.vcr
@@ -557,7 +656,7 @@ async def test_api_limits(
 async def test_http_error(allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture):
     """A model the API does not serve is an error response, raised for a `FallbackModel` to take over."""
     model = OpenAIDecisionsModel(
-        'gpt-5', provider=OpenAIDecisionsProvider(api_key=openai_api_key, http_client=request_capture.client)
+        'gpt-5', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
     )
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -1749,7 +1848,7 @@ class FreeTextOutput(BaseModel):
                 run=lambda captured: Agent(
                     OpenAIDecisionsModel(
                         'gpt-6-luna',
-                        provider=OpenAIDecisionsProvider(
+                        provider=OpenAIProvider(
                             openai_client=AsyncOpenAI(
                                 api_key='test',
                                 max_retries=0,
