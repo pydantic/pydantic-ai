@@ -518,13 +518,14 @@ async def test_invalid_remote_template_falls_back_to_default(capfire: CaptureLog
             'broken_template', default='Hello {{name}}!', label='production', render_template=True
         )
         agent = Agent(TestModel(), deps_type=NameDeps, capabilities=[capability])
-        seen: list[tuple[str | None, str | None, dict[str, Any]]] = []
+        seen: list[tuple[str | None, type[Exception] | None, dict[str, Any]]] = []
 
         @agent.tool_plain
         def inspect() -> str:
             resolved = capability.resolved
             assert resolved is not None
-            seen.append((resolved.reason, resolved.label, dict(logfire.get_baggage())))
+            error = type(resolved.exception) if resolved.exception is not None else None
+            seen.append((resolved.label, error, dict(logfire.get_baggage())))
             return 'ok'
 
         with pytest.warns(RuntimeWarning, match=r"'prompt__broken_template' \(label 'production', version 2\)"):
@@ -532,7 +533,7 @@ async def test_invalid_remote_template_falls_back_to_default(capfire: CaptureLog
 
     assert instructions_seen(result.all_messages()) == ['Hello Alice!', 'Hello Alice!']
     # The run is credited to the code default that ran, not to the remote version that failed.
-    assert seen == [('other_error', None, {'logfire.variables.prompt__broken_template': '<code_default>'})]
+    assert seen == [(None, HandlebarsParseError, {'logfire.variables.prompt__broken_template': '<code_default>'})]
 
 
 async def test_invalid_remote_template_falls_back_to_callable_default(capfire: CaptureLogfire) -> None:
@@ -540,7 +541,8 @@ async def test_invalid_remote_template_falls_back_to_callable_default(capfire: C
     with _variables_provider_configured(capfire, config):
 
         def default_prompt(targeting_key: str | None, attributes: Mapping[str, Any] | None) -> str:
-            return 'Hi {{name}}.'
+            # Valid only with Logfire's merged targeting context, which adds the resource attributes.
+            return 'Hi {{name}}.' if attributes and 'service.name' in attributes else 'Hi {{#if name}}'
 
         var = logfire.var(name='prompt__broken_callable', type=str, default=default_prompt)
         agent = Agent(
