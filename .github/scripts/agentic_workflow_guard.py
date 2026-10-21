@@ -118,8 +118,10 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 # only differs from the compiled version by a pair of them is the same pin.
 AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 
-# The step id gh-aw gives its daily AI-credits guardrail in the `activation` job.
-DAILY_AIC_GUARDRAIL_STEP = re.compile(r'^\s*id:\s*daily-effective-workflow-guardrail\s*$', re.MULTILINE)
+# The script gh-aw's daily AI-credits guardrail step runs. Match it rather than the step id,
+# which v0.92 renamed from `daily-effective-workflow-guardrail` to
+# `daily-ai-credits-workflow-guardrail`.
+DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -659,7 +661,7 @@ def check_daily_aic_guardrail(lock: Path) -> list[Violation]:
     An imported `-1` only skips the scan at run time and still compiles the guardrail
     with its conclusion-job cache steps, so this reads the lock.
     """
-    if DAILY_AIC_GUARDRAIL_STEP.search(lock.read_text(encoding='utf-8')) is None:
+    if DAILY_AIC_GUARDRAIL_SCRIPT not in lock.read_text(encoding='utf-8'):
         return []
     return [
         Violation(
