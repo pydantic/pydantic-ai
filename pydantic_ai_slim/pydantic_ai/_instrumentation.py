@@ -1118,7 +1118,8 @@ def get_instructions(
 
     When `model_request_parameters` is provided (normal model request flow), returns
     the joined content of `instruction_parts` which already includes prompted output
-    instructions and is properly sorted.
+    instructions and is properly sorted. Empty `instruction_parts` mean no instructions;
+    message history is only read when they are unset, as for a direct `model.request()` call.
 
     Falls back to reading `ModelRequest.instructions` from message history when
     `model_request_parameters` is not available (e.g. OTel span attributes).
@@ -1128,8 +1129,7 @@ def get_instructions(
 
     if model_request_parameters:
         parts = Model._get_instruction_parts(messages, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
-        if parts:
-            return InstructionPart.join(parts)
+        return InstructionPart.join(parts) if parts else None
 
     # Fallback: read from message history (used by OTel when model_request_parameters is unavailable)
     source = get_instructions_source(messages)
