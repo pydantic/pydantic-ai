@@ -8264,13 +8264,15 @@ async def test_session_enqueue_delivers_text_content_and_keeps_its_metadata() ->
     """Text-only `TextContent` crosses the live input channel, and history keeps the part with its metadata."""
     conn = FakeRealtimeConnection([ResponseDone()])
     agent: Agent[None, str] = Agent()
-    tagged = UserPromptPart([TextContent('<report>\nfound it\n</report>', metadata={'origin': 'app.report'})])
+    tagged = UserPromptPart(
+        ['Report:', TextContent('<report>\nfound it\n</report>', metadata={'origin': 'app.report'})]
+    )
 
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
         assert session.enqueue(tagged) is not None
         _ = [event async for event in session]
 
-    assert [item for item in conn.sent if isinstance(item, str)] == ['<report>\nfound it\n</report>']
+    assert [item for item in conn.sent if isinstance(item, str)] == ['Report:\n<report>\nfound it\n</report>']
     assert session.new_messages()[-1] == ModelRequest(
         parts=[tagged], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
     )
