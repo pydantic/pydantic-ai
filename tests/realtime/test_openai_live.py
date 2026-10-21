@@ -925,6 +925,8 @@ async def test_a_call_that_raised_gives_up_its_round() -> None:
     connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
     assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+    # Settled outside any provider message: no usage report follows, so a later one can't be taken for its settling.
+    assert not connection._lifecycle._settles  # pyright: ignore[reportPrivateUsage]
     await connection.send(ToolResult('c2', output='rainy'))
     assert connection.sent == []
 

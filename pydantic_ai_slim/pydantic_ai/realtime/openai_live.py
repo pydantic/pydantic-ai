@@ -863,7 +863,9 @@ class OpenAILiveConnection(RealtimeConnection):
         delegation.pending_tool_calls.discard(tool_call_id)
         delegation.stalled = True
         if not delegation.response_in_flight:
-            self._settle_delegation(delegation, gave_up=True)
+            # Settled outside any provider message, so no backend usage report follows to end the reply that called
+            # the tools: the turn clock, which the delegation no longer holds, ends it.
+            self._settle_delegation(delegation, gave_up=True, in_frame=False)
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
@@ -1656,12 +1658,15 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         return [SessionUsage(RequestUsage(unmeasured_requests=unmeasured_requests))]
 
-    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> None:
+    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool, in_frame: bool = True) -> None:
         """Account for one finished backend response, closing the delegation once it owes nothing.
 
         A delegation suspends the turn clock, so leaving a dead one in the map would keep the session
         from ever reporting another turn boundary: a backend that fails or stops short has to close
         it just as a completed one does.
+
+        `in_frame` says it is settled by the provider message being mapped, whose backend usage report then ends the
+        reply that called the tools (see `_LiveLifecycle.delegation_settled()`).
         """
         delegation.response_in_flight = False
         if gave_up or delegation.stalled:
@@ -1678,7 +1683,8 @@ class OpenAILiveConnection(RealtimeConnection):
             self._continuations_due.append(delegation)
             return
         self._delegations.pop(delegation.id, None)
-        self._lifecycle.delegation_settled()
+        if in_frame:
+            self._lifecycle.delegation_settled()
         self._heard_voice()
 
     def _map_backend_usage(self, response: Response) -> list[RealtimeCodecEvent]:
