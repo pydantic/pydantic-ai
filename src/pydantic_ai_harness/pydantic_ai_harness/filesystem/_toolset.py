@@ -93,6 +93,9 @@ _FILE_TYPE_NEEDS_RIPGREP = '`file_type` needs ripgrep, which this workspace cann
 _MAX_MATCH_COLUMNS = 4096
 """Bytes of a matching or context line `grep` shows before ripgrep cuts it with an omission marker."""
 
+_RG_ONLY_GLOB = re.compile(r'\*\*|[{}\\]|\[\^|^!')
+"""Glob syntax `rg --glob` gives a meaning `fnmatch` lacks: `**`, `{a,b}`, escapes, `[^...]`, and a leading `!`."""
+
 READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
     {'read_file', 'list_directory', 'search_files', 'find_files', 'file_info', *RIPGREP_TOOL_NAMES}
 )
@@ -1596,8 +1599,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         prefix = posixpath.relpath(cwd, scope.root)
         include_hidden = bool(include_glob and _explicit_hidden(include_glob))
         # `rg --glob` anchors a glob with a `/` in it and its `*` stops at `/`, so `src/*.py` would
-        # miss `src/pkg/m.py`. Such a glob is matched with `fnmatch` below instead, as without `rg`.
-        command_glob = include_glob if include_glob and '/' not in include_glob else None
+        # miss `src/pkg/m.py`. Such a glob is matched with `fnmatch` below instead, as without `rg`,
+        # unless it uses syntax only `rg` understands.
+        fnmatch_only = bool(include_glob and '/' in include_glob and not _RG_ONLY_GLOB.search(include_glob))
+        command_glob = include_glob.removeprefix(prefix + '/') if include_glob and prefix != '.' else include_glob
 
         def selected(record: Record) -> bool:
             path = posixpath.normpath(record.path)
@@ -1631,7 +1636,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     '--max-columns',
                     str(_MAX_MATCH_COLUMNS),
                     '--max-columns-preview',
-                    *(['--glob', command_glob] if command_glob else []),
+                    *(['--glob', command_glob] if command_glob and not fnmatch_only else []),
                     '--regexp',
                     pattern,
                     '--',
@@ -1641,7 +1646,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 limit=self._max_search_results,
                 accept=lambda record: (
                     self._match_line(scope, cwd, record, include_hidden=include_hidden)
-                    if (command_glob or selected(record)) and permitted(record)
+                    if (not fnmatch_only or selected(record)) and permitted(record)
                     else None
                 ),
                 prepare=prepare,
