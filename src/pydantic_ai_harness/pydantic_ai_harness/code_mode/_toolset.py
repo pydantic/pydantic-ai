@@ -33,7 +33,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     is_multi_modal_content,
 )
-from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolDenied, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -337,6 +336,9 @@ _CATALOG_INSTRUCTION_NAME = 'catalog'
 _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 """Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
 
+_TOOL_SEARCH_NATIVE_ID = 'tool_search'
+"""The `with_native` value that marks a member of the native tool search's corpus (`ToolSearchTool.kind`)."""
+
 _Placement: TypeAlias = Literal['native', 'sandboxed', 'hidden']
 """Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, or nowhere yet."""
 
@@ -354,12 +356,12 @@ def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, T
     member stays native, which keeps the native search on the wire and drops `search_tools` with it.
     """
     hidden = [name for name, where in placements.items() if where == 'hidden']
-    in_native_corpus = [name for name in hidden if tools[name].tool_def.with_native == ToolSearchTool.kind]
+    in_native_corpus = [name for name in hidden if tools[name].tool_def.with_native == _TOOL_SEARCH_NATIVE_ID]
     local_search = any(
         tool.tool_def.tool_kind == 'tool-search' and placements[name] == 'native' for name, tool in tools.items()
     )
     corpus_stays_native = any(
-        tool.tool_def.with_native == ToolSearchTool.kind and placements[name] == 'native'
+        tool.tool_def.with_native == _TOOL_SEARCH_NATIVE_ID and placements[name] == 'native'
         for name, tool in tools.items()
     )
     if in_native_corpus and (not local_search or corpus_stays_native):
