@@ -28,6 +28,8 @@ from pydantic_ai import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ModelHTTPError
@@ -570,8 +572,8 @@ async def test_the_prefix_stays_byte_stable_on_later_requests(allow_model_reques
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
-async def test_a_summary_inside_a_response_splits_it(allow_model_requests: None):
-    """The parts around the summary stay assistant turns on either side of it."""
+async def test_a_summary_inside_a_response_goes_ahead_of_it(allow_model_requests: None):
+    """A response holding a summary among other parts stays whole, with the summary sent just before it."""
     bodies: list[Any] = []
     client = httpx2.AsyncClient(transport=_capturing_transport(httpx2, bodies))
     model = OpenAIChatModel('gpt-5.6', provider=OpenAIProvider(api_key='x', http_client=client))
@@ -582,13 +584,34 @@ async def test_a_summary_inside_a_response_splits_it(allow_model_requests: None)
     with pytest.raises(ModelHTTPError):
         await Agent(model).run(QUESTION, message_history=history)
 
-    assert [(message['role'], message['content']) for message in bodies[0]['messages']] == [
-        ('user', 'go'),
-        ('assistant', 'before'),
-        ('user', FRAMED),
-        ('assistant', 'after'),
-        ('user', QUESTION),
+    messages = bodies[0]['messages']
+    assert [message['role'] for message in messages] == ['user', 'user', 'assistant', 'user']
+    assert [messages[0]['content'], messages[1]['content'], messages[3]['content']] == ['go', FRAMED, QUESTION]
+    assert 'before' in messages[2]['content'] and 'after' in messages[2]['content']
+
+
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+@pytest.mark.parametrize('summary_first', [True, False])
+async def test_a_summary_next_to_a_tool_call_keeps_the_call_answered(allow_model_requests: None, summary_first: bool):
+    """A UI client can send a summary in the same assistant message as a tool call; the call's result still follows it."""
+    bodies: list[Any] = []
+    client = httpx2.AsyncClient(transport=_capturing_transport(httpx2, bodies))
+    model = OpenAIChatModel('gpt-5.6', provider=OpenAIProvider(api_key='x', http_client=client))
+    call = ToolCallPart(tool_name='look', args='{}', tool_call_id='c1')
+    summary = CompactionPart(content=SUMMARY)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('go')]),
+        ModelResponse(parts=[summary, call] if summary_first else [call, summary]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='look', content='seen', tool_call_id='c1')]),
     ]
+    with pytest.raises(ModelHTTPError):
+        await Agent(model).run(QUESTION, message_history=history)
+
+    roles = [message['role'] for message in bodies[0]['messages']]
+    assert roles == ['user', 'user', 'assistant', 'tool', 'user']
+    assert bodies[0]['messages'][1]['content'] == FRAMED
+    assert bodies[0]['messages'][2]['tool_calls'][0]['id'] == 'c1'
+    assert bodies[0]['messages'][3]['tool_call_id'] == 'c1'
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')

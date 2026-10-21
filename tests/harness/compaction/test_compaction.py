@@ -5028,6 +5028,28 @@ recent
         assert roles == ['user', 'assistant', 'user']
         assert body['messages'][1]['content'][0]['type'] == 'thinking'
 
+    async def test_a_legacy_summary_in_the_kept_tail_is_replaced(self):
+        """An earlier release's system-prompt summary the cutoff keeps is superseded, not left in system voice."""
+        prompts: list[str] = []
+        comp = SummarizingCompaction(
+            model=_recording_summarizer(prompts, output='NEW'), max_messages=3, keep_messages=3
+        )
+        legacy = ModelRequest(
+            parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}OLD'), UserPromptPart(content='keep me')]
+        )
+        messages: list[ModelMessage] = [_user('a'), _assistant('b'), legacy, _assistant('c'), _user('d')]
+        result = await comp.compact(messages, _make_ctx(messages))
+
+        assert '<previous-summary>\nOLD\n</previous-summary>' in prompts[0]
+        assert not any(
+            isinstance(part, SystemPromptPart) and part.content.startswith(_SUMMARY_PREFIX)
+            for message in result
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        assert 'keep me' in _user_texts(result)
+        assert _summary_text(result) == 'NEW'
+
     async def test_a_summary_saved_by_an_earlier_release_anchors_the_next_one(self):
         """A history with the old system-prompt summary keeps loading, and its summary is replaced."""
         prompts: list[str] = []

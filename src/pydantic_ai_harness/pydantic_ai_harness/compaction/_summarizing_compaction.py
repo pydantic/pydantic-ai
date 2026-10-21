@@ -377,6 +377,23 @@ def _open_tail_at_request(
     return to_summarize[: min(len(to_summarize), adjusted)], messages[adjusted:]
 
 
+def _without_legacy_summaries(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """*messages* without summaries an earlier release stored as system prompts, keeping the rest of their requests."""
+    out: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest) and any(
+            isinstance(part, SystemPromptPart) and _is_legacy_summary(part) for part in message.parts
+        ):
+            parts = [
+                part for part in message.parts if not (isinstance(part, SystemPromptPart) and _is_legacy_summary(part))
+            ]
+            if not parts:
+                continue
+            message = replace(message, parts=parts)
+        out.append(message)
+    return out
+
+
 def _is_legacy_summary(part: SystemPromptPart) -> bool:
     """Whether *part* is a summary written by a release that stored it as a system prompt."""
     return part.content.startswith(_SUMMARY_PREFIX)
@@ -675,7 +692,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         if previous_summary is not None:
             # The new summary was written as an update of the newest earlier one, so it supersedes any
             # the cutoff kept. Without an anchor the new summary never saw them, so they stay.
-            preserved = without_summaries(preserved)
+            preserved = _without_legacy_summaries(without_summaries(preserved))
         before, after = ([], extra) if self.keep_user_messages else (extra, [])
         result: list[ModelMessage] = [*standing, *before, summary_message, *after, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)

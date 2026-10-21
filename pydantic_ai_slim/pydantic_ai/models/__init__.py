@@ -2694,8 +2694,10 @@ def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFuncti
     a `<system>` tag. Parts without content have nothing to send and are left for the adapter to omit, and a part a
     provider produced stays in that provider's own role.
 
-    The part is stored on the response side, so it is moved out into a request of its own and merged
-    with the requests around it, keeping user and assistant turns alternating. The merge only depends
+    The part is stored on the response side, so it is moved out into a request of its own, ahead of
+    the response that held it (a summary describes what came before), and merged with the requests
+    around it, keeping user and assistant turns alternating. The rest of that response stays whole,
+    so a tool call in it is still directly answered by the request after it. The merge only depends
     on the messages at the summary's position, so it is the same on every later request and the
     prompt prefix stays byte-stable.
 
@@ -2714,17 +2716,16 @@ def _render_unattributed_compaction_parts(  # pyright: ignore[reportUnusedFuncti
         if not isinstance(message, ModelResponse):
             new_messages.append(message)
             continue
-        kept: list[ModelResponsePart] = []
-        for part in message.parts:
-            if _is_unattributed_summary(part):
-                if kept:
-                    new_messages.append(replace(message, parts=kept))
-                    kept = []
-                new_messages.append(ModelRequest(parts=[UserPromptPart(_conversation_summary_text(part.content))]))
-            else:
-                kept.append(part)
-        if kept:
-            new_messages.append(replace(message, parts=kept))
+        summaries = [part for part in message.parts if _is_unattributed_summary(part)]
+        if summaries:
+            new_messages.append(
+                ModelRequest(parts=[UserPromptPart(_conversation_summary_text(part.content)) for part in summaries])
+            )
+            rest = [part for part in message.parts if not _is_unattributed_summary(part)]
+            if rest:
+                new_messages.append(replace(message, parts=rest))
+        else:
+            new_messages.append(message)
     return _merge_consecutive_messages(new_messages)
 
 
