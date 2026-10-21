@@ -38,6 +38,7 @@ def connect_with_auth(
 
     A function that returns `None` or `''` gives that run no tools. It must not return `'oauth'`, which FastMCP
     reads as a browser sign-in that would hang a server run; `expected` names what it should return instead.
+    Like a static token, the function is fixed when the toolset is built, so vary the token per run inside it.
     """
     if not callable(auth):
         return connect(auth)
