@@ -28,6 +28,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+boxlite = "2026-10-18T01:35:01Z"
 cassetter = false
 certifi = "2026-10-20T02:25:00Z"
 genai-prices = false
@@ -934,6 +935,28 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0c/a8/a26608ff39e3a5866c6c79eda10133490205cbddd45074190becece3ff2a/botocore_stubs-1.42.41.tar.gz", hash = "sha256:dbeac2f744df6b814ce83ec3f3777b299a015cbea57a2efc41c33b8c38265825", size = 42411, upload-time = "2026-02-03T20:46:14.479Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/76/cab7af7f16c0b09347f2ebe7ffda7101132f786acb767666dce43055faab/botocore_stubs-1.42.41-py3-none-any.whl", hash = "sha256:9423110fb0e391834bd2ed44ae5f879d8cb370a444703d966d30842ce2bcb5f0", size = 66759, upload-time = "2026-02-03T20:46:13.02Z" },
+]
+
+[[package]]
+name = "boxlite"
+version = "0.10.7"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f1/b1/a445910349760041c290bc1a7227fc68cb5b2f19b845ad660841165fdaa0/boxlite-0.10.7-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:9758254058b1ff0de5d5c2a1338e87ecd071d2704ba90ac70c42a5a81a83cb9a", size = 40618823, upload-time = "2026-10-18T01:34:00.027Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/fe/3769052575c7b3bea2164b5f44af774d577fbb72529ff78f8d46d8f74c43/boxlite-0.10.7-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:8e5b065c7476b4a87ef21d18e1522054461e7a3ba339050334d180923bcb57f1", size = 42888082, upload-time = "2026-10-18T01:34:03.769Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/e9/2d2476edfb04f85168363a39d27746f0864c80d4031dcc3efcd84bcf9bbc/boxlite-0.10.7-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:40c0c0cf551e29837642e5bd81c9e3e00baec1f4cd93e0dac5c012a8a8223953", size = 38895777, upload-time = "2026-10-18T01:34:08.257Z" },
+    { url = "https://files.pythonhosted.org/packages/48/36/35d0ff82b375969906f7f3b080ef7fbbb8371a2b58ffddc9c0cd3427b071/boxlite-0.10.7-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:97a3c9a7fba9b76182fafe5696288efba4c5e2057530942146192360d8378463", size = 40622820, upload-time = "2026-10-18T01:34:12.737Z" },
+    { url = "https://files.pythonhosted.org/packages/48/13/0691b95b587a8af4ab215ba204bd7ae86caf78dc54baa12e63601925d928/boxlite-0.10.7-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:024c9de004355a595ba54c23648c713c0e6f76f68034d31fa148c181cef51bee", size = 42879965, upload-time = "2026-10-18T01:34:17.267Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/63/389cf73c6dbd0c115601b60528942edbf0485fc002c40f58de4761e269d5/boxlite-0.10.7-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:8d29b231dfca853a3d75165b45ab4b0fd2edbc7fe5ee4067c5caf8b2e5f7d7c5", size = 38893454, upload-time = "2026-10-18T01:34:21.841Z" },
+    { url = "https://files.pythonhosted.org/packages/69/8c/2e78a99992d1b5acb0d3bbcce99fa078a92095e4c53cc3de090be51d831c/boxlite-0.10.7-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:dce36e669094d382e09496ec844d5dfef6b3c6fec07a0f44a6f56c3ed7b86fe3", size = 40622921, upload-time = "2026-10-18T01:34:26.35Z" },
+    { url = "https://files.pythonhosted.org/packages/77/0b/e8a16f2d3e029c72f70b73380a0bf624af712ee62fee2afcabb5fc751924/boxlite-0.10.7-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:615e0d43c0792aaaf10c6730666552263f94b3c3c607ce2812938c202bb70b2a", size = 42876826, upload-time = "2026-10-18T01:34:31.104Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/ff/fa26bcb7af001d84d25e9eef17689324bbdfc1944e44c7dd3196831568d5/boxlite-0.10.7-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:81b2579749d29a89481863e37b27c6c919a8279573a8601826eaed1430a6e5e4", size = 38892539, upload-time = "2026-10-18T01:34:35.588Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/13/6d1baf5a822d736e218e7b8d3305839ca1b2a97a31c9a954f26856a6bd4a/boxlite-0.10.7-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:fd11510b9e3f2d1dc38e706dfa2eb569671e7079468bb9075f250804306fa133", size = 40621587, upload-time = "2026-10-18T01:34:39.858Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/f0/dfd7ed9c4da7f89feed52ebb782c4a7a0799ca8e97e648358c664489e78b/boxlite-0.10.7-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:29e281a415627a76b0d7c0cd254b649c8db172a1d0356850f2c42c9c8b0c3e79", size = 42885269, upload-time = "2026-10-18T01:34:44.757Z" },
+    { url = "https://files.pythonhosted.org/packages/85/01/63eb2bba2581ff912a575930c40ce2feb090ddcda5404112edf4a2b69b8e/boxlite-0.10.7-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:417a8ed052796179a0680f9a58ab0cc0c302c635c7e4d207d2071ee5c4c25705", size = 38895278, upload-time = "2026-10-18T01:34:48.677Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/0b/6807ba036c3818bbcc62c7ca7c61fd6c4534c958001fcb05f3cfff258d50/boxlite-0.10.7-cp314-cp314t-macosx_14_0_arm64.whl", hash = "sha256:f36f9af56f355d08776f782963fa71a7868d028723df24efd9fc01c27142783f", size = 40620576, upload-time = "2026-10-18T01:34:52.543Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/48/21e952ec2b65f827c7245c3008d48a550bdef9f22e5bb90afbc08889a72a/boxlite-0.10.7-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:04c9b6b7c8fcde53246f5fd6f86ee9a11676142ad55cef59fdde5cb339a0c612", size = 42876965, upload-time = "2026-10-18T01:34:56.785Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/aa/f26445cbc397256edb2b73abb67a7f4345a1bdca3cfa358be211f60ac811/boxlite-0.10.7-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:b9586e737242bed22f9a875846c09d98c2998d778c530647590764fd13b42450", size = 38892912, upload-time = "2026-10-18T01:35:00.586Z" },
 ]
 
 [[package]]
@@ -6579,6 +6602,9 @@ anthropic = [
 aws-lambda = [
     { name = "aws-durable-execution-sdk-python" },
 ]
+boxlite = [
+    { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
+]
 cli = [
     { name = "pydantic-ai-slim", extra = ["cli"] },
 ]
@@ -6699,6 +6725,7 @@ requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<2" },
     { name = "beartype", marker = "python_full_version >= '3.15' and extra == 'stackone'", specifier = ">=0.23.0rc2" },
+    { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.223.1,<1" },
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=2.48.0" },
@@ -6748,7 +6775,7 @@ requires-dist = [
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "ordinal", "pgtask", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"

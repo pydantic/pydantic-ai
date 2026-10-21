@@ -1624,6 +1624,7 @@ You declare a [`name`][pydantic_ai.messages.InstructionPart.name]; the framework
 | `'agent:<name>'` | One part the agent named |
 | `'toolset:<toolset id>:<name>'` | One part that toolset named |
 | `'capability:<capability id>:<name>'` | One part that capability named |
+| `'run:<name>'` | One named [`InstructionPart`][pydantic_ai.messages.InstructionPart] passed to a run method's `instructions` argument |
 
 There are two ways to declare a name, depending on what the part is:
 
@@ -1679,7 +1680,7 @@ _(This example is complete, it can be run "as is")_
 Two consequences worth knowing before you key configuration on an id:
 
 - **A key covers everything under it.** Where a source contributes several parts and none of them are named, they all carry the source key, so replacing that key's text replaces all of them — computed parts included. That is the honest meaning of "I control what this capability tells the model", but it means parts a source didn't name can't be addressed one by one. `'agent'` is the deliberate exception: it covers only the literal instructions the agent was built with, so taking over the base prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's name.
-- **Some parts can't be addressed at all.** They take part in the prompt like any other, but nothing keys them: an instructions function with no `name` (a function's own name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)` that returns text or an unnamed part (one that returns an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` is keyed `'agent:<name>'`), anything passed as runtime instructions to a specific run, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(name=...)` or [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], or have it return a named `InstructionPart`.
+- **Some parts can't be addressed at all.** They take part in the prompt like any other, but nothing keys them: an instructions function with no `name` (a function's own name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)` that returns text or an unnamed part (one that returns an [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` is keyed `'agent:<name>'`), anything passed as runtime instructions to a specific run except a named `InstructionPart`, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(name=...)` or [`@capability.instructions(name=...)`][pydantic_ai.capabilities.Capability.instructions], or have it return a named `InstructionPart`.
 
     Naming a part whose source has no `id` leaves its `id` as `None`, because there is no source key to qualify the name against. The name still travels with the part, so you can see what its author called it, but nothing addresses it.
 
@@ -1741,6 +1742,7 @@ How you opt in depends on where the instructions come from:
 | [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] | `@capability.instructions(name='state', on_change='append')`, on a capability with an `id` |
 | [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] | `@toolset.instructions(name='state', on_change='append')`, on a toolset with an `id` |
 | Any other instruction function: passed to `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)`, or returned from a capability's `get_instructions()` | Return `InstructionPart(..., name='state', on_change='append')` from the function, as shown below |
+| A named [`InstructionPart`][pydantic_ai.messages.InstructionPart] passed to a run method's `instructions` argument | `instructions=InstructionPart('...', name='page', on_change='append')`, keyed `'run:<name>'`, as shown below. Unnamed runtime instructions always rewrite |
 | Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)` | Pass `InstructionPart('...', name='config', on_change='append')`. The text is fixed for the agent, so this only matters when it differs between runs of one conversation, for example an agent built per request |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] on a [custom capability](capabilities/custom.md#providing-instructions) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's read when the agent is built, and again for each run in which [`for_run`](capabilities/custom.md#per-run-state-isolation) returns a replacement, so a replacement can change its text between runs |
 | [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] on a [custom toolset](toolsets.md#building-a-custom-toolset) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's called before each request, so its text can change during a run |
@@ -1789,10 +1791,41 @@ print(changes)
 
 A function registered with a `name` can return an unnamed part to set only `on_change`; it can't rename itself.
 
+Instructions passed to a run method can append too, which suits per-request context an application passes to each run of a conversation, such as the page the user is on. Pass an `InstructionPart` with a `name`, keyed `'run:<name>'`; unnamed runtime instructions always rewrite:
+
+```python {title="run_instruction_changes.py"}
+from typing import Literal
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import InstructionDeltaPart, InstructionPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+Page = Literal['home', 'settings', 'billing']  # (1)!
+
+
+def current_page(page: Page) -> InstructionPart:
+    return InstructionPart(f'The user is on the {page} page.', name='page', on_change='append')
+
+
+agent = Agent(TestModel(), instructions='Help the user navigate the app.')
+first = agent.run_sync('Hi!', instructions=current_page('home'))
+second = agent.run_sync('What now?', instructions=current_page('settings'), message_history=first.all_messages())
+changes = [
+    part.content
+    for message in second.new_messages()
+    if isinstance(message, ModelRequest)
+    for part in message.parts
+    if isinstance(part, InstructionDeltaPart)
+]
+print(changes)
+#> ['The user is on the settings page.']
+```
+
+1. The page comes from the application's own routing, as one of a fixed set of names, never the raw URL or anything else the user controls: instructions carry operator authority.
+
 A few sources can't opt in yet:
 
 - A [template string](agent-spec.md#template-strings), which can only render text: use a function that returns an `InstructionPart` instead.
-- Instructions passed to a run method's `instructions` argument, which have no identity to address: move them into a named instruction function that reads the value from the run's dependencies.
 - [MCP server](mcp/client.md) instructions, which are read once when the connection opens and rarely change.
 
 The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, the history was compacted, or a request was sent without instructions (for example because a hook unset them), the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
@@ -1805,7 +1838,7 @@ Each block is sent as a `<context id="...">` element, and the last of them is fo
 
 Whether a model accepts and follows an update is model-dependent: preserving the prefix doesn't suppress provider refusals. See the provider pages for known issues, such as [refusals on repeated prompts](models/anthropic.md#refusals-on-repeated-prompts) on Anthropic.
 
-Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) compute themselves append their changes by default: the catalog of [on-demand capabilities](capabilities/on-demand.md) that the `load_capability` tool loads (keyed `capability:deferred_capabilities`), and the Harness [`SubAgents`](harness/subagents.md) listing (`capability:sub_agents`, or the capability's `id`) and [`RepoContext`](harness/repo-context.md) context files (`capability:repo_context`, or the capability's `id`). A skill added to the workspace, a new sub-agent definition or an edited `AGENTS.md` between runs of a conversation then extends the cached prompt rather than rewriting it. Instructions you write keep the `'rewrite'` default until you opt in.
+Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) compute themselves append their changes by default: the catalog of [on-demand capabilities](capabilities/on-demand.md) that the `load_capability` tool loads (keyed `capability:deferred_capabilities`), and the Harness [`SubAgents`](harness/subagents.md) listing (`capability:sub_agents`, or the capability's `id`), [`RepoContext`](harness/repo-context.md) context files (`capability:repo_context`, or the capability's `id`), and [`ManagedPrompt`](harness/managed-prompt.md) prompts (`capability:managed-prompt-<name>`, or the capability's `id`). A skill added to the workspace, a new sub-agent definition, an edited `AGENTS.md` or a new version of a managed prompt between runs of a conversation then extends the cached prompt rather than rewriting it. Instructions you write keep the `'rewrite'` default until you opt in.
 
 !!! note "Scope and trust"
     Append delivery supports always-on agent, capability, and toolset instruction sources. Deferred capability instructions and realtime sessions warn when given this opt-in and retain their existing delivery behavior; the framework's own appending blocks fall back to rewriting there without a warning. Legacy `system_prompt(dynamic=True)` is unchanged.
@@ -2007,11 +2040,13 @@ with capture_run_messages() as messages:  # (2)!
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
-                        content='Please try again.',
+                    ToolReturnPart(
                         tool_name='calc_volume',
+                        content='Please try again.',
                         tool_call_id='pyd_ai_tool_call_id',
                         timestamp=datetime.datetime(...),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=datetime.datetime(...),
@@ -2027,7 +2062,7 @@ with capture_run_messages() as messages:  # (2)!
                     )
                 ],
                 usage=RequestUsage(
-                    cost=Decimal('0.000224'), input_tokens=72, output_tokens=8
+                    cost=Decimal('0.000216'), input_tokens=68, output_tokens=8
                 ),
                 model_name='{{ openai:medium.name }}',
                 timestamp=datetime.datetime(...),

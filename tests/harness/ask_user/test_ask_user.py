@@ -11,13 +11,12 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -107,10 +106,10 @@ def calling(arguments: object) -> FunctionModel:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart(TOOL_NAME, {'questions': arguments}, tool_call_id='c1')])
         part = messages[-1].parts[-1]
-        if isinstance(part, ToolReturnPart):
-            return ModelResponse(parts=[TextPart(part.model_response_str())])
-        assert isinstance(part, RetryPromptPart)
-        return ModelResponse(parts=[TextPart(part.model_response())])
+        assert isinstance(part, ToolReturnPart)
+        if part.outcome == 'retried':
+            return ModelResponse(parts=[TextPart(part.model_response_str(wrap_if_error=False))])
+        return ModelResponse(parts=[TextPart(part.model_response_str())])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
         (part,) = respond(messages, info).parts
@@ -178,6 +177,22 @@ class TestAskUser:
         await agent.run('go')
         assert order == ['requested', 'answerer']
 
+    async def test_a_raising_answerer_fails_the_run_but_still_releases_observers(self) -> None:
+        async def disconnected(request: AskUserRequest) -> AskUserResponse:
+            raise ConnectionError('client went away')
+
+        observer = Observer()
+        agent = Agent(
+            calling(raw_questions()), deps_type=type(None), capabilities=[AskUser(answerer=disconnected), observer]
+        )
+        with pytest.raises(ConnectionError, match='client went away'):
+            await agent.run('go')
+        (requested,) = observer.requested
+        (answered,) = observer.answered
+        assert answered.request_id == requested.request.id
+        assert answered.failed and not answered.timed_out
+        assert answered.response == AskUserResponse(cancelled=True)
+
     @pytest.mark.parametrize(
         ('arguments', 'complaint'),
         [
@@ -239,6 +254,34 @@ class TestAskUser:
         first = result.all_messages()[0]
         assert isinstance(first, ModelRequest)
         assert first.instructions is not None and TOOL_NAME in first.instructions
+
+
+class TestTwoOfThem:
+    async def test_two_that_agree_become_one(self) -> None:
+        answerer = ScriptedAnswerer()
+        model = TestModel(call_tools=[])
+        agent = Agent(model, capabilities=[AskUser(answerer=answerer), AskUser(answerer=answerer)])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert [tool.name for tool in parameters.function_tools] == [TOOL_NAME]
+        assert [str(part.id) for part in parameters.instruction_parts or ()] == ['capability:ask_user']
+
+    def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'ask_user' is used by multiple AskUser capabilities that disagree on 'answerer'",
+        ):
+            Agent(TestModel(), capabilities=[AskUser(answerer=ScriptedAnswerer()), AskUser(answerer=None)])
+
+    async def test_distinct_ids_and_prefixed_tools_keep_two_apart(self) -> None:
+        model = TestModel(call_tools=[])
+        second = AskUser(answerer=None, id='deferred_ask_user')
+        agent = Agent(model, capabilities=[AskUser(answerer=ScriptedAnswerer()), PrefixTools(second, prefix='later')])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert sorted(tool.name for tool in parameters.function_tools) == [TOOL_NAME, f'later_{TOOL_NAME}']
 
 
 class TestDeferred:

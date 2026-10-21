@@ -17,6 +17,8 @@ from ._deferred import filter_deferred_results
 from ._output import (
     OutputSchema,
     OutputToolset,
+    build_retried_tool_return,
+    retried_return_from_legacy,
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -35,7 +37,6 @@ from .exceptions import (
 )
 from .messages import (
     _TOOL_KINDS,  # pyright: ignore[reportPrivateUsage]
-    RetryPromptPart,
     ToolCallPart,
     ToolReturn,
     _shape_name,  # pyright: ignore[reportPrivateUsage]
@@ -96,6 +97,92 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
                     f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its return type doesn't fit the "
                     f'content the kind declares ({_shape_name(kind.content)}): {"; ".join(problems)}.'
                 )
+
+
+def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[str, ToolsetTool[AgentDepsT]]:
+    """Leave out each tool whose `unless_tool_kind` names the kind of another tool that stays.
+
+    Every collected tool counts, including deferred ones not yet revealed, so revealing a tool doesn't
+    change the answer mid-run. A tool is only left out in favor of a tool that stays, so in a chain
+    (A unless B's kind, B unless C's kind) C drops B and A stays. Tools that can only be resolved in
+    favor of each other form a cycle; there the first tool in toolset order that is on the cycle stays,
+    every tool whose kind it names steps aside, and the rest follows from that. Some cycles can't satisfy
+    every rule at once (A unless B, B unless C, C unless A). There a tool is never left out without a tool
+    it names staying, so the rule given up is the other one: a tool can stay beside a tool it names. The
+    result is deterministic from toolset order.
+    """
+    names_by_kind: dict[str, list[str]] = {}
+    for name, tool in tools.items():
+        if (kind := tool.tool_def.tool_kind) is not None:
+            names_by_kind.setdefault(kind, []).append(name)
+
+    suppliers: dict[str, list[str]] = {}
+    for name, tool in tools.items():
+        if (unless_kind := tool.tool_def.unless_tool_kind) is not None:
+            if others := [other for other in names_by_kind.get(unless_kind, ()) if other != name]:
+                suppliers[name] = others
+    if not suppliers:
+        return tools
+
+    stays: dict[str, bool] = {name: True for name in tools if name not in suppliers}
+    undecided = [name for name in tools if name in suppliers]
+    while undecided:
+        progressed = False
+        for name in undecided:
+            if any(stays.get(other) is True for other in suppliers[name]):
+                stays[name] = False
+                progressed = True
+            elif all(stays.get(other) is False for other in suppliers[name]):
+                stays[name] = True
+                progressed = True
+        if not progressed:
+            pinned = _first_on_a_cycle(undecided, suppliers)
+            stays[pinned] = True
+            # The pinned tool wins against every tool whose kind it names, so none can be kept beside it later,
+            # for instance by a separate cycle that would otherwise pin one of them.
+            for other in suppliers[pinned]:
+                stays.setdefault(other, False)
+        undecided = [name for name in undecided if name not in stays]
+    _restore_tools_without_a_replacement(stays, suppliers)
+    return {name: tool for name, tool in tools.items() if stays[name]}
+
+
+def _restore_tools_without_a_replacement(stays: dict[str, bool], suppliers: Mapping[str, list[str]]) -> None:
+    """Bring back each left-out tool none of whose suppliers stays.
+
+    Keeping a tool beside one it names is only redundant, but dropping one with nothing to replace it
+    loses what it does. A cycle that can't meet both rules (A unless B, B unless C, C unless A) can leave
+    a tool out whose suppliers all went too. Restoring a tool only adds replacements for others, so this
+    never brings back a tool that was left out for good reason.
+    """
+    restored = True
+    while restored:
+        restored = False
+        for name, others in suppliers.items():
+            if not stays[name] and not any(stays[other] for other in others):
+                stays[name] = True
+                restored = True
+
+
+def _first_on_a_cycle(undecided: list[str], suppliers: Mapping[str, list[str]]) -> str:
+    """The first tool in `undecided` that can reach itself through undecided suppliers.
+
+    The loop stalls only when every undecided tool has an undecided supplier, so following them always ends
+    in a cycle. Pinning a tool that merely leads into one would keep it beside the cycle member that stays,
+    whose kind it names.
+    """
+    pending = set(undecided)
+    for name in undecided:
+        seen: set[str] = set()
+        stack = [other for other in suppliers[name] if other in pending]
+        while stack:
+            other = stack.pop()
+            if other == name:
+                return name
+            if other not in seen:
+                seen.add(other)
+                stack.extend(supplier for supplier in suppliers[other] if supplier in pending)
+    raise AssertionError('a stalled resolution always contains a cycle')  # pragma: no cover
 
 
 @lru_cache(maxsize=256)
@@ -199,11 +286,28 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
 
 
+def _record_attempt(error: ToolRetryError, *, attempt: int | None, max_retries: int | None) -> ToolRetryError:
+    """Stamp a retried tool return with the attempt the tool manager just charged for it."""
+    part = error.tool_retry
+    if isinstance(part, _messages.ToolReturnPart) and part.retry is not None and attempt is not None:
+        part.retry = replace(part.retry, attempt=attempt, max_retries=max_retries)
+    return error
+
+
+class _UnknownTool(ModelRetry):
+    """A `ModelRetry` refusing a call to a tool name that doesn't exist.
+
+    A distinct type only so the retried result can record `cause='unknown_tool'`; it reaches the
+    model as an ordinary retry, exactly like the `ModelRetry` it replaced.
+    """
+
+
 class _ToolUnavailable(ModelRetry):
     """A `ModelRetry` refusing a call because the tool is not available yet.
 
-    A distinct type only so `_make_validation_failure` can recognise it. It
-    reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
+    A distinct type only so `_make_validation_failure` can recognise it and the retried result can
+    record `cause='unavailable_tool'`. It reaches the model as an ordinary retry, exactly like the
+    `ModelRetry` it replaced.
 
     Carries the tool it refused: the refusal is raised while resolving, before the caller has
     bound the resolved tool, and the budget this failure is charged against is the tool's own
@@ -316,6 +420,7 @@ class ToolManager(Generic[AgentDepsT]):
         still gets its `prepare_tools` say over its own tools.
         """
         resolved_capability_ids = frozenset(ctx._dispatch_active_capability_ids)  # pyright: ignore[reportPrivateUsage]
+        caller_ctx = ctx
         same_step = False
         if self.ctx is not None:
             if ctx.run_step == self.ctx.run_step:
@@ -349,6 +454,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         tools = await toolset.get_tools(ctx)
         _check_tool_kinds(tools)
+        tools = _drop_superseded_tools(tools)
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
@@ -364,8 +470,10 @@ class ToolManager(Generic[AgentDepsT]):
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
-        # through the standard validation/execution path.
+        # through the standard validation/execution path. The caller's context gets it too: it is
+        # the one the step's instructions are rendered with, and `ctx` is a copy from the second step on.
         ctx.tool_manager = new_tm
+        caller_ctx.tool_manager = new_tm
         return new_tm
 
     @property
@@ -402,22 +510,48 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
         return tool.tool_def if tool is not None else None
 
-    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
-        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
+    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> int:
+        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries, else return the attempt.
+
+        The attempt is 1-based: the retry this failure makes, on the count `max_retries` limits.
+        """
         assert self.ctx is not None
+        retries = self.ctx.retries.get(name, 0)
         # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
         # (the count starts at 0 and only ever grows, so it would never equal a negative target).
-        if self.ctx.retries.get(name, 0) >= max_retries:
+        if retries >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
                 'limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
             ) from error
+        return retries + 1
 
     @staticmethod
-    def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
-        """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
-        m = RetryPromptPart.from_error(error, tool_name=name, tool_call_id=call.tool_call_id)
-        return ToolRetryError(m)
+    def _wrap_error_as_retry(
+        name: str,
+        call: ToolCallPart,
+        error: ValidationError | ModelRetry,
+        *,
+        attempt: int | None,
+        max_retries: int | None,
+    ) -> ToolRetryError:
+        """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
+        cause = (
+            'unknown_tool'
+            if isinstance(error, _UnknownTool)
+            else 'unavailable_tool'
+            if isinstance(error, _ToolUnavailable)
+            else None
+        )
+        return _record_attempt(
+            ToolRetryError(
+                build_retried_tool_return(
+                    error, tool_name=name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind, cause=cause
+                )
+            ),
+            attempt=attempt,
+            max_retries=max_retries,
+        )
 
     @staticmethod
     def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:
@@ -634,9 +768,10 @@ class ToolManager(Generic[AgentDepsT]):
                 if not wrap_validation_errors:
                     raise
                 name = call.tool_name
-                self._check_max_retries(name, validated.tool.max_retries, e)
+                max_retries = validated.tool.max_retries
+                attempt = self._check_max_retries(name, max_retries, e)
                 self.failed_tools.add(name)
-                raise self._wrap_error_as_retry(name, call, e) from e
+                raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
             except ToolFailed as e:
                 if not wrap_validation_errors:
                     raise
@@ -680,7 +815,7 @@ class ToolManager(Generic[AgentDepsT]):
                 msg = 'No tools are available yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
-            raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+            raise _UnknownTool(f'Unknown tool name: {name!r}. {msg}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
             raise _ToolUnavailable(unavailable, tool)
         return name, tool
@@ -760,12 +895,18 @@ class ToolManager(Generic[AgentDepsT]):
         # leave the tool with nothing left when it is later called properly and fails for real.
         # Later refusals of the same tool charge normally, so a model that never takes the
         # correction still ends the run.
+        attempt: int | None = None
         if isinstance(error, _ToolUnavailable) and name not in self.availability_refused:
             self.availability_refused.add(name)
         else:
-            self._check_max_retries(name, max_retries, cause)
+            attempt = self._check_max_retries(name, max_retries, cause)
             self.failed_tools.add(name)
-        validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
+        charged_max_retries = max_retries if attempt is not None else None
+        validation_error = (
+            _record_attempt(error, attempt=attempt, max_retries=charged_max_retries)
+            if isinstance(error, ToolRetryError)
+            else self._wrap_error_as_retry(name, call, error, attempt=attempt, max_retries=charged_max_retries)
+        )
         return ValidatedToolCall(
             call=call,
             tool=tool,
@@ -1067,9 +1208,9 @@ class ToolManager(Generic[AgentDepsT]):
             )
         except ToolRetryError as e:
             cause = e.__cause__ if isinstance(e.__cause__, Exception) else e
-            self._check_max_retries(name, tool.max_retries, cause)
+            attempt = self._check_max_retries(name, tool.max_retries, cause)
             self.failed_tools.add(name)
-            raise
+            raise _record_attempt(e, attempt=attempt, max_retries=tool.max_retries)
 
         # Gated like `failed_tools` above: raw-mode (streaming) callers leave retry-budget state untouched.
         if wrap_validation_errors:
@@ -1188,9 +1329,10 @@ class ToolManager(Generic[AgentDepsT]):
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise
-            self._check_max_retries(name, validated.tool.max_retries, e)
+            max_retries = validated.tool.max_retries
+            attempt = self._check_max_retries(name, max_retries, e)
             self.failed_tools.add(name)
-            raise self._wrap_error_as_retry(name, validated.call, e) from e
+            raise self._wrap_error_as_retry(name, validated.call, e, attempt=attempt, max_retries=max_retries) from e
 
         _usage_attribution.record_tool_call(usage)
 
@@ -1412,16 +1554,17 @@ class ToolManager(Generic[AgentDepsT]):
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
-                _messages.RetryPromptPart(
-                    content=tool_call_result.message,
-                    tool_name=call.tool_name,
-                    tool_call_id=call.tool_call_id,
+                build_retried_tool_return(
+                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
                 )
             )
-        if isinstance(tool_call_result, _messages.RetryPromptPart):
-            tool_call_result.tool_name = call.tool_name
-            tool_call_result.tool_call_id = call.tool_call_id
-            raise ToolRetryError(tool_call_result)
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(tool_call_result, _messages.RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            raise ToolRetryError(
+                retried_return_from_legacy(
+                    tool_call_result, tool_name=call.tool_name, tool_call_id=call.tool_call_id, tool_kind=call.tool_kind
+                )
+            )
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
         # the handler's original value verbatim so handle_call's contract — "what the
         # tool would have returned" — is preserved for plain-vs-wrapped inputs.
