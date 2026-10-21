@@ -73,8 +73,8 @@ Some models (e.g. Gemini) natively support semi-structured return values, while 
 Whether a file can travel inside the tool result depends on the model **and** the file's media type:
 
 - **Inside the tool result**, where the API and the media type both allow it: Anthropic and OpenAI Responses for images and documents, Gemini 3 for the types listed in its [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile]'s `google_supported_mime_types_in_tool_returns`, and Bedrock for the media kinds a model family supports.
-- **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set). Anthropic and OpenAI Responses have no fallback: a tool returning audio or video raises `NotImplementedError` rather than sending it.
-- **Nowhere**: Cohere drops a file returned from a tool without an error — see [#7646](https://github.com/pydantic/pydantic-ai/issues/7646).
+- **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set).
+- **As a note in its place**, where the model can't read that kind of file at all, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on Bedrock, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
 
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
@@ -89,6 +89,14 @@ The tool result itself carries `See file d9a13f.` in place of the file, and each
 The framing is applied while the request is built and is never stored: the file stays on the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in your message history, so the same history replayed against a model that takes files natively puts them in the tool result with no framing at all.
 
 Because it is ordinary prompt text, the framing tells the model where content came from rather than proving it — see [the trust boundary](message-history.md#trust-boundary-for-client-supplied-history).
+
+A file the model can't read would fail the request if it were sent, which is out of proportion for something the model asked a tool for, so it is replaced in the tool result by a note naming it, and the run goes on:
+
+```text
+File d9a13f (audio/mpeg, 48,213 bytes) was not sent: this model cannot read audio files.
+```
+
+The model can then tell the user, or try another tool. Like the framing, the note is only in the request: the file stays on the `ToolReturnPart` in your message history, and each model a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries decides for itself, so one that can read the file is sent it. A file in a user prompt, or in [`ToolReturn.content`](#advanced-tool-returns), is sent as it is, and a model that can't take it still fails the request: you or your user chose to send it.
 
 ### Advanced Tool Returns
 

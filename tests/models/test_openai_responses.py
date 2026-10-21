@@ -46,9 +46,11 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
@@ -4869,6 +4871,38 @@ async def test_openai_previous_response_id_auto_continues_an_unchanged_history_a
     second_request = get_mock_responses_kwargs(mock_client)[1]
     assert second_request['previous_response_id'] == 'resp_1'
     assert [item.get('content') for item in second_request['input']] == ['Again']
+
+
+_LOOKUP_KIND = ToolKind('test_openai_responses', 'lookup')
+
+
+def _lookup() -> str:
+    return 'found'
+
+
+async def test_openai_previous_response_id_auto_continues_after_a_call_promoted_to_its_tool_kind(
+    allow_model_requests: None,
+):
+    """A call to a tool with a `tool_kind` is promoted after the response is digested, which changes nothing sent.
+
+    The promotion only stamps the kind onto the part, so the next request still continues from the response.
+    """
+    call = response_message([_function_call_item('fc_1', '{}')]).model_copy(update={'id': 'resp_1'})
+    mock_client = MockOpenAIResponses.create_mock([call, _text_reply('resp_2', 'done')])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        tools=[Tool(_lookup, name='lookup', tool_kind=_LOOKUP_KIND)],
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    result = await agent.run('Look it up')
+
+    call_part = result.all_messages()[1].parts[0]
+    assert isinstance(call_part, ToolCallPart)
+    assert call_part.tool_kind == _LOOKUP_KIND.id
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == 'resp_1'
 
 
 async def test_openai_previous_response_id_auto_ignores_application_only_metadata(allow_model_requests: None):

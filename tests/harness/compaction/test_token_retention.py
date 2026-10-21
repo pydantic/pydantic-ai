@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     RetryInfo,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -452,7 +453,14 @@ class TestSummarizingCompactionTokenRetention:
 
         result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
 
-        kept_text = [part.content for message in result for part in message.parts if isinstance(part, UserPromptPart)]
+        kept_text = [
+            ''.join(item.content for item in part.content if isinstance(item, TextContent))
+            if not isinstance(part.content, str)
+            else part.content
+            for message in result
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
         assert kept_text == (['a'] if keep_messages and user_text == 'a' else [])
         assert len(result) == 2 + len(kept_text)
         assert result[-1] is history[-1]
@@ -515,14 +523,15 @@ class TestSummarizingCompactionTokenRetention:
         assert 'OLDER_RESPONSE_SENTINEL' in prompts[0]
         assert 'PROTECTED_USER_SENTINEL' not in prompts[0]
         assert 'PROTECTED_RESPONSE_SENTINEL' not in prompts[0]
+        # A retained copy's text is marked `TextContent`.
         retained_users = [
-            part.content
+            item.content
             for message in result[: -len(suffix)]
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, UserPromptPart)
-            and isinstance(part.content, str)
-            and 'OLDER_USER_SENTINEL' in part.content
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent) and 'OLDER_USER_SENTINEL' in item.content
         ]
         assert bool(retained_users) is keep_user_messages
         assert all(len(text) <= 30 for text in retained_users)
