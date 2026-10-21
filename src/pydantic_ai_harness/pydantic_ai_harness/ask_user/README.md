@@ -148,7 +148,8 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
 start and end in step with the run. When the answerer raises, the answered event carries
-`failed=True` and a cancelled response, then the error propagates and fails the run. A run
+`failed=True` and a cancelled response, then the error propagates from the tool call: a
+`ModelRetry` sends the model a retry prompt, and any other error fails the run. A run
 cancelled while the answerer waits emits no answered event, so also clear waiting state when the
 run ends. Subscribe with `@on_event` on a capability or through the run's event stream:
 
@@ -166,7 +167,12 @@ class WaitIndicator(AbstractCapability[None]):
 
     @on_event(AskUserAnsweredEvent)
     async def done(self, ctx: RunContext[None], event: AskUserAnsweredEvent) -> None:
-        print('declined' if event.response.cancelled else 'answered')
+        if event.failed:
+            print('failed')
+        elif event.timed_out:
+            print('timed out')
+        else:
+            print('declined' if event.response.cancelled else 'answered')
 ```
 
 ## What the model sees
@@ -186,9 +192,9 @@ The tool schema mirrors [Code Puppy](https://github.com/mpfaffenberger/code_pupp
 These strings are drawn on terminals, where an escape sequence in a prompt-injected call is an
 attack, so control characters and format characters such as zero-width spaces, joiners and
 bidirectional overrides are rejected. Spaces of any width are allowed, and uniqueness treats
-them as an ordinary space. A call outside these limits, or with a field the schema does not
-have, goes back to the model as a validation retry and never reaches the answerer. Once
-validated the questions are frozen: what the answerer sees is what the model asked.
+most of them as an ordinary space. A call outside these limits, or with a field the schema
+does not have, goes back to the model as a validation retry and never reaches the answerer.
+Once validated the questions are frozen: what the answerer sees is what the model asked.
 
 The result is a JSON object mapping each header to the list of picked labels (or one custom answer), or the sentence
 `The user declined to answer. Continue without the answer, or ask differently if it is essential.`
