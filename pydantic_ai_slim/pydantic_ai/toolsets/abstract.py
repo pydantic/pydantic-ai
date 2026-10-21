@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
@@ -46,6 +47,12 @@ class SchemaValidatorProt(Protocol):
     def validate_python(
         self, input: Any, *, allow_partial: bool | Literal['off', 'on', 'trailing-strings'] = False, **kwargs: Any
     ) -> Any: ...
+
+
+_RELAYED_CONTRIBUTIONS: ContextVar[dict[int, InstructionContribution[Any]] | None] = ContextVar(
+    '_RELAYED_CONTRIBUTIONS', default=None
+)
+"""The child contributions collected while an authoring container's `get_instructions` runs, by part identity."""
 
 
 @dataclass(kw_only=True)
@@ -196,10 +203,21 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         if not self._authors_own_instructions():
             return await self._collect_child_instruction_contributions(ctx)
 
-        result = await self.get_instructions(ctx)
+        relayed: dict[int, InstructionContribution[Any]] = {}
+        token = _RELAYED_CONTRIBUTIONS.set(relayed)
+        try:
+            result = await self.get_instructions(ctx)
+        finally:
+            _RELAYED_CONTRIBUTIONS.reset(token)
         sources_by_key = self._instruction_sources_by_key()
         contributions: list[InstructionContribution[AgentDepsT]] = []
         for part in normalize_toolset_instruction_parts(result):
+            # A part this container's children contributed, which `get_instructions` passed along as it
+            # got it (from `super().get_instructions()`, say), stays attributed to its author, with or
+            # without an id.
+            if (relay := relayed.get(id(part))) is not None:
+                contributions.append(InstructionContribution(relay.source, relay.source_id, (part,)))
+                continue
             # A key names the toolset that owns it, so a part arriving under one below this
             # container is being relayed and stays attributed there. Everything else this container
             # wrote itself, and is resolved against its own key like any other author's.
@@ -218,7 +236,12 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         child_contributions = await gather(
             *(child._collect_instruction_contributions(ctx) for child in self._instruction_children())
         )
-        return [contribution for contributions in child_contributions for contribution in contributions]
+        contributions = [contribution for contributions in child_contributions for contribution in contributions]
+        # Called from inside an authoring container's `get_instructions`, record what each part came
+        # from, so the container can tell the parts it relays from the ones it writes.
+        if (relayed := _RELAYED_CONTRIBUTIONS.get()) is not None:
+            relayed.update((id(part), contribution) for contribution in contributions for part in contribution.parts)
+        return contributions
 
     def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         """The toolsets whose instruction contributions this one passes along."""
