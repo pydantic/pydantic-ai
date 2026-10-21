@@ -24,10 +24,6 @@ import anyio.to_thread
 _URI_SCHEME = 'media+sha256://'
 _HEX_RE = re.compile(r'^[0-9a-f]{64}$')
 
-# Sentinel: empty, shareable, immutable. Used as the default `context` on every
-# `MediaStore` method. Pulled into a module constant so a default-bound empty
-# context is always the same instance (cheap identity checks, no per-call
-# allocation).
 _EMPTY_METADATA: Mapping[str, str] = MappingProxyType({})
 
 
@@ -61,9 +57,10 @@ class MediaContext:
     metadata: Mapping[str, str] = field(default_factory=lambda: _EMPTY_METADATA)
 
 
-_EMPTY_CONTEXT = MediaContext()
+EMPTY_CONTEXT = MediaContext()
+"""The shared default `context` for every `MediaStore` method."""
 
-PublicUrlResolver = Callable[[str, MediaContext], 'str | None | Awaitable[str | None]']
+PublicUrlResolver = Callable[[str, MediaContext], str | None | Awaitable[str | None]]
 """User-supplied callable that turns a `media+sha256://<hex>` URI into a fetchable URL.
 
 Sync or async; the store auto-detects via `inspect.isawaitable` on the result.
@@ -95,7 +92,7 @@ def default_key_strategy(uri: str, context: MediaContext) -> str:
     return f'{parse_media_uri(uri)}.bin'
 
 
-async def _resolve_public_url(
+async def resolve_public_url(
     resolver: PublicUrlResolver | None,
     uri: str,
     context: MediaContext,
@@ -181,18 +178,18 @@ class MediaStore(Protocol):
     to `ImageUrl`/`AudioUrl`/etc. before the model sees the message.
     """
 
-    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str: ...  # pragma: no cover
+    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str: ...  # pragma: no cover
 
-    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes: ...  # pragma: no cover
+    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes: ...  # pragma: no cover
 
-    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool: ...  # pragma: no cover
+    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool: ...  # pragma: no cover
 
     async def public_url(
-        self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT
+        self, uri: str, *, context: MediaContext = EMPTY_CONTEXT
     ) -> str | None: ...  # pragma: no cover
 
     async def get_metadata(
-        self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT
+        self, uri: str, *, context: MediaContext = EMPTY_CONTEXT
     ) -> Mapping[str, str]: ...  # pragma: no cover
 
 
@@ -246,7 +243,7 @@ class DiskMediaStore:
             raise ValueError(f'key_strategy produced traversal-unsafe path: {relative!r}')
         return self._root / candidate
 
-    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
+    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str:
         return await anyio.to_thread.run_sync(self._sync_put, data, context)
 
     def _sync_put(self, data: bytes, context: MediaContext) -> str:
@@ -259,7 +256,7 @@ class DiskMediaStore:
             _write_atomically(path.with_name(path.name + '.meta.json'), json.dumps(dict(context.metadata)).encode())
         return uri
 
-    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
+    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
         return await anyio.to_thread.run_sync(self._sync_get, uri, context)
 
     def _sync_get(self, uri: str, context: MediaContext) -> bytes:
@@ -268,16 +265,16 @@ class DiskMediaStore:
             raise FileNotFoundError(f'media not found: {uri}')
         return path.read_bytes()
 
-    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
+    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool:
         return await anyio.to_thread.run_sync(self._sync_exists, uri, context)
 
     def _sync_exists(self, uri: str, context: MediaContext) -> bool:
         return self._path_for(uri, context).exists()
 
-    async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+    async def public_url(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> str | None:
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
-    async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
+    async def get_metadata(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> Mapping[str, str]:
         return await anyio.to_thread.run_sync(self._sync_get_metadata, uri, context)
 
     def _sync_get_metadata(self, uri: str, context: MediaContext) -> Mapping[str, str]:
@@ -287,7 +284,7 @@ class DiskMediaStore:
         meta_path = path.with_name(path.name + '.meta.json')
         if not meta_path.exists():
             return _EMPTY_METADATA
-        return _coerce_metadata_mapping(json.loads(meta_path.read_text()))
+        return coerce_metadata_mapping(json.loads(meta_path.read_text()))
 
 
 def _write_atomically(path: Path, data: bytes) -> None:
@@ -304,7 +301,8 @@ def _is_object_dict(raw: object) -> TypeGuard[dict[object, object]]:
     return isinstance(raw, dict)
 
 
-def _coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
+def coerce_metadata_mapping(raw: object) -> Mapping[str, str]:
+    """Validate a decoded metadata payload as a `str` to `str` mapping."""
     if not _is_object_dict(raw):
         raise ValueError(f'metadata payload must be a JSON object, got {type(raw).__name__}')
     out: dict[str, str] = {}
@@ -404,7 +402,7 @@ class SqliteMediaStore:
         if self._connection is None:
             conn.close()
 
-    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
+    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str:
         return await anyio.to_thread.run_sync(self._sync_put, data, context)
 
     def _sync_put(self, data: bytes, context: MediaContext) -> str:
@@ -429,7 +427,7 @@ class SqliteMediaStore:
             self._maybe_close(conn)
         return uri
 
-    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
+    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
         digest = parse_media_uri(uri)
         return await anyio.to_thread.run_sync(self._sync_get, digest)
 
@@ -444,7 +442,7 @@ class SqliteMediaStore:
             raise FileNotFoundError(f'media not found: {digest}')
         return bytes(row[0])
 
-    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
+    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool:
         digest = parse_media_uri(uri)
         return await anyio.to_thread.run_sync(self._sync_exists, digest)
 
@@ -457,10 +455,10 @@ class SqliteMediaStore:
             self._maybe_close(conn)
         return row is not None
 
-    async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
-        return await _resolve_public_url(self._public_url_resolver, uri, context)
+    async def public_url(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> str | None:
+        return await resolve_public_url(self._public_url_resolver, uri, context)
 
-    async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
+    async def get_metadata(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
         return await anyio.to_thread.run_sync(self._sync_get_metadata, digest)
 
@@ -473,4 +471,4 @@ class SqliteMediaStore:
             self._maybe_close(conn)
         if row is None:
             raise FileNotFoundError(f'media not found: {digest}')
-        return _coerce_metadata_mapping(json.loads(row[0]))
+        return coerce_metadata_mapping(json.loads(row[0]))
