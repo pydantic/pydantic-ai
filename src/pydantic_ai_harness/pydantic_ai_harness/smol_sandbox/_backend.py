@@ -342,10 +342,10 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                     # The SDK reported the boot failed, so a retry boots a VM under a new name.
                     self._ref = None
                 elif error.code == 'NOT_FOUND' and self._passed_in:
-                    # Such as a Smol Cloud machine, whose id the local target doesn't know.
+                    # A Smol Cloud machine, whose id the local target doesn't know, or one deleted since.
                     raise UserError(
-                        f'The smol VM {machine_id!r} passed as `sandbox` is not a VM on this machine: '
-                        'SmolSandboxBackend only uses the local target.'
+                        f'The smol VM {machine_id!r} passed as `sandbox` is not, or is no longer, a VM on this '
+                        'machine: SmolSandboxBackend only uses the local target.'
                     ) from error
                 elif error.code == 'NOT_FOUND':
                     raise WorkspaceUnavailableError(_gone_message(machine_id)) from error

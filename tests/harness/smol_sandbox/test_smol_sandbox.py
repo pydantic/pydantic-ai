@@ -341,8 +341,9 @@ async def test_live_program_named_like_an_option_runs() -> None:  # pragma: lax 
 
 @pytest.mark.smol_live
 async def test_live_vm_passed_in_is_used() -> None:  # pragma: lax no cover
-    # The backend opens its own handle, by id, to a VM the application already has open.
-    config = smol.MachineConfig(name=f'byo-{uuid.uuid4().hex[:12]}', persistent=True)
+    # The backend opens its own handle, by id, to a VM the application already has open, made with the
+    # SDK's default, non-persistent config.
+    config = smol.MachineConfig(name=f'byo-{uuid.uuid4().hex[:12]}')
     machine = await asyncio.to_thread(smol.Machine.create, config, smol.ConnectOptions(target='local'))
     try:
         backend = SmolSandboxBackend(sandbox=smol.AsyncMachine(machine))
@@ -395,7 +396,7 @@ async def test_a_vm_not_on_this_machine_is_refused(fake_smol: FakeSmol, working_
     # Like a Smol Cloud machine: the local target doesn't know its id.
     elsewhere = FakeMachine(FakeVM(id='mach-0a1b2c', config=smol.MachineConfig()))
     backend = SmolSandboxBackend(sandbox=cast(Any, elsewhere), working_dir=working_dir)
-    with pytest.raises(UserError, match="'mach-0a1b2c' passed as `sandbox` is not a VM on this machine"):
+    with pytest.raises(UserError, match="'mach-0a1b2c' passed as `sandbox` is not, or is no longer, a VM on this"):
         await backend.run(['true'])
     assert fake_smol.commands == []
 
