@@ -1258,6 +1258,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
             messages = _drop_superseded_request_scoped_prompts(messages)
+        else:
+            messages = _drop_request_scoped_prompts_no_user_message_clears(messages)
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -2941,6 +2943,57 @@ def _drop_superseded_request_scoped_prompts(messages: list[ModelMessage]) -> lis
         else:
             kept_messages.append(message)
     return [*kept_messages, *messages[start:]]
+
+
+def _drop_request_scoped_prompts_no_user_message_clears(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Leave out the superseded request-scoped prompts a model that clears them itself never gets to clear.
+
+    Such a model clears a request-scoped `SystemPromptPart` at the next user message. When the request
+    after the one that held it reaches the model in the system voice alone, such as a `'no_output'`
+    retry, no user message follows it before that request is sent, so the model would see it next to the
+    retried step's own. It's left out of every later request too, so the bytes of the history don't
+    depend on how far the conversation has got: whether it goes is settled by the request right after
+    it, which never changes.
+
+    Returns the original list when nothing changed.
+    """
+    start = _current_request_start(messages)
+    dropped: set[int] = set()
+    for index in range(start):
+        message = messages[index]
+        if not (isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)):
+            continue
+        following = index + 1
+        while following < len(messages) and isinstance(messages[following], ModelResponse):
+            following += 1
+        next_request_parts: list[ModelRequestPart] = []
+        while following < len(messages) and isinstance(next_request := messages[following], ModelRequest):
+            next_request_parts.extend(next_request.parts)
+            following += 1
+        if not any(_reaches_the_model_as_a_user_message(part) for part in next_request_parts):
+            dropped.add(index)
+    if not dropped:
+        return messages
+    kept_messages: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if index in dropped:
+            assert isinstance(message, ModelRequest)
+            if parts := [part for part in message.parts if not _is_request_scoped(part)]:
+                kept_messages.append(replace(message, parts=parts))
+        else:
+            kept_messages.append(message)
+    return kept_messages
+
+
+def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
+    """Whether a request part reaches the model in the user role, the message a request-scoped prompt clears at.
+
+    Everything but the parts that render in the system voice: system prompts, instruction records, tool
+    reveals, and the retry feedback that speaks for the harness.
+    """
+    if isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart | ToolAvailabilityDeltaPart):
+        return False
+    return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
 
 
 def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
