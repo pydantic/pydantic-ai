@@ -43,7 +43,7 @@ A rule marked *(pending #N)* depends on a mechanism still in review. Until #N me
 - Keep attributes to identity (whose output, which call) and outcome. Mark an outcome with an attribute that reuses existing vocabulary, such as `outcome="failed"` from `ToolReturnPart.outcome`, not with a new sentence or tag. — Extra attributes invite the model to copy the frame: a provider-only attribute on `<assistant_thinking>` made Claude Opus 4.5 reproduce the tag in its own output 8 times out of 8.
 - Put no unframed framework text in front of a data frame on a user turn. The frame's attributes say whose output it is; any announcement or explanation goes in system voice or instructions ahead of time, such as the tool result that says a call is running in the background. — A preamble like "Background tool X completed." reads as the user's words.
 - Framing that refers to another part names it ("the accompanying `<judge_feedback>` tag"), never its position ("the tag that follows"). — Providers order system and user content their own way: Anthropic may put the user content before a mid-conversation system entry.
-- Live-probe new or changed framing on Claude Opus and on the fallback-path models before merging. — How a model treats a frame is behavior, not syntax, and only a probe shows it.
+- Live-probe any new or changed framing, voice or steering before merging, on the latest frontier model from each provider (check `KnownModelName` at probe time) and on both the native and the `<system>`-fallback rendering where both apply. — How a model treats a frame is behavior, not syntax, and only a probe shows it.
 
 ### Identify framework records by type or metadata, never by visible text
 
