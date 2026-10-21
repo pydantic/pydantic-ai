@@ -178,8 +178,9 @@ carry their outcomes as structured data.
 Some capabilities have a reader of their own for files they keep in the workspace. When those files
 are in the run's workspace, the reader is marked with
 [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`,
-so it is left out of every run step that has `read_file`, and the capability's text names
-`read_file` as it is called in the run:
+so it is left out of every run step that has `read_file`. The instructions name no reader, so
+they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
+is called in the run:
 
 - `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
   files through `read_file` are not reduced again.
@@ -194,8 +195,9 @@ its own names for now.
 The capability decides from its own configuration, not from `FileSystem`'s access rules. With
 `denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,
 the asset roots), or `allowed_patterns` that leave them out, the dedicated reader is still left out
-and `read_file` refuses the files. Give such a capability a store with a workspace of its own to keep
-its reader.
+and `read_file` refuses the files. To keep the dedicated reader, give `ToolOutputLimits` or `Memory` a store with a workspace of its
+own, and for `RepoContext` keep the asset roots readable or use an asset root outside the working
+directory.
 
 ## Events
 

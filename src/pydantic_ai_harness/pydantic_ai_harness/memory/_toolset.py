@@ -27,7 +27,8 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
 from pydantic_ai_harness._workspace import in_working_dir, raise_tool_failure
-from pydantic_ai_harness.filesystem import READ_FILE_KIND, step_aside_for_read_file
+from pydantic_ai_harness.filesystem import READ_FILE_KIND
+from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._store import (
     MemoryConflictError,
@@ -80,9 +81,9 @@ def file_reader(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str) -> 
     return reader, directory
 
 
-def read_call(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str, name: str) -> str:
-    """How the model reads memory file `name`, naming the tool it has in this run."""
-    if (found := file_reader(ctx, store, scope)) is None:
+def read_call(found: tuple[str, str] | None, name: str) -> str:
+    """How the model reads memory file `name`, given the run's `file_reader` result."""
+    if found is None:
         return f'{_READ_MEMORY}("{name}")'
     reader, directory = found
     return f'{reader}(path="{posixpath.join(directory, name)}")'
@@ -330,7 +331,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                         content,
                         old_text,
                         name,
-                        read_call(ctx, store, scope, name),
+                        read_call(file_reader(ctx, store, scope), name),
                     )
                     if len(updated) > capability.max_memory_size:
                         raise ModelRetry(

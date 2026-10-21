@@ -17,7 +17,8 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent, step_aside_for_read_file
+from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness.filesystem._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
@@ -196,7 +197,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             # The hint doesn't depend on the run, so it stays static and inside the cached prefix.
             return self._inventory_hint()
 
-        def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
+        def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
             return self._render_instructions()
 
         return instructions
@@ -208,7 +209,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     def _render_instructions(self) -> str | None:
         parts: list[str] = []
-        if self.autoload_instructions and self._context_files:
+        if self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
         if self.expose_inventory_tool:

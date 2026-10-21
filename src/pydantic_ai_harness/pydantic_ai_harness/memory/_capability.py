@@ -308,6 +308,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             )
             has_memory = bool(main_content or subfiles or files_truncated)
             if content_budget > 0 and has_memory:
+                reader = file_reader(ctx, store, scope)
                 rendered = render_memory_prompt(
                     main_content,
                     subfiles,
@@ -317,8 +318,8 @@ class Memory(AbstractCapability[AgentDepsT]):
                     max_tokens=max(1, content_budget // 4),
                     main_truncated=main is not None and main.truncated,
                     files_truncated=files_truncated,
-                    read_main=read_call(ctx, store, scope, MAIN_FILENAME),
-                    location=None if (found := file_reader(ctx, store, scope)) is None else found[1],
+                    read_main=read_call(reader, MAIN_FILENAME),
+                    location=None if reader is None else reader[1],
                 )[:content_budget]
                 rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])
