@@ -146,7 +146,12 @@ def test_framing_tag_names_are_snake_case() -> None:
     assert [tag for tag in get_args(FramingTag) if not _TAG_NAME.fullmatch(tag)] == []
 
 
-_HAND_BUILT_TAG = re.compile(rf'</?(?:{"|".join(re.escape(tag) for tag in get_args(FramingTag))})(?=[\s/>])')
+_INTERPOLATION = '\x00'
+"""Stands in for each `{…}` of an f-string, so a tag name followed by interpolated attributes still counts."""
+_HAND_BUILT_TAG = re.compile(
+    rf'<\s*/?\s*(?:{"|".join(re.escape(tag) for tag in get_args(FramingTag))})(?=[\s/>{_INTERPOLATION}]|$)',
+    re.IGNORECASE,
+)
 _SOURCE_ROOT = Path(__file__).parents[1] / 'pydantic_ai_slim' / 'pydantic_ai'
 _HAND_BUILT_TAG_ALLOWLIST = {
     # Prose that names the tag for the model, explaining how a later `<context>` element applies. It builds none.
@@ -160,15 +165,23 @@ def _hand_built_framing_tags_in(relative: str, source: str) -> list[tuple[str, i
     prose = {
         id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
     }
-    return [
-        (relative, node.lineno, node.value[:80])
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and id(node) not in prose
-        and _HAND_BUILT_TAG.search(node.value)
-        and not any(relative == file and node.value.startswith(start) for file, start in _HAND_BUILT_TAG_ALLOWLIST)
-    ]
+    # An f-string is checked as a whole, with each interpolation as a placeholder, rather than fragment by
+    # fragment: `f'<system{attrs}>'` splits the tag across fragments that don't contain it on their own.
+    fragments = {id(value) for node in ast.walk(tree) if isinstance(node, ast.JoinedStr) for value in node.values}
+    skip = prose | fragments
+    found: list[tuple[str, int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.JoinedStr):
+            text = ''.join(value.value if isinstance(value, ast.Constant) else _INTERPOLATION for value in node.values)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in skip:
+            text = node.value
+        else:
+            continue
+        if _HAND_BUILT_TAG.search(text) and not any(
+            relative == file and text.startswith(start) for file, start in _HAND_BUILT_TAG_ALLOWLIST
+        ):
+            found.append((relative, node.lineno, text[:80]))
+    return found
 
 
 def _hand_built_framing_tags() -> list[tuple[str, int, str]]:
@@ -180,11 +193,22 @@ def _hand_built_framing_tags() -> list[tuple[str, int, str]]:
     ]
 
 
-def test_the_framing_tag_scan_finds_a_hand_built_tag() -> None:
-    source = 'def render(text):\n    """Wrap in `<system>`."""\n    return f\'<system>{text}</system>\'\n'
+@pytest.mark.parametrize(
+    'statement, found',
+    [
+        pytest.param("f'<system>{text}</system>'", ['<system>\x00</system>'], id='static-tags'),
+        pytest.param("f'<system{attrs}>{text}</system>'", ['<system\x00>\x00</system>'], id='interpolated-attrs'),
+        pytest.param("'</system'", ['</system'], id='truncated'),
+        pytest.param("'< / TOOL_RESULT >'", ['< / TOOL_RESULT >'], id='spaced-upper'),
+        pytest.param("f'<{name}>'", [], id='interpolated-name-is-not-a-framing-tag'),
+        pytest.param("'wc -c < file'", [], id='redirect'),
+        pytest.param("'<systemd>'", [], id='longer-name'),
+    ],
+)
+def test_the_framing_tag_scan(statement: str, found: list[str]) -> None:
+    source = f'def render(text, attrs, name):\n    """Wrap in `<system>`."""\n    return {statement}\n'
     assert _hand_built_framing_tags_in('models/example.py', source) == [
-        ('models/example.py', 3, '<system>'),
-        ('models/example.py', 3, '</system>'),
+        ('models/example.py', 3, text) for text in found
     ]
 
 
