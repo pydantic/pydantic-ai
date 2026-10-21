@@ -100,13 +100,13 @@ agent = Agent(model)
 ...
 ```
 
-Structured output with `NativeOutput` (or `output_type` pointing at a model) is supported provider-wide on Fireworks: every model served on the platform accepts OpenAI-style `response_format`, regardless of model family.
+Use [`NativeOutput`][pydantic_ai.output.NativeOutput] for Fireworks' schema-constrained structured output.
+Fireworks enforces the schema through its OpenAI-compatible `response_format` parameter.
 
-Known caveats:
+The [Fireworks structured output documentation](https://docs.fireworks.ai/structured-responses/structured-response-formatting) describes these limitations:
 
-- Schemas using `pattern` constraints may fall back to prompt-based enforcement for some models.
-- Output can be truncated with `finish_reason='length'` when the generated JSON exceeds the model's completion limit.
-- A `json_schema` response format disables reasoning output on reasoning models.
+- `pattern` enforcement is best-effort. Unsupported regex constructs, such as lookahead and lookbehind, are ignored, leaving the field as an unconstrained string.
+- `NativeOutput` uses `json_schema`, which disables reasoning output on reasoning models, so responses do not contain [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
 
 ## Heroku AI
 

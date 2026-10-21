@@ -65,12 +65,10 @@ class FireworksProvider(_OpenAICompatibleProvider):
 
         # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
-        # The structured output flags win on top: Fireworks serves every model with structured output
-        # mode, so `response_format` works even for families whose own profiles don't claim support for it.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
-            ModelProfile(supports_json_schema_output=True, supports_json_object_output=True),
+            ModelProfile(supports_json_schema_output=True),
         )
 
     @overload

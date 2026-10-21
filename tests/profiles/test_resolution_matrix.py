@@ -2090,7 +2090,29 @@ def test_fireworks_llama():
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
             'supports_json_schema_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_fireworks_unprofiled():
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/kimi-k3')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_json_schema_output': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_fireworks_gemma():
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/gemma-3-27b-it')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_schema_output': True,
             'supports_json_object_output': True,
+            'supports_tool_return_schema': True,
+            'google_supports_thinking_level': False,
+            'google_web_search_billed_per_prompt': False,
         }
     )
 

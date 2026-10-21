@@ -111,22 +111,3 @@ def test_fireworks_mixed_case_model_name_profile_flags():
     deepseek_mixed_path = provider.model_profile('Accounts/Fireworks/Models/DeepSeek-R1')
     assert deepseek_mixed_path is not None
     assert deepseek_mixed_path.get('supports_thinking') is True
-
-
-def test_model_profile_sets_supports_json_output_flags() -> None:
-    """Structured output is served provider-wide: the flags must win on top of family profiles and defaults."""
-    provider = FireworksProvider(api_key='api-key')
-
-    # `llama-v3p3-70b-instruct` and `qwen3-235b-a22b` have family profiles, `kimi-k3` and `glm-5p3`
-    # have none, and `gemma-3-27b-it` already claimed support via the google profile.
-    for model_name in (
-        'accounts/fireworks/models/llama-v3p3-70b-instruct',
-        'accounts/fireworks/models/qwen3-235b-a22b',
-        'accounts/fireworks/models/kimi-k3',
-        'accounts/fireworks/models/glm-5p3',
-        'accounts/fireworks/models/gemma-3-27b-it',
-    ):
-        profile = provider.model_profile(model_name)
-        assert profile is not None, model_name
-        assert profile.get('supports_json_schema_output') is True, model_name
-        assert profile.get('supports_json_object_output') is True, model_name
