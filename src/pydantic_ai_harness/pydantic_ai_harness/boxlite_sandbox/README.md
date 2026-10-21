@@ -117,7 +117,7 @@ Pass `workspace='new'` to create a fresh box even when the message history names
 
 A box stops when nothing in this process uses it any more, or when the process exits, and keeps its disk. The next use of its ref boots it again, in this process or in a later one. Only one process at a time can use a BoxLite home directory (`~/.boxlite`, or `BOXLITE_HOME`): another process that tries gets `WorkspaceUnavailableError` until the first one exits.
 
-Already have a `boxlite.Box`? Pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run, with `BoxLiteSandboxBackend` from `pydantic_ai_harness.boxlite_sandbox`, or `BoxLiteSandboxBackend(ref=WorkspaceRef(provider='boxlite', id=...))` with the box's name, or its id if it has none. `BoxLiteSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the box. See [Which boxes a run can use](#which-boxes-a-run-can-use) for what each way accepts.
+Already have a `boxlite.Box` from `boxlite.Boxlite.default()`? Pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run, with `BoxLiteSandboxBackend` from `pydantic_ai_harness.boxlite_sandbox`, or `BoxLiteSandboxBackend(ref=WorkspaceRef(provider='boxlite', id=...))` with the box's name, or its id if it has none. `BoxLiteSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the box. See [Which boxes a run can use](#which-boxes-a-run-can-use) for what each way accepts.
 
 ## Other BoxLite options
 
@@ -229,7 +229,7 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 | Where the box comes from | What's accepted |
 | --- | --- |
 | `BoxLiteSandbox`: a ref in the message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` | Only boxes `BoxLiteSandbox` created, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError` before anything runs. |
-| `BoxLiteSandboxBackend(sandbox=box)` or `BoxLiteSandboxBackend(ref=...)`, built by your code | Any box, including one with mounts or published ports, because your code chose it. |
+| `BoxLiteSandboxBackend(sandbox=box)` or `BoxLiteSandboxBackend(ref=...)`, built by your code | Any box of this process's default BoxLite runtime, including one with mounts or published ports, because your code chose it. A box from another runtime raises `UserError`: configure the default one with `boxlite.Boxlite.init_default(...)` instead. |
 
 - A run in a box you passed in writes that box's name into the message history. A later run given only that history raises `ValueError`; it doesn't open the box or create a new one. Pass the backend again, or `workspace='new'` for a fresh box.
 - Durable execution rebuilds the workspace from its ref, so it only works with boxes `BoxLiteSandbox` created.

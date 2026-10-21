@@ -445,7 +445,13 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _acquire(self, name: str, *, create: bool) -> _Box:
         try:
-            boxes = runtime()
+            try:
+                boxes = runtime()
+            except BaseException:
+                if create:
+                    # No box was created, so a retry creates one under a new name.
+                    self._ref = None
+                raise
             if create:
                 try:
                     box = await boxes.create(self._options, name=name)
@@ -462,9 +468,19 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
                     else:
                         self._ref = None
                     raise
+            elif (box := self._given) is not None:
+                # Later lookups by `ref`, such as after a stop invalidates this handle, go through this
+                # process's default runtime, which can't see a box of another BoxLite home.
+                if await boxes.get_info(box.id) is None:
+                    raise UserError(
+                        f"The BoxLite box {name!r} passed as `sandbox` is not in this process's default BoxLite "
+                        'runtime. Create it with `boxlite.Boxlite.default()`, after `boxlite.Boxlite.init_default(...)` '
+                        'to use another home directory.'
+                    )
+                self._given = None
+                await _boot(box)
             else:
-                # A box passed in is booted like an attached one; after that, the runtime finds it by `ref`.
-                box, self._given = self._given or await boxes.get(name), None
+                box = await boxes.get(name)
                 if box is None:
                     raise WorkspaceUnavailableError(_gone_message(name))
                 await _boot(box)

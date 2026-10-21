@@ -31,6 +31,7 @@ import boxlite
 import pytest
 from pytest_examples import CodeExample
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceOutputLimitError, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
 
@@ -198,6 +199,18 @@ async def test_a_box_passed_in_is_found_again_after_a_stop() -> None:
         assert (await backend.run(['echo', 'again'])).stdout == 'again\n'
     finally:
         await runtime.remove(box.id, force=True)
+
+
+async def test_a_box_of_another_home_is_refused(tmp_path: Path) -> None:
+    """Validates the fake's assumption that the default runtime can't see a box another BoxLite home made,
+    so the backend must refuse it rather than look its name up in the default home."""
+    other = cast(Any, boxlite).Boxlite(cast(Any, boxlite).Options(home_dir=str(tmp_path)))
+    box = await other.create(cast(Any, boxlite).BoxOptions(image='alpine:3.20', auto_delete=0))
+    try:
+        with pytest.raises(UserError, match='not in this process'):
+            await BoxLiteSandboxBackend(sandbox=box).run(['true'])
+    finally:
+        await other.remove(box.id, force=True)
 
 
 # The README's Python blocks are the same as this page's.

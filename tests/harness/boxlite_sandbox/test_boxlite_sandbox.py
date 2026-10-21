@@ -29,7 +29,7 @@ from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBa
 from pydantic_ai_harness.coder import Coder
 
 from .._tool_calls import call_tools
-from .fake_boxlite import FakeBoxLite, PanicException
+from .fake_boxlite import FakeBox, FakeBoxLite, FakeHandle, PanicException
 
 GONE = WorkspaceRef(provider='boxlite', id='pydantic-ai-' + '0' * 32)
 
@@ -456,11 +456,23 @@ async def test_a_host_that_cannot_run_boxes_is_unavailable(fake_boxlite: FakeBox
     assert fake_boxlite.boxes == {} and backend.ref is None
 
 
-async def test_a_runtime_that_cannot_open_is_unavailable(fake_boxlite: FakeBoxLite) -> None:
+async def test_a_runtime_that_cannot_open_is_unavailable(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
     # Another process holding the BoxLite home directory makes the runtime panic.
     fake_boxlite.runtime_error = PanicException('Failed to acquire runtime lock at /home/.boxlite')
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
     with pytest.raises(WorkspaceUnavailableError, match='Could not open the BoxLite runtime: Failed to acquire'):
-        await BoxLiteSandboxBackend().run(['true'])
+        await backend.run(['true'])
+    # No box was created, so once the other process lets go, a retry creates one.
+    assert backend.ref is None
+    fake_boxlite.runtime_error = None
+    await backend.run(['true'])
+    assert backend.ref is not None and len(fake_boxlite.boxes) == 1
+    # Attaching keeps the ref: it names a box that exists.
+    attaching = BoxLiteSandboxBackend(ref=backend.ref, working_dir=working_dir)
+    fake_boxlite.runtime_error = PanicException('Failed to acquire runtime lock at /home/.boxlite')
+    with pytest.raises(WorkspaceUnavailableError, match='Could not open the BoxLite runtime'):
+        await attaching.run(['true'])
+    assert attaching.ref == backend.ref
     fake_boxlite.runtime_error = _Abort()
     with pytest.raises(_Abort):
         await BoxLiteSandboxBackend().run(['true'])
@@ -505,6 +517,16 @@ async def test_a_box_passed_in_is_used_and_kept(fake_boxlite: FakeBoxLite, worki
     # A stop invalidates the handle passed in; the backend finds the box again by its ref.
     assert (await backend.run(['echo', 'again'])).stdout == 'again\n'
     assert len(fake_boxlite.boxes) == 1
+
+
+async def test_a_box_of_another_boxlite_home_is_refused(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
+    # The default home has its own `dev`; the backend must not reach it through the passed box's name.
+    await fake_boxlite.module.Boxlite.default().create(None, name='dev')
+    elsewhere = FakeHandle(fake_boxlite, FakeBox(id='other-home', name='dev', options=None))
+    backend = BoxLiteSandboxBackend(sandbox=elsewhere, working_dir=working_dir)
+    with pytest.raises(UserError, match="'dev' passed as `sandbox` is not in this process's default BoxLite runtime"):
+        await backend.run(['true'])
+    assert fake_boxlite.commands == []
 
 
 async def test_destroy_deletes_by_ref_and_ignores_a_missing_box(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
