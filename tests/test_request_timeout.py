@@ -366,8 +366,8 @@ async def test_fallback_stream_times_out_mid_stream_on_the_models_own_deadline(a
 class PollsForever(Model):
     """A background job that is still running at every poll, each of which takes a while.
 
-    Each poll moves `clock` forward by `poll_time` of the deadline, so the third one is the one the deadline
-    cancels, however fast or slow the runner is. Once a poll has been cancelled, it is unavailable, so that
+    Each poll moves `clock` forward by `poll_time` (40% of the `LONG_TIMEOUT` deadline), so the third one is the one
+    the deadline cancels, however fast or slow the runner is. Once a poll has been cancelled, it is unavailable, so that
     the fallback that follows moves on to the next model.
     """
 
