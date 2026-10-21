@@ -95,20 +95,25 @@ def _require_prompt_text(replacement: object, position: int) -> str:
     return replacement
 
 
-def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]) -> UserPromptPart | None:
-    """The user's prompt for this run, as it appears in this request.
+def _find_prompt_part(
+    ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]
+) -> tuple[UserPromptPart | None, UserPromptPart | None]:
+    """The user's prompt for this run as it appears in this request, and its original in the history.
 
-    That is the most recent `UserPromptPart` in the run's history, `ctx.messages`. `messages` is
-    this request's copy of the history, where an outer capability can add a `UserPromptPart` for
+    The prompt is the most recent `UserPromptPart` in the run's history, `ctx.messages`. `messages`
+    is this request's copy of the history, where an outer capability can add a `UserPromptPart` for
     this request only (`SystemReminders`, `Planning` and `Memory` append one to the last request).
     That part is not the user's prompt, so the prompt is found by identity: the guard neither
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
-    the same object, so the guard reads the rewritten text.
+    the same object, so the guard reads the rewritten text, and the two returned parts are the same.
 
     When a capability replaced the prompt with a copy, the copy is the part at the prompt's
     position: the same part index in the message the same distance from the end. Parts appended
-    after it and earlier turns are not taken for it. Only when that position holds no user prompt,
-    because the request was rebuilt, is the most recent part in `messages` used.
+    after it and earlier turns are not taken for it. The copy is returned with the history part it
+    was made from, so a redaction can overwrite both; the history then gets the redacted text of
+    the part sent to the model. Only when that position holds no user prompt,
+    because the request was rebuilt, is the most recent part in `messages` used, with no original:
+    nothing ties that part to a part of the history.
     """
     for from_end, message in enumerate(reversed(ctx.messages), start=1):
         prompts = [(index, part) for index, part in enumerate(message.parts) if isinstance(part, UserPromptPart)]
@@ -116,12 +121,14 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
             index, prompt = prompts[-1]
             break
     else:
-        return _latest_prompt_part(messages)
+        return _latest_prompt_part(messages), None
     if any(part is prompt for request in messages for part in request.parts):
-        return prompt
+        return prompt, prompt
     parts = messages[-from_end].parts if from_end <= len(messages) else ()
     copy = parts[index] if index < len(parts) else None
-    return copy if isinstance(copy, UserPromptPart) else _latest_prompt_part(messages)
+    if isinstance(copy, UserPromptPart):
+        return copy, prompt
+    return _latest_prompt_part(messages), None
 
 
 def _latest_prompt_part(messages: Sequence[ModelMessage]) -> UserPromptPart | None:
@@ -177,11 +184,16 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     The `guard` callable receives the prompt text and returns one of the
     outcomes (see the module docstring). `replace` rewrites the prompt sent to
     the model and also overwrites the original in the run's message history, so
-    a redacted secret is not retained -- unless a later guard in a chain blocks,
-    which ends the chain before the rewrite happens. `retry` is not valid for an
-    input guardrail, and neither is `replace` on a multimodal prompt: the guard sees
-    the whole prompt rendered as text, and writing one string back over a
-    prompt built from several parts would drop the attached ones, so it raises
+    a redacted secret is not retained. When an outer capability sent the model a
+    copy of the prompt part, the copy and the original are both rewritten. A
+    request rebuilt with a new prompt part is not tied to the history, so only
+    the part sent to the model is rewritten. A later guard in a chain that
+    blocks ends the chain before any rewrite happens.
+
+    `retry` is not valid for an input guardrail, and neither is `replace` on a
+    multimodal prompt: the guard sees the whole prompt rendered as text, and
+    writing one string back over a prompt built from several parts would drop
+    the attached ones, so it raises
     [`UserError`][pydantic_ai.exceptions.UserError] instead.
 
     ```python
@@ -252,13 +264,15 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         part: UserPromptPart | None,
+        original: UserPromptPart | None,
         prompt: str,
     ) -> None:
         """Evaluate the guard and act on its verdict.
 
         `allow` returns; `block` raises `SkipModelRequest`; `replace` rewrites
-        the prompt `part`; `retry` and `replace` under `parallel=True` raise
-        `UserError`.
+        the prompt `part` sent to the model and its `original` in the run's
+        history when that is a different object; `retry` and `replace` under
+        `parallel=True` raise `UserError`.
         """
         verdict, position = await evaluate_all(
             as_guards(self.guard, capability='InputGuardrail'),
@@ -293,6 +307,10 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 if part is None:
                     raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
                 _replace_prompt(part, replacement)
+                if original is not None and original is not part:
+                    # The model gets the copy, but the run's history keeps the original, so the
+                    # secret would otherwise survive in `all_messages()` and any stored history.
+                    _replace_prompt(original, replacement)
                 trace_redaction(ctx, direction='input', replacement=replacement)
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
@@ -311,19 +329,19 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         """
         if ctx.run_step > 1:
             return await handler(request_context)
-        part = _find_prompt_part(ctx, request_context.messages)
+        part, original = _find_prompt_part(ctx, request_context.messages)
         content = ctx.prompt if part is None else part.content
         if content is None:
             return await handler(request_context)
         prompt = _prompt_text(content)
         if not self.parallel:
-            await self._run_guard(ctx, part, prompt)
+            await self._run_guard(ctx, part, original, prompt)
             return await handler(request_context)
 
         async def run_handler() -> ModelResponse:
             return await handler(request_context)
 
-        guard_task: asyncio.Task[None] = asyncio.create_task(self._run_guard(ctx, part, prompt))
+        guard_task: asyncio.Task[None] = asyncio.create_task(self._run_guard(ctx, part, original, prompt))
         handler_task: asyncio.Task[ModelResponse] = asyncio.create_task(run_handler())
         try:
             done, _ = await asyncio.wait(
