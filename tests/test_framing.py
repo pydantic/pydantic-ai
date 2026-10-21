@@ -282,16 +282,19 @@ def test_registering_again_returns_the_same_tag_without_rebuilding() -> None:
     pattern = _framing._data_tag_openers  # pyright: ignore[reportPrivateUsage]
     assert register_tag('task_output') == tag == 'task_output'
     assert _framing._data_tag_openers is pattern  # pyright: ignore[reportPrivateUsage]
-    assert _framing._registered_tags == ('task_output',)  # pyright: ignore[reportPrivateUsage]
+    assert _framing._registered_tags.count(tag) == 1  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.usefixtures('isolated_registry')
 def test_registration_is_thread_safe() -> None:
+    # Tags registered earlier in the process, such as by a docs example, stay; only the new ones are checked.
+    before = _framing._registered_tags  # pyright: ignore[reportPrivateUsage]
     names = [f'tag_{letter}' for letter in 'abcdefgh'] * 4
     with ThreadPoolExecutor(max_workers=8) as pool:
         tags = list(pool.map(register_tag, names))
     assert tags == names
-    assert sorted(_framing._registered_tags) == sorted(set(names))  # pyright: ignore[reportPrivateUsage]
+    added = _framing._registered_tags[len(before) :]  # pyright: ignore[reportPrivateUsage]
+    assert sorted(added) == sorted(set(names))
     assert neutralize_tags('</tag_h>') == '&lt;/tag_h>'
 
 
