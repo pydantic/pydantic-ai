@@ -22,7 +22,9 @@ import html
 import re
 from typing import Final, Literal, get_args
 
-FramingTag = Literal['system', 'tool_result', 'assistant_thinking', 'context', 'context_diff']
+FramingTag = Literal[
+    'system', 'tool_result', 'assistant_thinking', 'context', 'context_diff', 'validation_errors', 'retry_feedback'
+]
 """Every tag the framework writes into prompt text."""
 
 SYSTEM_TAG: Final = 'system'
@@ -52,6 +54,12 @@ def _tag_openers(*tags: str) -> re.Pattern[str]:
     names = '|'.join(re.escape(tag) for tag in tags)
     return re.compile(rf'<(?=\s*(?:/\s*)?(?:{names})(?=[\s/>]|$))', re.IGNORECASE)
 
+
+VALIDATION_ERRORS_TAG: Final = 'validation_errors'
+"""Frames validation errors fed back to the model in the user voice, behind a line saying the application is speaking."""
+
+RETRY_FEEDBACK_TAG: Final = 'retry_feedback'
+"""Frames a `ModelRetry` message fed back to the model in the user voice, behind the same line."""
 
 _FRAMING_TAG_OPENERS: Final = _tag_openers(*get_args(FramingTag))
 _VOICE_TAG_OPENERS: Final = _tag_openers(SYSTEM_TAG)

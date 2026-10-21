@@ -29,6 +29,7 @@ from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
     cancelled_sub_agent_return,
+    tool_bound_retry_part,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
 from ..conversation import Conversation
@@ -42,6 +43,7 @@ from ..exceptions import (
     UserError,
 )
 from ..messages import (
+    ERROR_OUTCOMES,
     INTERRUPTED_TOOL_RETURN_CONTENT,
     BinaryAudio,
     BinaryContent,
@@ -67,7 +69,6 @@ from ..messages import (
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
-    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -75,6 +76,9 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+)
+from ..models import (
+    ModelRequestParameters,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
@@ -142,7 +146,6 @@ from .settings import AudioRetention, RealtimeModelSettings
 
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
-    from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
     from .model import RealtimeModel, RealtimeProviderSession
@@ -413,12 +416,12 @@ _TranslatableEvent: TypeAlias = (
     | PartEndEvent
     | RealtimeSessionErrorEvent
 )
-_SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
+_SettledToolResult: TypeAlias = tuple[ToolReturnPart, str | Sequence[UserContent] | None]
 
 
 def _build_session_tool_return(
     tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
-) -> tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]:
+) -> tuple[ToolReturnPart, str | Sequence[UserContent] | None]:
     """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
     result_part, user_content, tools_added = build_tool_return_part(
@@ -551,8 +554,7 @@ class RealtimeSession:
     - a tool call becomes a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] (start/end) plus a
       [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] when execution starts and a
       [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] carrying a normalized
-      [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
-      [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] when it settles.
+      [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] when it settles.
 
     Tools always run concurrently with the session. The session keeps streaming events while a tool
     runs, so the model can keep speaking and user speech keeps being processed, then sends the result
@@ -560,8 +562,8 @@ class RealtimeSession:
     happens.
 
     Tool outcomes use the same normalized history shapes as a classic agent run: retries become
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]s, denials retain their `outcome`, and
-    structured returns preserve `content`, `metadata`, and typed `tool_kind` identity. Realtime
+    `outcome='retried'` returns, denials retain their `outcome`, and structured returns preserve
+    `content`, `metadata`, and typed `tool_kind` identity. Realtime
     tool-output channels are string-only, so the structured part is rendered only when it is sent.
     OpenAI-protocol connections send additional user content as a follow-up conversation item; Gemini
     includes a text fallback in its tool response. If the provider cancels an in-flight call, the
@@ -2173,7 +2175,7 @@ class RealtimeSession:
     def _complete_tool_call(
         self,
         call_part: ToolCallPart,
-        result_part: ToolReturnPart | RetryPromptPart,
+        result_part: ToolReturnPart,
         content: str | Sequence[UserContent] | None = None,
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
@@ -2395,7 +2397,7 @@ class RealtimeSession:
                 on_inline_deferred=on_inline_deferred,
             )
         except ToolRetryError as e:
-            result_part = e.tool_retry
+            result_part = tool_bound_retry_part(e)
             user_content = None
         except ToolFailedError as e:
             # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
@@ -2418,11 +2420,7 @@ class RealtimeSession:
             # every concurrent call.
             self._tool_calls_in_flight -= int(reserved_budget)
 
-        if isinstance(result_part, RetryPromptPart):
-            output = result_part.model_response()
-            wire_content: list[UserContent] = []
-        else:
-            output, wire_content = result_part.model_response_str_and_user_content()
+        output, wire_content = result_part.model_response_str_and_user_content()
         if isinstance(user_content, str):
             wire_content.append(user_content)
         elif user_content:
@@ -2436,7 +2434,7 @@ class RealtimeSession:
             # A message the tool enqueued goes out ahead of its result. A response that went on past the call isn't
             # waited for: the result ends it.
             await self._drain_pending_messages('asap', ending=call_part.tool_call_id if response_continues else None)
-        failed = isinstance(result_part, RetryPromptPart) or result_part.outcome == 'failed'
+        failed = result_part.outcome in ERROR_OUTCOMES
         await self._send_tool_result(call_part, output, wire_content, failed=failed)
         return result_part, user_content
 
