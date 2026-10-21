@@ -918,12 +918,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
     _telemetry_url_derived_id: str | None
-    _client_source: MCPToolsetClient | None
-    _client_options: _ClientOptions | None
-    _auth_func: MCPAuthFunc[AgentDepsT] | None
-    _headers_func: MCPHeadersFunc[AgentDepsT] | None
-    _static_auth: HTTPAuth | Literal['oauth'] | str | None
-    _static_headers: dict[str, str] | None
+    # Defaulted at class level so a subclass that doesn't call `MCPToolset.__init__` (like a test double
+    # with canned results) is an ordinary toolset rather than missing them.
+    _client_source: MCPToolsetClient | None = None
+    _client_options: _ClientOptions | None = None
+    _auth_func: MCPAuthFunc[AgentDepsT] | None = None
+    _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
+    _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
+    _static_headers: dict[str, str] | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
