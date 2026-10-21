@@ -156,7 +156,8 @@ A one-item tuple such as `tuple[int]` can remain strict: its single allowed elem
 `items` schema. Multi-item fixed tuples such as `tuple[int, int, int, int]` still use `prefixItems`; OpenAI strict mode
 does not support that tuple schema, so inferred strictness falls back to non-strict mode and explicitly strict
 [`ToolOutput`][pydantic_ai.output.ToolOutput] or [`NativeOutput`][pydantic_ai.output.NativeOutput] raises a
-[`UserError`][pydantic_ai.exceptions.UserError]. To keep an exact item count in strict mode, use a bounded list:
+[`UserError`][pydantic_ai.exceptions.UserError]. The same rules apply to function tool parameters in
+[strict mode](../tools-advanced.md#strict-mode). To keep an exact item count in strict mode, use a bounded list:
 
 ```python
 from typing import Annotated

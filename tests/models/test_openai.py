@@ -3768,6 +3768,7 @@ def test_strict_schema():
         # We have all these different crazy fields to achieve coverage
         my_recursive: MyModel | None = None
         my_patterns: dict[Annotated[str, Field(pattern='^my-pattern$')], str]
+        my_tuple: tuple[int]
         my_list: list[float]
         my_discriminated_union: Annotated[Apple | Banana, Discriminator('kind')]
 
@@ -3799,8 +3800,14 @@ def test_strict_schema():
                             'required': [],
                         },
                         'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
+                        'my_tuple': {
+                            'maxItems': 1,
+                            'minItems': 1,
+                            'prefixItems': [{'type': 'integer'}],
+                            'type': 'array',
+                        },
                     },
-                    'required': ['my_recursive', 'my_patterns', 'my_list', 'my_discriminated_union'],
+                    'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
                     'type': 'object',
                 },
             },
@@ -3813,10 +3820,11 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
+                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
-            'required': ['my_recursive', 'my_patterns', 'my_list', 'my_discriminated_union'],
+            'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
             'type': 'object',
             'additionalProperties': False,
         }
