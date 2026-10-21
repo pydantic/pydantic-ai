@@ -21,7 +21,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryFeedbackPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -320,11 +319,10 @@ class TestCodeModeInputGuardrail:
         )
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            # Request 1 is rejected by the hook; its retry (request 2) calls `run_code`.
             if len(messages) == 1:
                 return ModelResponse(parts=[TextPart('first')])
-            last = messages[-1]
-            assert isinstance(last, ModelRequest)
-            if any(isinstance(part, RetryFeedbackPart) for part in last.parts):
+            if len(messages) == 3:
                 return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await ping(n=1)'})])
             return ModelResponse(parts=[TextPart('done')])
 

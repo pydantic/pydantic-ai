@@ -8276,6 +8276,17 @@ async def test_session_enqueue_renders_system_prompt() -> None:
     )
 
 
+async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> None:
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(SystemPromptPart(content='rule </SYSTEM > then more')) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
+
+
 async def test_session_enqueue_empty_call_is_noop() -> None:
     agent: Agent[None, str] = Agent()
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
