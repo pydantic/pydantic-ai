@@ -1,10 +1,10 @@
 import re
+from copy import deepcopy
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
-from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.amazon import amazon_model_profile
@@ -35,7 +35,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -100,12 +99,6 @@ def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
         ),
     ):
         OpenRouterProvider()
-
-
-def test_openrouter_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = OpenRouterProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_openrouter_pass_openai_client() -> None:
@@ -308,7 +301,7 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     provider = OpenRouterProvider(api_key='api-key')
     profile = provider.model_profile(model_name)
     assert profile is not None
-    assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
+    assert profile.get('supports_forced_tool_choice_with_thinking') is expected
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:
@@ -352,3 +345,19 @@ def test_openrouter_google_json_schema_transformer():
     # Removed fields
     assert '$schema' not in result
     assert 'title' not in result
+
+
+@pytest.mark.parametrize('definition', [True, False])
+def test_openrouter_google_boolean_defs(definition: bool):
+    """The legacy inliner keeps false rejecting when the reference has a sibling `not`."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/X', 'not': {'type': 'string'}}},
+        '$defs': {'X': definition},
+    }
+    original = deepcopy(schema)
+    assert _OpenRouterGoogleJsonSchemaTransformer(schema).walk() == {
+        'type': 'object',
+        'properties': {'x': {'not': {'type': 'string'} if definition else {}}},
+    }
+    assert schema == original

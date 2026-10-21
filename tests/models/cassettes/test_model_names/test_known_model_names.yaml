@@ -15,7 +15,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=86400
       content-length:
-      - '368'
+      - '269'
       content-type:
       - application/json
       referrer-policy:
@@ -25,11 +25,7 @@ interactions:
     parsed_body:
       data:
       - created: 0
-        id: zai-glm-4.7
-        object: model
-        owned_by: Cerebras
-      - created: 0
-        id: qwen-3-235b-a22b-instruct-2507
+        id: gemma-4-31b
         object: model
         owned_by: Cerebras
       - created: 0
@@ -37,7 +33,7 @@ interactions:
         object: model
         owned_by: Cerebras
       - created: 0
-        id: llama3.1-8b
+        id: zai-glm-4.7
         object: model
         owned_by: Cerebras
       object: list

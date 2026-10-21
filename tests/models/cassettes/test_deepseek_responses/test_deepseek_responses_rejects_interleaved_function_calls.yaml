@@ -1,0 +1,67 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '599'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      input:
+      - content: |-
+          <think>
+          inspect inputs
+          </think>
+        role: assistant
+      - arguments: '{"path":"a"}'
+        call_id: call-a
+        name: read
+        type: function_call
+      - content: |-
+          <think>
+          inspect views
+          </think>
+        role: assistant
+      - arguments: '{"path":"b"}'
+        call_id: call-b
+        name: view
+        type: function_call
+      - call_id: call-a
+        output: contents
+        type: function_call_output
+      - call_id: call-b
+        output: rendered
+        type: function_call_output
+      - content: 'Reply exactly: done'
+        role: user
+      model: deepseek-v4-flash
+      stream: false
+    uri: https://api.deepseek.com/responses
+  response:
+    body:
+      string: '{"error":{"message":"No tool output found for tool call call-a.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}'
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      connection:
+      - keep-alive
+      content-length:
+      - '141'
+      content-type:
+      - application/octet-stream
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 400
+      message: Bad Request
+version: 1

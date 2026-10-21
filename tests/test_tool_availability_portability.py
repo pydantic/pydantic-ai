@@ -8,9 +8,9 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
@@ -76,7 +77,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic, google or openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1666,6 +1666,128 @@ def test_announcement_part_respects_inline_system_prompt_support(supports_inline
     else:
         assert isinstance(part, UserPromptPart)
         assert part.content == f'<system>{expected}</system>'
+
+
+def test_announcements_render_after_sibling_tool_returns() -> None:
+    """Announcements for a turn that reveals several tools land after the request's tool returns."""
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart(content='unused')]),
+        profile=ModelProfile(supports_inline_system_prompts=True),
+    )
+    tools = [
+        ToolDefinition(name='first_tool', defer_loading=True),
+        ToolDefinition(name='second_tool', defer_loading=True),
+    ]
+    prepared = model.prepare_messages(
+        [
+            ModelRequest(parts=[UserPromptPart(content='start')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_1'),
+                    ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                    ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_2'),
+                    ToolAvailabilityDeltaPart(tools_added=['second_tool']),
+                ]
+            ),
+        ],
+        ModelRequestParameters(function_tools=tools, revealed_tool_names={tool.name for tool in tools}),
+    )
+
+    parts = prepared[1].parts
+    assert [type(part) for part in parts] == [ToolReturnPart, ToolReturnPart, SystemPromptPart, SystemPromptPart]
+    assert [part.tool_call_id for part in parts if isinstance(part, ToolReturnPart)] == ['call_1', 'call_2']
+    assert [part.content for part in parts if isinstance(part, SystemPromptPart)] == [
+        TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`first_tool`'),
+        TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`second_tool`'),
+    ]
+
+
+def test_standing_system_prompt_stays_ahead_of_sorted_tool_returns() -> None:
+    """The first request's opening system prompt keeps its place when tool returns sort forward."""
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart(content='unused')]),
+        profile=ModelProfile(supports_inline_system_prompts=True),
+    )
+    tool = ToolDefinition(name='first_tool', defer_loading=True)
+    prepared = model.prepare_messages(
+        [
+            # Drops out entirely (its only delta names a tool that is no longer served), passing
+            # the leading role to the next request.
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['withdrawn_tool'])]),
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='standing'),
+                    ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_1'),
+                    ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                ]
+            ),
+        ],
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
+
+    parts = prepared[0].parts
+    assert [type(part) for part in parts] == [SystemPromptPart, ToolReturnPart, SystemPromptPart]
+    assert [part.content for part in parts if isinstance(part, SystemPromptPart)] == [
+        'standing',
+        TOOL_AVAILABILITY_ANNOUNCEMENT.format(names='`first_tool`'),
+    ]
+
+
+_ANNOUNCEMENT = f'<system>{TOOL_AVAILABILITY_ANNOUNCEMENT.format(names="`first_tool`")}</system>'
+
+
+@pytest.mark.parametrize(
+    'authored, expected',
+    [
+        pytest.param(
+            [ToolAvailabilityDeltaPart(tools_added=['first_tool']), UserPromptPart(content='go')],
+            [(UserPromptPart, _ANNOUNCEMENT), (UserPromptPart, 'go')],
+            id='delta-first',
+        ),
+        pytest.param(
+            [
+                SystemPromptPart(content='standing'),
+                ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                UserPromptPart(content='go'),
+            ],
+            [(SystemPromptPart, 'standing'), (UserPromptPart, _ANNOUNCEMENT), (UserPromptPart, 'go')],
+            id='after-standing-prompt',
+        ),
+        pytest.param(
+            [
+                ToolAvailabilityDeltaPart(tools_added=['first_tool']),
+                ToolReturnPart(tool_name='load_capability', content='loaded', tool_call_id='call_1'),
+            ],
+            [(ToolReturnPart, 'loaded'), (UserPromptPart, _ANNOUNCEMENT)],
+            id='before-tool-return',
+        ),
+    ],
+)
+def test_first_request_announcement_is_not_standing_system_prompt(
+    authored: list[ModelRequestPart], expected: list[tuple[type[ModelRequestPart], object]]
+) -> None:
+    """An announcement opening the first request stays in the conversation instead of being hoisted (#7899).
+
+    Only the `SystemPromptPart`s the history was authored with count as the standing prompt, which
+    non-inline adapters lift into the provider's system field; the rendered announcement is not one.
+    """
+    model = FunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart(content='unused')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+    tool = ToolDefinition(name='first_tool', defer_loading=True)
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=authored)],
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
+
+    [request] = prepared
+    assert isinstance(request, ModelRequest)
+    rendered: list[tuple[type[ModelRequestPart], object]] = []
+    for part in request.parts:
+        assert isinstance(part, SystemPromptPart | UserPromptPart | ToolReturnPart)
+        rendered.append((type(part), part.content))
+    assert rendered == expected
 
 
 async def test_responses_output_tool_stays_forceable_alongside_reveal(allow_model_requests: None) -> None:

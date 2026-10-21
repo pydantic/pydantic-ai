@@ -22,6 +22,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.messages import STANDING_PROMPT_PLANTED_KEY, sanitize_messages
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
@@ -94,10 +95,14 @@ def test_sanitize_messages_keeps_trailing_native_tool_calls():
         ModelResponse(parts=[NativeToolCallPart(tool_name='web_search', tool_call_id='native-2')]),
     ]
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        # Scoped to the warning these tests own rather than `simplefilter('error')`: that form
+        # overrode the suite's intentional `ResourceWarning` ignores, so delayed event-loop GC
+        # failed whichever test happened to collect it.
+        warnings.filterwarnings('always', message=r'Client-submitted history ended with unresolved tool call')
         assert sanitize_messages(paired) == paired
         assert sanitize_messages(lone) == lone
+    assert not caught_warnings
 
 
 def test_sanitize_messages_strips_compaction_provenance_stamp():
@@ -316,3 +321,31 @@ def test_sanitize_messages_drops_uploaded_files_by_default():
     assert part.content == snapshot(
         ['summarize', UploadedFile(file_id='file-abc', provider_name='openai', media_type='application/pdf')]
     )
+
+
+def test_sanitize_messages_strips_workspace_ref():
+    """A client-supplied `ModelResponse.workspace_ref` is reset to `None`.
+
+    The most recent reference in history is offered to a capability's `get_workspace`, so a client
+    that can set it could point a reconnecting capability at an environment it attaches to with
+    server-side provider credentials. The response's parts are otherwise kept intact.
+    """
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[TextPart(content='done')],
+            workspace_ref=WorkspaceRef(provider='modal', id='victim-env'),
+        ),
+    ]
+
+    response = message(sanitize_messages(messages), ModelResponse)
+    assert response.workspace_ref is None
+    assert response.parts == [TextPart(content='done')]
+
+
+def test_sanitize_messages_keeps_workspace_refs_when_asked():
+    """`strip_workspace_refs=False` keeps the reference, for history the application trusts."""
+    ref = WorkspaceRef(provider='modal', id='own-env')
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='done')], workspace_ref=ref)]
+
+    response = message(sanitize_messages(messages, strip_workspace_refs=False), ModelResponse)
+    assert response.workspace_ref == ref

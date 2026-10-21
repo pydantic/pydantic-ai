@@ -1,0 +1,82 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-preview-09-2025
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in two or three words.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Say a short greeting.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - text: '**Crafting a Greeting**
+
+
+            I''ve decided "Hello there" is the best fit for the user''s needs, given
+            the length constraints and general appropriateness for a wide audience.
+            It strikes a balance between being friendly and concise.
+
+
+
+            '
+          thought: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: Hello there.
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AwAaACYAHQA0ADMAAwALACsASQDY/7j/PQA3ABMA5v8U
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1131
+      responseTokenCount: 26
+      totalTokenCount: 1157
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 1131
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 26
+      thoughtsTokenCount: 24

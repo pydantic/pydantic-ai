@@ -15,10 +15,11 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     BinaryImage,
+    CompactionPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     DocumentUrl,
@@ -50,6 +51,7 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -65,20 +67,22 @@ from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
+from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, message, message_part
+from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 pytest.importorskip('starlette')
 
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
 
-from pydantic_ai.ui import NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
+from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent, OnCompleteFunc, UIAdapter, UIEventStream
 from pydantic_ai.ui._adapter import resolve_allow_uploaded_files
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -305,6 +309,34 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_without_run_input():
+    """A `UIEventStream` encodes events on its own, with no run input to build it from.
+
+    Transports that carry native events out of band — a durable execution workflow, a queue, a
+    websocket fan-out — encode them where no HTTP request exists. See #6970.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = DummyUIEventStream[None, str]()
+    assert event_stream.run_input is None
+
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_event_stream_close_finalizes_native_stream_without_protocol_trailer():
     """A disconnected consumer cannot receive protocol trailers, but its native stream must be closed."""
     finalized = anyio.Event()
@@ -449,6 +481,97 @@ async def test_event_stream_error_closes_open_tool_call():
             '{"query": "pydantic"}',
             "</tool-call name='my_tool'>",
             "<error type='RuntimeError'>boom</error>",
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_event_stream_aclose_while_emitting_error():
+    """Closing the transformed stream while the error events are being emitted must not raise.
+
+    The error handler yields too (it closes the open part and then emits the error chunk), so a
+    consumer that aborts at one of those chunks — like the AI SDK does — throws `GeneratorExit` at a
+    yield *inside* the handler, not just at one in the forwarding loop. The protocol trailers must
+    stay outside the `try`/`finally` for that case too, or the `finally` yields while
+    `GeneratorExit` propagates and closing raises. See #7016.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={}))
+        raise RuntimeError('boom')
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = event_stream.transform_stream(event_generator())
+    # Pull through the tool-call close emitted by the error handler, leaving the generator suspended
+    # at a yield inside `except Exception`.
+    events = [await anext(transformed) for _ in range(4)]
+
+    await _utils.aclose_if_supported(transformed)
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='my_tool'>{}",
+            "</tool-call name='my_tool'>",
+        ]
+    )
+
+
+async def test_event_stream_aclose_with_tool_call_in_flight():
+    """Closing mid-run with a dispatched tool call skips the interrupted-tool-call cleanup.
+
+    That cleanup exists for the error path, where the client still receives the events. On close
+    there is no consumer left, so it must not be emitted. See #7016.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={}))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+
+    transformed = event_stream.transform_stream(event_generator())
+    events = [await anext(transformed), await anext(transformed)]
+
+    await _utils.aclose_if_supported(transformed)
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<request>',
+        ]
+    )
+    assert event_stream._pending_tool_calls  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_event_stream_native_stream_without_aclose():
+    """`transform_stream()` accepts any `AsyncIterator`, including ones without an `aclose()` method."""
+
+    class OneEventIterator:
+        def __init__(self):
+            self._events: list[NativeEvent] = [PartStartEvent(index=0, part=TextPart(content='Hello'))]
+
+        def __aiter__(self) -> AsyncIterator[NativeEvent]:
+            return self
+
+        async def __anext__(self) -> NativeEvent:
+            if self._events:
+                return self._events.pop(0)
+            raise StopAsyncIteration
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(OneEventIterator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
             '</response>',
             '</stream>',
         ]
@@ -818,7 +941,7 @@ async def test_run_stream_response_error():
             '<request>',
             "<function-tool-call name='unknown_tool'>None</function-tool-call>",
             "<function-tool-result name='unknown_tool'>Tool execution was interrupted by an error.</function-tool-result>",
-            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries</error>",
+            "<error type='UnexpectedModelBehavior'>Tool 'unknown_tool' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries</error>",
             '</request>',
             '</stream>',
         ]
@@ -857,6 +980,158 @@ async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
             '</stream>',
         ]
     )
+
+
+class PartEndEventStream(UIEventStream[None, str | PartEndEvent, None, str]):
+    def encode_event(self, event: str | PartEndEvent) -> str:
+        return repr(event)  # pragma: no cover
+
+    async def before_stream(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def after_stream(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def before_response(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def after_response(self) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def handle_event(self, event: NativeEvent) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def handle_part_end(self, event: PartEndEvent) -> AsyncIterator[str | PartEndEvent]:
+        yield event
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+    async def on_error(self, error: Exception) -> AsyncIterator[str | PartEndEvent]:
+        return
+        yield
+
+
+@pytest.mark.parametrize(
+    ('part', 'deltas', 'expected_part'),
+    [
+        pytest.param(
+            TextPart(content='The'),
+            [TextPartDelta(content_delta=' quick brown fox'), TextPartDelta(content_delta=' jumps over')],
+            TextPart(content='The quick brown fox jumps over'),
+            id='text',
+        ),
+        pytest.param(
+            ThinkingPart(content='Looking'),
+            [ThinkingPartDelta(content_delta=' for an'), ThinkingPartDelta(content_delta=' answer')],
+            ThinkingPart(content='Looking for an answer'),
+            id='thinking',
+        ),
+        pytest.param(
+            ToolCallPart(tool_name='search', args=None, tool_call_id='call_1'),
+            [
+                ToolCallPartDelta(args_delta='{"query":', tool_call_id='call_1'),
+                ToolCallPartDelta(args_delta='"pydantic"}', tool_call_id='call_1'),
+            ],
+            ToolCallPart(tool_name='search', args='{"query":"pydantic"}', tool_call_id='call_1'),
+            id='tool-call',
+        ),
+        pytest.param(
+            NativeToolCallPart(tool_name='code_execution', args=None, tool_call_id='call_2'),
+            [
+                ToolCallPartDelta(args_delta='{"code":', tool_call_id='call_2'),
+                ToolCallPartDelta(args_delta='"print(1)"}', tool_call_id='call_2'),
+            ],
+            NativeToolCallPart(tool_name='code_execution', args='{"code":"print(1)"}', tool_call_id='call_2'),
+            id='native-tool-call',
+        ),
+    ],
+)
+async def test_cancelled_part_end_contains_accumulated_part(
+    part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart,
+    deltas: list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta],
+    expected_part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart,
+):
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        for delta in deltas:
+            yield PartDeltaEvent(index=0, delta=delta)
+        raise RunCancelled('The agent run was cancelled.')
+
+    events = [event async for event in PartEndEventStream(run_input=None).transform_stream(event_generator())]
+
+    assert events == [PartEndEvent(index=0, part=expected_part)]
+
+
+async def test_cancelled_part_end_ignores_delta_for_different_part():
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' world'))
+        raise RunCancelled('The agent run was cancelled.')
+
+    events = [event async for event in PartEndEventStream().transform_stream(event_generator())]
+
+    assert events == [PartEndEvent(index=0, part=TextPart(content='Hello'))]
+
+
+@pytest.mark.parametrize(
+    ('yield_delta', 'expected_events'),
+    [
+        pytest.param(
+            True,
+            [' world', PartEndEvent(index=0, part=TextPart(content='Hello world'))],
+            id='after-yield',
+        ),
+        pytest.param(False, [PartEndEvent(index=0, part=TextPart(content='Hello'))], id='before-yield'),
+    ],
+)
+async def test_part_end_delta_matches_handler_output_on_error(
+    yield_delta: bool, expected_events: list[str | PartEndEvent]
+):
+    class FailingEventStream(PartEndEventStream):
+        async def handle_event(self, event: NativeEvent) -> AsyncIterator[str | PartEndEvent]:
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                if yield_delta:
+                    yield event.delta.content_delta
+                raise RuntimeError('handler failed')
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
+
+    events = [event async for event in FailingEventStream().transform_stream(event_generator())]
+
+    assert events == expected_events
+
+
+async def test_part_cleanup_error_does_not_replace_stream_error():
+    class ErrorEventStream(PartEndEventStream):
+        async def on_error(self, error: Exception) -> AsyncIterator[str | PartEndEvent]:
+            yield f'{type(error).__name__}: {error}'
+
+    def raise_cleanup_error(_: dict[str, Any] | None) -> dict[str, Any]:
+        raise ValueError('cleanup failed')
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Thinking'))
+        yield PartDeltaEvent(
+            index=0,
+            delta=ThinkingPartDelta(content_delta='...', provider_details=raise_cleanup_error),
+        )
+        raise RuntimeError('stream failed')
+
+    events = [event async for event in ErrorEventStream().transform_stream(event_generator())]
+
+    assert events == [
+        PartEndEvent(index=0, part=ThinkingPart(content='Thinking')),
+        'RuntimeError: stream failed',
+    ]
 
 
 async def test_run_stream_on_cancel():
@@ -1245,9 +1520,21 @@ async def test_run_stream_native_metadata_forwarded():
     assert run_result_event.result.metadata == {'ui': 'native'}
 
 
-async def test_adapter_dispatch_request():
-    agent = Agent(model=TestModel())
+async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
+    # The agent carries a capability that recognizes the ref: a `WorkspaceRef` no capability can
+    # supply is a `UserError`, and this test is about the forwarding, not that failure.
+    agent = Agent(model=TestModel(), capabilities=[ConnectOnlyWorkspaceCapability()])
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    workspace = WorkspaceRef(provider='fake', id='test')
+    captured_workspace: list[object] = []
+
+    run_stream_events = agent.run_stream_events
+
+    def capture_run_stream_events(**kwargs: Any) -> Any:
+        captured_workspace.append(kwargs['workspace'])
+        return run_stream_events(**kwargs)
+
+    monkeypatch.setattr(agent, 'run_stream_events', capture_run_stream_events)
 
     async def receive() -> dict[str, Any]:
         return {'type': 'http.request', 'body': request.model_dump_json().encode('utf-8')}
@@ -1269,7 +1556,11 @@ async def test_adapter_dispatch_request():
         captured_metadata.append(run_result.metadata)
 
     response = await DummyUIAdapter.dispatch_request(
-        starlette_request, agent=agent, metadata={'ui': 'dispatch'}, on_complete=on_complete
+        starlette_request,
+        agent=agent,
+        metadata={'ui': 'dispatch'},
+        on_complete=on_complete,
+        workspace=workspace,
     )
 
     assert isinstance(response, StreamingResponse)
@@ -1308,6 +1599,7 @@ async def test_adapter_dispatch_request():
         ]
     )
     assert captured_metadata == [{'ui': 'dispatch'}]
+    assert captured_workspace == [workspace]
 
 
 def test_manage_system_prompt_visible_in_base_adapter_signatures():
@@ -1505,6 +1797,217 @@ async def test_reinject_system_prompt_capability_preserves_existing():
     assert [p.content for p in sys_parts] == ['First agent']
 
 
+async def test_adapter_server_mode_accepts_per_run_reinject_system_prompt():
+    """A caller may supply their own reinjector for the run without tripping over the adapter's.
+
+    Both land in the same run-supplied layer, where ids must be unique, so the adapter's own
+    instance has to stay out of the `reinject_system_prompt` slot the caller's default `id` takes.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Server prompt')
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Stale prompt'), UserPromptPart(content='Earlier')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    events = [
+        event
+        async for event in adapter.run_stream_native(
+            message_history=history, capabilities=[ReinjectSystemPrompt(replace_existing=True)]
+        )
+    ]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    # The caller's reinjector does the work; the adapter must not add a colliding second one.
+    first_request = message(run_result_event.result.all_messages(), ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['Server prompt']
+
+
+async def test_adapter_server_mode_with_non_replacing_agent_reinjector():
+    """Server mode stays authoritative when the agent carries a non-replacing reinjector.
+
+    A bare `ReinjectSystemPrompt()` leaves an existing `SystemPromptPart` alone, so if the adapter
+    let it stand in for its own, a stale prompt in the server-side history would win.
+    """
+    agent = Agent(model=TestModel(), system_prompt='Server prompt', capabilities=[ReinjectSystemPrompt()])
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Stale prompt'), UserPromptPart(content='Earlier')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
+    ]
+
+    events = [event async for event in adapter.run_stream_native(message_history=history)]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    first_request = message(run_result_event.result.all_messages(), ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['Server prompt']
+
+
+async def test_adapter_server_mode_with_deferred_agent_reinjector():
+    """Server mode stays authoritative when the agent's reinjector is deferred.
+
+    A deferred capability's `before_model_request` hook doesn't run until the model calls
+    `load_capability`, so it can never stand in for the adapter's own reinjector.
+    """
+    agent = Agent(
+        # `call_tools=[]` so the model doesn't call `load_capability`, leaving the reinjector deferred.
+        TestModel(call_tools=[]),
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(replace_existing=True, defer_loading=True, id='deferred_reinject')],
+    )
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    events = [event async for event in adapter.run_stream_native()]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    first_request = message(run_result_event.result.all_messages(), ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['Server prompt']
+
+
+def _steering_agent(**kwargs: Any) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+    """An agent whose first model turn calls a tool that enqueues a mid-run `SystemPromptPart`."""
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
+        if len(requests) == 1:
+            return ModelResponse(parts=[ToolCallPart('steer', {}, tool_call_id='steer_call')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_respond(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='steer', json_args='{}', tool_call_id='steer_call')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(respond, stream_function=stream_respond), system_prompt='Server prompt', **kwargs)
+
+    @agent.tool
+    def steer(ctx: RunContext[None]) -> str:
+        ctx.enqueue(SystemPromptPart('Mid-run steering'))
+        return 'steered'
+
+    return agent, requests
+
+
+def _contents(messages: Sequence[ModelMessage]) -> list[str]:
+    """The text of each system and user prompt part in `messages`, in order."""
+    return [
+        part.content
+        for m in messages
+        if isinstance(m, ModelRequest)
+        for part in m.parts
+        if isinstance(part, (SystemPromptPart, UserPromptPart)) and isinstance(part.content, str)
+    ]
+
+
+async def test_reinject_system_prompt_replace_keeps_mid_run_system_prompts():
+    """`replace_existing=True` replaces the system prompts the run started with, not ones added during it."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert len(requests) == 2
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Hi', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Hi', 'Go', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_keeps_summary_added_to_head_on_first_request():
+    """A summary a compaction capability folds into the head request on the run's first step is kept."""
+
+    @dataclass
+    class SummarizeHistory(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            standing = [p for p in ctx.messages[0].parts if isinstance(p, SystemPromptPart)]
+            compacted: list[ModelMessage] = [
+                ModelRequest(parts=[*standing, SystemPromptPart('Summary of previous conversation')]),
+                ctx.messages[-1],
+            ]
+            ctx.messages[:] = compacted
+            request_context.messages = list(compacted)
+            return request_context
+
+    agent = Agent(TestModel(), system_prompt='Server prompt', capabilities=[SummarizeHistory()])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+
+    result = await agent.run('Go', message_history=history, capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Summary of previous conversation', 'Go'])
+
+
+async def test_reinject_system_prompt_replace_fresh_conversation_does_not_duplicate():
+    """On a fresh conversation the agent's own system prompt is replaced, not doubled, on every step."""
+    agent, requests = _steering_agent(capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    result = await agent.run('Go')
+
+    assert [_contents(request) for request in requests] == snapshot(
+        [['Server prompt', 'Go'], ['Server prompt', 'Go', '<system>Mid-run steering</system>']]
+    )
+    assert _contents(result.all_messages()) == snapshot(['Server prompt', 'Go', 'Mid-run steering'])
+
+
+async def test_reinject_system_prompt_replace_rerendered_dynamic_prompt_does_not_duplicate():
+    """A dynamic system prompt in the history is re-rendered as a new part before the first request, yet still replaced."""
+    agent = Agent(TestModel(), capabilities=[ReinjectSystemPrompt(replace_existing=True)])
+
+    @agent.system_prompt(dynamic=True)
+    def server_prompt() -> str:
+        return 'Dynamic server prompt'
+
+    # Not at the head, where the standing prompt would be replaced regardless.
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(
+            parts=[UserPromptPart('Again'), SystemPromptPart('Stale', dynamic_ref=server_prompt.__qualname__)]
+        ),
+        ModelResponse(parts=[TextPart('Hello again')]),
+    ]
+
+    result = await agent.run('Go', message_history=history)
+
+    assert _contents(result.all_messages()) == snapshot(['Dynamic server prompt', 'Hi', 'Again', 'Go'])
+
+
+async def test_adapter_server_mode_keeps_mid_run_system_prompts():
+    """In `manage_system_prompt='server'` mode, a `SystemPromptPart` the server adds during the run survives."""
+    agent, requests = _steering_agent()
+    adapter = DummyUIAdapter(
+        agent,
+        DummyUIRunInput(messages=[ModelRequest(parts=[SystemPromptPart('Client prompt'), UserPromptPart('Go')])]),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Stale prompt'), UserPromptPart('Earlier')]),
+        ModelResponse(parts=[TextPart('Earlier reply')]),
+    ]
+
+    with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+        events = [event async for event in adapter.run_stream_native(message_history=history)]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert len(requests) == 2
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(run_result_event.result.all_messages()) == snapshot(
+        ['Server prompt', 'Earlier', 'Go', 'Mid-run steering']
+    )
+
+
 def test_allowed_file_url_schemes_visible_in_base_adapter_signatures():
     from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
     dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
@@ -1526,6 +2029,7 @@ def _make_dummy_adapter(
     allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
     allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
     allow_uploaded_files: bool = False,
+    strip_workspace_refs: bool = True,
 ) -> DummyUIAdapter[None, str]:
     agent = Agent(model=TestModel())
     return DummyUIAdapter(
@@ -1534,6 +2038,7 @@ def _make_dummy_adapter(
         allowed_file_url_schemes=allowed_file_url_schemes,
         allowed_file_url_force_download=allowed_file_url_force_download,
         allow_uploaded_files=allow_uploaded_files,
+        strip_workspace_refs=strip_workspace_refs,
     )
 
 
@@ -1882,6 +2387,27 @@ def test_sanitize_messages_keeps_uploaded_files_when_allow_uploaded_files():
     assert user_part.content == snapshot(['Look at this:', uploaded_file])
 
 
+@pytest.mark.parametrize('strip_workspace_refs', [True, False])
+def test_adapter_strip_workspace_refs(strip_workspace_refs: bool):
+    """The adapter resets client-submitted `workspace_ref`s unless `strip_workspace_refs=False`."""
+    ref = WorkspaceRef(provider='modal', id='env')
+    adapter = _make_dummy_adapter(
+        [ModelResponse(parts=[TextPart(content='done')], workspace_ref=ref)],
+        strip_workspace_refs=strip_workspace_refs,
+    )
+
+    response = message(adapter.sanitize_messages(adapter.messages), ModelResponse)
+    assert response.workspace_ref == (None if strip_workspace_refs else ref)
+
+
+def test_strip_workspace_refs_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert from_request_parameters['strip_workspace_refs'].default is True
+    assert dispatch_request_parameters['strip_workspace_refs'].default is True
+
+
 def test_resolve_allow_uploaded_files_maps_deprecated_preserve_file_data():
     """`resolve_allow_uploaded_files` maps the deprecated `preserve_file_data` arg onto `allow_uploaded_files`.
 
@@ -2046,9 +2572,13 @@ def test_sanitize_messages_keeps_dangling_native_tool_calls():
         ]
     )
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')  # no dangling-tool-call warning should fire for native calls
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        # Scoped to the warning these tests own rather than `simplefilter('error')`: that form
+        # overrode the suite's intentional `ResourceWarning` ignores, so delayed event-loop GC
+        # failed whichever test happened to collect it.
+        warnings.filterwarnings('always', message=r'Client-submitted history ended with unresolved tool call')
         sanitized = adapter.sanitize_messages(adapter.messages)
+    assert not caught_warnings
 
     response = message(sanitized, ModelResponse, index=1)
     assert [type(p).__name__ for p in response.parts] == ['TextPart', 'NativeToolCallPart']
@@ -2104,6 +2634,47 @@ async def test_run_stream_strips_dangling_tool_calls_from_client_history():
     assert not any(
         isinstance(message, ModelResponse) and bool(message.tool_calls) for message in history_seen_by_model
     ), 'dangling client-submitted tool call leaked into the agent run'
+
+
+async def test_run_stream_with_message_history_strips_unresolved_tool_calls():
+    """End-to-end: with server-side `message_history`, an unresolved client tool call is still
+    stripped when other client messages before and after it are not kept, so the agent makes a
+    normal model request instead of running the call.
+    """
+    executed: list[int] = []
+    captured: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        captured.append(list(messages))
+        yield 'done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def refresh_cache(key: int) -> str:
+        executed.append(key)  # pragma: no cover
+        return 'refreshed'  # pragma: no cover
+
+    request = DummyUIRunInput(
+        messages=[
+            ModelResponse(parts=[ToolCallPart(tool_name='refresh_cache', args={'key': 42}, tool_call_id='call-1')]),
+            ModelRequest(parts=[SystemPromptPart(content='client system prompt')]),
+            ModelResponse(parts=[CompactionPart(content='client summary')]),
+        ]
+    )
+    adapter = DummyUIAdapter(agent=agent, run_input=request)
+
+    # Two warnings fire here (system-prompt strip + dangling call); assert on the dangling one.
+    with pytest.warns(UserWarning) as record:
+        async for _ in adapter.run_stream(message_history=[ModelRequest.user_text_prompt('server context')]):
+            pass
+    assert any('unresolved tool call' in str(w.message) and 'refresh_cache' in str(w.message) for w in record)
+
+    assert executed == []
+    assert len(captured) == 1
+    parts_seen_by_model = [part for message in captured[0] for part in message.parts]
+    assert not any(isinstance(part, (ToolCallPart, CompactionPart)) for part in parts_seen_by_model)
+    assert any(isinstance(part, UserPromptPart) and part.content == 'server context' for part in parts_seen_by_model)
 
 
 async def test_run_stream_strips_file_urls_with_disallowed_schemes():
@@ -2171,3 +2742,208 @@ async def test_reinject_system_prompt_capability_with_pending_tool_calls():
             UserPromptPart(content='Call the tool', timestamp=IsDatetime()),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        # The three CORS-safelisted content types, which a browser can send cross-origin with no
+        # preflight, plus the request that declares none at all.
+        pytest.param(b'text/plain;charset=UTF-8', id='text-plain'),
+        pytest.param(b'multipart/form-data', id='multipart'),
+        pytest.param(b'application/x-www-form-urlencoded', id='form-urlencoded'),
+        pytest.param(None, id='no-content-type'),
+    ],
+)
+async def test_from_request_rejects_cross_origin_forgeable_content_type(content_type: bytes | None):
+    """A body that could have been posted cross-origin without a preflight is turned away with 415.
+
+    The rejection has to land before the body is read, so the run — which is the damage, since the
+    attacker never needs to read the response — never starts. `receive` failing the test is what
+    pins that: asserting on the status code alone would pass even if the check ran after dispatch.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', content_type)] if content_type is not None else [],
+        },
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.from_request(starlette_request, agent=agent)
+
+    assert exc_info.value.status_code == 415
+    assert exc_info.value.detail == snapshot(
+        f'Expected `Content-Type: application/json`, got {content_type.decode().split(";")[0] if content_type else "no content type"}'
+    )
+
+
+async def test_dispatch_request_rejects_cross_origin_forgeable_content_type():
+    """`dispatch_request` inherits the check and never constructs the adapter."""
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.dispatch_request(starlette_request, agent=agent)
+
+    assert exc_info.value.status_code == 415
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        pytest.param(b'application/json', id='bare'),
+        # Parameters are stripped and the type is matched case-insensitively, as media types are.
+        pytest.param(b'application/json; charset=utf-8', id='with-charset'),
+        pytest.param(b'APPLICATION/JSON', id='uppercase'),
+    ],
+)
+async def test_from_request_accepts_json_content_type(content_type: bytes):
+    """What every real frontend sends is admitted untouched."""
+    agent = Agent(model=TestModel())
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', content_type)]},
+        receive=receive,
+    )
+
+    adapter = await DummyUIAdapter.from_request(starlette_request, agent=agent)
+
+    assert adapter.run_input == run_input
+
+
+@pytest.mark.parametrize(
+    'allowed_content_types,expected_run_input',
+    [
+        # `None` skips the check entirely, for a route that carries CSRF protection of its own.
+        pytest.param(None, True, id='disabled'),
+        # A wider set admits another media type without giving up the control.
+        pytest.param(frozenset({'application/json', 'text/plain'}), True, id='widened'),
+        # The default set does not contain it.
+        pytest.param(DEFAULT_ALLOWED_CONTENT_TYPES, False, id='default'),
+    ],
+)
+async def test_allowed_content_types_opt_out(allowed_content_types: frozenset[str] | None, expected_run_input: bool):
+    agent = Agent(model=TestModel())
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain')]},
+        receive=receive,
+    )
+
+    if expected_run_input:
+        adapter = await DummyUIAdapter.from_request(
+            starlette_request, agent=agent, allowed_content_types=allowed_content_types
+        )
+        assert adapter.run_input == run_input
+    else:
+        with pytest.raises(HTTPException):
+            await DummyUIAdapter.from_request(
+                starlette_request, agent=agent, allowed_content_types=allowed_content_types
+            )
+
+
+async def test_empty_allowed_content_types_rejects_everything():
+    """An empty set is the most restrictive value, matching `allowed_file_url_force_download`.
+
+    Pinned so it can't drift into meaning "allow anything", which is how an allowlist turns into a
+    silent no-op.
+    """
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.from_request(starlette_request, agent=agent, allowed_content_types=frozenset())
+
+    assert exc_info.value.status_code == 415
+
+
+def test_allowed_content_types_visible_in_base_adapter_signatures():
+    from_request_parameters = inspect.signature(DummyUIAdapter.from_request).parameters
+    dispatch_request_parameters = inspect.signature(DummyUIAdapter.dispatch_request).parameters
+
+    assert 'allowed_content_types' in from_request_parameters
+    assert from_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+    assert 'allowed_content_types' in dispatch_request_parameters
+    assert dispatch_request_parameters['allowed_content_types'].default == DEFAULT_ALLOWED_CONTENT_TYPES
+
+    assert DEFAULT_ALLOWED_CONTENT_TYPES == snapshot(frozenset({'application/json'}))
+
+
+@pytest.mark.parametrize(
+    'configured',
+    [
+        pytest.param(frozenset({'APPLICATION/JSON'}), id='uppercase'),
+        pytest.param(frozenset({'Application/Json'}), id='mixed-case'),
+        pytest.param(frozenset({' application/json '}), id='surrounding-whitespace'),
+    ],
+)
+async def test_allowed_content_types_are_normalized(configured: frozenset[str]):
+    """A configured entry is matched case-insensitively, like the request's own media type.
+
+    Without this the check rejects a perfectly valid `application/json` request and the 415 names
+    the same media type the request just sent, which reads as a contradiction.
+    """
+    agent = Agent(model=TestModel())
+    run_input = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+
+    adapter = await DummyUIAdapter.from_request(starlette_request, agent=agent, allowed_content_types=configured)
+
+    assert adapter.run_input == run_input
+
+
+async def test_rejection_message_names_the_normalized_media_type():
+    """The 415 is built from the same normalized set the comparison uses."""
+    agent = Agent(model=TestModel())
+
+    async def receive() -> dict[str, Any]:  # pragma: no cover
+        pytest.fail('the request body must not be read when the content type is rejected')
+
+    starlette_request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'text/plain')]},
+        receive=receive,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await DummyUIAdapter.from_request(
+            starlette_request, agent=agent, allowed_content_types=frozenset({'APPLICATION/JSON'})
+        )
+
+    assert exc_info.value.detail == snapshot('Expected `Content-Type: application/json`, got text/plain')

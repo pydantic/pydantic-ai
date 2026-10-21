@@ -1,6 +1,10 @@
+---
+description: "Route each Pydantic AI run or step to a different model, chosen from dependencies, message history or usage, with the SelectModel capability."
+---
+
 # Select Model
 
-[`SelectModel`][pydantic_ai.capabilities.SelectModel] is a [capability](overview.md) that chooses a model from run dependencies, message history, usage, or the current step. The selector is first evaluated during run setup, so the agent does not need a constructor model:
+[`SelectModel`][pydantic_ai.capabilities.SelectModel] is a [capability](overview.md) that chooses a model from run dependencies, the run's prompt, message history, usage, the current step, or the run's IDs, deadline and usage limits. The selector is first evaluated during run setup, so the agent does not need a constructor model:
 
 ```python {title="adaptive_model.py"}
 from dataclasses import dataclass
@@ -19,7 +23,7 @@ class Deps:
 
 def select_model(ctx: ModelSelectionContext[Deps]) -> str:
     """Use the larger model for complex tasks."""
-    return 'openai:gpt-5.6-sol' if ctx.deps.task_complexity == 'complex' else 'openai:gpt-5.6-luna'
+    return '{{ openai:medium }}' if ctx.deps.task_complexity == 'complex' else '{{ openai:small }}'
 
 
 agent = Agent(deps_type=Deps, capabilities=[SelectModel(select_model)])

@@ -3,7 +3,11 @@ changelog:
     labels:
       - docs
       - chore
+      - pkg:clai2
   categories:
+    - title: ⚠️ Compatibility Notes
+      labels:
+        - compatibility impact
     - title: 🚀 Features
       labels:
         - feature

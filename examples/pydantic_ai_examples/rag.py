@@ -36,6 +36,7 @@ from pydantic import TypeAdapter
 from typing_extensions import AsyncGenerator
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -49,7 +50,7 @@ class Deps:
     pool: asyncpg.Pool
 
 
-agent = Agent('openai:gpt-5.2', deps_type=Deps)
+agent = Agent('openai:gpt-5.2', deps_type=Deps, capabilities=[Caching()])
 
 
 @agent.tool

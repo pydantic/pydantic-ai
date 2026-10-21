@@ -1,17 +1,32 @@
 from __future__ import annotations as _annotations
 
 import inspect
+import warnings
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import cached_property
-from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Concatenate,
+    Generic,
+    Literal,
+    Protocol,
+    Self,
+    TypeAlias,
+    Union,
+    cast,
+    overload,
+)
 
 from pydantic import AliasChoices, Field
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import ParamSpec, Self, TypeVar
+from typing_extensions import ParamSpec, TypeVar
 
-from . import _function_schema, _utils
+from . import _function_schema, _utils, messages as _messages
 from ._deferred import (
     DeferredToolApprovalResult as DeferredToolApprovalResult,
     DeferredToolCallResult as DeferredToolCallResult,
@@ -21,10 +36,16 @@ from ._deferred import (
     ToolApproved as ToolApproved,
     ToolDenied as ToolDenied,
 )
+from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import ToolPartKind
+from .messages import (
+    ToolPartKind,
+    ToolReturn,
+    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
+)
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -125,7 +146,7 @@ def only_if_42(
 def hitchhiker(ctx: RunContext[int], answer: str) -> str:
     return f'{ctx.deps} {answer}'
 
-hitchhiker = Tool(hitchhiker, prepare=only_if_42)
+hitchhiker_tool = Tool(hitchhiker, prepare=only_if_42)
 ```
 
 Usage `ToolPrepareFunc[AgentDepsT]`.
@@ -244,6 +265,11 @@ NativeToolFunc: TypeAlias = Callable[
 
 This is useful if you want to customize the native tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
+
+Returning `None` omits the tool. The one exception is a
+[`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] capability that routes native configuration
+into a `fallback_subagent_model` subagent, where the subagent has already been invoked and cannot omit; see
+[`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration].
 """
 
 AgentNativeTool: TypeAlias = AbstractNativeTool | NativeToolFunc[AgentDepsT]
@@ -266,6 +292,41 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
+    def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
+        # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
+        # (the JSON Schema way to describe single values), so models can tell the options apart.
+        #
+        # Opted into by mixing in `UseEnumMemberDocstrings`, rather than by the enclosing model's
+        # `use_attribute_docstrings` config: that config is pushed while the *core* schema is built and nothing
+        # pushes it while the JSON schema is generated, so an enum reached from a tool's parameters never sees it
+        # even though `_function_schema` sets it. A base class is also the only marker an `Enum` can carry — a
+        # plain class attribute, annotated or not, becomes a member — so the opt-in is read off the class itself.
+        json_schema = super().enum_schema(schema)
+        # `schema['cls']` is `Any`, and narrowing an `Any` by `issubclass` loses the enum along with it, so the
+        # declared type is spelled out here to keep both sides of the intersection.
+        enum_cls: type[Enum] = schema['cls']
+        if not issubclass(enum_cls, UseEnumMemberDocstrings):
+            return json_schema
+        # A docstring is read under the name it was declared under, but an alias (`urgent = 'high'` beside
+        # `high = 'high'`) is the same member, so the schema only ever names the canonical one. Resolve the
+        # declared names through `__members__` so an alias's docstring describes the option it was written
+        # for; `setdefault` keeps the canonical name's own docstring when both have one, since `__members__`
+        # lists a member before its aliases.
+        declared = _utils.enum_member_docstrings(enum_cls)
+        docstrings: dict[str, str] = {}
+        for name, member in enum_cls.__members__.items():
+            if (docstring := declared.get(name)) is not None:
+                docstrings.setdefault(member.name, docstring)
+        # A `None` member has no `const` a schema can carry: `{'const': None}` reads as "no const" to anything
+        # that looks the key up with a default, and the option silently loses its constraint. Such an enum keeps
+        # the plain `enum` list, which states every value including the null.
+        if docstrings and all(value is not None for value in json_schema.get('enum', ())):
+            json_schema['anyOf'] = [
+                {'const': value, **({'description': docstrings[member.name]} if member.name in docstrings else {})}
+                for member, value in zip(schema['members'], json_schema.pop('enum'))
+            ]
+        return json_schema
+
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
         # Remove largely-useless property titles
         s = super()._named_required_fields_schema(named_required_fields)
@@ -305,6 +366,7 @@ class Tool(Generic[ToolAgentDepsT]):
     sequential: bool
     requires_approval: bool
     metadata: dict[str, Any] | None
+    tool_kind: ToolPartKind | None
     timeout: float | None
     defer_loading: bool
     include_return_schema: bool | None
@@ -332,6 +394,7 @@ class Tool(Generic[ToolAgentDepsT]):
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
+        tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
@@ -347,7 +410,7 @@ class Tool(Generic[ToolAgentDepsT]):
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
             return f'{ctx.deps} {x} {y}'
 
-        agent = Agent('test', tools=[Tool(my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool)], deps_type=int)
         ```
 
         or with a custom prepare method:
@@ -367,7 +430,7 @@ class Tool(Generic[ToolAgentDepsT]):
             if ctx.deps == 42:
                 return tool_def
 
-        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)], deps_type=int)
         ```
 
 
@@ -399,9 +462,13 @@ class Tool(Generic[ToolAgentDepsT]):
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
+            tool_kind: What the tool is, independent of its name: a [`ToolKind`][pydantic_ai.messages.ToolKind], or the id of one.
+                Its call and return parts are then promoted to the typed parts registered for the kind.
+                See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -421,7 +488,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.description = description or self.function_schema.description
+        self.description = description if description is not None else self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
@@ -430,6 +497,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.sequential = sequential
         self.requires_approval = requires_approval
         self.metadata = metadata
+        self.tool_kind = _tool_kind_id(tool_kind)
         self.timeout = timeout
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
@@ -501,6 +569,7 @@ class Tool(Generic[ToolAgentDepsT]):
             strict=self.strict,
             sequential=self.sequential,
             metadata=self.metadata,
+            tool_kind=self.tool_kind,
             timeout=self.timeout,
             defer_loading=self.defer_loading,
             kind='unapproved' if self.requires_approval else 'function',
@@ -536,8 +605,93 @@ This type is used to define tools parameters (aka arguments) in [ToolDefinition]
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
 
-ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
-"""Kind of tool."""
+ToolDefinitionKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
+"""How a tool is invoked: see [`ToolDefinition.kind`][pydantic_ai.tools.ToolDefinition.kind].
+
+Distinct from [`ToolKind`][pydantic_ai.messages.ToolKind], which says what a tool is.
+"""
+
+if TYPE_CHECKING:
+    # TODO(v3): remove this deprecated alias and the `__getattr__` at the bottom of this module.
+    ToolKind: TypeAlias = ToolDefinitionKind
+
+
+if TYPE_CHECKING:
+
+    class _ToolKindField:
+        """How type checkers see `ToolDefinition.tool_kind`: set as a `ToolKind` or its id, read as the id.
+
+        At runtime the field is a plain `ToolPartKind | None`, which `ToolDefinition.__post_init__`
+        normalizes, so reading it costs nothing.
+        """
+
+        @overload
+        def __get__(self, obj: None, owner: type[Any]) -> None: ...
+
+        @overload
+        def __get__(self, obj: object, owner: type[Any]) -> ToolPartKind | None: ...
+
+        def __get__(self, obj: object | None, owner: type[Any]) -> ToolPartKind | None: ...
+
+        def __set__(self, obj: object, value: _messages.ToolKindLike | None) -> None: ...
+
+
+KindArgsT = TypeVar('KindArgsT')
+"""The arguments shape of the [`ToolKind`][pydantic_ai.messages.ToolKind] given to a tool decorator."""
+
+KindContentT = TypeVar('KindContentT')
+"""The result shape of the [`ToolKind`][pydantic_ai.messages.ToolKind] given to a tool decorator."""
+
+_KindArgsT_co = TypeVar('_KindArgsT_co', covariant=True)
+_KindContentT = TypeVar('_KindContentT')
+_DecoratorDepsT = TypeVar('_DecoratorDepsT')
+_KindParams = ParamSpec('_KindParams')
+
+KindedToolResult: TypeAlias = (
+    'KindContentT | ToolReturn[KindContentT] | Awaitable[KindContentT] | Awaitable[ToolReturn[KindContentT]]'
+)
+"""What a tool function with a [`ToolKind`][pydantic_ai.messages.ToolKind] returns: the kind's result shape, maybe wrapped in a `ToolReturn` and awaitable."""
+
+
+class KindedToolPlainDecorator(Protocol[_KindArgsT_co, _KindContentT]):
+    """The decorator `tool_plain(tool_kind=...)` returns, which checks the function against the kind's shapes.
+
+    The function either takes the kind's arguments shape as its one parameter, or the shape's fields as
+    separate parameters; either way it returns the kind's result shape. Type checkers can only check the
+    parameters of the first form; the second is checked when the agent collects its tools.
+    """
+
+    @overload
+    def __call__(
+        self, func: Callable[[_KindArgsT_co], KindedToolResult[_KindContentT]], /
+    ) -> Callable[[_KindArgsT_co], KindedToolResult[_KindContentT]]: ...
+
+    @overload
+    def __call__(
+        self, func: Callable[_KindParams, KindedToolResult[_KindContentT]], /
+    ) -> Callable[_KindParams, KindedToolResult[_KindContentT]]: ...
+
+
+class KindedToolDecorator(Protocol[_DecoratorDepsT, _KindArgsT_co, _KindContentT]):
+    """The decorator `tool(tool_kind=...)` returns, which checks the function against the kind's shapes.
+
+    Like [`KindedToolPlainDecorator`][pydantic_ai.tools.KindedToolPlainDecorator], for a function that
+    takes [`RunContext`][pydantic_ai.tools.RunContext] as its first parameter.
+    """
+
+    @overload
+    def __call__(
+        self,
+        func: Callable[[RunContext[_DecoratorDepsT], _KindArgsT_co], KindedToolResult[_KindContentT]],
+        /,
+    ) -> Callable[[RunContext[_DecoratorDepsT], _KindArgsT_co], KindedToolResult[_KindContentT]]: ...
+
+    @overload
+    def __call__(
+        self,
+        func: Callable[Concatenate[RunContext[_DecoratorDepsT], _KindParams], KindedToolResult[_KindContentT]],
+        /,
+    ) -> Callable[Concatenate[RunContext[_DecoratorDepsT], _KindParams], KindedToolResult[_KindContentT]]: ...
 
 
 @dataclass(repr=False, kw_only=True)
@@ -577,7 +731,7 @@ class ToolDefinition:
     (Gemini 2.5+); Anthropic and Bedrock leave it off unless you explicitly set `strict=True`.
 
     Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. See
-    [Strict Mode](https://ai.pydantic.dev/tools-advanced/#strict-mode) for the full per-provider table.
+    [Strict Mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode) for the full per-provider table.
     """
 
     sequential: bool = False
@@ -590,7 +744,7 @@ class ToolDefinition:
     instead.
     """
 
-    kind: ToolKind = field(default='function')
+    kind: ToolDefinitionKind = field(default='function')
     """The kind of tool:
 
     - `'function'`: a tool that will be executed by Pydantic AI during an agent run and has its result returned to the model
@@ -655,27 +809,26 @@ class ToolDefinition:
     the wire; that's `defer_loading`'s question.
     """
 
-    # Implementation note for new typed native tools: registering a new tool_kind value
-    # requires (1) extending the ToolPartKind Literal in messages.py, (2) defining
-    # the typed subclass + narrower under pydantic_ai/<your_native_tool>.py and registering
-    # in _TOOL_CALL_NARROWERS / _NATIVE_CALL_NARROWERS / _TOOL_RETURN_NARROWERS /
-    # _NATIVE_RETURN_NARROWERS, (3) adding the (part_kind, tool_kind) → Tag entries
-    # in messages.py's _TYPED_PART_TAGS and _TYPED_PART_TAGS_BY_TYPE registries, and
-    # (4) extending the ModelResponsePart / ModelRequestPart Annotated unions with
-    # the new typed subclasses.
-    tool_kind: ToolPartKind | None = None
-    """Discriminator for a cross-provider typed call/return shape (e.g. `'tool-search'`).
+    if TYPE_CHECKING:
+        tool_kind: _ToolKindField = _ToolKindField()
+    else:
+        tool_kind: ToolPartKind | None = None
+    """What this tool is, independent of its name (e.g. `'tool-search'`), for tools with typed parts.
 
-    Set by the framework when a tool emits parts that should be promoted to a typed
-    subclass (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
-    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]). Leave as
-    `None` for user-defined function tools — they go through the standard
-    [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] shapes.
+    Set it to a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id; either way it reads back as the id.
 
-    To detect a tool-search part regardless of execution path (native server-side vs.
-    local fallback), check `part.tool_kind == 'tool-search'` — this works across both
-    call/return and both server/local variants.
+    The tool's call and return parts carry it and are promoted to the typed subclasses
+    registered for it (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
+    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]), so code can
+    recognize the tool with `isinstance` even when it has been renamed or prefixed. A run whose
+    tools include a kind that isn't defined, or whose parameters or return type don't fit their
+    kind's shapes, raises `UserError` (see [Typed tool parts](../tools-advanced.md#typed-tool-parts)),
+    while a stored definition with one still loads. Leave as `None` for tools that have no typed parts.
+
+    `part.tool_kind == 'tool-search'` answers which tool a part belongs to, whatever its outcome
+    and whether search ran server-side or locally. To read a search result, check
+    `isinstance(part, ToolSearchReturnPart | NativeToolSearchReturnPart)` instead: a failed or
+    denied return keeps its `tool_kind`, but its content is an error, not the typed result.
 
     Distinct from [`kind`][pydantic_ai.tools.ToolDefinition.kind], which is about invocation
     semantics (`'function'` / `'output'` / `'external'` / `'unapproved'`).
@@ -736,6 +889,10 @@ class ToolDefinition:
         """
         return self.function_signature.render(body, name=self.name, description=self.description, **kwargs)
 
+    def __post_init__(self) -> None:
+        if self.tool_kind is not None and self.tool_kind.__class__ is not str:
+            self.tool_kind = _tool_kind_id(self.tool_kind)
+
     @property
     def defer(self) -> bool:
         """Whether calls to this tool will be deferred.
@@ -745,3 +902,16 @@ class ToolDefinition:
         return self.kind in ('external', 'unapproved')
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def __getattr__(name: str) -> object:
+    if name == 'ToolKind':
+        warnings.warn(
+            '`pydantic_ai.tools.ToolKind` has been renamed to `ToolDefinitionKind`; `ToolKind` is now the '
+            '`pydantic_ai.ToolKind` class that says what a tool is. Update your imports; this deprecated alias will '
+            'be removed in v3.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        return ToolDefinitionKind
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

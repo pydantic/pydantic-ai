@@ -1,0 +1,612 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-2.5-flash-native-audio-preview-09-2025
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: My name is Alice and my favorite color is teal.
+        role: user
+      - parts:
+        - text: Nice to meet you, Alice!
+        role: model
+      turnComplete: false
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is my name and favorite color?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - text: '**Recall User Information**
+
+
+            I''ve remembered the user''s name is Alice, and their favorite color is
+            teal. These details should be easy to retain, given their recent mention.
+            I am ready to use this information.
+
+
+
+            '
+          thought: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: Your name
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' is'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' Alice,'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: IgD0//T/FgAoAPv/6P/g/9T/4//q/93/zP++/7//2v+F
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: zxJ3EyEUQxXgFBcV6xWxFAAS3RBIEOEMowxBDH4JsAbi
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: e+tG6tPqkuo/6sDqg+sT7M3sbO4L8hTyuPN39Qr35fja
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 6P3yBW/+kvzJAagDAPyr/0UEBv2T/i4E5PvZ/wsHLPgp
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8Pv9AFQBFABP+8sGG/szAZv/swGE/jr+7AV99pkHAv/K
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 2fq9BDf8gQN1/BwCl/w3BUX4nAk9+CQDBwG3/AEEyfyd
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: tP4WAz/6qAVX+1gDSfynA2L9GQLB/rH/ogHi/YgBIP3F
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +vinB7n6xwApBEz65QOb/sL/zv5MAhb/Zf6YAqn7mwYP
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: VgBXAGMAagBwAHYAcwBkAFIAPgAeABcACwDw/+//4v/i
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /v/9/wEA///9//3/AAABAAAA///2//v//v/8//z//f/+
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' and your'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: +P/5//f/+v/7//r//P/6//3/+v8CAPn/9//9//r/+v/6
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Ed9A163THMK6vyTkkP0YAYwH2AwvDd8ZazJTL+Ep+y9R
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: mfzs/bb7P/yY+qf5ZP7nASkC+P9M/5X8Cfyi/Nz9Gf3/
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: of3XBOEJpww2EjkW7xc2HNQiMSVxJkwpIyzjLiMy3zSU
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: pfC57NHqB+op6OXmJOa44+nfIt5s3ojdiNua2SLYdNZZ
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ENmh3YTiieXM5w3nlOk36wPtP+7p7k/y7fed/rwC/ASQ
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: DSUdJgQpESukJ8gkfx1OGPQPtQn9APL+TPuZ/gb+a/6s
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Oe/77sHtmu4z7bfs7ezb7CLv2/DW9Nj2/f3LAb0JTQ7U
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' favorite'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Vv5LAm3+EQB2ANb+IwB4/6r/rwEm/8j/uQHT/gACqP6x
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: DABCAM3/XgDy/+P/DwDc/lwArwBm/9oAaf8LAIT/SADx
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: EQDE/9T/OQAoAHj/+v9JAOv/d/9FAC0Avf9dAAoAcv/i
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: QQDJANb/u/9jALYAyAAAAEQAZ/9jAagAHAAFAc4AvwBZ
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: eAsWA5f6vPhp9EvyoPMG7PTfyte2127Yt9ok22DXDNRD
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: eQkACQH+tgF0BTQK5BXQF40cIBifFzUW9RaxHAwivSq2
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: CAKgAz0FsAUXB9sHmQcUCaoJWwqHC+4MAw3oDZUOMw/B
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: qQyTDOYNUwyDDloOwQ40D5cQnBKdE8YSNhRfElsSsxFs
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5wq9/wHz1epC5xjoaezc8kn2Pvgv9DPuteYT4QPdOdsf
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9AQtBSIFDgWoBEEEmgMNA5oCMALqAdABlAF2AS4B0gBw
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5v/p/+b/6//p/+f/6//u/+3/8v/q/+//7v/x//P/9P/0
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' color'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: cvqR/H75o/8n/rUAzgHyA48BAQJBAYwCJ/xy+kT7Qfx+
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ywJt/gP7p/py9VXyBvS496b9QQfICTYFzAVUCzsKwghH
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: T/QI9ADy+PGf8pvwmPM99vryd/bR+AT4+/qO+uT5z/hF
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: svYa9jjzM/FB8lbyi/Bf8Ivwmu/Q8JbyGvL+8Yby5fG+
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5vlZ+1r6nvpZ+5P7Tfv3+oX77Pn++iX7cPud+YX5a/hx
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ftli3/Lga+Va6P/psu1i+oYCgRDeFzEeUyWJJVwo+yYO
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: OPhh9gvzIfAF7Tvq/Oh36Abojekr6pTrJ+1U7rnvoPBP
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' is teal.'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: MtFM0vfQ3NPX1undcOH34vfkeOor+aMF/xHmFaoZHRye
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ywAR/+r9KfqL+MD1rPGC7mvsxujO5KHlduNX4ffj1uCj
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5ft2Bwf6kfvBDdP0mgOG/a4F9PfeBGoBevpGAtcB5f/y
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: cwBc/1UA3/++/0AAggAn//H/5wAG/4gACQCg/0MAmP9K
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BgAFAPn//f8DAP//8v8CAP7/9v/r//X//P/8//X/AQAC
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: yvPcApsLbv2U8aj7Rgnq+6P5xAB2AfL6qP1A/4L8n/5n
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: I/hf+eb36PZh9wb1MPS09Yb0JvII9FPxWPCa8mn16vLR
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: S+va5lPl3OI04mzgwN1N3X/aOtqg2hrZeNmw2irbydqB
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: d+2B8a33bvp7/gICOQVhCfIMVBHvFDoY8xmNHKIeeh9k
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gf8d/lkB9gVjCjENDBCPDTQKaA7kFSIUrg+pC4kFfwIB
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: X/9V/+L+7v7v/qv+h/7S/pz+Yf5E/i3+O/4w/hn+Bf5o
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: IQAjAPv/GQA/AAcA5/8YABIAIwAzAAUAFwANABcATgAT
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Dv1D/az8H/0M/b/9Gv44/j7/fv8wADIB3wE+AgADsANB
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: MQAiABIAEwAPAA8AEwASAB8APgBUAHAAfACPAKUAtwDH
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /f8DAAMABQACAP7/BQAIAAMA/P8DAAAA//8FAAEAAAD9
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 8//8//3//v/9/////////wAABQACAPn//P/+////AAAA
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BgAFAAgACAAJAAsABgAIAAoACQD8////BwD+//7//f//
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /f/8//z//P/8//z//f/8//j/8//0//r/+v/8/////f/8
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9v/5//T/9//2//X/+P/2//b//f/+//v/9//3//7//P/8
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1150
+      responseTokenCount: 85
+      totalTokenCount: 1235
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 1150
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 85
+      thoughtsTokenCount: 28

@@ -1,0 +1,237 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-3.8-live
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in one short sentence.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    realtime_input:
+      video:
+        data: _9j_4AAQSkZJRgABAQAAAQABAAD_2wBDAAMCAgICAgMC
+        mime_type: image/jpeg
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - inlineData:
+            data: _9j_4AAQSkZJRgABAQAAAQABAAD_2wBDAAMCAgICAgMC
+            mime_type: image/jpeg
+        - text: What fruit is in the image?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    sessionResumptionUpdate:
+      newHandle: b5475112-c12b-470f-a731-81a6491df488
+      resumable: true
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+        role: model
+      outputTranscription:
+        text: 'The image shows a '
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: BgAZACwAGwAhACQAMAAuAEMAOwA9AEUAOwBAAEwAVABK
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: uAGPAVkBQAEdAeAAqABhADgAEwC//63/mf9f/0L/Df+3
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: xekb6PvmceXn41/iH+Fs3wre3d2e3dDe6uCG4MfhB+Rc
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9vhGBjEJugDA+zYCQP5Y9CMDtxGoCaz0uPe//0n1FPsM
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: dALX/477/vdm89/uveyt6jLpAuiy6LPpFu1P8t70n/hK
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: kvup80b/RApAFiweOB2hGrkdfiqnJiUvJi6qORpETkbW
+        role: model
+      outputTranscription:
+        text: halved kiwi fruit.
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: qBJdEc8OVAuTBkwCHgAe//v+ef7w/Fj7EvqF+Fb4vfjm
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: NvlkAMsE/QBKANv+1/uzAIUFN/88/C4C6wGq/T0BkwDE
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 1QzCCo4I+QURA8EAv/6p/PD6tvgP93X14vNA8hrwrO5K
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: effn9Sb1WPQd9E/0ovR49fH1vvYj95r34PdZ+E74tPgP
+        role: model
+- kind: message
+  direction: received
+  data: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: EQAHAAAA+P/8/wIACAAVAAsAEQAAAAMABwADABcABQAV
+        role: model
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 834
+      responseTokenCount: 69
+      totalTokenCount: 903
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 313
+      - modality: AUDIO
+        tokenCount: 222
+      - modality: IMAGE
+        tokenCount: 272
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 69
+      thoughtsTokenCount: 30

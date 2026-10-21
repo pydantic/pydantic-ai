@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -28,7 +28,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserPromptPart,
 )
-from pydantic_ai._cost import best_effort_price, calculate_price_for_usage
+from pydantic_ai._genai_prices import best_effort_price, calculate_price_for_usage
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -37,8 +37,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
-
-pytestmark = pytest.mark.anyio
 
 
 def test_genai_prices():
@@ -107,8 +105,8 @@ async def test_streamed_text_limits() -> None:
             assert result.all_messages() == snapshot(
                 [
                     ModelRequest(
-                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                        timestamp=IsNow(tz=timezone.utc),
+                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),
@@ -122,7 +120,7 @@ async def test_streamed_text_limits() -> None:
                         ],
                         usage=RequestUsage(input_tokens=51),
                         model_name='test',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         provider_name='test',
                         run_id=IsStr(),
                         conversation_id=IsStr(),
@@ -132,11 +130,11 @@ async def test_streamed_text_limits() -> None:
                             ToolReturnPart(
                                 tool_name='ret_a',
                                 content='a-apple',
-                                timestamp=IsNow(tz=timezone.utc),
+                                timestamp=IsNow(tz=UTC),
                                 tool_call_id=IsStr(),
                             )
                         ],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),
@@ -576,11 +574,14 @@ def test_usage_pydantic_core_serialization_subclass():
         {
             'input_tokens': 0,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {},
             'cost': None,
             'custom_tokens': 7,
@@ -1316,7 +1317,7 @@ def test_best_effort_price_unexpected_error_warns(monkeypatch: pytest.MonkeyPatc
     def boom(*args: object, **kwargs: object) -> object:
         raise RuntimeError('kaboom')
 
-    monkeypatch.setattr('pydantic_ai._cost.calc_price', boom)
+    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', boom)
     with pytest.warns(CostCalculationFailedWarning, match='Failed to get cost: RuntimeError: kaboom'):
         price = best_effort_price(RequestUsage(input_tokens=10), model_name='gpt-4o', provider_name='openai')
     assert price is None

@@ -1,14 +1,17 @@
 """Tests for exception classes."""
 
 import pickle
+import traceback
 from collections.abc import Callable
 from typing import Any
 
+import httpx2
 import pytest
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai._model_errors import transport_phase
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -17,7 +20,16 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     IncompleteToolCall,
     ModelAPIError,
+    ModelConnectionError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelRequestTimeout,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -25,6 +37,8 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+
+from ._inline_snapshot import snapshot
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
@@ -57,6 +71,9 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: UsageLimitExceeded('test'),
         lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
+        lambda: ModelRateLimitError('model', 'test message'),
+        lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
+        lambda: ModelRequestTimeout('model', 30),
         lambda: IncompleteToolCall('test'),
         lambda: ToolRetryError(RetryPromptPart(content='test', tool_name='test')),
     ],
@@ -71,6 +88,9 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'UsageLimitExceeded',
         'ModelAPIError',
         'ModelHTTPError',
+        'ModelRateLimitError',
+        'ModelHTTPError-ModelRateLimitError',
+        'ModelRequestTimeout',
         'IncompleteToolCall',
         'ToolRetryError',
     ],
@@ -105,7 +125,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             lambda: UsageLimitExceeded('limit hit'),
             {
                 'message': 'limit hit. Consider raising the limit, or see the docs on usage limits '
-                'for budget-aware patterns: https://ai.pydantic.dev/agent/#usage-limits'
+                'for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
             },
         ),
         (lambda: ConcurrencyLimitExceeded('too many'), {'message': 'too many'}),
@@ -116,6 +136,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         ),
         (lambda: ContentFilterError('filtered'), {'message': 'filtered', 'body': None}),
         (lambda: ModelAPIError('gpt-4', 'api failed'), {'model_name': 'gpt-4', 'message': 'api failed'}),
+        (
+            lambda: ModelRequestTimeout('gpt-4', 2.5),
+            {'model_name': 'gpt-4', 'timeout': 2.5, 'message': "Request to model 'gpt-4' timed out after 2.5 seconds"},
+        ),
         (
             lambda: ModelHTTPError(500, 'gpt-4'),
             {'status_code': 500, 'model_name': 'gpt-4', 'body': None, 'headers': None},
@@ -131,6 +155,76 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'model_name': 'gpt-4',
                 'body': None,
                 'headers': {'retry-after': '60', 'x-request-id': 'abc'},
+            },
+        ),
+        (
+            lambda: ModelHTTPError(404, 'gpt-5x', suggested_model_id='openai:gpt-5'),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'body': None,
+                'headers': None,
+                'suggested_model_id': 'openai:gpt-5',
+            },
+        ),
+        (
+            lambda: ModelOverloadedError(
+                'claude-sonnet-4-5',
+                'Overloaded',
+                body={'type': 'error', 'error': {'type': 'overloaded_error'}},
+                provider_error_type='overloaded_error',
+            ),
+            {
+                'model_name': 'claude-sonnet-4-5',
+                'message': 'Overloaded',
+                'body': {'type': 'error', 'error': {'type': 'overloaded_error'}},
+                'provider_error_code': None,
+                'provider_error_type': 'overloaded_error',
+            },
+        ),
+        (
+            lambda: ModelTimeoutError('gpt-4', 'Request timed out.', phase='pool', retry_after=1.5),
+            {'message': 'Request timed out.', 'phase': 'pool', 'retry_after': 1.5},
+        ),
+        (
+            lambda: ModelHTTPError.for_category(
+                ModelContextWindowExceededError,
+                status_code=400,
+                model_name='gpt-4',
+                body={'code': 'context_length_exceeded'},
+                provider_error_code='context_length_exceeded',
+            ),
+            {
+                'status_code': 400,
+                'model_name': 'gpt-4',
+                'body': {'code': 'context_length_exceeded'},
+                'provider_error_code': 'context_length_exceeded',
+            },
+        ),
+        (
+            lambda: ModelHTTPError(400, 'model', hint='Check the provider account setting'),
+            {
+                'status_code': 400,
+                'model_name': 'model',
+                'body': None,
+                'headers': None,
+                'hint': 'Check the provider account setting',
+            },
+        ),
+        (
+            lambda: ModelHTTPError(
+                404,
+                'gpt-5x',
+                suggested_model_id='openai:gpt-5',
+                hint='Check the provider account setting',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'body': None,
+                'headers': None,
+                'suggested_model_id': 'openai:gpt-5',
+                'hint': 'Check the provider account setting',
             },
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
@@ -150,9 +244,16 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'UnexpectedModelBehavior-with-body',
         'ContentFilterError',
         'ModelAPIError',
+        'ModelRequestTimeout',
         'ModelHTTPError-no-body',
         'ModelHTTPError-with-body',
         'ModelHTTPError-with-headers',
+        'ModelHTTPError-with-model-suggestion',
+        'ModelOverloadedError',
+        'ModelTimeoutError',
+        'ModelHTTPError-ModelContextWindowExceededError',
+        'ModelHTTPError-with-hint',
+        'ModelHTTPError-with-model-suggestion-and-hint',
         'IncompleteToolCall',
     ],
 )
@@ -165,6 +266,19 @@ def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], chec
     assert str(restored) == str(exc)
     for attr, expected in check_attrs.items():
         assert getattr(restored, attr) == expected
+
+
+def test_categorized_http_error_reads_as_its_category():
+    """An HTTP error with a category is named after the category wherever its class is shown, but stays both."""
+    error = ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model')
+
+    assert type(error) is not ModelRateLimitError
+    assert isinstance(error, ModelHTTPError) and isinstance(error, ModelRateLimitError)
+    assert (type(error).__module__, type(error).__qualname__) == ('pydantic_ai.exceptions', 'ModelRateLimitError')
+    assert repr(error) == snapshot("ModelRateLimitError('status_code: 429, model_name: model, body: None')")
+    assert traceback.format_exception_only(error) == snapshot(
+        ['pydantic_ai.exceptions.ModelRateLimitError: status_code: 429, model_name: model, body: None\n']
+    )
 
 
 def test_tool_retry_error_pickle_round_trip():
@@ -319,9 +433,10 @@ def test_model_http_error_retry_after_http_date():
     assert result > 0
 
 
-def test_model_http_error_retry_after_unparseable():
+@pytest.mark.parametrize('retry_after', ['not-a-number-or-date', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
+def test_model_http_error_retry_after_unparseable(retry_after: str):
     """retry_after returns None for a Retry-After value it cannot parse."""
-    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': 'not-a-number-or-date'})
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': retry_after})
     assert exc.retry_after is None
 
 
@@ -392,15 +507,43 @@ def test_model_http_error_headers_provider_openai():
     assert exc.retry_after == 30.0
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-5', 'claude-sonet-4-5'],
+    ids=['requested-known-model', 'different-provider-model'],
+)
+def test_model_http_error_does_not_suggest_an_unusable_match(model_name: str):
+    """Provider access errors and custom-endpoint IDs cannot produce a useful close match."""
+    openai = pytest.importorskip('openai', reason='openai extra not installed')
+    import httpx
+
+    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+
+    req = httpx.Request('POST', 'https://example.com/v1/responses')
+    resp = httpx.Response(404, request=req)
+    sdk_exc = openai.NotFoundError(
+        'Model unavailable',
+        response=resp,
+        body={'code': 'model_not_found', 'message': 'Model unavailable'},
+    )
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        with _map_api_errors(model_name):
+            raise sdk_exc
+
+    assert exc_info.value.suggested_model_id is None
+    assert 'Did you mean' not in str(exc_info.value)
+
+
 def test_model_http_error_headers_provider_anthropic():
     """Headers from an anthropic.APIStatusError land on ModelHTTPError."""
     anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
-    import httpx
+    import httpx2
 
     from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
-    req = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
-    resp = httpx.Response(
+    req = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
+    resp = httpx2.Response(
         429,
         headers={'retry-after': '10', 'anthropic-ratelimit-tokens-remaining': '0'},
         request=req,
@@ -466,3 +609,221 @@ def test_model_http_error_headers_provider_xai_no_headers():
     assert exc.status_code == 429
     assert exc.headers is None
     assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_ms():
+    """`retry-after-ms`, which OpenAI and Anthropic send, takes precedence over `Retry-After`."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after-ms': '1500', 'retry-after': '2'})
+    assert exc.retry_after == 1.5
+
+
+@pytest.mark.parametrize('raw', ['soon', '-5', 'inf'])
+def test_model_http_error_retry_after_ms_invalid_falls_back(raw: str):
+    """An unusable `retry-after-ms` falls back to `Retry-After`."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after-ms': raw, 'retry-after': '2'})
+    assert exc.retry_after == 2.0
+
+
+def test_model_http_error_retry_after_explicit():
+    """An explicit `retry_after` wins over the headers."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '2'}, retry_after=7.0)
+    assert exc.retry_after == 7.0
+
+
+def test_model_api_error_retry_after_stored():
+    """Any `ModelAPIError` can carry a retry hint, e.g. from a non-HTTP source."""
+    exc = ModelRateLimitError('gemini-2.5-flash', 'Resource exhausted', retry_after=3.0)
+    assert exc.retry_after == 3.0
+    assert pickle.loads(pickle.dumps(exc)).retry_after == 3.0
+    assert ModelAPIError('gpt-4', 'failed').retry_after is None
+
+
+def test_model_http_error_unpickles_state_from_before_categories():
+    """State pickled before the error categories only had `headers` and `suggested_model_id`; `body` survives."""
+    restored = ModelHTTPError(429, 'gpt-4', {'error': 'rate limited'})
+    restored.__setstate__({'headers': {'retry-after': '60'}, 'suggested_model_id': None})
+    assert restored.body == {'error': 'rate limited'}
+    assert restored.retry_after == 60.0
+    assert restored.in_stream is False
+
+
+def _reduce_model_api_error_before_categories(self: ModelAPIError) -> tuple[Any, ...]:
+    return type(self), (self.model_name, self.message)
+
+
+def _reduce_model_http_error_before_categories(self: ModelHTTPError) -> tuple[Any, ...]:
+    state = {'headers': self.headers, 'suggested_model_id': self.suggested_model_id}
+    return type(self), (self.status_code, self.model_name, self.body), state
+
+
+def test_model_errors_pickled_before_categories_unpickle_with_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Pickles made by `__reduce__` before the error categories get the new attributes' defaults."""
+    http_error = ModelHTTPError(429, 'gpt-4', {'error': 'rate limited'}, headers={'Retry-After': '60'})
+    api_error = ModelAPIError('gpt-4', 'failed')
+    with monkeypatch.context() as patch:
+        patch.setattr(ModelHTTPError, '__reduce__', _reduce_model_http_error_before_categories)
+        patch.setattr(ModelAPIError, '__reduce__', _reduce_model_api_error_before_categories)
+        http_pickle = pickle.dumps(http_error)
+        api_pickle = pickle.dumps(api_error)
+
+    restored_http = pickle.loads(http_pickle)
+    assert restored_http.body == {'error': 'rate limited'}
+    assert restored_http.headers == {'retry-after': '60'}
+    assert restored_http.retry_after == 60.0
+    assert restored_http.provider_retry_hint is None
+    assert restored_http.provider_error_code is None
+    assert restored_http.provider_error_type is None
+    assert restored_http.in_stream is False
+
+    restored_api = pickle.loads(api_pickle)
+    assert restored_api.body is None
+    assert restored_api.provider_error_code is None
+    assert restored_api.provider_error_type is None
+    assert restored_api.retry_after is None
+    assert restored_api.in_stream is False
+
+
+class _StatefulConnectionError(ModelConnectionError):
+    extra: int | None = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {**super().__getstate__(), 'extra': self.extra}
+
+
+def test_model_error_subclass_state_survives_pickle():
+    """A subclass's own attributes in its pickled state are restored, as `BaseException.__setstate__` does."""
+    error = _StatefulConnectionError('gpt-4', 'reset', phase='read', in_stream=True)
+    error.extra = 5
+    restored = pickle.loads(pickle.dumps(error))
+    assert isinstance(restored, _StatefulConnectionError)
+    assert restored.extra == 5
+    assert restored.phase == 'read'
+    assert restored.in_stream is True
+
+
+def test_model_http_error_unpickles_state_without_retry_after():
+    """An error pickled before `retry_after` was stored recomputes it from the headers."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '60'})
+    state = exc.__getstate__()
+    del state['retry_after']
+    restored = ModelHTTPError(429, 'gpt-4')
+    restored.__setstate__(state)
+    assert restored.retry_after == 60.0
+
+
+@pytest.mark.parametrize(
+    ('headers', 'expected'),
+    [
+        ({'x-should-retry': 'true'}, True),
+        ({'X-Should-Retry': 'False'}, False),
+        ({'x-should-retry': 'maybe'}, None),
+        ({}, None),
+        (None, None),
+    ],
+)
+def test_model_http_error_provider_retry_hint(headers: dict[str, str] | None, expected: bool | None):
+    assert ModelHTTPError(503, 'gpt-4', headers=headers).provider_retry_hint is expected
+
+
+def test_transport_phase():
+    """The phase is read from the transport exception, following `__cause__` from an SDK's wrapper."""
+    request = httpx2.Request('POST', 'https://example.com')
+    for error, phase in [
+        (httpx2.PoolTimeout('pool', request=request), 'pool'),
+        (httpx2.ConnectTimeout('connect', request=request), 'connect'),
+        (httpx2.WriteError('write', request=request), 'write'),
+        (httpx2.RemoteProtocolError('read', request=request), 'read'),
+    ]:
+        wrapper = RuntimeError('wrapped')
+        wrapper.__cause__ = error
+        assert transport_phase(wrapper) == phase
+
+    looping = RuntimeError('loop')
+    looping.__cause__ = looping
+    assert transport_phase(looping) is None
+    assert transport_phase(ValueError('unrelated')) is None
+
+
+def test_model_connection_error_phase_defaults_to_none():
+    assert ModelConnectionError('gpt-4', 'Connection error.').phase is None
+
+
+_HTTP_CATEGORIES = [
+    ModelRateLimitError,
+    ModelQuotaExceededError,
+    ModelUnavailableError,
+    ModelOverloadedError,
+    ModelServerError,
+    ModelContextWindowExceededError,
+]
+
+
+@pytest.mark.parametrize('category', _HTTP_CATEGORIES, ids=lambda c: c.__name__)
+def test_model_http_error_for_category(category: type[ModelAPIError]):
+    """`for_category` builds an HTTP error that is also the category, keeps its fields, and survives pickling."""
+    error = ModelHTTPError.for_category(
+        category,  # pyright: ignore[reportArgumentType]
+        status_code=503,
+        model_name='gpt-4',
+        body={'error': 'x'},
+        headers={'Retry-After': '3'},
+        hint='Fix the setting',
+        provider_error_code='code',
+        provider_error_type='type',
+        in_stream=True,
+    )
+    assert isinstance(error, ModelHTTPError)
+    assert isinstance(error, category)
+    assert (error.status_code, error.model_name, error.body, error.headers, error.retry_after) == (
+        503,
+        'gpt-4',
+        {'error': 'x'},
+        {'retry-after': '3'},
+        3.0,
+    )
+    assert (error.provider_error_code, error.provider_error_type, error.in_stream) == ('code', 'type', True)
+
+    restored = pickle.loads(pickle.dumps(error))
+    assert type(restored) is type(error)
+    assert str(restored) == str(error)
+    assert (restored.status_code, restored.headers, restored.hint, restored.in_stream) == (
+        503,
+        {'retry-after': '3'},
+        'Fix the setting',
+        True,
+    )
+
+
+def test_model_http_error_for_category_none_is_plain():
+    error = ModelHTTPError.for_category(None, status_code=500, model_name='gpt-4')
+    assert type(error) is ModelHTTPError
+
+
+def test_model_http_error_for_category_rejects_a_non_http_category():
+    with pytest.raises(TypeError, match='ModelConnectionError is not an error category an HTTP error can belong to'):
+        ModelHTTPError.for_category(
+            ModelConnectionError,  # pyright: ignore[reportArgumentType]
+            status_code=500,
+            model_name='gpt-4',
+        )
+
+
+@pytest.mark.parametrize(
+    'category', [*_HTTP_CATEGORIES, ModelConnectionError, ModelTimeoutError], ids=lambda c: c.__name__
+)
+def test_model_error_categories_pickle_round_trip(category: type[ModelAPIError]):
+    error = category('gpt-4', 'failed', body={'error': 'x'}, provider_error_code='code', in_stream=True)
+    restored = pickle.loads(pickle.dumps(error))
+    assert type(restored) is category
+    assert (restored.model_name, restored.message, restored.body, restored.provider_error_code, restored.in_stream) == (
+        'gpt-4',
+        'failed',
+        {'error': 'x'},
+        'code',
+        True,
+    )
+
+
+def test_model_overloaded_error_is_unavailable():
+    assert issubclass(ModelOverloadedError, ModelUnavailableError)
+    assert not issubclass(ModelUnavailableError, ModelOverloadedError)

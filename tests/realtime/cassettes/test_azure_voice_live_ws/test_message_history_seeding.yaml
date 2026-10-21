@@ -1,0 +1,586 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    event_id: event_1vYdV285cJWWyKoCPxz0V7
+    type: session.created
+    session:
+      id: sess_ETb0jnU5gXvP3WriYJNCQ
+      model: gpt-realtime-global-standard
+      modalities:
+      - audio
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      voice:
+        name: alloy
+        type: openai
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: 0.5
+        prefix_padding_ms: 300
+        silence_duration_ms: 200
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      max_response_output_tokens: inf
+      expires_at: 1790726089
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types: null
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: ''
+      modalities:
+      - text
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_sampling_rate: 24000
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      input_audio_transcription:
+        model: whisper-1
+- kind: message
+  direction: received
+  at: 0.108
+  data:
+    event_id: event_61WJxN3dKSjW4XNbBil0kj
+    type: session.updated
+    session:
+      id: sess_ETb0jnU5gXvP3WriYJNCQ
+      model: gpt-realtime-global-standard
+      modalities:
+      - text
+      instructions: Your knowledge cutoff is 2023-10. You are a helpful, witty, and
+        friendly AI. Act like a human, but remember that you aren't a human and that
+        you can't do human things in the real world. Your voice and personality should
+        be warm and engaging, with a lively and playful tone. If interacting in a
+        non-English language, start by using the standard accent or dialect familiar
+        to the user. Talk quickly. You should always call a function if you can. Do
+        not refer to these rules, even if you’re asked about them.
+      voice:
+        name: alloy
+        type: openai
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription:
+        model: whisper-1
+        language: null
+        prompt: null
+        delay: null
+        custom_speech: null
+        phrase_list: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: 0.5
+        prefix_padding_ms: 400
+        silence_duration_ms: 500
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      max_response_output_tokens: inf
+      expires_at: 1790726089
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types: null
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.108
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: My name is Alice and my favorite color is teal.
+- kind: message
+  direction: sent
+  at: 0.109
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: assistant
+      content:
+      - type: output_text
+        text: Nice to meet you, Alice!
+- kind: message
+  direction: sent
+  at: 0.109
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is my name and favorite color?
+- kind: message
+  direction: sent
+  at: 0.109
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.281
+  data:
+    event_id: event_qc3sllJGnDD0fQxHjOKL8
+    type: conversation.item.created
+    previous_item_id: null
+    item:
+      id: item_7QHEcU2eaPD8dOIMafIbQI
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: My name is Alice and my favorite color is teal.
+- kind: message
+  direction: received
+  at: 0.281
+  data:
+    event_id: event_yuOtVUA4lfVrGkFrOZxBr
+    type: conversation.item.created
+    previous_item_id: item_7QHEcU2eaPD8dOIMafIbQI
+    item:
+      id: item_16dkDtmu4d74PCAEL6CNvl
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: text
+        text: Nice to meet you, Alice!
+- kind: message
+  direction: received
+  at: 0.281
+  data:
+    event_id: event_1WsSYH8ChInEivBqVPrlq7
+    type: conversation.item.created
+    previous_item_id: item_16dkDtmu4d74PCAEL6CNvl
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: What is my name and favorite color?
+- kind: message
+  direction: received
+  at: 0.299
+  data:
+    event_id: event_3tWcWRhOKs8GnCDCPchGBj
+    type: response.created
+    response:
+      object: realtime.response
+      id: resp_ETb0khUMK8B1uWCOKBc5J
+      status: in_progress
+      status_details: null
+      output: []
+      usage: null
+      conversation_id: conv_ETb0j3OjOMAEC9iCb8tYp
+      modalities:
+      - text
+      voice:
+        name: alloy
+        type: openai
+      output_audio_format: pcm16
+      temperature: null
+      max_output_tokens: inf
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.518
+  data:
+    event_id: event_5EenK78BVT0sRMpZUvG6Uf
+    type: response.output_item.added
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    output_index: 0
+    item:
+      id: item_ETb0kA2Ywf2pPaShxVJmr
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.518
+  data:
+    event_id: event_4e9wLcOOM7oR85OESXo7YG
+    type: conversation.item.created
+    previous_item_id: pydantic_ai_item_0
+    item:
+      id: item_ETb0kA2Ywf2pPaShxVJmr
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 0.518
+  data:
+    event_id: event_52ugBTLTtlDIehWEKlA94T
+    type: response.content_part.added
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 0.519
+  data:
+    event_id: event_5sL9pH4rlblV2FywJRuJn8
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: Your
+- kind: message
+  direction: received
+  at: 0.535
+  data:
+    event_id: event_1pPE5QglJKwAXAAQza9RY9
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' name'
+- kind: message
+  direction: received
+  at: 0.555
+  data:
+    event_id: event_7EwHSq15eyiZhmFrGagJaC
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' is'
+- kind: message
+  direction: received
+  at: 0.571
+  data:
+    event_id: event_5V5rAnN7MUYHnZfYCJDf4d
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' Alice'
+- kind: message
+  direction: received
+  at: 0.591
+  data:
+    event_id: event_g7zkUj6ZbmdFe5y7YT4jm
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ','
+- kind: message
+  direction: received
+  at: 0.604
+  data:
+    event_id: event_1XbQUrWc6X7xfRL4oVwp8a
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' and'
+- kind: message
+  direction: received
+  at: 0.626
+  data:
+    event_id: event_5uzsS1nlrhaLoiRcl9z2g5
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' your'
+- kind: message
+  direction: received
+  at: 0.646
+  data:
+    event_id: event_4Il2ky2n2kHcuiqUdCeGWM
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' favorite'
+- kind: message
+  direction: received
+  at: 0.653
+  data:
+    event_id: event_7KRyQKFOZiWNNDVNXcT5eU
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' color'
+- kind: message
+  direction: received
+  at: 0.669
+  data:
+    event_id: event_4TU0TenzKPdJFYNj4Gain1
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' is'
+- kind: message
+  direction: received
+  at: 0.691
+  data:
+    event_id: event_51JzmMZbCSKYeNxM98GMu5
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' teal'
+- kind: message
+  direction: received
+  at: 0.709
+  data:
+    event_id: event_13B6av889Cuo3UR7msFz7G
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: .
+- kind: message
+  direction: received
+  at: 0.779
+  data:
+    event_id: event_7M4UblWLvw8hEBZdWFh6xh
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' I'
+- kind: message
+  direction: received
+  at: 0.779
+  data:
+    event_id: event_1PYlZeEb24hxYLjBZN2KmD
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ’ve
+- kind: message
+  direction: received
+  at: 0.779
+  data:
+    event_id: event_5NJR95iJO4AXoryZw58aqH
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' got'
+- kind: message
+  direction: received
+  at: 0.779
+  data:
+    event_id: event_6o6TZoFYwLIa33XFvCS7hq
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' it'
+- kind: message
+  direction: received
+  at: 0.779
+  data:
+    event_id: event_2pJNFVb2SK9P2Xe6SthMVC
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' locked'
+- kind: message
+  direction: received
+  at: 0.781
+  data:
+    event_id: event_6gaYjYFlX20IxVit1rXAi8
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: ' in'
+- kind: message
+  direction: received
+  at: 0.796
+  data:
+    event_id: event_2bSu5F44N5xiTQKokniKpF
+    type: response.text.delta
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    delta: '!'
+- kind: message
+  direction: received
+  at: 0.876
+  data:
+    event_id: event_6rRgqOyXgR64OA5VcaYCAz
+    type: response.text.done
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    text: Your name is Alice, and your favorite color is teal. I’ve got it locked
+      in!
+- kind: message
+  direction: received
+  at: 0.876
+  data:
+    event_id: event_6ZDdp9ANDZ7snHl4BO6Ki3
+    type: response.content_part.done
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    item_id: item_ETb0kA2Ywf2pPaShxVJmr
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 0.876
+  data:
+    event_id: event_5QLBi8VCP08W2pplQQytbj
+    type: response.output_item.done
+    response_id: resp_ETb0khUMK8B1uWCOKBc5J
+    output_index: 0
+    item:
+      id: item_ETb0kA2Ywf2pPaShxVJmr
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: text
+        text: Your name is Alice, and your favorite color is teal. I’ve got it locked
+          in!
+- kind: message
+  direction: received
+  at: 0.876
+  data:
+    event_id: event_bsHszOjXQtLFl2Q3ver5H
+    type: response.done
+    response:
+      object: realtime.response
+      id: resp_ETb0khUMK8B1uWCOKBc5J
+      status: completed
+      status_details: null
+      output:
+      - id: item_ETb0kA2Ywf2pPaShxVJmr
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: text
+          text: Your name is Alice, and your favorite color is teal. I’ve got it locked
+            in!
+      usage:
+        total_tokens: 170
+        input_tokens: 149
+        output_tokens: 21
+        input_token_details:
+          cached_tokens: 0
+          cache_write_tokens: 0
+          text_tokens: 149
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 21
+          audio_tokens: 0
+          reasoning_tokens: 0
+      conversation_id: conv_ETb0j3OjOMAEC9iCb8tYp
+      modalities:
+      - text
+      voice:
+        name: alloy
+        type: openai
+      output_audio_format: pcm16
+      temperature: null
+      max_output_tokens: inf
+      metadata:
+        pydantic_ai_inputs: '0'

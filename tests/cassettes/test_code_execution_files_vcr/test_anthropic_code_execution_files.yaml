@@ -1,7 +1,8 @@
+version: 1
 interactions:
 - request:
-    body: "--e8f15f8bcbb90a26bab475c6e6f4dc99\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
-      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--e8f15f8bcbb90a26bab475c6e6f4dc99--\r\n"
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_01GHwTcSZLQPvhRG25iUUFRe?beta=true
     headers:
       accept:
       - application/json
@@ -9,44 +10,38 @@ interactions:
       - gzip, deflate, br, zstd
       connection:
       - keep-alive
-      content-length:
-      - '198'
       content-type:
-      - multipart/form-data; boundary=e8f15f8bcbb90a26bab475c6e6f4dc99
+      - application/json
       host:
       - api.anthropic.com
-    method: POST
-    uri: https://api.anthropic.com/v1/files?beta=true
+    body:
+      type: none
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '190'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=253
+      - x-originResponse;dur=214
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      created_at: '2026-06-25T16:16:09.340000Z'
-      downloadable: false
-      filename: data.csv
-      id: file_011CcQH3nbP5brKi4DsVcj7j
-      mime_type: text/csv
-      size_bytes: 30
-      type: file
-    status:
-      code: 200
-      message: OK
+    body:
+      type: json
+      content:
+        id: file_01GHwTcSZLQPvhRG25iUUFRe
+        type: file_deleted
+  recorded_at: 2026-09-29T16:31:23.868103+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/files?beta=true
     headers:
       accept:
       - application/json
@@ -55,142 +50,315 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '389'
+      - "198"
       content-type:
-      - application/json
+      - multipart/form-data; boundary=53e5dccd651e84feb3ef4c657fc8b920
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
-          type: text
-        - file_id: file_011CcQH3nbP5brKi4DsVcj7j
-          type: container_upload
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tools:
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: text
+      content: "--53e5dccd651e84feb3ef4c657fc8b920\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type: text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--53e5dccd651e84feb3ef4c657fc8b920--\r\n"
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '1740'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      server-timing:
+      - x-originResponse;dur=303
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        type: file
+        id: file_01GHwTcSZLQPvhRG25iUUFRe
+        size_bytes: 30
+        created_at: 2026-09-29T16:31:15.543502Z
+        filename: data.csv
+        mime_type: text/csv
+        downloadable: false
+  recorded_at: 2026-09-29T16:31:15.768016+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "368"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the code execution tool to read the uploaded CSV file and report the sum of
+              the `value` column.
+            type: text
+          - type: container_upload
+            file_id: file_01GHwTcSZLQPvhRG25iUUFRe
+        model: claude-sonnet-4-6
+        stream: true
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-124ce3031891967ade49cab5e1ae119b-801632d85d8d160c-01
+      - 00-450b0f271a03becf7eaf4da241d32a5d-2b9730b15524e93c-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-06-25T17:16:14.434245Z'
-        id: container_01WfczkmsEMSmoNwCxagV4xL
-      content:
-      - id: srvtoolu_012hrYtwqs67C1hwVJGUfBvV
-        input:
-          command: |
-            python3 -c "
-            import csv, os
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3rX7pxFjwYUdw6MRFv","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2272,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}             }
 
-            file_path = os.path.join(os.environ['INPUT_DIR'], 'data.csv')
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
 
-            total = 0
-            with open(file_path, newline='') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    total += float(row['value'])
+        event: ping
+        data: {"type": "ping"}
 
-            print(f'Sum of value column: {total}')
-            "
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            Sum of value column: 100.0
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_012hrYtwqs67C1hwVJGUfBvV
-        type: bash_code_execution_tool_result
-      - text: "The sum of the `value` column in **data.csv** is **100.0**. \n\nHere's a quick breakdown of what was done:\n1.
-          **Read the file** using Python's `csv.DictReader`, which parsed the CSV using the header row as column names.\n2.
-          **Iterated through each row**, extracting the `value` column and converting it to a float.\n3. **Summed all values**
-          and printed the result.\n\nLet me know if you'd like any further analysis on the file!"
-        type: text
-      id: msg_017QZ67Jz76ms38ctthCEN8Q
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 4727
-        output_tokens: 278
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    body: ''
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: DELETE
-    uri: https://api.anthropic.com/v1/files/file_011CcQH3nbP5brKi4DsVcj7j?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '63'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=453
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      id: file_011CcQH3nbP5brKi4DsVcj7j
-      type: file_deleted
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Let"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" me start"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" by reading the uploaded"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" CSV file to examine"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" its contents."}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_016pJZucprjPoL6KSo7GSdVY","name":"bash_code_execution","input":{}}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nd\": \"c"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"at $INP"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"UT_DIR/"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"data.cs"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"v\"}"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_016pJZucprjPoL6KSo7GSdVY","content":{"type":"bash_code_execution_result","stdout":"item,value\napple,30\nbanana,70\n","stderr":"","return_code":0,"content":[]}}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"Now"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" let"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" me sum"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" the `value` column:"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"server_tool_use","id":"srvtoolu_01M59y9Bij46moqNKh3qmjSx","name":"bash_code_execution","input":{}}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"nd\": \"a"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"wk -F',"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"' 'NR>1"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":" {sum +"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"= $2} E"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"ND {pri"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"nt \\\"Su"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"m of va"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"lue col"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"umn:\\\","}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":" sum}' "}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"$INPUT_"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"DIR/dat"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"a.csv\"}"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01M59y9Bij46moqNKh3qmjSx","content":{"type":"bash_code_execution_result","stdout":"Sum of value column: 100\n","stderr":"","return_code":0,"content":[]}}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":6,"content_block":{"type":"text","text":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"Here"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"'s a"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" summary of the results"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":":\n\n|"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" Item   "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"| Value |\n|--------|"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"-------|\n| apple  |"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" 30    |\n| banana"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" | 70    |\n|"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" **Sum**"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"| **100** |\n\nThe"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" CSV"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" file contains two"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" rows of data:\n- **"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"apple**"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" →"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" 30\n- **banana**"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" → 70\n\nThe"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" **"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"sum of the `value` column"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":" is 100**"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":". "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":6,"delta":{"type":"text_delta","text":"🎉"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":6         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_019LaXw7rjwgwFmtVGMWm4g5","expires_at":"2026-09-29T17:31:21.519353Z"}},"usage":{"input_tokens":7156,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":278,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-09-29T16:31:23.549717+00:00
