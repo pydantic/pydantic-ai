@@ -540,7 +540,20 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   goes on. When Live reports such a failure only as a session-level error that names no delegation
   (for instance `Responses handoff incomplete.` when the backend runs out of `max_output_tokens`),
   Pydantic AI treats the delegated work in flight as the work that failed, with code
-  `live_delegation_failed`, so the turn still ends.
+  `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
+  result is recorded in history, but goes nowhere: the turn doesn't wait for it.
+- The backend continues a delegated round only once it has every call's output, and Live has no
+  command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
+  more for the rest of the session. So when a tool raises, the model *does* get a result, unlike on
+  the [other providers](tools.md#function-tools): the call's output is the error history records,
+  `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
+  again), and Live speaks what it makes of it. The exception is still raised from the session as
+  usual, and a [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was
+  waiting still returns. When the exception is a
+  [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out, so the round
+  doesn't make another request: Pydantic AI gives it up, and turn boundaries are inferred again. To
+  give the model something better than the generic failure, turn the exception into a result with
+  [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error].
 
 ### gpt-realtime {#gpt-realtime-provider-specific-quirks}
 

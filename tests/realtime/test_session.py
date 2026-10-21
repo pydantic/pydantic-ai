@@ -3757,6 +3757,80 @@ async def test_tool_runner_exception_ends_session() -> None:
     assert conn.sent == []
 
 
+class _SendsFailedResults(FakeRealtimeConnection):
+    """A connection whose model can't move on without a result for every call (GPT-Live's delegated backend)."""
+
+    def __init__(self, events: list[RealtimeCodecEvent]) -> None:
+        super().__init__(events)
+        self.unanswered: list[str] = []
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        return True
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        self.unanswered.append(tool_call_id)
+
+
+async def test_tool_exception_is_sent_as_a_failure_where_the_connection_needs_it() -> None:
+    """The failure history records goes out as the call's result, and the exception is still raised."""
+    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise RuntimeError('kaboom')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(RuntimeError, match='kaboom'):
+        await collect_events(session)
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
+    assert conn.unanswered == []
+    returned = [
+        part for message in session.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.content, part.outcome) for part in returned] == snapshot(
+        [('The tool raised an unhandled error.', 'failed')]
+    )
+
+
+async def test_tool_failure_stopped_by_a_usage_limit_sends_nothing() -> None:
+    """A usage limit stops the exchange, so its result must not ask for another request: nothing goes out.
+
+    The connection is told no result will follow.
+    """
+    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(UsageLimitExceeded):
+        await collect_events(session)
+    assert conn.sent == []
+    assert conn.unanswered == ['tc']
+
+
+async def test_tool_failure_that_cannot_be_sent_tells_the_connection() -> None:
+    """The link drops as the failure goes out: the connection is told no result will follow, as for a limit."""
+
+    class _Dropped(_SendsFailedResults):
+        transport_errors = (ConnectionResetError,)
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('link dropped')
+
+    conn = _Dropped([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise RuntimeError('kaboom')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(RuntimeError, match='kaboom'):
+        await collect_events(session)
+    assert conn.unanswered == ['tc']
+
+
 async def test_tool_runner_base_exception_ends_session() -> None:
     class ToolFailure(BaseException):
         pass
@@ -8469,10 +8543,11 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -8484,6 +8559,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         execution_prerequisites=(),
         completion=completion,
         response_usage_follows=True,
+        response_continues=False,
         run_step=0,
         reserved_budget=True,
         order_index=0,
@@ -8525,10 +8601,11 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -8541,6 +8618,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
             execution_prerequisites=(),
             completion=asyncio.Event(),
             response_usage_follows=True,
+            response_continues=False,
             run_step=0,
             reserved_budget=True,
             order_index=0,

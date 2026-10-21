@@ -309,7 +309,7 @@ async def test_text_in_audio_out_turn(
     [part] = response.parts
     assert isinstance(part, SpeechPart)
     assert part.speaker == 'assistant'
-    assert part.transcript == snapshot('Hello there.')
+    assert part.transcript == snapshot('Hi there.')
     assert isinstance(part.audio, BinaryContent)
     assert len(part.audio.data) > 0
 
