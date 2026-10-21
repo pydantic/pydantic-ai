@@ -13,6 +13,7 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, AgentRunResultEvent, CancellationToken, RunCancelled, UsageLimits
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -25,6 +26,8 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     BinaryContent,
     EnqueuedMessagesEvent,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -1323,6 +1326,61 @@ class TestBackgroundTools:
 
         assert _ack_seen(result.all_messages())
         assert _follow_up_seen(result.all_messages(), '">\nresearched topic\n</tool_result>')
+
+    @pytest.mark.parametrize('set_metadata_first', [True, False])
+    @pytest.mark.parametrize(
+        ('background', 'args'),
+        [(True, '{"query": "topic"}'), ('optional', '{"query": "topic", "run_in_background": true}')],
+    )
+    async def test_set_tool_metadata_marks_tools_as_background(
+        self, background: bool | str, args: str, set_metadata_first: bool
+    ) -> None:
+        """Not a VCR test: the order capabilities build the tool list in never reaches the provider."""
+        capabilities: list[AbstractCapability[Any]] = [
+            SetToolMetadata(tools=['slow_research'], background=background),
+            BackgroundTools(),
+        ]
+        if not set_metadata_first:
+            capabilities.reverse()
+        agent = Agent(_model_calling('slow_research', args), capabilities=capabilities)
+
+        @agent.tool_plain
+        async def slow_research(query: str) -> str:
+            return f'researched {query}'
+
+        result = await agent.run('go')
+
+        assert _ack_seen(result.all_messages())
+        assert _follow_up_seen(result.all_messages(), '">\nresearched topic\n</tool_result>')
+
+    @pytest.mark.parametrize('loaded', [False, True])
+    async def test_deferred_capability_offers_run_in_background_only_once_loaded(self, loaded: bool) -> None:
+        """Not a VCR test: whether the capability is loaded is decided from history, not by the provider."""
+        seen: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            slow = next(t for t in info.function_tools if t.name == 'slow')
+            seen.append(list(slow.parameters_json_schema['properties']))
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[BackgroundTools(defer_loading=True, description='Run tools in the background.')],
+        )
+
+        @agent.tool_plain(metadata={'background': 'optional'})
+        def slow(x: int) -> int:
+            return x  # pragma: no cover
+
+        history: list[ModelMessage] = []
+        if loaded:
+            history = [
+                ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'background_tools'}, tool_call_id='load')]),
+                ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='load')]),
+            ]
+        await agent.run('go', message_history=history)
+
+        assert seen == [['x', 'run_in_background'] if loaded else ['x']]
 
     async def test_callable_selector_decision_stays_stable_for_each_model_response(self) -> None:
         selector_calls = 0

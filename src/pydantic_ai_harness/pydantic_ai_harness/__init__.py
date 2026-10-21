@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from .approval_reviewer import ApprovalReviewer
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
+    from .boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
     from .conversation_search import ConversationSearch
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+    from .docker_sandbox import DockerSandbox, DockerSandboxBackend
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
@@ -82,6 +84,8 @@ __all__ = [
     'ApprovalReviewer',
     'AskUser',
     'BackgroundTools',
+    'BoxLiteSandbox',
+    'BoxLiteSandboxBackend',
     'BrowserUse',
     'BubblewrapSandbox',
     'BubblewrapWorkspace',
@@ -96,6 +100,8 @@ __all__ = [
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
+    'DockerSandbox',
+    'DockerSandboxBackend',
     'DynamicWorkflow',
     'E2BSandbox',
     'E2BSandboxBackend',
@@ -166,6 +172,7 @@ _CAPABILITY_EXPORTS = {
     'ApprovalReviewer': 'approval_reviewer',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
+    'BoxLiteSandbox': 'boxlite_sandbox',
     'BrowserUse': 'browser_use',
     'BubblewrapSandbox': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
@@ -176,6 +183,7 @@ _CAPABILITY_EXPORTS = {
     'ConversationSearch': 'conversation_search',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
+    'DockerSandbox': 'docker_sandbox',
     'DeduplicateFileReads': 'compaction',
     'DynamicWorkflow': 'dynamic_workflow',
     'E2BSandbox': 'e2b_sandbox',
@@ -224,9 +232,11 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'BoxLiteSandboxBackend': 'boxlite_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'DockerSandboxBackend': 'docker_sandbox',
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',

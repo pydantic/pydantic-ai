@@ -295,6 +295,8 @@ only where the provider offers nothing else. Every `ModelAPIError` also exposes 
 [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and error
 [`body`][pydantic_ai.exceptions.ModelAPIError.body], when available.
 
+[Embedding models](../embeddings.md#handling-errors) raise the same errors.
+
 An error is reported the same way whether the provider sent it before a stream opened or inside an already open
 stream. For example, both an HTTP 503 from Bedrock and a `serviceUnavailableException` in a Bedrock stream raise a
 `ModelHTTPError` with status 503 that is also a `ModelUnavailableError`. The second has
