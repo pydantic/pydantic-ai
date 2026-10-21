@@ -609,6 +609,12 @@ class _Delegation:
 
     The continuation waits for its terminal, then goes out from the receive loop.
     """
+    stalled: bool = False
+    """A call it asked for settled without a result (a usage limit stopped it), so it can never be continued.
+
+    The backend resumes only from every output of its round, so it is given up as one that failed would be,
+    at once or, while a response is still running, at that response's terminal.
+    """
 
 
 class _LiveLifecycle(InferredLifecycle):
@@ -787,6 +793,27 @@ class OpenAILiveConnection(RealtimeConnection):
         history it was seeded with.
         """
         return False
+
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        # The delegated backend resumes from all of a round's results together, with one `response.create`.
+        return True
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
+        # delegates nothing more for the rest of the session (checked live).
+        return True
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        self._open_calls.discard(tool_call_id)
+        delegation_id = self._call_delegations.pop(tool_call_id, None)
+        if (delegation := self._delegations.get(delegation_id) if delegation_id is not None else None) is None:
+            return
+        delegation.pending_tool_calls.discard(tool_call_id)
+        delegation.stalled = True
+        if not delegation.response_in_flight:
+            self._settle_delegation(delegation, gave_up=True)
 
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
@@ -1587,7 +1614,7 @@ class OpenAILiveConnection(RealtimeConnection):
         it just as a completed one does.
         """
         delegation.response_in_flight = False
-        if gave_up:
+        if gave_up or delegation.stalled:
             # Nothing further is coming for this delegation — no continuation, and no answer to any
             # call it had asked for — so it must not hold the clock open waiting for one.
             self._abandoned_calls.update(delegation.pending_tool_calls)
