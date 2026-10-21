@@ -1626,10 +1626,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_contribution = None if model_is_explicit else bootstrap_capability.get_model()
         self._check_dynamic_model_resume(model_contribution, message_history)
 
-        # Build the initial state before step-one model selection, so the selector's `ModelSelectionContext`
-        # sees the run's ids, deadline and usage limits like later steps' do. Inside a durable workflow or
-        # flow, the durability capability supplies the default ids, so a re-execution of this code gets the
-        # same ones.
+        has_default_model = self._has_model(model)
+
+        # The string the run's model was selected from, if any — carried through to
+        # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
+        # the original selection token (e.g. an alias only a `resolve_model_id` capability
+        # can resolve) across the activity/step/task boundary.
+        model_id: str | None = None
+        default_model_id: str | None = None
+        default_model: models.Model | None = None
+        if has_default_model:
+            raw_model = self._pick_raw_model(model)
+            model_id = raw_model if isinstance(raw_model, str) else None
+            default_model_id = model_id
+            default_model = await self._resolve_model_selection(
+                raw_model,
+                capability=bootstrap_capability,
+                deps=deps,
+                resolved_models=resolved_models_by_selection,
+                run_built_models=run_built_models,
+            )
+
+        # Build the initial state before the step-one model selector runs (but after the default model is
+        # resolved, as before), so its `ModelSelectionContext` sees the run's ids, deadline and usage limits
+        # like later steps' do. Inside a durable workflow or flow, the durability capability supplies the
+        # default ids, so a re-execution of this code gets the same ones.
         resolved_run_id = _agent_graph.resolve_run_id(
             run_id if run_id is not None else bootstrap_capability._default_run_id(),  # pyright: ignore[reportPrivateUsage]
             message_history,
@@ -1659,26 +1680,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deadline = own_deadline if deadline is None else min(own_deadline, deadline)
         usage_limits = usage_limits or _usage.UsageLimits()
 
-        has_default_model = self._has_model(model)
-
-        # The string the run's model was selected from, if any — carried through to
-        # `ModelRequestContext.model_id` so durable-execution capabilities can round-trip
-        # the original selection token (e.g. an alias only a `resolve_model_id` capability
-        # can resolve) across the activity/step/task boundary.
-        model_id: str | None = None
-        default_model_id: str | None = None
-        default_model: models.Model | None = None
-        if has_default_model:
-            raw_model = self._pick_raw_model(model)
-            model_id = raw_model if isinstance(raw_model, str) else None
-            default_model_id = model_id
-            default_model = await self._resolve_model_selection(
-                raw_model,
-                capability=bootstrap_capability,
-                deps=deps,
-                resolved_models=resolved_models_by_selection,
-                run_built_models=run_built_models,
-            )
         if model_contribution is not None:
             selection_messages, selection_prompt = _agent_graph.first_step_selection_messages(
                 message_history, user_prompt, has_deferred_tool_results=deferred_tool_results is not None
