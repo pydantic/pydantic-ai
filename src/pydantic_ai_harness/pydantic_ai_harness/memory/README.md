@@ -16,7 +16,7 @@ The model gets four tools:
 | Tool | Purpose |
 | --- | --- |
 | `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run and tool call. |
-| `read_memory` | Read a bounded prefix of one memory file. |
+| `read_memory` | Read a bounded prefix of one memory file. Left out when `FileSystem` can read the files ([Reading memory with `FileSystem`](#reading-memory-with-filesystem)). |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
 
@@ -39,9 +39,19 @@ agent = Agent(
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 
+### Reading memory with `FileSystem`
+
+When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind) set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind, whatever that tool is named or prefixed as. With a `store_resolver`, the store it returns for the run decides. The default guidance then names that tool as it is called in the run and the directory of this scope's files, for example "Read a listed file with `read_file` from `.agent-memory/main/`", and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead. A custom `guidance` is used as written.
+
+`InMemoryStore`, `SqliteMemoryStore`, `PostgresMemoryStore` and a `FileStore` with a `workspace=` of its own keep their files where `FileSystem` cannot see them, so with those `read_memory` stays.
+
+The decision is made from the store, not from `FileSystem`'s access rules. A `FileSystem` whose `denied_patterns` cover the memory directory, or whose `allowed_patterns` leave it out, still replaces `read_memory` but cannot open the files. Give the store a `workspace=` of its own to keep `read_memory` in that setup.
+
+The directory includes the namespace. With file tools over the run's workspace, the model can read every namespace's files under `directory`, whether or not `read_memory` is offered, so give the store a `workspace=` of its own when namespaces separate users who must not see each other's memory.
+
 ## Injection modes and limits
 
-Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` or `search_memory`.
+Automatic injection is enabled by default. Trusted usage guidance remains in model instructions, while model-written memory is enclosed in `<memory>` delimiters in a user-role part beside the latest user prompt. Together, the guidance, main notebook, and file listing share a finite `max_tokens` budget, estimated at four characters per token. The default is 2,000 approximate tokens. `max_lines` is an additional limit on the main notebook. Backend reads are limited by `max_memory_size`, and the number of requested paths is derived from the prompt budget, so the capability never requests an unbounded file or listing. Content that does not fit is omitted with a prompt directing the model to use `read_memory` (or `read_file`, where it replaces `read_memory`) or `search_memory`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 

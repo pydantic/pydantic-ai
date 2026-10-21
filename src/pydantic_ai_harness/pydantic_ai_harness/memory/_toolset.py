@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Generic, Literal, TypeVar
 
 from opentelemetry.trace import Span
@@ -15,11 +16,12 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
 from pydantic_ai_harness._workspace import raise_tool_failure
+from pydantic_ai_harness.filesystem import READ_FILE_KIND
 from pydantic_ai_harness.memory._store import (
     FileStore,
     MemoryConflictError,
@@ -35,6 +37,8 @@ from pydantic_ai_harness.memory._store import (
 if TYPE_CHECKING:
     from pydantic_ai_harness.memory._capability import Memory
 
+_READ_MEMORY = 'read_memory'
+
 MAIN_FILENAME = 'MEMORY.md'
 """The main notebook file injected as bounded user-role context."""
 
@@ -47,6 +51,36 @@ _MIN_FILENAME_LIST_CHARS = 6
 _READ_TRUNCATION_MARKER = (
     '\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
 )
+
+
+def run_workspace_directory(store: MemoryStore, scope: str) -> str | None:
+    """Where this scope's files are in the run's workspace, or `None` when the run's file tools cannot see them.
+
+    Known from configuration: a `FileStore` without a `workspace` of its own, whose `directory` is
+    inside the working directory, which `FileSystem`'s root contains.
+    """
+    if not isinstance(store, FileStore) or store.workspace is not None:
+        return None
+    directory = posixpath.normpath(store.directory)
+    if posixpath.isabs(directory) or directory.split('/', 1)[0] == '..':
+        return None
+    return posixpath.join(directory, scope)
+
+
+def file_reader(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str) -> tuple[str, str] | None:
+    """The file tool that reads this scope's files in place of `read_memory`, and where they are."""
+    directory = run_workspace_directory(store, scope)
+    if directory is None or (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is None:
+        return None
+    return reader, directory
+
+
+def read_call(ctx: RunContext[AgentDepsT], store: MemoryStore, scope: str, name: str) -> str:
+    """How the model reads memory file `name`, naming the tool it has in this run."""
+    if (found := file_reader(ctx, store, scope)) is None:
+        return f'{_READ_MEMORY}("{name}")'
+    reader, directory = found
+    return f'{reader}(path="{posixpath.join(directory, name)}")'
 
 
 class MemoryWriteResult(TypedDict):
@@ -148,8 +182,12 @@ def render_memory_prompt(
     max_tokens: int,
     main_truncated: bool = False,
     files_truncated: bool = False,
+    read_main: str = f'{_READ_MEMORY}("{MAIN_FILENAME}")',
 ) -> str:
-    """Render a complete memory section within the strict approximate token budget."""
+    """Render a complete memory section within the strict approximate token budget.
+
+    `read_main` is the call that reads the full notebook, named when lines are dropped.
+    """
     budget = max_tokens * _CHARS_PER_TOKEN
     rendered_guidance = guidance
     source_lines = main_content.rstrip().splitlines()
@@ -161,6 +199,7 @@ def render_memory_prompt(
     omitted_files = len(subfiles) - len(shown_files)
 
     rendered = _render_sections(
+        read_main,
         heading,
         rendered_guidance,
         kept_lines,
@@ -174,6 +213,7 @@ def render_memory_prompt(
         shown_files.pop()
         omitted_files += 1
         rendered = _render_sections(
+            read_main,
             heading,
             rendered_guidance,
             kept_lines,
@@ -187,6 +227,7 @@ def render_memory_prompt(
         kept_lines.pop(0)
         dropped_lines += 1
         rendered = _render_sections(
+            read_main,
             heading,
             rendered_guidance,
             kept_lines,
@@ -199,6 +240,7 @@ def render_memory_prompt(
     if len(rendered) > budget and dropped_lines:
         dropped_lines = 0
         rendered = _render_sections(
+            read_main,
             heading,
             rendered_guidance,
             kept_lines,
@@ -211,6 +253,7 @@ def render_memory_prompt(
     if len(rendered) > budget and rendered_guidance:
         rendered_guidance = rendered_guidance[: max(0, len(rendered_guidance) - (len(rendered) - budget))]
         rendered = _render_sections(
+            read_main,
             heading,
             rendered_guidance,
             kept_lines,
@@ -229,6 +272,7 @@ def render_memory_prompt(
 
 
 def _render_sections(
+    read_main: str,
     heading: str,
     guidance: str,
     main_lines: list[str],
@@ -246,7 +290,7 @@ def _render_sections(
         if dropped_lines:
             lines.insert(
                 0,
-                f'... [{dropped_lines} earlier lines; use read_memory("{MAIN_FILENAME}") for the full notebook] ...',
+                f'... [{dropped_lines} earlier lines; use {read_main} for the full notebook] ...',
             )
         if main_truncated:
             lines.append('... [notebook exceeds `max_memory_size`; bounded prefix shown] ...')
@@ -261,7 +305,9 @@ def _render_sections(
     return '\n\n'.join(sections)
 
 
-def _apply_write(existing: str | None, content: str, old_text: str | None, name: str) -> tuple[str, str]:
+def _apply_write(
+    existing: str | None, content: str, old_text: str | None, name: str, read_current: str
+) -> tuple[str, str]:
     if old_text is None:
         if existing is not None and existing.strip():
             return f'{existing.rstrip()}\n{content.rstrip()}\n', 'appended'
@@ -270,9 +316,7 @@ def _apply_write(existing: str | None, content: str, old_text: str | None, name:
         raise ModelRetry(f'There is no memory file named {name!r} to edit -- omit `old_text` to create it.')
     occurrences = existing.count(old_text) if old_text else 0
     if occurrences == 0:
-        raise ModelRetry(
-            f'`old_text` was not found in {name!r} -- call `read_memory("{name}")` to see its current content.'
-        )
+        raise ModelRetry(f'`old_text` was not found in {name!r} -- call `{read_current}` to see its current content.')
     if occurrences > 1:
         raise ModelRetry(
             f'`old_text` appears {occurrences} times in {name!r}; it must match exactly once. '
@@ -324,7 +368,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         self._capability = capability
         self._operations = operations
         self.add_function(self.write_memory, name='write_memory')
-        self.add_function(self.read_memory, name='read_memory')
+        self.add_function(self.read_memory, name=_READ_MEMORY, prepare=self._prepare_read_memory)
         self.add_function(self.delete_memory, name='delete_memory')
         self.add_function(self.search_memory, name='search_memory')
 
@@ -349,6 +393,13 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         if ctx.root_capability is not None:
             ctx.root_capability.apply(select)
         return run_capability.resolve_scope(ctx)
+
+    async def _prepare_read_memory(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
+        """Step aside for a tool of `FileSystem`'s `READ_FILE_KIND` when it can read this run's memory files."""
+        store, scope = self._resolve_scope(ctx)
+        if run_workspace_directory(store, scope) is None:
+            return tool_def
+        return replace(tool_def, unless_tool_kind=READ_FILE_KIND)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)
@@ -412,6 +463,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                         content,
                         old_text,
                         name,
+                        read_call(ctx, store, scope, name),
                     )
                     if len(updated) > capability.max_memory_size:
                         raise ModelRetry(
@@ -535,7 +587,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
     async def search_memory(self, ctx: RunContext[AgentDepsT], query: str) -> MemorySearchResponse:
         """Search memory files in the current tenant and agent scope.
 
-        Results contain bounded snippets; call `read_memory` when a larger
+        Results contain bounded snippets; read the file when a larger
         bounded excerpt is relevant.
 
         Args:
