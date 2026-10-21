@@ -2446,6 +2446,25 @@ class RealtimeSession:
         )
         await self._send_frame(result)
 
+    async def _send_failed_result(
+        self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
+    ) -> bool:
+        """Send the failure history records for a call that couldn't settle, if the connection needs it; whether it did.
+
+        Only for a connection whose model can't move on without it (see `_sends_failed_tool_results`). A usage limit
+        stops the exchange instead: its result must not ask for another request.
+        """
+        if not self._connection._sends_failed_tool_results or isinstance(error, UsageLimitExceeded):  # pyright: ignore[reportPrivateUsage]
+            return False
+        output, _ = result_part.model_response_str_and_user_content()
+        try:
+            await self._send_tool_result(call_part, output, [], failed=True)
+        except (RealtimeError, UsageLimitExceeded, UserError):
+            # (The link dropped, the result's request would pass a limit, or the session closed meanwhile: the round
+            # is given up instead.)
+            return False
+        return True
+
     # --- streaming --------------------------------------------------------------------------------
 
     def _notify_pending_messages(self, priority: PendingMessagePriority) -> None:
@@ -2580,8 +2599,12 @@ class RealtimeSession:
             # Whatever cancelled it settled the call (see `_stop_tool_calls`).
             raise
         except BaseException as e:
-            self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
-            self._connection._tool_call_unanswered(call_part.tool_call_id)  # pyright: ignore[reportPrivateUsage]
+            result_part = _unsettled_call_return(call_part, e)
+            # Sent before the call is recorded as settled, so the core takes it as a result that went out.
+            sent = await self._send_failed_result(call_part, result_part, e)
+            self._complete_tool_call(call_part, result_part)
+            if not sent:
+                self._connection._tool_call_unanswered(call_part.tool_call_id)  # pyright: ignore[reportPrivateUsage]
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.

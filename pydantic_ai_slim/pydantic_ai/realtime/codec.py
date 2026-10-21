@@ -651,8 +651,18 @@ class RealtimeConnection(ABC):
         """
         return False
 
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        """Whether a call whose tool raised still needs a result sent, saying it failed, for the model to move on.
+
+        For a provider that can't continue, or drop, a round of calls missing one of its results. The session then
+        sends the failure history records (unless a usage limit stopped the call). Defaults to `False`: the model
+        gets nothing for the call, and the exchange it was part of ends. Private until the realtime refactor settles.
+        """
+        return False
+
     def _tool_call_unanswered(self, tool_call_id: str) -> None:
-        """The session settled this call without sending its result (the tool raised): none will follow.
+        """The session settled this call without sending its result (the tool raised, or a usage limit stopped it).
 
         For a connection that holds state until a round's results are all in. Does nothing by default.
         Private until the realtime refactor settles.
