@@ -707,15 +707,11 @@ async def test_abandoning_some_requests_keeps_the_batch_running() -> None:
     assert wrapped.canceled == []
 
 
-def _forged(
-    response: ModelResponse, *, custom_id: str | None = None, request_count: int | None = None
-) -> ModelResponse:
+def _forged(response: ModelResponse, *, request_count: int, custom_id: str | None = None) -> ModelResponse:
     """`response` with its ticket edited, as a caller who controls the message history could."""
     assert response.provider_details is not None
     ticket = response.provider_details['batch']
-    batch = ticket['batch']
-    if request_count is not None:
-        batch = {**batch, 'request_count': request_count}
+    batch = {**ticket['batch'], 'request_count': request_count}
     custom_id = custom_id or ticket['custom_id']
     return replace(
         response,
