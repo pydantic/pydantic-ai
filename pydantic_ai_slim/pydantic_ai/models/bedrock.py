@@ -1031,9 +1031,22 @@ class BedrockConverseModel(Model[BaseClient]):
             model_request_parameters,
         )
         settings = cast(BedrockModelSettings, model_settings or {})
-        response = await self._messages_create(messages, False, settings, model_request_parameters)
-        model_response = await self._process_response(response)
-        return model_response
+        if self._default_max_tokens(settings) is None:
+            response = await self._messages_create(messages, False, settings, model_request_parameters)
+            return await self._process_response(response)
+        # The default `maxTokens` is the model's maximum output, which can take longer to generate than the client's read
+        # timeout, and botocore retries a timed-out `Converse` request, generating the response again each time. So the
+        # request is streamed behind the scenes, and the read timeout then limits the wait between chunks.
+        stream_response = await self._messages_create(messages, True, settings, model_request_parameters)
+        streamed_response = self._process_streamed_response(stream_response, model_request_parameters)
+        try:
+            async for _ in streamed_response:
+                pass
+        finally:
+            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
+            with anyio.CancelScope(shield=True):
+                await streamed_response.close_stream()
+        return streamed_response.get()
 
     async def count_tokens(
         self,
@@ -1093,7 +1106,12 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(
+        yield self._process_streamed_response(response, model_request_parameters)
+
+    def _process_streamed_response(
+        self, response: ConverseStreamResponseTypeDef, model_request_parameters: ModelRequestParameters
+    ) -> BedrockStreamedResponse:
+        return BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),
@@ -1103,6 +1121,17 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+
+    def _default_max_tokens(self, model_settings: BedrockModelSettings) -> int | None:
+        """The `maxTokens` to send when the request doesn't set `max_tokens`.
+
+        That's the model's maximum output for Claude models whose maximum is known, so responses are only cut off at the
+        model's limit, like on `AnthropicModel`. Bedrock's own default for Claude Opus 5.5 is 4096, which thinking
+        counts toward. Other models get Bedrock's default.
+        """
+        if model_settings.get('max_tokens'):
+            return None
+        return self.profile.get('anthropic_max_output_tokens')
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
@@ -1275,6 +1304,8 @@ class BedrockConverseModel(Model[BaseClient]):
         settings = model_settings or BedrockModelSettings()
         system_prompt, bedrock_messages = await self._map_messages(messages, model_request_parameters, settings)
         inference_config = self._map_inference_config(settings)
+        if (default_max_tokens := self._default_max_tokens(settings)) is not None:
+            inference_config['maxTokens'] = default_max_tokens
 
         params: ConverseRequestTypeDef = {
             'modelId': settings.get('bedrock_inference_profile') or self.model_name,
