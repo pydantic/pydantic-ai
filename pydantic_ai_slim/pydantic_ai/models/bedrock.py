@@ -1089,7 +1089,7 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(
+        streamed_response = BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),
@@ -1099,6 +1099,12 @@ class BedrockConverseModel(Model[BaseClient]):
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
+        try:
+            yield streamed_response
+        finally:
+            # Shielded, so a cancelled request still closes the stream rather than leave Bedrock generating.
+            with anyio.CancelScope(shield=True):
+                await streamed_response.close_stream()
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
