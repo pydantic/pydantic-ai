@@ -115,6 +115,18 @@ fixes. To keep fixes off your working tree, give the agent a separate worktree
 as its workspace. A large review returns every finding in one tool result; add
 [Tool Output Limits](tool-output-limits.md) to cap its size.
 
+## Durable execution
+
+Under [durable execution](../durable_execution/overview.md) on Temporal, each
+review runs in its own activity, which gets `timeout` plus 30 seconds. The
+workspace therefore stops a slow review first, and the model still gets the
+findings that arrived. To set a different activity limit, use `SetToolMetadata`
+as in [Temporal command timeouts](../durable_execution/temporal.md#harness-command-timeouts).
+
+The activities are named after the capability's `id`, which defaults to
+`macroscope`, so durable execution needs no configuration. Changing `id`
+renames them, which in-flight runs then cannot find.
+
 ## Data and trust
 
 The review uploads the branch diff to Macroscope's service. Finding bodies are

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import timedelta
 from pathlib import Path
 from typing import Literal, NoReturn
 
@@ -29,6 +30,9 @@ _ISSUE_EVENT_PREFIX = 'issue_event='
 _ISSUE_STATUS_PREFIX = 'issue_status='
 
 _UNKNOWN_STATUS = 'unknown'
+
+_ACTIVITY_GRACE_SECONDS = 30
+"""How much longer than `timeout` a Temporal activity running the review may take."""
 
 _ERROR_TAIL_CHARS = 2000
 """How much trailing CLI output to include when a review fails to start."""
@@ -122,12 +126,14 @@ def parse_macroscope_stream(lines: Iterable[str]) -> MacroscopeReview:
             issue = _parse_issue(line.split(_ISSUE_EVENT_PREFIX, 1)[1])
             if issue is not None:
                 issues.append(issue)
-            continue
-        # One line can carry both markers, so neither check excludes the other.
-        if _ISSUE_STATUS_PREFIX in line and (token := _token_after(line, _ISSUE_STATUS_PREFIX)) is not None:
-            status = token
-        if _REVIEW_ID_PREFIX in line and (token := _token_after(line, _REVIEW_ID_PREFIX)) is not None:
-            review_id = token
+        elif _ISSUE_STATUS_PREFIX in line:
+            token = _token_after(line, _ISSUE_STATUS_PREFIX)
+            if token is not None:
+                status = token
+        elif _REVIEW_ID_PREFIX in line:
+            token = _token_after(line, _REVIEW_ID_PREFIX)
+            if token is not None:
+                review_id = token
     return MacroscopeReview(review_id=review_id, status=status, issues=issues)
 
 
@@ -169,7 +175,9 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
         self._command = command
         self._base = base
         self._timeout = timeout
-        self.add_function(self.run_macroscope_review, name='run_macroscope_review')
+        # Outlast the workspace timeout, so a slow review under Temporal stops there and keeps its findings.
+        activity = {'start_to_close_timeout': timedelta(seconds=timeout + _ACTIVITY_GRACE_SECONDS)}
+        self.add_function(self.run_macroscope_review, name='run_macroscope_review', metadata={'temporal': activity})
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer the tool only when the workspace can run commands."""

@@ -107,6 +107,18 @@ keep fixes off your working tree, give the agent a separate worktree as its
 workspace. A large review returns every finding in one tool result; add
 `ToolOutputLimits` to cap its size.
 
+## Durable execution
+
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) on Temporal, each review runs in its own activity, which
+gets `timeout` plus 30 seconds. The workspace therefore stops a slow review first,
+and the model still gets the findings that arrived. To set a different activity
+limit, use `SetToolMetadata` as in
+[Temporal command timeouts](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-command-timeouts).
+
+The activities are named after the capability's `id`, which defaults to
+`macroscope`, so durable execution needs no configuration. Changing `id` renames
+them, which in-flight runs then cannot find.
+
 ## Data and trust
 
 The review uploads the branch diff to Macroscope's service. Finding bodies are

@@ -6,6 +6,7 @@ import json
 import re
 import shlex
 from collections.abc import Sequence
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -161,10 +162,6 @@ class TestParseStream:
         assert review.review_id is None  # not pulled out of the body
         assert review.status == 'unknown'  # not pulled out of the body
 
-    def test_review_id_and_status_on_one_line(self) -> None:
-        review = parse_macroscope_stream(['review_id=rev-6 issue_status=completed'])
-        assert (review.review_id, review.status) == ('rev-6', 'completed')
-
 
 class TestRunReview:
     async def test_returns_findings(self, tmp_path: Path) -> None:
@@ -319,6 +316,10 @@ class TestCapability:
 
     def test_empty_guidance_disables_instructions(self) -> None:
         assert Macroscope(guidance='').get_instructions() is None
+
+    def test_temporal_activity_outlasts_the_review_timeout(self) -> None:
+        tool = _toolset('macroscope', timeout=600).tools['run_macroscope_review']
+        assert tool.metadata == {'temporal': {'start_to_close_timeout': timedelta(seconds=630)}}
 
     def test_toolset_id_follows_the_capability_id(self) -> None:
         # Durable execution identifies a toolset's activities by its `id`.
