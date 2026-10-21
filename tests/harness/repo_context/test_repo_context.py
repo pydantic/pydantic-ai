@@ -252,9 +252,8 @@ class TestInstructions:
     async def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
         cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True)
-        ctx = _run_context(workspace=workspace)
-        await cap.before_run(ctx)
-        instructions = _render_capability_instructions(cap, ctx)
+        await cap.before_run(_run_context(workspace=workspace))
+        instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'ignored' not in instructions
         assert 'inventory_agent_context' in instructions
@@ -330,12 +329,11 @@ class TestToolset:
         reader = 'read_file' if prefix is None else f'{prefix}_read_file'
         assert offered and all('inventory_agent_context' not in tools and reader in tools for tools in offered)
         assert instructions[0] is not None
-        assert f'such as `{reader}`' in instructions[0]
         assert '`.claude/`' in instructions[0]
-        assert 'inventory_agent_context' not in instructions[0]
 
-    def test_inventory_hint_is_static_when_nothing_can_replace_the_tool(self) -> None:
-        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True, asset_roots=('../shared',))
+    @pytest.mark.parametrize('asset_roots', [('.claude', '.agents'), ('../shared',)])
+    def test_inventory_hint_is_static(self, asset_roots: tuple[str, ...]) -> None:
+        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True, asset_roots=asset_roots)
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'inventory_agent_context' in instructions

@@ -19,8 +19,8 @@ Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=No
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
 protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
 relative `directory`) and `FileSystem` on the agent, `read_memory` is left out
-(`unless_tool_kind=READ_FILE_KIND`) and the default guidance names `read_file` (as called in the run)
-and the scope's directory, e.g. `.agent-memory/main/`. By default a bounded excerpt of `MEMORY.md` plus the list
+(`unless_tool_kind=READ_FILE_KIND`) and the injected memory block gives the scope's directory, e.g.
+`.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
 of other files is injected into each request as a delimited user-role part, attached to the request
 that holds the latest user prompt (not after tool results), or to the last request when there is none.
 

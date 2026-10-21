@@ -71,18 +71,14 @@ class TestReaderStepsAside:
             call=ToolCallPart('read_file', {'path': '.agent-memory/main/notes.md'}),
         )
         assert all('read_memory' not in tools and 'read_file' in tools for tools in recorder.offered)
-        assert recorder.instructions[0] is not None
-        assert 'Read a listed file with `read_file` from `.agent-memory/main/`' in recorder.instructions[0]
-        assert '`read_memory`' not in recorder.instructions[0]
+        assert any('These files are in `.agent-memory/main/` in the workspace.' in text for text in recorder.user_text)
         assert 'the deploy key rotates on Mondays' in output
 
-    async def test_prefixed_read_file_is_named(self, tmp_path: Path) -> None:
+    async def test_prefixed_read_file_replaces_read_memory(self, tmp_path: Path) -> None:
         recorder, _ = await _run(
             tmp_path, Memory(store=FileStore('.agent-memory')), PrefixTools(FileSystem(), prefix='repo')
         )
         assert all('read_memory' not in tools and 'repo_read_file' in tools for tools in recorder.offered)
-        assert recorder.instructions[0] is not None
-        assert 'Read a listed file with `repo_read_file` from `.agent-memory/main/`' in recorder.instructions[0]
 
     async def test_dropped_notebook_lines_point_at_read_file(self, tmp_path: Path) -> None:
         notebook = tmp_path / '.agent-memory' / 'main' / 'MEMORY.md'
@@ -98,18 +94,39 @@ class TestReaderStepsAside:
         def resolve(ctx: RunContext[None]) -> MemoryStore:
             return FileStore('.agent-memory')
 
+        notebook = tmp_path / '.agent-memory' / 'tenant-a' / 'main' / 'MEMORY.md'
+        notebook.parent.mkdir(parents=True)
+        notebook.write_text('- a fact\n')
         recorder, _ = await _run(tmp_path, Memory(store_resolver=resolve, namespace='tenant-a'), FileSystem())
         assert all('read_memory' not in tools for tools in recorder.offered)
-        assert recorder.instructions[0] is not None
-        assert '`read_file` from `.agent-memory/tenant-a/main/`' in recorder.instructions[0]
+        assert any('`.agent-memory/tenant-a/main/`' in text for text in recorder.user_text)
+
+
+class TestGuidanceStaysStatic:
+    def test_guidance_is_static_for_every_store(self) -> None:
+        def resolve(ctx: RunContext[None]) -> MemoryStore:
+            return FileStore('.agent-memory')  # pragma: no cover
+
+        default = Memory[None](store=InMemoryStore()).get_instructions()
+        assert isinstance(default, str)
+        assert Memory[None](store=FileStore('.agent-memory')).get_instructions() == default
+        assert Memory[None](store_resolver=resolve).get_instructions() == default
+
+    async def test_instructions_match_with_and_without_file_system(self, tmp_path: Path) -> None:
+        without, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')))
+        with_file_system, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')), FileSystem())
+        assert without.instructions[0] is not None
+        assert with_file_system.instructions == without.instructions
 
 
 class TestReaderKept:
     async def test_without_file_system(self, tmp_path: Path) -> None:
+        notebook = tmp_path / '.agent-memory' / 'main' / 'MEMORY.md'
+        notebook.parent.mkdir(parents=True)
+        notebook.write_text('- a fact\n')
         recorder, _ = await _run(tmp_path, Memory(store=FileStore('.agent-memory')))
         assert all('read_memory' in tools for tools in recorder.offered)
-        assert recorder.instructions[0] is not None
-        assert 'Read a listed file with `read_memory`' in recorder.instructions[0]
+        assert recorder.user_text and not any('in the workspace.' in text for text in recorder.user_text)
 
     @pytest.mark.parametrize('store_kind', ['own_workspace', 'in_memory', 'outside_working_dir'])
     async def test_store_the_file_tools_cannot_see(self, tmp_path: Path, store_kind: str) -> None:
@@ -126,5 +143,3 @@ class TestReaderKept:
             store = FileStore('../elsewhere')
         recorder, _ = await _run(work, Memory(store=store), FileSystem())
         assert all('read_memory' in tools and 'read_file' in tools for tools in recorder.offered)
-        assert recorder.instructions[0] is not None
-        assert 'Read a listed file with `read_memory`' in recorder.instructions[0]

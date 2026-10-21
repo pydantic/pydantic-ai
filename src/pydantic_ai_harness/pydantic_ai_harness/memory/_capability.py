@@ -34,7 +34,6 @@ from pydantic_ai_harness.memory._toolset import (
     read_call,
     require_metadata_store,
     run_as_operation,
-    run_workspace_directory,
 )
 
 _DEFAULT_GUIDANCE = (
@@ -44,7 +43,7 @@ _DEFAULT_GUIDANCE = (
     'bullet lines, and put longer or evolving topics in separate files referenced from '
     'MEMORY.md. When you learn something a future session will need, store it proactively with '
     '`write_memory` (append by default; pass `old_text` to correct or remove). Read a listed '
-    'file with {read} when it looks relevant, or use `search_memory` to find relevant '
+    'file when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
     'in this turn.'
@@ -68,7 +67,7 @@ class Memory(AbstractCapability[AgentDepsT]):
     `MEMORY.md` is injected as user-role context and longer topic files are
     available through `read_memory` and `search_memory`. When a `FileStore`
     keeps the files in the run's workspace, `read_memory` steps aside for
-    `FileSystem`'s `read_file`, and the guidance names it and the directory.
+    `FileSystem`'s `read_file`, and the injected snapshot gives the directory.
     Automatic snapshot loading is journaled by durability engines that support
     capability operations.
     """
@@ -238,31 +237,14 @@ class Memory(AbstractCapability[AgentDepsT]):
 
         Stored memory is added separately as user-role context by
         `before_model_request` so model-written content is not placed in the
-        instruction channel. The default guidance names the tool that reads
-        memory files in this run, so it is rendered per run when that can vary.
+        instruction channel. The guidance is the same in every run, so it stays
+        static and inside the cached prefix; when `read_file` reads the files in
+        place of `read_memory`, the injected snapshot says where they are.
         """
-        if self.store_resolver is None and run_workspace_directory(self.store, '') is None:
-            return self._render_guidance(None)
+        return self._render_guidance()
 
-        def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
-            return self._render_guidance(ctx)
-
-        return instructions
-
-    def _render_guidance(self, ctx: RunContext[AgentDepsT] | None) -> str | None:
-        if self.guidance is not None:
-            guidance = self.guidance
-        else:
-            found = None
-            if ctx is not None:
-                store, scope = self.resolve_scope(ctx)
-                found = file_reader(ctx, store, scope)
-            if found is None:
-                read = '`read_memory`'
-            else:
-                reader, directory = found
-                read = f'`{reader}` from `{directory}/`'
-            guidance = _DEFAULT_GUIDANCE.format(read=read)
+    def _render_guidance(self) -> str | None:
+        guidance = _DEFAULT_GUIDANCE if self.guidance is None else self.guidance
         if not guidance:
             return None
         return render_memory_prompt(
@@ -320,7 +302,7 @@ class Memory(AbstractCapability[AgentDepsT]):
 
             main_content = '' if main is None else _MEMORY_TAG_RE.sub('&lt;', main.content)
             rendered = ''
-            guidance = self._render_guidance(ctx)
+            guidance = self._render_guidance()
             content_budget = (
                 self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
             )
@@ -336,6 +318,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                     main_truncated=main is not None and main.truncated,
                     files_truncated=files_truncated,
                     read_main=read_call(ctx, store, scope, MAIN_FILENAME),
+                    location=None if (found := file_reader(ctx, store, scope)) is None else found[1],
                 )[:content_budget]
                 rendered = f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
                 part = UserPromptPart([TextContent(rendered, metadata=marker)])

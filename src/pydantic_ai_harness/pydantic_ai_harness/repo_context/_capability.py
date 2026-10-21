@@ -17,7 +17,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, require_workspace, workspace_path
-from pydantic_ai_harness.filesystem import READ_FILE_KIND, DirectoryListedEvent, FileReadEvent, step_aside_for_read_file
+from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent, step_aside_for_read_file
 from pydantic_ai_harness.repo_context._loader import (
     ContextFile,
     discover_instruction_files,
@@ -35,7 +35,7 @@ _INVENTORY_HINT = (
 _ASSET_ROOTS_HINT = (
     'This repo may keep its coding-assistant setup in {roots}: `skills/*/SKILL.md`, '
     '`agents/*.md` (sub-agents), and `settings.json` (hooks). Inspect it with your file tools, '
-    'such as `{reader}`.'
+    'or call `{tool_name}` to map it when that tool is offered.'
 )
 _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the '
@@ -193,12 +193,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if not self.autoload_instructions:
             if not self.expose_inventory_tool:
                 return None
-            if not self._asset_roots_in_working_dir:
-                # Nothing can replace the inventory tool, so the hint stays static and inside the cached prefix.
-                return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name)
+            # The hint doesn't depend on the run, so it stays static and inside the cached prefix.
+            return self._inventory_hint()
 
         def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
-            return self._render_instructions(ctx)
+            return self._render_instructions()
 
         return instructions
 
@@ -207,20 +206,23 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         # diff, when that's shorter) rather than rewriting the cached prompt.
         return append_on_change_by_default(super()._collect_instructions(), key='repo_context')
 
-    def _render_instructions(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    def _render_instructions(self) -> str | None:
         parts: list[str] = []
         if self.autoload_instructions and self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
         if self.expose_inventory_tool:
-            parts.append(self._inventory_hint(ctx))
+            parts.append(self._inventory_hint())
         return '\n\n'.join(parts) or None
 
-    def _inventory_hint(self, ctx: RunContext[AgentDepsT]) -> str:
-        """Point at the inventory tool, or at the asset roots when a file reader replaces it in this run."""
-        if self._asset_roots_in_working_dir and (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
+    def _inventory_hint(self) -> str:
+        """Point at the inventory tool, and at the asset roots when a file reader can replace it.
+
+        It names no reader, so it is the same whether or not `FileSystem` is on the agent.
+        """
+        if self._asset_roots_in_working_dir:
             roots = ', '.join(f'`{root}/`' for root in self.asset_roots)
-            return _ASSET_ROOTS_HINT.format(roots=roots, reader=reader)
+            return _ASSET_ROOTS_HINT.format(roots=roots, tool_name=self.inventory_tool_name)
         return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name)
 
     @property
