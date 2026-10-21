@@ -1008,6 +1008,34 @@ class TestMarkdownConverter:
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             assert 'ok' in _convert_html(html)[1]
 
+    @pytest.mark.parametrize('prefix', ['<div ', '<div data-x=">" ', "<div data=x' "])
+    def test_many_attributes_are_rejected_before_whole_tag_scan(self, prefix: str):
+        """A tag's attributes are counted before the parser matches the whole tag."""
+        html = prefix + ' x=1' * 21 + '>ok</div>'
+        with (
+            patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TAG_ATTRIBUTES', 20),
+            patch('html.parser.HTMLParser.check_for_whole_start_tag', side_effect=AssertionError('whole-tag scan')),
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
+    @pytest.mark.parametrize('separator', ['', '/'])
+    def test_adjacent_attributes_are_counted(self, separator: str):
+        """Attributes with no whitespace between them are still counted."""
+        html = '<div a0="x"' + (separator + 'a1="x"') * 21 + '>ok</div>'
+        with (
+            patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TAG_ATTRIBUTES', 20),
+            patch('html.parser.HTMLParser.check_for_whole_start_tag', side_effect=AssertionError('whole-tag scan')),
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
+    def test_slashes_in_unquoted_attribute_value_are_not_attributes(self):
+        """Slashes inside an unquoted attribute value do not count as attribute separators."""
+        html = '<a href=https://example.com/' + 'path/' * 21 + '>ok</a>'
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TAG_ATTRIBUTES', 20):
+            assert 'ok' in _convert_html(html)[1]
+
     @pytest.mark.parametrize('entity', ['&amp;', '&#65;'])
     def test_many_entities_are_rejected_before_parsing(self, entity: str):
         """Entity and character references are counted before the document is parsed."""
