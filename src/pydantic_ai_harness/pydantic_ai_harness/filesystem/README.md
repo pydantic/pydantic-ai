@@ -181,26 +181,38 @@ lands, without parsing tool arguments:
 | `DirectoryCreatedEvent` | stream | `create_directory` | `path`, `root_dir` |
 | `FilesSearchedEvent` | stream | `search_files`, `find_files`, `list_files`, `grep` | `path`, `root_dir`, `pattern`, `search` (`grep` or `find`), `match_count`, `truncated` |
 
-`FileChangeRequestEvent` is a decision; the other events are notifications. It
-fires only for a change that passed the access and conflict checks, so a
-listener cannot approve what the policy or the filesystem refuses. Call
-`event.cancel(reason)` to refuse the change; the model gets `reason` as the
-tool result. A listener that raises aborts the run, and the change is not
-applied.
-
-A listener may take a while (a human approving the diff, say), so after it
-returns the path is checked again and the file re-read: a file that changed
-meanwhile fails instead of being overwritten, and an edit does not recreate a
-file deleted meanwhile. A target the workspace cannot read has no content to
-guard; pass `expected_hash` to refuse such a write before it is announced.
-
-`diff` is the unified diff from the current content to the proposed content. A
-new file diffs from empty; an unreadable file is announced with the file
-headers alone and `truncated` set; `create_directory` has no diff, and on a
-directory that already exists it emits nothing.
+`FileChangeRequestEvent` is a decision. It fires after the path has passed the
+access checks and, for `write_file` and `edit_file`, after the conflict check,
+so a listener only sees changes that would otherwise go ahead: a denied path,
+a missing parent for `write_file`, a parent that is not a directory, a stale
+`expected_hash` for a file that exists, or a directory that collides with a
+file emits no request, so a listener cannot approve what the policy or the
+filesystem refuses. A
+listener may take a while (a human approving the diff, say), so once the
+request returns the path is resolved and checked again, and a write or edit
+re-reads the file just before writing and checks that it still holds what the
+listener was shown: a file changed in the meantime fails after it was
+announced instead of being overwritten, and an edit does not recreate a file
+deleted in the meantime. This holds the window between the check and the write
+(see [Security model](#security-model)) to what it is without a listener for
+readable targets. For a target the workspace cannot read, an approved write has
+no content guard; passing `expected_hash` instead refuses the write before
+announcement. A listener that calls `cancel(reason)`
+stops the change before it touches the disk, and the model gets the reason as the tool
+result. A listener that raises instead aborts the run, as any raising event
+listener does, and the change is not applied. `diff` is the unified diff from
+the current content to the proposed content: a new file diffs from empty, a
+file the workspace cannot read is announced with the file headers alone and
+`truncated` set, since what it holds cannot be shown, and a `create_directory`
+has no diff. A `create_directory` on a directory that already exists changes
+nothing and emits nothing. The other events are notifications.
 
 `FileEditedEvent` subclasses `FileWrittenEvent`, so a listener for writes
-receives edits too; its serialized kind is `file_system.file_edited`. Diffs are cut at
+receives edits too and can read the `diff` when it has one. Before this
+release `edit_file` emitted a plain `FileWrittenEvent`, so a serialized edit
+had the kind `file_system.file_written`; it is now `file_system.file_edited`.
+A listener registered for `FileWrittenEvent` still receives it; code that
+matches on the serialized kind needs to accept both. Diffs are cut at
 `MAX_EVENT_DIFF_CHARS` (8192) with a `truncated` flag, so a persisted or
 forwarded event stream cannot be flooded by one large write, and a change
 whose text is longer than `MAX_DIFF_SOURCE_CHARS` (32768) on either side is

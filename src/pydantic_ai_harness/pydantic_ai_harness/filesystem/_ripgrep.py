@@ -3,7 +3,7 @@
 `rg` is invoked with `--null`, so every file path it prints ends in a NUL byte
 and cannot be confused with the `:`/`-` separators of the match text that
 follows it. The workspace returns a command's output whole, so the output is
-cut inside the workspace at `MAX_OUTPUT_BYTES` (`head -c`) and records are then
+cut inside the workspace at `_MAX_OUTPUT_BYTES` (`head -c`) and records are then
 streamed through the caller's `accept` filter until `limit` accepted records
 have been collected; only kept records count towards the cap.
 """
@@ -22,20 +22,17 @@ from pydantic_ai.workspaces import Workspace
 _SEPARATOR = '--\n'
 """What `rg` prints between non-adjacent context groups; carries no path and is dropped."""
 
-MAX_RECORD_BYTES = 1 << 20
-"""Longest record a workspace search keeps while waiting for its terminator.
-
-`rg`'s own `--max-columns` keeps its lines far shorter; the POSIX fallback has no such option.
-"""
+_MAX_RECORD_BYTES = 1 << 20
+"""Longest record kept while waiting for its terminator; `rg`'s own `--max-columns` keeps lines far shorter."""
 
 _PREPARE_BATCH = 500
 """Records handed to `prepare` at once."""
 
-MAX_OUTPUT_BYTES = 8 << 20
-"""Bytes of search output brought back from the workspace; a search that prints more is reported as truncated."""
+_MAX_OUTPUT_BYTES = 8 << 20
+"""Bytes of `rg` output brought back from the workspace; a search that prints more is reported as truncated."""
 
-SEARCH_TIMEOUT = 120.0
-"""Deadline in seconds for one workspace search command, so a search over a huge tree cannot hang the tool call."""
+_TIMEOUT = 120.0
+"""Deadline in seconds for one search, so a search over a huge tree cannot hang the tool call."""
 
 _STATUS_PREFIX = '__harness_rg_status='
 """Prefix of the last stderr line, which carries `rg`'s own exit status past the `head` pipe."""
@@ -48,15 +45,6 @@ _UNREADABLE = re.compile(r'rg: (?P<path>.+?): (?:IO error for operation on .+?: 
 """An error `rg` reports for one path it could not open, after which it carries on with the rest."""
 
 _T = TypeVar('_T')
-
-
-def realpath_of_file(on_failure: str) -> str:
-    """Shell that sets `real` to the canonical path of `$file`, running `on_failure` when it cannot be resolved.
-
-    `realpath` strips trailing newlines from its output, so a `.` is printed after it and both are
-    stripped again, keeping a file name that ends in a newline intact.
-    """
-    return f'real=$(realpath -- "$file" && printf .) || {on_failure}; real=${{real%.}}; real=${{real%?}}; '
 
 
 class RipgrepMissing(Exception):
@@ -107,9 +95,9 @@ async def run_ripgrep(
     script = (
         f'cd {shlex.quote(cwd)} || exit\n'
         f'command -v rg > /dev/null 2>&1 || exit {_MISSING}\n'
-        f'{{ {command}; echo "{_STATUS_PREFIX}$?" >&2; }} | head -c {MAX_OUTPUT_BYTES}'
+        f'{{ {command}; echo "{_STATUS_PREFIX}$?" >&2; }} | head -c {_MAX_OUTPUT_BYTES}'
     )
-    result = await workspace.run(script, shell=True, timeout=SEARCH_TIMEOUT)
+    result = await workspace.run(script, shell=True, timeout=_TIMEOUT)
     stderr_lines = result.stderr.rstrip('\n').split('\n')
     status_line = stderr_lines[-1] if stderr_lines else ''
     detail = '\n'.join(stderr_lines[:-1]).strip()
@@ -120,7 +108,7 @@ async def run_ripgrep(
     status = status_line.removeprefix(_STATUS_PREFIX)
 
     output = result.stdout
-    output_cut = len(output.encode('utf-8', errors='surrogateescape')) >= MAX_OUTPUT_BYTES
+    output_cut = len(output.encode('utf-8', errors='surrogateescape')) >= _MAX_OUTPUT_BYTES
     results: list[_T] = []
     records: list[Record] = []
     truncated = False
@@ -128,7 +116,7 @@ async def run_ripgrep(
     start = 0
     while (end := output.find(terminator, start)) >= 0:
         line, start = output[start : end + 1], end + 1
-        if len(line) > MAX_RECORD_BYTES:
+        if len(line) > _MAX_RECORD_BYTES:
             truncated = True
             break
         if line == _SEPARATOR:
@@ -137,7 +125,7 @@ async def run_ripgrep(
     else:
         # Anything left is a record without its terminator: cut off by the output cap, or one
         # too long to keep, which a well-formed `rg` listing never prints.
-        truncated = output_cut or len(output) - start > MAX_RECORD_BYTES
+        truncated = output_cut or len(output) - start > _MAX_RECORD_BYTES
     # Prepared a batch at a time, so a capped search stops preparing once it has enough.
     for offset in range(0, len(records), _PREPARE_BATCH):
         batch = records[offset : offset + _PREPARE_BATCH]
