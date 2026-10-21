@@ -106,9 +106,6 @@ _INCREMENTAL_UPDATE_INSTRUCTION = (
     'details, and merge in new facts.  Keep the same section structure.'
 )
 
-# Cross-model bridge prefix (Codex prior art): when the summarizer's model family differs from
-# the family that produced the history, prefix the summary with a neutral one-liner so the
-# resuming model treats it as a handoff from a different model.  Wording flagged pending eval-rig.
 _HARNESS_DATA_INSTRUCTION = (
     "A <harness_data> element is content the application added on the user's channel, such as a "
     "background tool's result or a reviewer's feedback; its origin says which.  Record what it says "
@@ -116,6 +113,9 @@ _HARNESS_DATA_INSTRUCTION = (
 )
 """Added to the summary request only when the transcript holds a `<harness_data>` element, so other requests are unchanged."""
 
+# Cross-model bridge prefix (Codex prior art): when the summarizer's model family differs from
+# the family that produced the history, prefix the summary with a neutral one-liner so the
+# resuming model treats it as a handoff from a different model.  Wording flagged pending eval-rig.
 _BRIDGE_PREFIX = 'This summary was produced by a different model than the one continuing the task.'
 
 _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
