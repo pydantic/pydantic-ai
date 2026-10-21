@@ -10,7 +10,7 @@ See `tests/append_only.py` for the scenario and the three invariants it checks, 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -409,7 +409,7 @@ def _delegation_reports(
     child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
 
     @asynccontextmanager
-    async def owning() -> AsyncIterator[None]:
+    async def owning() -> AsyncGenerator[None]:
         async with owner.opened():
             with owner.bind():
                 yield
