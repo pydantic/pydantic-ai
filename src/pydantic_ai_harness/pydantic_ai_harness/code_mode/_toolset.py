@@ -471,14 +471,14 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     """Build the functions-header paragraph for the `run_code` tool description."""
     base = (
         '\nThe following functions are available inside the sandbox. Call them directly '
-        '(do **not** redefine or import them). All parameters are keyword-only.'
+        '(do **not** redefine or import these functions). All parameters are keyword-only.'
     )
     if has_async and not has_sync:
         return base + (
             ' All tool functions are async: invoke them with `await`,'
             ' e.g. `await tool_name(arg=value)`.'
             ' Calling without `await` returns an unresolved future, not the value.'
-            ' For concurrency, use `await asyncio.gather(...)` with positional awaitables.'
+            ' For concurrency, `import asyncio` and use `await asyncio.gather(...)` with positional awaitables.'
             ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
             ' and wait APIs.'
         )
@@ -488,7 +488,7 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
         ' Async functions (`async def`) must be invoked with `await`,'
         ' e.g. `await tool_name(arg=value)`.'
         ' Sync functions (`def`) are called directly, e.g. `tool_name(arg=value)`.'
-        ' For concurrent async calls, use `await asyncio.gather(...)` with positional awaitables.'
+        ' For concurrent async calls, `import asyncio` and use `await asyncio.gather(...)` with positional awaitables.'
         ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
         ' and wait APIs.'
     )
