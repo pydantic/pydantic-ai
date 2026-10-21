@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib.util import find_spec
 from types import ModuleType, NoneType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
@@ -35,6 +35,7 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     XSearch,
 )
+from pydantic_ai.capabilities._native_resolution import resolve_native_tool
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import (
@@ -960,6 +961,63 @@ class TestMCPCapability:
         transport = cap.local.client.transport  # pyright: ignore[reportUnknownMemberType]
         assert isinstance(transport, StreamableHttpTransport)
         assert transport.headers == {'Authorization': 'Bearer xyz'}
+
+    async def test_mcp_authorization_token_function_resolved_per_run(self):
+        """A function `authorization_token` is resolved for each run, on both the native and the local side."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
+
+        cap = MCP[str](
+            url='https://mcp.example.com/api',
+            authorization_token=lambda ctx: f'Bearer {ctx.deps}',
+            headers={'X-Tenant': 'acme'},
+            native=True,
+        )
+        ctx = _build_run_context(deps='alice')
+
+        # The native tool is built for each run, with that run's token.
+        assert not isinstance(cap.native, bool)
+        native_tool = await resolve_native_tool(MCPServerTool, cap.native, ctx)
+        assert native_tool == MCPServerTool(
+            id='mcp.example.com',
+            url='https://mcp.example.com/api',
+            authorization_token='Bearer alice',
+            headers={'X-Tenant': 'acme'},
+        )
+
+        # The local toolset connects each run with its own copy, carrying that run's token.
+        local = cast('MCPToolset[str]', cap.local)
+        assert isinstance(local, MCPToolset)
+        transport = (await local.for_run(ctx)).client.transport
+        assert isinstance(transport, StreamableHttpTransport)
+        assert transport.headers == {'X-Tenant': 'acme', 'Authorization': 'Bearer alice'}
+
+    async def test_mcp_headers_function_resolved_per_run(self):
+        """A function `headers` is resolved for each run; an `authorization_token` of `None` sends no auth."""
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        from pydantic_ai.mcp import MCPToolset
+
+        async def headers(ctx: RunContext[str]) -> dict[str, str] | None:
+            return {'X-User': ctx.deps} if ctx.deps else None
+
+        cap = MCP[str](url='https://mcp.example.com/api', headers=headers, native=True)
+
+        assert not isinstance(cap.native, bool)
+        native_tool = await resolve_native_tool(MCPServerTool, cap.native, _build_run_context(deps='bob'))
+        assert native_tool.authorization_token is None
+        assert native_tool.headers == {'X-User': 'bob'}
+
+        local = cast('MCPToolset[str]', cap.local)
+        assert isinstance(local, MCPToolset)
+        transport = (await local.for_run(_build_run_context(deps='bob'))).client.transport
+        assert isinstance(transport, StreamableHttpTransport)
+        assert transport.headers == {'X-User': 'bob'}
+
+        transport = (await local.for_run(_build_run_context(deps=''))).client.transport
+        assert isinstance(transport, StreamableHttpTransport)
+        assert not transport.headers
 
     def test_mcp_allowed_tools_filters_local(self):
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""

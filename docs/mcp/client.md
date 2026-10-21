@@ -586,6 +586,8 @@ Because the toolset only knows which credentials to use once a run has started, 
     - With FastMCP 4, which is built on MCP SDK v2, the `auth` object is called in the context of the run making each request, so each request carries that run's credentials, but is sent on a session opened for another user.
     - With FastMCP 3, which is built on MCP SDK v1, the `auth` object is called in the context of the run that opened the session, so overlapping runs silently send their requests with that run's credentials.
 
+With the [`MCP` capability](../capabilities/mcp.md), pass the function as its `authorization_token` or `headers` instead; see [per-user credentials](../capabilities/mcp.md#per-user-credentials).
+
 If each user needs more than their own credentials, such as a server URL of their own, build the whole toolset for each run with a [dynamic toolset](../toolsets.md#dynamically-building-a-toolset) instead: an [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] function with `per_run_step=False` that returns an `MCPToolset` for the run's user.
 
 ## Custom TLS / SSL configuration {#custom-tls-ssl-configuration}
