@@ -379,9 +379,11 @@ def _web_citation_agent(
     elif case.provider == 'anthropic-web-fetch':
         # Web Fetch only returns citations when asked.
         model = AnthropicModel(
-            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            settings=ModelSettings(**ANTHROPIC_SETTINGS, citations=True),
         )
-        tool = WebFetchTool(max_uses=1, enable_citations=True)
+        tool = WebFetchTool(max_uses=1)
         # A plain-text page with no trailing whitespace or smart characters, which recording would rewrite and so move
         # the cited ranges that tie a citation to the fetched page.
         prompt = (
@@ -550,7 +552,7 @@ async def test_document_citations(
     model = AnthropicModel(
         'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
     )
-    agent = Agent(model, model_settings=ModelSettings(include_citations=True))
+    agent = Agent(model, model_settings=ModelSettings(citations=True))
     prompt: str | list[str | BinaryContent]
     if case.pdf:
         prompt = ['What text appears in this PDF? Answer in one sentence and cite the document.', document_content]
@@ -589,7 +591,7 @@ async def test_anthropic_tool_return_document_citations(allow_model_requests: No
     model = AnthropicModel(
         'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
     )
-    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(citations=True))
 
     result = await agent.run(TOOL_DOCUMENT_PROMPT)
 

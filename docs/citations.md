@@ -9,13 +9,13 @@ document you sent with the prompt, or a file in a provider's file store. Provide
 - When you send documents with the prompt. Providers that support this only cite documents when asked.
 
 Pydantic AI puts the citations a provider returns on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations], in
-the same shape for every provider, without changing the model's text. Set `include_citations=True` to ask the
+the same shape for every provider, without changing the model's text. Set `citations=True` to ask the
 providers that only cite when asked:
 
 ```python {title="document_citations.py"}
 from pydantic_ai import Agent, BinaryContent, TextPart
 
-agent = Agent('{{ anthropic:medium }}', model_settings={'include_citations': True})
+agent = Agent('{{ anthropic:medium }}', model_settings={'citations': True})
 result = agent.run_sync(
     [
         'How long do customers have to return an item?',
@@ -136,7 +136,7 @@ provider's and can change with the provider's API.
 
 | Provider/API | Citations returned | How to enable | Provider support notes |
 | --- | --- | --- | --- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web Search, Web Fetch and document citations | Web Search always returns citations. [`WebFetchTool(enable_citations=True)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] enables them for Web Fetch. `include_citations=True` enables them for all documents, including those in tool results | Anthropic splits its answer into text parts and cites whole parts, so the anchor covers the part. A fetched PDF is cited as a document source. Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web Search, Web Fetch and document citations | Web Search always returns citations. `citations=True` enables them for Web Fetch and for all documents, including those in tool results. [`WebFetchTool(enable_citations=False)`][pydantic_ai.native_tools.WebFetchTool.enable_citations] turns them off for Web Fetch alone | Anthropic splits its answer into text parts and cites whole parts, so the anchor covers the part. A fetched PDF is cited as a document source. Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
 | [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Search, file search and Web Fetch grounding | Enable the grounding tool | |
 | [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerateContentResponse#GroundingMetadata) | Search and Vertex retrieval grounding | Enable the grounding tool | A retrieved document's resource name is its `document_id` |
 | [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | URL citations, and Responses file citations | Enable Web Search for URL citations, or File Search for file citations | Other annotation types, such as `container_file_citation` and `file_path`, are only available as raw annotations |

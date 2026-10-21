@@ -109,7 +109,7 @@ def test_model_request_parameters_are_serializable():
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
-                    'enable_citations': False,
+                    'enable_citations': None,
                     'max_content_tokens': None,
                 },
                 {
