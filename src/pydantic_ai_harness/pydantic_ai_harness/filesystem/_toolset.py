@@ -843,14 +843,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         root-level `secrets.yaml` -- there's no leading directory to match.
         Retrying with the `**/` prefix stripped covers the zero-directory case.
         """
+        spellings = [(path, pattern, fnmatch.fnmatch)]
         if ignore_case:
-            path, pattern = path.casefold(), pattern.casefold()
-        match = fnmatch.fnmatchcase if ignore_case else fnmatch.fnmatch
-        if match(path, pattern):
-            return True
-        if pattern.startswith('**/'):
-            return match(path, pattern[3:])
-        return False
+            # Folding can change a string's length (`ß` becomes `ss`), so a `?` that matches the
+            # original spelling may not match the folded one: folding adds a way to match.
+            spellings.append((path.casefold(), pattern.casefold(), fnmatch.fnmatchcase))
+        return any(
+            match(name, glob) or (glob.startswith('**/') and match(name, glob[3:])) for name, glob, match in spellings
+        )
 
     def _first_matching_pattern(self, path: str, patterns: list[str]) -> str | None:
         """Return the first denied or read-only pattern matching this path or one of its ancestors.
