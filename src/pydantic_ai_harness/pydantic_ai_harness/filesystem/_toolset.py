@@ -253,7 +253,11 @@ def _directories_holding(glob: str, prefix: str) -> list[str]:
             if len(literal) <= len(above):
                 return []  # With `prefix` in front, every path starts with the glob's directories.
             directories.append('/'.join(literal[len(above) :]))
-    return sorted(directories)
+    kept: list[str] = []
+    for directory in sorted(directories, key=len):  # A directory inside another is searched with it.
+        if not any(directory == k or directory.startswith(k + '/') for k in kept):
+            kept.append(directory)
+    return sorted(kept)
 
 
 def _fall_back_from_ripgrep(scope: _Scope) -> None:

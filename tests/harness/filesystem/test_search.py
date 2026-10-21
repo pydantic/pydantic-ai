@@ -426,8 +426,12 @@ async def test_include_glob_with_rg_only_syntax_still_goes_to_rg(tmp_path: Path)
     [
         ('pkg/*.py', 'src/pkg/m.py:1:needle'),
         ('src/pkg/*.py', 'src/pkg/m.py:1:needle'),
-        ('src/*.py', 'src/a.py:1:needle\nsrc/pkg/m.py:1:needle'),
+        (
+            'src/*.py',
+            'src/a.py:1:needle\nsrc/pkg/m.py:1:needle\nsrc/src/src/z.py:1:needle\nsrc/src/y.py:1:needle',
+        ),
         ('docs/*.py', 'No matches found.'),
+        ('src/src/*.py', 'src/src/src/z.py:1:needle\nsrc/src/y.py:1:needle'),
     ],
 )
 async def test_include_glob_is_also_matched_below_the_search_directory(
@@ -437,6 +441,9 @@ async def test_include_glob_is_also_matched_below_the_search_directory(
     (tmp_path / 'src' / 'pkg').mkdir(parents=True)
     (tmp_path / 'src' / 'a.py').write_text('needle\n')
     (tmp_path / 'src' / 'pkg' / 'm.py').write_text('needle\n')
+    (tmp_path / 'src' / 'src' / 'src').mkdir(parents=True)
+    (tmp_path / 'src' / 'src' / 'y.py').write_text('needle\n')
+    (tmp_path / 'src' / 'src' / 'src' / 'z.py').write_text('needle\n')
     (tmp_path / 'docs').mkdir()
     (tmp_path / 'docs' / 'd.py').write_text('needle\n')
     tools = FileSystem[None]().get_toolset()
