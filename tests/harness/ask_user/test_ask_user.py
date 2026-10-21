@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
-from pydantic_ai.capabilities import AbstractCapability, on_event
+from pydantic_ai.capabilities import AbstractCapability, PrefixTools, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -238,6 +238,34 @@ class TestAskUser:
         first = result.all_messages()[0]
         assert isinstance(first, ModelRequest)
         assert first.instructions is not None and TOOL_NAME in first.instructions
+
+
+class TestTwoOfThem:
+    async def test_two_that_agree_become_one(self) -> None:
+        answerer = ScriptedAnswerer()
+        model = TestModel(call_tools=[])
+        agent = Agent(model, capabilities=[AskUser(answerer=answerer), AskUser(answerer=answerer)])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert [tool.name for tool in parameters.function_tools] == [TOOL_NAME]
+        assert [str(part.id) for part in parameters.instruction_parts or ()] == ['capability:ask_user']
+
+    def test_two_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(
+            UserError,
+            match="Capability id 'ask_user' is used by multiple AskUser capabilities that disagree on 'answerer'",
+        ):
+            Agent(TestModel(), capabilities=[AskUser(answerer=ScriptedAnswerer()), AskUser(answerer=None)])
+
+    async def test_distinct_ids_and_prefixed_tools_keep_two_apart(self) -> None:
+        model = TestModel(call_tools=[])
+        second = AskUser(answerer=None, id='deferred_ask_user')
+        agent = Agent(model, capabilities=[AskUser(answerer=ScriptedAnswerer()), PrefixTools(second, prefix='later')])
+        await agent.run('hello')
+        parameters = model.last_model_request_parameters
+        assert parameters is not None
+        assert sorted(tool.name for tool in parameters.function_tools) == [TOOL_NAME, f'later_{TOOL_NAME}']
 
 
 class TestDeferred:
