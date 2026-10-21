@@ -392,13 +392,23 @@ async def test_a_vm_passed_in_is_used_and_kept(fake_smol: FakeSmol, working_dir:
     assert list(fake_smol.vms) == ['dev']
 
 
-async def test_a_vm_not_on_this_machine_is_refused(fake_smol: FakeSmol, working_dir: str) -> None:
+async def test_a_vm_not_on_this_machine_is_unavailable(fake_smol: FakeSmol, working_dir: str) -> None:
     # Like a Smol Cloud machine: the local target doesn't know its id.
     elsewhere = FakeMachine(FakeVM(id='mach-0a1b2c', config=smol.MachineConfig()))
     backend = SmolSandboxBackend(sandbox=cast(Any, elsewhere), working_dir=working_dir)
-    with pytest.raises(UserError, match="'mach-0a1b2c' passed as `sandbox` is not, or is no longer, a VM on this"):
+    with pytest.raises(
+        WorkspaceUnavailableError, match="'mach-0a1b2c' passed as `sandbox` is not, or is no longer, a VM on this"
+    ):
         await backend.run(['true'])
     assert fake_smol.commands == []
+
+
+async def test_a_deleted_vm_passed_in_is_unavailable(fake_smol: FakeSmol, working_dir: str) -> None:
+    machine = fake_smol.module.Machine.create(smol.MachineConfig(name='dev'))
+    backend = SmolSandboxBackend(sandbox=machine, working_dir=working_dir)
+    del fake_smol.vms['dev']
+    with pytest.raises(WorkspaceUnavailableError, match="'dev' passed as `sandbox` is not, or is no longer, a VM"):
+        await backend.run(['true'])
 
 
 async def test_attaching_to_a_deleted_vm_is_unavailable(fake_smol: FakeSmol) -> None:

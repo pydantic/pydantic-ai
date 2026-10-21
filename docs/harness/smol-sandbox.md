@@ -193,7 +193,7 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 | Where the VM comes from | What's accepted |
 | --- | --- |
 | `SmolSandbox`: a ref in the message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` | Only VMs `SmolSandbox` booted, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError` before anything runs. |
-| `SmolSandboxBackend(sandbox=machine)` or `SmolSandboxBackend(ref=...)`, built by your code | Any VM on this machine, including one with mounts or network, because your code chose it. A Smol Cloud machine raises `UserError`, unless a VM on this machine is named like its id. |
+| `SmolSandboxBackend(sandbox=machine)` or `SmolSandboxBackend(ref=...)`, built by your code | Any VM on this machine, including one with mounts or network, because your code chose it. A Smol Cloud machine, like a VM deleted since, raises `WorkspaceUnavailableError`, unless a VM on this machine is named like its id. |
 
 - A run in a VM you passed in writes that VM's name into the message history. A later run given only that history raises `ValueError`; it doesn't open the VM or boot a new one. Pass the backend again, or `workspace='new'` for a fresh VM.
 - Durable execution rebuilds the workspace from its ref, so it only works with VMs `SmolSandbox` booted.
