@@ -10,7 +10,7 @@ from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, Tool, ToolKind
 from pydantic_ai.capabilities import PrefixTools, Toolset
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolKindLike
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolKindLike, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import ToolDefinition, ToolPrepareFunc
 from pydantic_ai.toolsets import FunctionToolset
@@ -101,7 +101,8 @@ def test_dropped_tool_is_not_callable():
     )
     result = agent.run_sync('hello')
     retry = result.all_messages()[2].parts[0]
-    assert isinstance(retry, RetryPromptPart)
+    assert isinstance(retry, ToolReturnPart)
+    assert retry.outcome == 'retried'
     assert retry.content == "Unknown tool name: 'read_notes'. Available tools: 'read_file'"
 
 
