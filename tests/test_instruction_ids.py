@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RunInstructionSource,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1526,13 +1527,16 @@ async def test_an_instruction_part_keeps_its_own_dynamic_flag_and_block():
     ]
 
 
-async def test_a_run_level_part_keeps_its_unresolved_name():
-    """Per-run instructions preserve a bare author name because they have no source to resolve it against."""
+async def test_a_named_run_level_part_is_keyed_beneath_the_run():
+    """A named per-run part is keyed `run:<name>`; unnamed per-run instructions stay unidentified."""
     agent = Agent(instructions='Agent block.')
 
-    assert await run_and_capture(agent, instructions=[InstructionPart(content='Per run.', name='urgent')]) == [
+    assert await run_and_capture(
+        agent, instructions=[InstructionPart(content='Per run.', name='urgent'), 'Unnamed.']
+    ) == [
         InstructionPart(content='Agent block.', id=agent_instruction_id()),
-        InstructionPart(content='Per run.', name='urgent'),
+        InstructionPart(content='Per run.', name='urgent', id=InstructionId(RunInstructionSource(), name='urgent')),
+        InstructionPart(content='Unnamed.'),
     ]
 
 

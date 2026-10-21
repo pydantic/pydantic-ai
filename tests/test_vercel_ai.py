@@ -17,6 +17,7 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, Too
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
+from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -155,8 +156,12 @@ with try_import() as starlette_import_successful:
     )
 
 with try_import() as openai_import_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from openai.types.chat import ChatCompletionMessage
+
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -6679,6 +6684,44 @@ async def test_adapter_dump_messages_with_retry():
             outcome='retried',
         )
     )
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+@pytest.mark.parametrize('structured', [True, False], ids=['validation-errors', 'message'])
+async def test_retried_tool_return_content_survives_dump_and_load(allow_model_requests: None, structured: bool):
+    """A retry's validation errors reach the provider as the same structure after a round-trip.
+
+    `error_text` can only hold the rendered string, so the list rides the call's provider metadata;
+    without it a provider with no native error channel would go from `{"error": [...]}` to
+    `{"error": "[...]"}`. A plain `ModelRetry` message is already exactly what `error_text` holds.
+    """
+
+    class Count(BaseModel):
+        count: int
+
+    with pytest.raises(ValidationError) as exc_info:
+        Count.model_validate({'count': 'lots'})
+    error: ValidationError | ModelRetry = exc_info.value if structured else ModelRetry('count must be a number')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='how many?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='count', args={'count': 'lots'}, tool_call_id='c1')]),
+        ModelRequest(parts=[build_retried_tool_return(error, tool_name='count', tool_call_id='c1')]),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+    retried = message_part(reloaded, ToolReturnPart, message_index=2)
+    assert (retried.outcome, retried.content) == (
+        'retried',
+        message_part(messages, ToolReturnPart, message_index=2).content,
+    )
+
+    async def payload(history: list[ModelMessage]) -> Any:
+        mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+        await model.request(model.prepare_messages(history), None, ModelRequestParameters())
+        return get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-1]
+
+    assert await payload(reloaded) == await payload(messages)
 
 
 async def test_retried_tool_return_cause_survives_dump_and_load():

@@ -63,6 +63,7 @@ from pydantic_ai_harness._monty_exec import (
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode._parts import RUN_CODE_KIND, RunCodeArgs
 from pydantic_ai_harness.code_mode._repl_store import CodeModeReplStore, PersistentRepl
+from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -470,26 +471,35 @@ def _base_description(*, has_os: bool, has_mount: bool) -> str:
 
 def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     """Build the functions-header paragraph for the `run_code` tool description."""
+    if has_sync and not has_async:
+        return (
+            '\nThe following functions are available inside the sandbox. Call them directly '
+            '(do **not** redefine or import them). All parameters are keyword-only.'
+            ' All tool functions are synchronous: call them directly, e.g. `tool_name(arg=value)`.'
+        )
     base = (
-        '\nThe following functions are available inside the sandbox. Call them directly '
-        '(do **not** redefine or import them). All parameters are keyword-only.'
+        '\nThe following functions are available inside the sandbox. These functions are already defined'
+        ' in the sandbox; call them by name without redefining or importing them.'
+        ' All parameters are keyword-only.'
     )
     if has_async and not has_sync:
         return base + (
             ' All tool functions are async: invoke them with `await`,'
             ' e.g. `await tool_name(arg=value)`.'
             ' Calling without `await` returns an unresolved future, not the value.'
-            ' For concurrency, use `await asyncio.gather(...)` with positional awaitables.'
+            # A separate paragraph that leads with the import: next to "without importing them",
+            # models drop `import asyncio` and the first snippet fails the type check.
+            '\n\nTo run calls concurrently, first `import asyncio`, then use `await asyncio.gather(...)`'
+            ' with positional awaitables.'
             ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
             ' and wait APIs.'
         )
-    if has_sync and not has_async:
-        return base + (' All tool functions are synchronous: call them directly, e.g. `tool_name(arg=value)`.')
     return base + (
         ' Async functions (`async def`) must be invoked with `await`,'
         ' e.g. `await tool_name(arg=value)`.'
         ' Sync functions (`def`) are called directly, e.g. `tool_name(arg=value)`.'
-        ' For concurrent async calls, use `await asyncio.gather(...)` with positional awaitables.'
+        '\n\nTo run async calls concurrently, first `import asyncio`, then use `await asyncio.gather(...)`'
+        ' with positional awaitables.'
         ' Monty does not support `asyncio.gather` keyword arguments or other task creation'
         ' and wait APIs.'
     )
@@ -649,6 +659,15 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
     tool_kind = tool_def.tool_kind if tool_def is not None else None
     ctx = tool_manager.ctx
     assert ctx is not None, 'the nested `ToolManager` is built with the run context'
+    # Eager and speculative execution dispatch while the model is still streaming, possibly before a
+    # parallel input guard has decided. The verdict comes first, as it does for a non-eager call.
+    if not await input_guardrails_allow(ctx):
+        return NestedCallOutcome(
+            error=RuntimeError(
+                f'Tool {call_part.tool_name!r} did not run: an input guardrail did not allow the prompt.'
+            ),
+            tool_kind=tool_kind,
+        )
     usage_limits = ctx.usage_limits
     reserved = 0
     if usage_limits is not None and usage_limits.tool_calls_limit is not None:

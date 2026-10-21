@@ -448,6 +448,18 @@ def _agent_instruction_source(instruction: _instructions.AgentInstruction[Any]) 
     return _messages.AgentInstructionSource() if isinstance(instruction, (str, _messages.InstructionPart)) else None
 
 
+def _run_instruction_source(instruction: _instructions.AgentInstruction[Any]) -> _messages.InstructionSource | None:
+    """The source to attribute one of the instructions passed to a single run to.
+
+    Only a named `InstructionPart` is addressed, as `'run:<name>'`, so the same block passed to a later
+    run of the conversation can append its changes. Anything unnamed stays unidentified: nothing says a
+    later run's unnamed text is the same block.
+    """
+    if isinstance(instruction, _messages.InstructionPart) and instruction.name is not None:
+        return _messages.RunInstructionSource()
+    return None
+
+
 def _normalize_agent_retries(retries: AgentRetries, *, default: int = 1) -> _ResolvedAgentRetries:
     """Resolve normalized retry overrides into concrete retry budgets.
 
@@ -3718,9 +3730,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
                 # Instructions passed to a specific run are already the caller's to change, and
-                # aren't part of the agent's own configured instructions.
+                # aren't part of the agent's own configured instructions, so a named part is keyed
+                # beneath the run (`'run:<name>'`) rather than the agent.
                 instructions.extend(
-                    _instructions.sourced_instruction(instruction, None)
+                    _instructions.sourced_instruction(instruction, _run_instruction_source(instruction))
                     for instruction in _instructions.normalize_instructions(additional_instructions)
                 )
 
