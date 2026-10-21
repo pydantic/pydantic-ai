@@ -339,8 +339,8 @@ _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
 )
-# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts both tool-search variants on models that
-# support tool search, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
+# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts the `bm25` tool-search variant wherever it
+# accepts `regex`, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
 # and resolving to `bm25` would change the search algorithm for every request that doesn't set one. For the same
 # reason, recorded `bm25` calls replay as `regex` there unless the request asks for `bm25`. The other transports
 # (Vertex, Foundry, and the Messages-API-based `AsyncAnthropicBedrockMantle`) default to `bm25`.

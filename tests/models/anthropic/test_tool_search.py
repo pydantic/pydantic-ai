@@ -18,6 +18,8 @@ from ...conftest import RequestCapture, try_import
 from ..conftest import content_blocks, json_objects
 
 with try_import() as imports_successful:
+    from anthropic import AsyncAnthropicBedrock
+
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -30,13 +32,11 @@ async def test_anthropic_tool_search_bm25_on_legacy_bedrock(
 ):
     """An explicit `bm25` strategy on the legacy Bedrock InvokeModel API sends the `bm25` variant and replays it as recorded.
 
-    InvokeModel accepts `tool_search_tool_bm25_20251119` without a beta header:
+    InvokeModel accepts `tool_search_tool_bm25_20251119` without a beta header on Sonnet 4.6:
     https://github.com/pydantic/pydantic-ai/issues/9911. The second run replays the first run's search.
     """
     # `AsyncAnthropicBedrock`'s SigV4 signer imports `botocore`, which only ships under the `bedrock` extra.
     pytest.importorskip('botocore')
-
-    from anthropic import AsyncAnthropicBedrock
 
     client = AsyncAnthropicBedrock(
         aws_access_key=os.environ.get('AWS_ACCESS_KEY_ID', 'test-access-key'),
@@ -95,29 +95,43 @@ async def test_anthropic_tool_search_bm25_on_legacy_bedrock(
 
 
 @pytest.mark.parametrize(
-    'strategy,expected',
+    'recorded,strategy,expected',
     [
         pytest.param(
+            'bm25',
             None,
             {'name': 'tool_search_tool_regex', 'input': {'pattern': 'weather forecast'}},
             id='unset',
         ),
         pytest.param(
+            'bm25',
             'regex',
             {'name': 'tool_search_tool_regex', 'input': {'pattern': 'weather forecast'}},
             id='regex',
         ),
         pytest.param(
             'bm25',
+            'bm25',
             {'name': 'tool_search_tool_bm25', 'input': {'query': 'weather forecast'}},
             id='bm25',
+        ),
+        pytest.param(
+            'regex',
+            'bm25',
+            {'name': 'tool_search_tool_regex', 'input': {'pattern': 'weather forecast'}},
+            id='recorded-regex-bm25',
         ),
     ],
 )
 async def test_anthropic_legacy_bedrock_bm25_history_replay(
-    allow_model_requests: None, strategy: Literal['bm25', 'regex'] | None, expected: dict[str, JsonValue]
+    allow_model_requests: None,
+    recorded: Literal['bm25', 'regex'],
+    strategy: Literal['bm25', 'regex'] | None,
+    expected: dict[str, JsonValue],
 ):
     """On `AsyncAnthropicBedrock`, a recorded `bm25` search replays as `regex` unless the request sends `bm25` explicitly.
+
+    A recorded `regex` search stays `regex`, even when the request sends `bm25`.
 
     The history stands in for one recorded on another Anthropic transport. A mock transport stands in for a
     cassette because the claim is the replayed request, not the response.
@@ -127,8 +141,6 @@ async def test_anthropic_legacy_bedrock_bm25_history_replay(
     def handler(request: httpx2.Request) -> httpx2.Response:
         bodies.append(TypeAdapter(dict[str, JsonValue]).validate_json(request.content))
         return httpx2.Response(400, json={'message': 'captured'})
-
-    from anthropic import AsyncAnthropicBedrock
 
     # A bearer token skips SigV4 signing, which would need `botocore` from the `bedrock` extra.
     async with AsyncAnthropicBedrock(
@@ -155,7 +167,7 @@ async def test_anthropic_legacy_bedrock_bm25_history_replay(
                         args={'queries': ['weather forecast']},
                         tool_call_id='srvtoolu_1',
                         provider_name='anthropic',
-                        provider_details={'strategy': 'bm25'},
+                        provider_details={'strategy': recorded},
                     ),
                     NativeToolSearchReturnPart(
                         tool_call_id='srvtoolu_1',

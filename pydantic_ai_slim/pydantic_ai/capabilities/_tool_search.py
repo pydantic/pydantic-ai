@@ -109,9 +109,8 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
       local keyword matching elsewhere. On the legacy `AsyncAnthropicBedrock` client it's
       Anthropic regex, so BM25 there needs an explicit `'bm25'`, and models that require
       the `tool-search-tool-2025-10-19` beta on Bedrock (e.g. Claude Sonnet 4.5) reject
-      both tool-search variants on that client with a provider 400, since pydantic-ai
-      sends no beta header there (tracked in the pydantic-ai #9911 thread). The choice may
-      change in future versions.
+      both tool-search variants on that client with a provider 400, since Pydantic AI
+      sends no beta header there. The choice may change in future versions.
     * `'keywords'`: always use the local keyword-overlap algorithm. Still prompt-cache
       compatible on providers that expose a "client-executed" native surface (Anthropic,
       OpenAI): the algorithm rides the same `defer_loading` wire as a custom callable,
