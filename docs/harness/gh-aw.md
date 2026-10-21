@@ -173,7 +173,7 @@ Four things about that module.
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
 - **No third-party imports.** The engine installs `pydantic-clai2` and
   `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
-  `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`, so `pydantic_ai` is importable
+  `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
 
@@ -287,7 +287,9 @@ Key by key:
   three are OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
   [`github-copilot:`](../models/github-copilot.md) model, so Copilot's per-family model
   profiles apply and the thinking its Claude and Gemini models return in `reasoning_text`
-  is kept. Under `PAI_BASE_URL` everything stays on the generic Chat Completions client.
+  is kept. Its requests carry the `agentic-workflows` integration id, the one the api-proxy
+  adds to requests that carry none. Under `PAI_BASE_URL` everything stays on the generic
+  Chat Completions client.
 - `engine: env: PAI_AGENT:` is what replaces the engine's composed
   [`Coder`](coder.md) agent with yours. The engine writes a private wrapper module in every mode;
   when resolving an imported target, it adds the checkout to `sys.path` after loading the

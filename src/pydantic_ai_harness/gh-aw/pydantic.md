@@ -11,8 +11,9 @@ pre-agent-steps:
       # imported in place of the installed packages.
       #
       # CLAI 2.0's published `-p` command is the headless interface used by this
-      # engine. The agent hooks and MCP composition require Pydantic AI 2.54.
-      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0"
+      # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
+      # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
+      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
@@ -22,7 +23,7 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.58.0"
+  version: "0.59.0"
   display-name: Pydantic AI
   description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
   mcp: true
@@ -664,6 +665,11 @@ engine:
           if (useCopilotAPI) {
             env.GITHUB_COPILOT_BASE_URL = baseUrl;
             env.GITHUB_COPILOT_API_KEY = "awf-copilot-proxy";
+            // Copilot rejects a personal access token on a request carrying the
+            // provider's default `vscode-chat` integration id. The api-proxy keeps an
+            // inbound id rather than injecting its own, so the engine sends the id
+            // the proxy would otherwise add.
+            env.GITHUB_COPILOT_INTEGRATION_ID = "agentic-workflows";
           }
         }
 

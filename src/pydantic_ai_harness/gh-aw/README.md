@@ -58,7 +58,8 @@ OpenAI-shaped and use Chat Completions. `copilot/` runs on Pydantic AI's
 `github-copilot:` model, which applies Copilot's per-family model profiles and reads
 the thinking Copilot's Claude and Gemini models return in `reasoning_text`. The
 engine points it at the proxy with `GITHUB_COPILOT_BASE_URL` and a placeholder
-`GITHUB_COPILOT_API_KEY`.
+`GITHUB_COPILOT_API_KEY`, and sets `GITHUB_COPILOT_INTEGRATION_ID` to
+`agentic-workflows`, the id the proxy adds to requests that carry none.
 
 ## What actually runs
 
@@ -74,7 +75,7 @@ The engine creates a generated module with a private wrapper around either the h
 JSON/YAML spec once, retaining import tracebacks. CLAI 2 runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
 `pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
-`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0`; the explicit provider extras keep
+`pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
 through Pydantic AI's public dynamic toolset interface, preserving the agent's existing
 tools. gh-aw writes the MCP server configuration outside the checkout and mounts it

@@ -263,7 +263,7 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         'pydantic-ai-harness==${GH_AW_ENGINE_VERSION}',
         'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
     ]
-    assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0'
+    assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'
 
 
 def test_threat_detection_runs_on_a_built_in_engine() -> None:
@@ -510,6 +510,9 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     assert 'COPILOT_GITHUB_TOKEN' not in invocation.env
     assert invocation.env['GITHUB_COPILOT_BASE_URL'] == 'http://host.docker.internal:10002/v1'
     assert invocation.env['GITHUB_COPILOT_API_KEY'] == 'awf-copilot-proxy'
+    # Copilot rejects a personal access token under the provider's default
+    # `vscode-chat` id, and the api-proxy keeps whichever id the request carries.
+    assert invocation.env['GITHUB_COPILOT_INTEGRATION_ID'] == 'agentic-workflows'
     # gh-aw sets the OpenAI-compatible pair for the copilot backend too, so an agent
     # that builds its own OpenAI-compatible client keeps reaching the proxy.
     assert invocation.env['OPENAI_BASE_URL'] == 'http://host.docker.internal:10002/v1'
@@ -730,6 +733,7 @@ def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, m
     assert invocation.cli_args[3] == f'openai-chat:{model.split("/", 1)[1]}'
     assert invocation.env['OPENAI_BASE_URL'] == 'https://endpoint.example.com/v1'
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
+    assert 'GITHUB_COPILOT_INTEGRATION_ID' not in invocation.env
 
 
 async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(
