@@ -334,6 +334,10 @@ async def test_in_memory_store_copies_and_indexes_initial_files() -> None:
     assert await store.list_paths(limit=10) == ['a.md', 'b.md']
 
 
+def test_in_memory_store_repr_omits_content() -> None:
+    assert repr(InMemoryStore({'main/MEMORY.md': 'secret'})) == 'InMemoryStore()'
+
+
 def test_in_memory_store_files_view_is_read_only() -> None:
     store = InMemoryStore(files={'a.md': 'a'})
 
