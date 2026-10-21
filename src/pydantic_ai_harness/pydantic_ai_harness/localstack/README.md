@@ -99,10 +99,7 @@ filesystem.
 `allowed_services` and `denied_services` are mutually exclusive - set one, not
 both. The service is the first token that is neither a global option nor its
 value (`s3` in `--output text s3 ls`). Global options are recognized by any
-prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too. Commands that
-pass `--endpoint-url`, `--profile`, `--region`, or `--no-sign-request`, or any
-prefix of them, are rejected, since the capability injects the target and
-credentials.
+prefix the AWS CLI accepts, so `--out text s3 ls` names `s3` too.
 
 > **These checks are best-effort, not a security boundary.** They gate which
 > commands the agent issues, not what it can reach. For hard guarantees,
