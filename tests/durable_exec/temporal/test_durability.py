@@ -2297,9 +2297,6 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'ToolAvailabilityDeltaEvent',
             'PartStartEvent',
             'FinalResultEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
             'PartEndEvent',
             'AgentRunResultEvent',
         ]
@@ -2365,9 +2362,12 @@ class ProcessStreamDurableAgentWorkflow:
     async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
         result = await _process_durable_agent.run(prompt)
         text_chunks = [
-            event.delta.content_delta
+            event.part.content
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+            else event.delta.content_delta
             for event in _process_events_collected
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+            if (isinstance(event, PartStartEvent) and isinstance(event.part, TextPart))
+            or (isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta))
         ]
         return result.output, _process_model_events_in_activity, text_chunks
 
@@ -2542,7 +2542,7 @@ async def test_durability_mcp_instructions_use_operation_activity_summary(monkey
 
 
 async def test_durability_process_event_stream_fires_workflow_side(client: Client):
-    """ProcessEventStream sees the real captured events replayed in the workflow."""
+    """ProcessEventStream sees the activity's final response replayed in the workflow, each part complete."""
     _process_events_collected.clear()
     _process_model_events_in_activity.clear()
     async with Worker(
@@ -2561,7 +2561,7 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert model_events_in_activity
         assert not any(model_events_in_activity)
 
-    assert text_chunks == ['ed ', 'response']
+    assert text_chunks == ['Streamed response']
 
 
 # --- Capability events emitted workflow-side reach the handler activity ---
@@ -5354,9 +5354,7 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 2
     assert _scheduled_activity_count(history) == 2
 
@@ -5399,12 +5397,7 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
-    assert indices == snapshot(
-        [
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
-        ]
-    )
+    assert indices == snapshot([('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 1
 
 
