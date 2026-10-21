@@ -108,7 +108,7 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
   matching who wrote it, framework records are found by type or metadata, never by their text, and
   any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
   escaping every opening and closing spelling of every registered framing tag, through
-  `_framing.wrap()`/`neutralize_tags()` once #10547 lands, attributes, no preambles)
+  `_framing.wrap()`/`neutralize_tags()` once [#10547](https://github.com/pydantic/pydantic-ai/pull/10547) lands, attributes, no preambles)
 
 ## Writing style
 

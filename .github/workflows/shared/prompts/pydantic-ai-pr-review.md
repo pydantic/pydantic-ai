@@ -86,7 +86,7 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   renders to the same bytes. For tags: lowercase `snake_case` names, an
   existing tag before a new one, an escape that neutralizes every opening and
   closing spelling of every registered framing tag inside a data frame (only
-  `system` inside a `<system>` body; through `_framing.wrap()` once #10547
+  `system` inside a `<system>` body; through `_framing.wrap()` once [#10547](https://github.com/pydantic/pydantic-ai/pull/10547)
   merges),
   with tests for the variants and a cross-tag case, attributes limited to identity and
   outcome, no unframed framework preamble before a frame on a user turn, no

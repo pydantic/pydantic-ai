@@ -682,7 +682,7 @@ for a framework or harness hook that rewrites or strips earlier messages by
 default or on every request, for
 framework guidance enqueued as a plain `str` (it becomes a user message), for
 code that finds its own earlier parts by matching their text, and for a new
-wrapper whose escaper (until `_framing.wrap()` lands in #10547) escapes only the closing
+wrapper whose escaper (until `_framing.wrap()` lands in [#10547](https://github.com/pydantic/pydantic-ai/pull/10547)) escapes only the closing
 `</name>` spelling (`</NAME >`, `< / name>` or an opening `<name>` still gets
 through) or escapes only its own tag (a `</context>` or `<system>` in its
 body still gets through), uses a `kebab-case` tag name, or puts an
