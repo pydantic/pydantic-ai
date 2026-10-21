@@ -57,6 +57,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FinishReason,
     ModelMessage,
@@ -85,6 +86,7 @@ from ..messages import (
 from ..models import (
     Model,
     ModelRequestParameters,
+    _conversation_summary_text,  # pyright: ignore[reportPrivateUsage]
     infer_model,
     parse_model_id,
 )
@@ -499,6 +501,9 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
         return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
     if isinstance(part, RetryFeedbackPart):
         return 'user', seed_retry_feedback_text(part)
+    if isinstance(part, CompactionPart) and part.content:
+        # A summary the application or a harness wrote stands in for the history it replaced.
+        return 'user', _conversation_summary_text(part.content)
     return None
 
 

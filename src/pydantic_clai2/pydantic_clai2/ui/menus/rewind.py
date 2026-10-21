@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
@@ -16,6 +17,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai_harness.compaction._summary import summary_time
 from pydantic_clai2.plugins import Conversation
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -50,11 +52,11 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
             ),
             # Any compaction part (provider-native, app-written or the harness's) rewrote what came before it.
             *(
-                message.timestamp
+                compacted_at
                 for message in messages
                 if message.run_id is None
-                and message.timestamp is not None
-                and any(isinstance(part, CompactionPart) for part in message.parts)
+                for part in message.parts
+                if isinstance(part, CompactionPart) and (compacted_at := _compaction_time(part, message)) is not None
             ),
         ),
         default=None,
@@ -101,6 +103,15 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
         .key_source(menu_key)
         .build()
     )
+
+
+def _compaction_time(part: CompactionPart, message: ModelMessage) -> datetime | None:
+    """When *part* rewrote the history before it.
+
+    The harness's summary records that on the part: merging its request into the preserved one after it
+    leaves the message with that older request's timestamp.
+    """
+    return summary_time(part) or message.timestamp
 
 
 def _preview(item: MenuItem) -> str:

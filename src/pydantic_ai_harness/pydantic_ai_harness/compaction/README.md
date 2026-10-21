@@ -490,7 +490,9 @@ loads from before it are announced again, and `WarnOnCacheBusts` reports the cac
 which the model never sees; that marker, together with the part having no provider data, is how
 `SummarizingCompaction` recognizes its own summaries, so a `CompactionPart` your application wrote is
 left alone. It's on the part, not the message, so it survives Pydantic AI merging the summary's request
-with the requests next to it. A history saved before this, with the summary in a system prompt opening
+with the requests next to it. So does `'pydantic-ai-harness.compaction.summary.created_at'`, the ISO 8601
+time the summary was written: the merged request keeps the timestamp of a request next to it, which can
+be an older prompt the compaction preserved. A history saved before this, with the summary in a system prompt opening
 with `Summary of previous conversation:`, keeps working: that summary anchors the next one and is
 replaced by it.
 

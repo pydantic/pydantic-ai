@@ -1,9 +1,13 @@
 """Pin the summary provenance used by CLAI2's conservative rewind boundary check."""
 
+from datetime import UTC, datetime
+
+import pytest
+
 from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
-from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY, SUMMARY_TIME_METADATA_KEY, summary_time
 
 
 class TestSummarizingCompaction:
@@ -25,9 +29,42 @@ class TestSummarizingCompaction:
         # The first prompt precedes the summary of everything after it.
         preserved_prompt, summary, last_response = result
         assert isinstance(summary, ModelRequest) and summary.run_id is None
-        assert summary.parts == [
-            CompactionPart(content='summary of both prompts', metadata={SUMMARY_METADATA_KEY: True})
-        ]
         assert summary.timestamp is not None
+        assert summary.parts == [
+            CompactionPart(
+                content='summary of both prompts',
+                metadata={SUMMARY_METADATA_KEY: True, SUMMARY_TIME_METADATA_KEY: summary.timestamp.isoformat()},
+            )
+        ]
         assert summary.timestamp > max(first_prompt.timestamp, later_prompt.timestamp)
         assert preserved_prompt == messages[0] and last_response == messages[-1]
+
+
+WRITTEN = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ('part', 'expected'),
+    [
+        pytest.param(
+            CompactionPart(
+                content='S', metadata={SUMMARY_METADATA_KEY: True, SUMMARY_TIME_METADATA_KEY: WRITTEN.isoformat()}
+            ),
+            WRITTEN,
+            id='summary',
+        ),
+        pytest.param(CompactionPart(content='S', metadata={SUMMARY_METADATA_KEY: True}), None, id='saved-before-times'),
+        pytest.param(
+            CompactionPart(content='S', metadata={SUMMARY_METADATA_KEY: True, SUMMARY_TIME_METADATA_KEY: 'soon'}),
+            None,
+            id='unreadable',
+        ),
+        pytest.param(
+            CompactionPart(content='S', metadata={SUMMARY_TIME_METADATA_KEY: WRITTEN.isoformat()}),
+            None,
+            id='not-a-summary',
+        ),
+    ],
+)
+def test_summary_time_reads_only_a_summarys_own_time(part: CompactionPart, expected: datetime | None) -> None:
+    assert summary_time(part) == expected

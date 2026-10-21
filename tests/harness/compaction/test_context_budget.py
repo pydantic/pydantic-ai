@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from dirty_equals import IsStr
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
 import pydantic_ai_harness
@@ -54,7 +55,7 @@ from pydantic_ai_harness.compaction import (
     resolve_context_window,
 )
 from pydantic_ai_harness.compaction._shared import resolve_token_trigger
-from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
+from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY, SUMMARY_TIME_METADATA_KEY
 
 try:
     from logfire.testing import CaptureLogfire
@@ -1746,7 +1747,11 @@ class TestSummarizerMustWriteText:
         assert result.output is True
         first = result.all_messages()[0]
         assert isinstance(first, ModelRequest)
-        assert first.parts == [CompactionPart(content='Summary.', metadata={SUMMARY_METADATA_KEY: True})]
+        assert first.parts == [
+            CompactionPart(
+                content='Summary.', metadata={SUMMARY_METADATA_KEY: True, SUMMARY_TIME_METADATA_KEY: IsStr()}
+            )
+        ]
 
 
 pytestmark = [pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning')]

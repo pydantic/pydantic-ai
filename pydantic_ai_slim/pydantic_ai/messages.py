@@ -4450,9 +4450,12 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
 
     After compaction, the summary replaces everything before it, so this window is what the model
-    effectively works from — at part-level precision: within the response that carries the
-    compaction part, parts before it are excluded and parts after it are kept. With no compaction
-    part in the history, the whole history is returned (as a new list).
+    effectively works from — at part-level precision for a provider's compaction: within the response
+    that carries the compaction part, parts before it are excluded and parts after it are kept. A
+    summary the application wrote into a request opens the window at the start of that request's turn
+    (the consecutive requests around it), since normalizing the history merges them and moves tool
+    results ahead of the summary. With no compaction part in the history, the whole history is
+    returned (as a new list).
 
     This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
     history (discovered tools, loaded capabilities). Capability and toolset authors should apply
@@ -4474,19 +4477,25 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     continue to use this conservative provider-agnostic window because they feed a future request
     whose provider may differ.
     """
+    # Indexed iteration rather than slicing `messages`: the runtime `Sequence` contract only requires
+    # integer `__getitem__`, so a minimal conforming implementation may reject slices.
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
-        # A provider's compaction part sits in a response; a summary the application wrote, in a request.
+        if isinstance(message, ModelRequest):
+            if any(isinstance(part, CompactionPart) for part in message.parts):
+                # A summary the application wrote sits in a request, and the window opens with that
+                # request's turn: the run of consecutive requests that history normalization merges into
+                # one, hoisting its tool results ahead of the summary as providers require. Cutting at the
+                # part instead would let that reordering decide what was discovered or loaded.
+                start = message_index
+                while start > 0 and isinstance(messages[start - 1], ModelRequest):
+                    start -= 1
+                return [messages[i] for i in range(start, len(messages))]
+            continue
+        # A provider's compaction part sits in a response, which the provider replays from that part on.
         for part_index in range(len(message.parts) - 1, -1, -1):
             if isinstance(message.parts[part_index], CompactionPart):
-                # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
-                # `Sequence` contract only requires integer `__getitem__`, so a minimal
-                # conforming implementation may reject slices. (`message.parts` is a list.)
-                head: ModelMessage = (
-                    replace(message, parts=list(message.parts[part_index:]))
-                    if isinstance(message, ModelResponse)
-                    else replace(message, parts=list(message.parts[part_index:]))
-                )
+                head = replace(message, parts=list(message.parts[part_index:]))
                 return [head, *(messages[i] for i in range(message_index + 1, len(messages)))]
     return list(messages)
 
