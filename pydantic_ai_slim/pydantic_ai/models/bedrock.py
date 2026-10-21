@@ -596,6 +596,40 @@ def _insert_cache_point_before_trailing_documents(
         return False
 
 
+# Document formats that Claude on Bedrock renders as text, and moves to the front of the message unless a `cachePoint`
+# precedes them. See `bedrock_document_cache_point_variant`.
+_HOISTED_DOCUMENT_FORMATS = frozenset({'txt', 'md', 'csv', 'html'})
+
+
+def _add_automatic_cache_point(
+    content: list[Any],
+    cache_point: ContentBlockUnionTypeDef,
+    variant: Literal['anthropic'] | None,
+) -> None:
+    """Add a `bedrock_cache_messages` cache point at the end of `content`, or as close to it as Bedrock accepts.
+
+    A later request doesn't send this cache point again, so it can only read the cache when the prompt renders the
+    same without it. See `bedrock_document_cache_point_variant`.
+    """
+    if variant == 'anthropic':
+        if content[-1].get('document', {}).get('format') == 'pdf':
+            content.append(cache_point)
+            return
+        start = len(content)
+        while start > 0 and content[start - 1].get('document', {}).get('format') in _HOISTED_DOCUMENT_FORMATS:
+            start -= 1
+        if (
+            0 < start < len(content)
+            and not any(key in content[start - 1] for key in ('document', 'video'))
+            and not any('cachePoint' in block for block in content)
+        ):
+            # Bedrock moves these documents to the front of the message either way, so moving them ahead of the
+            # block before them leaves the prompt as it was, and the cache point can go last.
+            content[start - 1 :] = [*content[start:], content[start - 1], cache_point]
+            return
+    _insert_cache_point_before_trailing_documents(content, cache_point)
+
+
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
 
@@ -1717,6 +1751,7 @@ class BedrockConverseModel(Model[BaseClient]):
             if profile.get('bedrock_supports_prompt_caching', False):
                 last_user_content = self._get_last_user_message_content(processed_messages)
                 if last_user_content is not None:
+                    document_cache_point_variant = profile.get('bedrock_document_cache_point_variant')
                     # Bedrock's lookback for the previous request's cache entry spans only about 20 content
                     # blocks, so after a wide turn the end of the previous request gets a breakpoint too.
                     previous_tail = previous_tail_needing_breakpoint(
@@ -1726,8 +1761,8 @@ class BedrockConverseModel(Model[BaseClient]):
                     if previous_tail is not None:
                         previous_content = cast(list[Any], processed_messages[previous_tail]['content'])
                         if 'cachePoint' not in previous_content[-1]:
-                            _insert_cache_point_before_trailing_documents(
-                                previous_content, self._get_cache_point(cache_messages)
+                            _add_automatic_cache_point(
+                                previous_content, self._get_cache_point(cache_messages), document_cache_point_variant
                             )
                     # A request-scoped prompt ends the request when it's rendered as text (see
                     # `_request_scoped_tail_texts`), and the next request won't send it, so the breakpoint goes
@@ -1737,8 +1772,8 @@ class BedrockConverseModel(Model[BaseClient]):
                     )
                     lasting_content = last_user_content[:end]
                     if lasting_content and 'cachePoint' not in lasting_content[-1]:
-                        _insert_cache_point_before_trailing_documents(
-                            lasting_content, self._get_cache_point(cache_messages)
+                        _add_automatic_cache_point(
+                            lasting_content, self._get_cache_point(cache_messages), document_cache_point_variant
                         )
                         last_user_content[:end] = lasting_content
 

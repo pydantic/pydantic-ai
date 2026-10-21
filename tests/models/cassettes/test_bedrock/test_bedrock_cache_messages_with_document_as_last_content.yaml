@@ -1,231 +1,389 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n"}, {"text": "Please analyze
-      this document:"}, {"document": {"name": "Document 1", "format": "txt", "source": {"bytes": "VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCBpbXBvcnRhbnQgYW5hbHlzaXMgZGF0YS4="}}},
-      {"text": "And this document:"}, {"cachePoint": {"type": "default"}}, {"document": {"name": "Document 2", "format": "txt",
-      "source": {"bytes": "VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCB1bmltcG9ydGFudCBkYXRhLg=="}}}]}], "system": [{"text": "YOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\n"}], "inferenceConfig": {}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        ZDlkMWM1NzAtYmMxOS00ZWM4LWEyMTItZjc1NmYwNWE1NDIw
+      - dbd4f3c1-91d2-4595-ba96-cee0f6c37630
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '5916'
+      - "5916"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: |
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+          - text: "Please analyze this document:"
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                bytes: VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCBpbXBvcnRhbnQgYW5hbHlzaXMgZGF0YS4=
+          - document:
+              name: Document 2
+              format: txt
+              source:
+                bytes: VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCB1bmltcG9ydGFudCBkYXRhLg==
+          - text: "And this document:"
+          - cachePoint:
+              type: default
+        system:
+        - text: |
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+        inferenceConfig: {}
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
       content-length:
-      - '1449'
+      - "1532"
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 5246
-      output:
-        message:
-          content:
-          - text: |-
-              I'll analyze the documents you've provided:
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 6425
+        output:
+          message:
+            content:
+            - text: |-
+                I'd be happy to analyze the documents you've provided. Here's my analysis:
 
-              ## Document 1 (Document 1.txt)
-              - **Content**: Contains important analysis data
-              - **Key characteristic**: Explicitly marked as containing "important" information
-              - **Purpose**: Appears to be a test document designed to hold significant analytical data
+                ## Document 1: "Document 1.txt"
+                - **Content**: Contains important analysis data
+                - **Key characteristic**: The information is described as "important," suggesting it has significant value or relevance
+                - **Purpose**: Appears to be a test document designed to contain meaningful analytical information
 
-              ## Document 2 (Document 2.txt)
-              - **Content**: Contains unimportant data
-              - **Key characteristic**: Explicitly marked as containing "unimportant" information
-              - **Purpose**: Also a test document, but with data of lesser significance
+                ## Document 2: "Document 2.txt"
+                - **Content**: Contains unimportant data
+                - **Key characteristic**: The information is described as "unimportant," indicating it may be less relevant or of lower priority
+                - **Purpose**: Also appears to be a test document, but with less critical information
 
-              ## Summary
-              Both documents appear to be test files with minimal content. The main distinction between them is the stated importance level of their data - Document 1 contains information designated as important for analysis, while Document 2's data is marked as unimportant. Without more specific content or a particular analysis goal, these seem to be placeholder documents for testing document analysis capabilities.
+                ## Comparative Analysis:
+                The two documents appear to be designed as contrasting examples, with Document 1 containing valuable analysis data while Document 2 contains less significant information. This suggests they may be part of a test set to evaluate document analysis or prioritization capabilities.
 
-              Is there a specific aspect of these documents you'd like me to focus on or a particular type of analysis you need?
-          role: assistant
-      stopReason: end_turn
-      usage:
-        cacheDetails:
-        - inputTokens: 1712
-          ttl: 5m
-        cacheReadInputTokenCount: 0
-        cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 1712
-        cacheWriteInputTokens: 1712
-        inputTokens: 3
-        outputTokens: 227
-        serverToolUsage: {}
-        totalTokens: 1942
-    status:
-      code: 200
-      message: OK
+                If you have specific questions about these documents or would like me to focus on particular aspects of the analysis, please let me know!
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheDetails:
+          - inputTokens: 1712
+            ttl: 5m
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 1712
+          cacheWriteInputTokens: 1712
+          inputTokens: 3
+          outputTokens: 235
+          serverToolUsage: {}
+          totalTokens: 1950
+  recorded_at: 2026-10-21T16:34:03.281495+00:00
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n"}, {"text": "Please analyze
-      this document:"}, {"document": {"name": "Document 1", "format": "txt", "source": {"bytes": "VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCBpbXBvcnRhbnQgYW5hbHlzaXMgZGF0YS4="}}},
-      {"text": "And this document:"}, {"document": {"name": "Document 2", "format": "txt", "source": {"bytes": "VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCB1bmltcG9ydGFudCBkYXRhLg=="}}}]},
-      {"role": "assistant", "content": [{"text": "I''ll analyze the documents you''ve provided:\n\n## Document 1 (Document
-      1.txt)\n- **Content**: Contains important analysis data\n- **Key characteristic**: Explicitly marked as containing \"important\"
-      information\n- **Purpose**: Appears to be a test document designed to hold significant analytical data\n\n## Document
-      2 (Document 2.txt)\n- **Content**: Contains unimportant data\n- **Key characteristic**: Explicitly marked as containing
-      \"unimportant\" information\n- **Purpose**: Also a test document, but with data of lesser significance\n\n## Summary\nBoth
-      documents appear to be test files with minimal content. The main distinction between them is the stated importance level
-      of their data - Document 1 contains information designated as important for analysis, while Document 2''s data is marked
-      as unimportant. Without more specific content or a particular analysis goal, these seem to be placeholder documents
-      for testing document analysis capabilities.\n\nIs there a specific aspect of these documents you''d like me to focus
-      on or a particular type of analysis you need?"}]}, {"role": "user", "content": [{"text": "How long is the doc?"}, {"cachePoint":
-      {"type": "default"}}]}], "system": [{"text": "YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES
-      DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU
-      ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL
-      ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT
-      THAT ANALYZES DOCUMENTS.\nYOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.\n"}], "inferenceConfig": {}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        Nzc5ZDNkNDMtZmM2NS00MTU2LTlkNDMtOGU3NjVlOTBlZWRk
+      - c633b9d3-79b2-4618-b902-8bb03e52bd87
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '7110'
+      - "7160"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: |
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+              YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+          - text: "Please analyze this document:"
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                bytes: VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCBpbXBvcnRhbnQgYW5hbHlzaXMgZGF0YS4=
+          - text: "And this document:"
+          - document:
+              name: Document 2
+              format: txt
+              source:
+                bytes: VGhpcyBpcyBhIHRlc3QgZG9jdW1lbnQgd2l0aCB1bmltcG9ydGFudCBkYXRhLg==
+        - role: assistant
+          content:
+          - text: |-
+              I'd be happy to analyze the documents you've provided. Here's my analysis:
+
+              ## Document 1: "Document 1.txt"
+              - **Content**: Contains important analysis data
+              - **Key characteristic**: The information is described as "important," suggesting it has significant value or relevance
+              - **Purpose**: Appears to be a test document designed to contain meaningful analytical information
+
+              ## Document 2: "Document 2.txt"
+              - **Content**: Contains unimportant data
+              - **Key characteristic**: The information is described as "unimportant," indicating it may be less relevant or of lower priority
+              - **Purpose**: Also appears to be a test document, but with less critical information
+
+              ## Comparative Analysis:
+              The two documents appear to be designed as contrasting examples, with Document 1 containing valuable analysis data while Document 2 contains less significant information. This suggests they may be part of a test set to evaluate document analysis or prioritization capabilities.
+
+              If you have specific questions about these documents or would like me to focus on particular aspects of the analysis, please let me know!
+        - role: user
+          content:
+          - text: How long is the doc?
+          - cachePoint:
+              type: default
+        system:
+        - text: |
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+            YOU ARE A HELPFUL ASSISTANT THAT ANALYZES DOCUMENTS.
+        inferenceConfig: {}
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
       content-length:
-      - '813'
+      - "783"
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 2818
-      output:
-        message:
-          content:
-          - text: |-
-              Based on the documents provided:
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 3090
+        output:
+          message:
+            content:
+            - text: |-
+                Looking at the documents you provided:
 
-              **Document 1 (Document 1.txt)**: 10 words
-              - "This is a test document with important analysis data."
+                **Document 1**: 10 words
+                ("This is a test document with important analysis data.")
 
-              **Document 2 (Document 2.txt)**: 8 words
-              - "This is a test document with unimportant data."
+                **Document 2**: 8 words
+                ("This is a test document with unimportant data.")
 
-              Both documents are very short - just single sentences. If you're asking about character count instead:
-
-              - Document 1: 55 characters (including spaces)
-              - Document 2: 49 characters (including spaces)
-          role: assistant
-      stopReason: end_turn
-      usage:
-        cacheDetails:
-        - inputTokens: 236
-          ttl: 5m
-        cacheReadInputTokenCount: 1712
-        cacheReadInputTokens: 1712
-        cacheWriteInputTokenCount: 236
-        cacheWriteInputTokens: 236
-        inputTokens: 3
-        outputTokens: 121
-        serverToolUsage: {}
-        totalTokens: 2072
-    status:
-      code: 200
-      message: OK
-version: 1
+                Both documents are quite short - just single sentences. If you were asking about character count or another metric, please let me know and I can provide that instead!
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheDetails:
+          - inputTokens: 244
+            ttl: 5m
+          cacheReadInputTokenCount: 1712
+          cacheReadInputTokens: 1712
+          cacheWriteInputTokenCount: 244
+          cacheWriteInputTokens: 244
+          inputTokens: 3
+          outputTokens: 89
+          serverToolUsage: {}
+          totalTokens: 2048
+  recorded_at: 2026-10-21T16:34:06.458627+00:00

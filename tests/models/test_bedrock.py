@@ -4791,7 +4791,11 @@ async def test_unified_cache_reads_history_after_wide_turn_real_api(
 async def test_bedrock_cache_messages_with_document_as_last_content(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """Test the workaround for the AWS bug where cache points cannot be added after documents, so we insert them before the documents."""
+    """A message ending in txt documents gets a cache point that the next request reads back.
+
+    Bedrock rejects a cache point right after a txt document on Claude, so the documents move ahead of the text
+    before them and the cache point goes last; see `test_bedrock_cache_messages_trailing_text_document`.
+    """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     agent = Agent(
         model,
@@ -4814,22 +4818,22 @@ async def test_bedrock_cache_messages_with_document_as_last_content(
 
     result = await agent.run(run_args)
     assert result.output == snapshot("""\
-I'll analyze the documents you've provided:
+I'd be happy to analyze the documents you've provided. Here's my analysis:
 
-## Document 1 (Document 1.txt)
+## Document 1: "Document 1.txt"
 - **Content**: Contains important analysis data
-- **Key characteristic**: Explicitly marked as containing "important" information
-- **Purpose**: Appears to be a test document designed to hold significant analytical data
+- **Key characteristic**: The information is described as "important," suggesting it has significant value or relevance
+- **Purpose**: Appears to be a test document designed to contain meaningful analytical information
 
-## Document 2 (Document 2.txt)
+## Document 2: "Document 2.txt"
 - **Content**: Contains unimportant data
-- **Key characteristic**: Explicitly marked as containing "unimportant" information
-- **Purpose**: Also a test document, but with data of lesser significance
+- **Key characteristic**: The information is described as "unimportant," indicating it may be less relevant or of lower priority
+- **Purpose**: Also appears to be a test document, but with less critical information
 
-## Summary
-Both documents appear to be test files with minimal content. The main distinction between them is the stated importance level of their data - Document 1 contains information designated as important for analysis, while Document 2's data is marked as unimportant. Without more specific content or a particular analysis goal, these seem to be placeholder documents for testing document analysis capabilities.
+## Comparative Analysis:
+The two documents appear to be designed as contrasting examples, with Document 1 containing valuable analysis data while Document 2 contains less significant information. This suggests they may be part of a test set to evaluate document analysis or prioritization capabilities.
 
-Is there a specific aspect of these documents you'd like me to focus on or a particular type of analysis you need?\
+If you have specific questions about these documents or would like me to focus on particular aspects of the analysis, please let me know!\
 """)
 
     usage = result.usage
@@ -4842,18 +4846,15 @@ Is there a specific aspect of these documents you'd like me to focus on or a par
 
     result = await agent.run('How long is the doc?', message_history=messages)
     assert result.output == snapshot("""\
-Based on the documents provided:
+Looking at the documents you provided:
 
-**Document 1 (Document 1.txt)**: 10 words
-- "This is a test document with important analysis data."
+**Document 1**: 10 words
+("This is a test document with important analysis data.")
 
-**Document 2 (Document 2.txt)**: 8 words
-- "This is a test document with unimportant data."
+**Document 2**: 8 words
+("This is a test document with unimportant data.")
 
-Both documents are very short - just single sentences. If you're asking about character count instead:
-
-- Document 1: 55 characters (including spaces)
-- Document 2: 49 characters (including spaces)\
+Both documents are quite short - just single sentences. If you were asking about character count or another metric, please let me know and I can provide that instead!\
 """)
 
     usage = result.usage
@@ -4861,6 +4862,88 @@ Both documents are very short - just single sentences. If you're asking about ch
     assert usage.output_tokens > 0
     assert usage.cache_write_tokens > 0
     assert usage.cache_read_tokens > 0
+
+
+def _block_kinds(body: dict[str, Any]) -> list[list[str]]:
+    return [[next(iter(block)) for block in message['content']] for message in body['messages']]
+
+
+# Long enough to be cached by Claude Opus 5.5.
+_DOCUMENT_ANALYST_PROMPT = 'You analyze documents. Keep every answer to one short sentence.\n' * 400
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_trailing_text_document(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """The next request reads back the cache written for a message ending in a txt document.
+
+    Bedrock renders a txt document as text at the front of the message unless a cache point precedes it, and rejects a
+    cache point right after it on Claude. The next request doesn't send this request's cache point, so one placed
+    before the document would render the document inline in this request and at the front in the next, and the next
+    request would read nothing back. Instead, the document moves ahead of the text before it, where Bedrock renders it
+    anyway, and the cache point goes last.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-opus-5-5', provider=bedrock_provider)
+    agent = Agent(model, model_settings=BedrockModelSettings(bedrock_cache_messages=True, max_tokens=4000))
+    document = BinaryContent(data=b'The quarterly report shows revenue grew by 12 percent.', media_type='text/plain')
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await agent.run([f'Session: trailing txt.\n{_DOCUMENT_ANALYST_PROMPT}', 'Summarize this:', document])
+        second = await agent.run('How much did revenue grow?', message_history=first.all_messages())
+
+    assert [_block_kinds(body) for body in sent_requests] == snapshot(
+        [
+            [['text', 'document', 'text', 'cachePoint']],
+            [['text', 'text', 'document'], ['reasoningContent', 'text'], ['text', 'cachePoint']],
+        ]
+    )
+    assert (first.usage.cache_write_tokens, second.usage.cache_read_tokens) == snapshot((8493, 8493))
+    assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_trailing_pdf_document(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, document_content: BinaryContent
+):
+    """Claude on Bedrock accepts a cache point right after a PDF, so the cache point covers the PDF too."""
+    model = BedrockConverseModel('us.anthropic.claude-opus-5-5', provider=bedrock_provider)
+    agent = Agent(model, model_settings=BedrockModelSettings(bedrock_cache_messages=True, max_tokens=4000))
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        first = await agent.run(
+            [f'Session: trailing PDF.\n{_DOCUMENT_ANALYST_PROMPT}', 'Summarize this:', document_content]
+        )
+        second = await agent.run('What is its title?', message_history=first.all_messages())
+
+    assert [_block_kinds(body) for body in sent_requests] == snapshot(
+        [[['text', 'text', 'document', 'cachePoint']], [['text', 'text', 'document'], ['text'], ['text', 'cachePoint']]]
+    )
+    assert (first.usage.cache_write_tokens, second.usage.cache_read_tokens) == snapshot((10043, 10043))
+    assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens
+
+
+@pytest.mark.vcr()
+async def test_bedrock_cache_messages_trailing_text_document_after_cache_point(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A txt document after an explicit `CachePoint` stays where it is, and the cache point goes before it.
+
+    Bedrock renders a txt document after a cache point inline, so moving it would change the prompt.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-opus-5-5', provider=bedrock_provider)
+    agent = Agent(model, model_settings=BedrockModelSettings(bedrock_cache_messages=True, max_tokens=4000))
+    document = BinaryContent(data=b'The quarterly report shows revenue grew by 12 percent.', media_type='text/plain')
+
+    with _capture_bedrock_request_bodies(model) as sent_requests:
+        result = await agent.run(
+            [f'Session: explicit cache point.\n{_DOCUMENT_ANALYST_PROMPT}', CachePoint(), 'Summarize this:', document]
+        )
+
+    assert [_block_kinds(body) for body in sent_requests] == snapshot(
+        [[['text', 'cachePoint', 'text', 'cachePoint', 'document']]]
+    )
+    assert result.usage.cache_write_tokens > 0
 
 
 @pytest.mark.vcr()
@@ -5389,11 +5472,30 @@ async def test_bedrock_cache_point_with_mixed_content_and_trailing_documents(
     )
 
 
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        pytest.param(
+            'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+            [['document', 'document', 'text', 'cachePoint']],
+            id='claude-moves-documents',
+        ),
+        pytest.param(
+            'us.amazon.nova-pro-v1:0',
+            [['text', 'cachePoint', 'document', 'document']],
+            id='nova-cache-point-before-documents',
+        ),
+    ],
+)
 async def test_bedrock_cache_messages_with_multiple_trailing_documents(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
+    allow_model_requests: None, bedrock_provider: BedrockProvider, model_name: str, expected: list[list[str]]
 ):
-    """bedrock_cache_messages should place cache point before the entire trailing document group."""
-    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    """`bedrock_cache_messages` moves the whole trailing group of txt documents on Claude, and puts the cache point
+    before it on other models.
+
+    A unit test, since `test_bedrock_cache_messages_trailing_text_document` covers Claude live with one document.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
@@ -5410,27 +5512,62 @@ async def test_bedrock_cache_messages_with_multiple_trailing_documents(
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         messages, ModelRequestParameters(), BedrockModelSettings(bedrock_cache_messages=True)
     )
-    # Cache point should be before both documents
-    assert bedrock_messages[0]['content'] == snapshot(
-        [
-            {'text': 'Analyze these files.'},
-            {'cachePoint': {'type': 'default'}},
-            {
-                'document': {
-                    'name': 'Document 1',
-                    'format': 'txt',
-                    'source': {'bytes': b'File 1'},
-                }
-            },
-            {
-                'document': {
-                    'name': 'Document 2',
-                    'format': 'txt',
-                    'source': {'bytes': b'File 2'},
-                }
-            },
-        ]
+    assert _block_kinds({'messages': bedrock_messages}) == expected
+    documents = [block['document']['name'] for block in bedrock_messages[0]['content'] if 'document' in block]
+    assert documents == ['Document 1', 'Document 2']
+
+
+@pytest.mark.parametrize(
+    'content,expected',
+    [
+        pytest.param(
+            [
+                'Analyze these.',
+                BinaryContent(data=b'%PDF-1.4', media_type='application/pdf'),
+                BinaryContent(data=b'Notes', media_type='text/plain'),
+            ],
+            [['text', 'cachePoint', 'document', 'document']],
+            id='after-pdf',
+        ),
+        pytest.param(
+            [
+                'Analyze these.',
+                BinaryContent(data=b'video', media_type='video/mp4'),
+                BinaryContent(data=b'Notes', media_type='text/plain'),
+            ],
+            [['text', 'cachePoint', 'video', 'document']],
+            id='after-video',
+        ),
+        pytest.param(
+            [
+                'Analyze this.',
+                BinaryContent(
+                    data=b'docx', media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                ),
+            ],
+            [['text', 'cachePoint', 'document']],
+            id='docx',
+        ),
+    ],
+)
+async def test_bedrock_cache_messages_trailing_documents_not_moved(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    content: list[str | BinaryContent],
+    expected: list[list[str]],
+):
+    """On Claude, trailing txt documents only move past a non-document block, which keeps their document index,
+    and documents of formats not verified to render as text don't move; the cache point goes before them instead.
+
+    A unit test, since the live tests cover only the cases where the documents move.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[UserPromptPart(content=content)])],
+        ModelRequestParameters(),
+        BedrockModelSettings(bedrock_cache_messages=True),
     )
+    assert _block_kinds({'messages': bedrock_messages}) == expected
 
 
 async def test_bedrock_cache_point_multiple_markers_with_documents_no_back_to_back(
@@ -5899,18 +6036,12 @@ async def test_bedrock_cache_messages_with_binary_content(
         ModelRequestParameters(),
         BedrockModelSettings(bedrock_cache_messages=True),
     )
-    # Should not add cache point for document content
+    # The document moves ahead of the text Bedrock requires alongside it, so the cache point can go last.
     assert bedrock_messages[0]['content'] == snapshot(
         [
+            {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Test document content'}}},
             {'text': 'See attached document(s).'},
             {'cachePoint': {'type': 'default'}},
-            {
-                'document': {
-                    'name': 'Document 1',
-                    'format': 'txt',
-                    'source': {'bytes': b'Test document content'},
-                }
-            },
         ]
     )
 
