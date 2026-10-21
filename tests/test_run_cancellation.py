@@ -25,7 +25,7 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator
 from contextlib import contextmanager
 from datetime import UTC
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -47,6 +47,7 @@ from pydantic_ai._utils import BaseExceptionGroup, get_event_loop
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -66,6 +67,113 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from .conftest import IsNow, IsStr
 
 READINESS_WAIT_TIMEOUT = 5
+
+
+def _parallel_sibling_tools_agent(*, raise_first: bool) -> tuple[Agent[None, str], asyncio.Event]:
+    """An agent whose first-emitted tool waits until its sibling task has completed."""
+    fast_finished = asyncio.Event()
+    first_blocked = asyncio.Event()
+
+    def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('first_tool', {}, tool_call_id='call_first'),
+                ToolCallPart('fast_tool', {}, tool_call_id='call_fast'),
+            ]
+        )
+
+    async def stream_call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='first_tool', json_args='{}', tool_call_id='call_first'),
+            1: DeltaToolCall(name='fast_tool', json_args='{}', tool_call_id='call_fast'),
+        }
+
+    agent = Agent(FunctionModel(call_tools, stream_function=stream_call_tools))
+
+    @agent.tool_plain
+    async def first_tool() -> str:
+        await fast_finished.wait()
+        if raise_first:
+            raise RuntimeError('first tool failed')
+        first_blocked.set()
+        await asyncio.Event().wait()
+        return 'never reached'  # pragma: no cover
+
+    @agent.tool_plain
+    async def fast_tool() -> str:
+        # Release `first_tool` only once this tool's task is done, so the completed return is
+        # deterministically sitting in a finished task when the sibling raises or blocks.
+        task = asyncio.current_task()
+        assert task is not None
+        task.add_done_callback(lambda _: fast_finished.set())
+        return 'fast result'
+
+    return agent, first_blocked
+
+
+def _assert_interrupted_fast_result(message: ModelMessage) -> None:
+    assert message == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='fast_tool',
+                    content='fast result',
+                    tool_call_id='call_fast',
+                    timestamp=IsNow(tz=UTC),
+                )
+            ],
+            timestamp=IsNow(tz=UTC),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+            state='interrupted',
+        )
+    )
+
+
+@pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+async def test_sibling_exception_keeps_completed_tool_result(
+    mode: Literal['parallel', 'parallel_ordered_events'],
+) -> None:
+    """A completed tool's return survives in the interrupted request when an earlier-emitted sibling raises."""
+    agent, _ = _parallel_sibling_tools_agent(raise_first=True)
+
+    with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
+        with pytest.raises(RuntimeError, match='first tool failed'):
+            await agent.run('go')
+
+    _assert_interrupted_fast_result(messages[-1])
+
+
+@pytest.mark.parametrize('mode', ['parallel', 'parallel_ordered_events'])
+async def test_external_cancellation_keeps_completed_tool_result(
+    mode: Literal['parallel', 'parallel_ordered_events'],
+) -> None:
+    """A completed tool's return survives in the interrupted request when the run is cancelled mid-segment."""
+    agent, first_blocked = _parallel_sibling_tools_agent(raise_first=False)
+
+    with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
+        run_task = asyncio.create_task(agent.run('go'))
+        await asyncio.wait_for(first_blocked.wait(), timeout=READINESS_WAIT_TIMEOUT)
+        run_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+    _assert_interrupted_fast_result(messages[-1])
+
+
+async def test_parallel_ordered_sibling_exception_does_not_emit_later_result_event() -> None:
+    """Keeping the completed return doesn't add a result event: ordered settlement stops at the first exception."""
+    agent, _ = _parallel_sibling_tools_agent(raise_first=True)
+    seen_events: list[object] = []
+
+    with agent.parallel_tool_call_execution_mode('parallel_ordered_events'):
+        with pytest.raises(RuntimeError, match='first tool failed'):
+            async with agent.run_stream_events('go') as events:
+                async for event in events:
+                    seen_events.append(event)
+
+    assert seen_events
+    assert not any(isinstance(event, FunctionToolResultEvent) for event in seen_events)
 
 
 def _task_cancelling(task: asyncio.Task[Any]) -> int:

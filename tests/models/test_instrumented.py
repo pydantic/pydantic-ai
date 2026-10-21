@@ -219,6 +219,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -557,6 +558,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -653,6 +655,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -756,6 +759,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
@@ -1534,6 +1538,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'allow_image_output': False,
                         'instruction_parts': None,
                         'thinking': None,
+                        'cache': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat gpt-4o',

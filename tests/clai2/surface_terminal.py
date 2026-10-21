@@ -58,6 +58,8 @@ class SurfaceTerminal(io.StringIO):
             if token.startswith('\x1b]'):
                 continue  # OSC: hyperlinks and palettes have no cells
             if token in ('\n', '\x1bD'):
+                if token == '\n' and self.main is None:
+                    self.column = 0  # The cooked main screen's ONLCR; raw alternate-screen output writes its own CR.
                 self.advance()
             elif token == '\r':
                 self.column = 0

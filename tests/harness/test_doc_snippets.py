@@ -66,14 +66,19 @@ def test_coder_explains_sandbox_creation_timing() -> None:
         assert 'sandbox' in text.lower()
 
 
-def test_durable_guidance_lives_on_one_page() -> None:
-    durable = (_ROOT / 'docs/harness/durable-execution.md').read_text()
-    assert 'FileChangeRequestEvent' in durable
-    assert '.pydantic-ai-harness/shell/run-state/' in durable
+def test_durable_guidance_lives_in_the_workspace_guide() -> None:
+    guide = (_ROOT / 'docs/workspace.md').read_text()
+    assert 'FileChangeRequestEvent' in guide
+    assert '.pydantic-ai-harness/shell/run-state/' in guide
+    temporal = (_ROOT / 'docs/durable_execution/temporal.md').read_text()
+    assert 'agent_folders=None' in temporal and 'start_to_close_timeout=timedelta(minutes=30)' in temporal
     for name in ('coder', 'filesystem', 'shell'):
         for page, link in (
-            (f'docs/harness/{name}.md', '(durable-execution.md)'),
-            (f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md', '/harness/durable-execution/)'),
+            (f'docs/harness/{name}.md', '(../workspace.md#durable-execution)'),
+            (
+                f'src/pydantic_ai_harness/pydantic_ai_harness/{name}/README.md',
+                '/core-concepts/workspace/#durable-execution)',
+            ),
         ):
             text = (_ROOT / page).read_text()
             section = text.split('## Durable execution\n', 1)[1].split('\n## ', 1)[0]

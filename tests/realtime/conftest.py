@@ -13,9 +13,6 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from cassetter import RawRequest, RawResponse
 
-from pydantic_ai.realtime import _session as realtime_session  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.realtime._core import SessionCore
-
 from .. import cassette_hooks
 from ..conftest import sanitize_filename, try_import
 from .ws_cassettes import ProviderName, RealtimeCassette, patched_ws_connect, realtime_cassette_plan
@@ -35,11 +32,21 @@ with try_import() as gateway_imports_successful:
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
+with try_import() as elevenlabs_imports_successful:
+    # The provider itself has no optional dependency; the realtime module needs `openai` and `websockets`.
+    import pydantic_ai.realtime.elevenlabs  # pyright: ignore[reportUnusedImport]
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+
 with try_import() as xai_imports_successful:
     from pydantic_ai.providers.xai import XaiProvider
 
 with try_import() as azure_imports_successful:
     from pydantic_ai.providers.azure import AzureProvider
+
+with try_import() as elevenlabs_agents_imports_successful:
+    # The provider itself has no optional dependency; the realtime module needs `websockets`.
+    import pydantic_ai.realtime.elevenlabs_agents  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.models import AbstractModel
@@ -167,31 +174,6 @@ def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.fixture(autouse=True)
-def _shadow_core(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Run the new session core in shadow of the current one, and fail on anything the two disagree about.
-
-    Every session over a connection that identifies its responses, turns, and inputs (the OpenAI protocol)
-    builds its history twice; they must match when it closes. A test whose trace the current core gets
-    wrong in a way the new one fixes says so with `@pytest.mark.shadow_divergence(reason)`.
-    """
-    monkeypatch.setattr(realtime_session, '_CORE_MODE', 'shadow')
-    divergences: list[str] = []
-    compare = realtime_session.RealtimeSession._compare_shadow  # pyright: ignore[reportPrivateUsage]
-
-    def recorded(session: realtime_session.RealtimeSession, core: SessionCore) -> None:
-        compare(session, core)
-        divergences.extend(session._shadow_divergences)  # pyright: ignore[reportPrivateUsage]
-
-    monkeypatch.setattr(realtime_session.RealtimeSession, '_compare_shadow', recorded)
-    yield
-    node = cast('pytest.Item', request.node)  # pyright: ignore[reportUnknownMemberType]
-    if node.get_closest_marker('shadow_divergence') is None:
-        assert not divergences, '\n'.join(divergences)
-    else:
-        assert divergences, 'the session cores agree on this trace now: drop its `shadow_divergence` mark'
-
-
-@pytest.fixture(autouse=True)
 def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Provide placeholder API keys so realtime models can resolve their default providers offline.
 
@@ -206,6 +188,7 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
     monkeypatch.setenv('GOOGLE_API_KEY', 'mock-api-key')
     monkeypatch.setenv('XAI_API_KEY', 'mock-api-key')
+    monkeypatch.setenv('ELEVENLABS_API_KEY', 'mock-api-key')
     monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com/openai/v1')
     monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
     # Voice Live is a distinct resource with its own credential set. Tests build their provider from the
@@ -352,6 +335,33 @@ def xai_ws_cassette(request: pytest.FixtureRequest, xai_api_key: str) -> Iterato
         yield XaiProvider(api_key=xai_api_key), cassette
 
 
+@pytest.fixture
+def elevenlabs_agents_ws_cassette(
+    request: pytest.FixtureRequest, elevenlabs_api_key: str
+) -> Iterator[tuple[ElevenLabsProvider, RealtimeCassette]]:
+    """An `ElevenLabsProvider` whose agent WebSocket is backed by a cassette.
+
+    The REST preflight around the WebSocket records an HTTP VCR cassette (`pytest.mark.vcr`) under the
+    module-named cassette subdirectory, so the WebSocket cassette gets its own subdirectory, as for
+    `openai_live_ws_and_http_cassette`, so the two don't collide.
+    """
+    if not elevenlabs_agents_imports_successful():  # pragma: no cover
+        pytest.skip('websockets not installed')
+    with _ws_cassette(request, 'elevenlabs_agents', subdir='test_elevenlabs_agents_ws_and_http') as cassette:
+        yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
+
+
+@pytest.fixture
+def elevenlabs_ws_cassette(
+    request: pytest.FixtureRequest, elevenlabs_api_key: str
+) -> Iterator[tuple[ElevenLabsProvider, RealtimeCassette]]:
+    """An `ElevenLabsProvider` whose realtime WebSocket is backed by a cassette."""
+    if not elevenlabs_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'elevenlabs') as cassette:
+        yield ElevenLabsProvider(api_key=elevenlabs_api_key), cassette
+
+
 def _gateway_realtime_provider(kind: str, api_key: str | None) -> Provider[Any]:
     """Build a gateway provider for realtime, mirroring how `gateway/<kind>:...` resolves for a user.
 
@@ -488,12 +498,14 @@ def parity_ws_cassette(
     openai_api_key: str,
     gemini_api_key: str,
     xai_api_key: str,
+    elevenlabs_api_key: str,
     azure_config: tuple[str, str],
     gateway_api_key: str | None,
 ) -> Iterator[tuple[Any, Provider[Any], RealtimeCassette]]:
     """Build an indirectly parametrized parity-matrix provider before placeholder keys take effect."""
     case, route = cast('tuple[Any, str]', request.param)
     provider_name: ProviderName
+    subdir: str | None = None
     if route == 'openai':
         provider = OpenAIProvider(api_key=openai_api_key)
         provider_name = 'openai'
@@ -512,18 +524,29 @@ def parity_ws_cassette(
     elif route == 'xai':
         provider = XaiProvider(api_key=xai_api_key)
         provider_name = 'xai'
+    elif route == 'elevenlabs':
+        provider = ElevenLabsProvider(api_key=elevenlabs_api_key)
+        provider_name = 'elevenlabs'
     elif route == 'google':
         provider = GoogleProvider(api_key=gemini_api_key)
         provider_name = 'gemini'
     elif route == 'gateway-openai':
         provider = _gateway_realtime_provider('openai', gateway_api_key)
         provider_name = 'openai'
+    elif route == 'elevenlabs-agents':
+        if not elevenlabs_agents_imports_successful():  # pragma: no cover
+            pytest.skip('websockets not installed')
+        provider = ElevenLabsProvider(api_key=elevenlabs_api_key)
+        provider_name = 'elevenlabs_agents'
+        # The REST preflight records an HTTP VCR cassette under the module-named subdirectory, so the
+        # WebSocket cassette takes its own, as in `elevenlabs_agents_ws_cassette`.
+        subdir = 'test_parity_ws_and_http'
     else:
         assert route == 'gateway-google'
         provider = _gateway_realtime_provider('google', gateway_api_key)
         provider_name = 'gemini'
 
-    with _ws_cassette(request, provider_name) as cassette:
+    with _ws_cassette(request, provider_name, subdir=subdir) as cassette:
         yield case, provider, cassette
 
 

@@ -204,7 +204,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     (tracked via `ThinkingPart.id` and `ThinkingPart.provider_name`), it's sent back in that same field. Otherwise,
     it's sent using tags. Only the `reasoning` and `reasoning_content` fields are checked by
     default when receiving responses. If your provider uses a different field name, you must explicitly set
-    `openai_chat_thinking_field` to that field name.
+    `openai_chat_thinking_field` to that field name. When the request sends exactly one of these fields back, it's
+    also sent empty on tool-calling assistant turns after the last user message that don't already carry it, such as
+    a step served by another model or provider, since DeepSeek-style APIs reject those turns without it.
     * `'tags'`: The thinking content is included in the main `content` field, enclosed within thinking tags as
     specified in `thinking_tags` profile option.
     * `'field'`: The thinking content is included in a separate field specified by `openai_chat_thinking_field`.
@@ -454,13 +456,17 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # and the GPT-6 family verified live). Like the other gates in
     # this function, this enumerates known versions rather than matching open-endedly, so a new
     # family must be added here explicitly once confirmed; until then it falls back to local search.
-    supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES))
+    # gpt-5.4-nano (incl. its dated snapshots) rejects `tool_search` with a 400, and its model page
+    # leaves it out of the supported tools: https://developers.openai.com/api/docs/models/gpt-5.4-nano
+    supports_tool_search = model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
     supported_native_tools = _OPENAI_BASE_BUILTINS | {ToolSearchTool} if supports_tool_search else _OPENAI_BASE_BUILTINS
 
     # Explicit prompt cache breakpoints are supported on gpt-5.6 and later models, on both the
     # Chat Completions and Responses APIs. Like the other gates in this function, this enumerates
     # known versions rather than matching open-endedly.
-    # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
+    # See https://developers.openai.com/api/docs/guides/prompt-caching#choose-a-caching-mode.
     supports_prompt_cache_breakpoints = model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES))
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
@@ -603,6 +609,9 @@ _TYPE_BEARING_KEYS = ('type', '$ref', 'anyOf', 'oneOf', 'allOf', 'enum', 'const'
 Used to tell whether an array's `items` actually types its elements. A node without any of these
 (e.g. `{}`, `True`, or `{'description': '...'}`) is untyped and rejected by OpenAI strict mode."""
 
+_TOP_LEVEL_DEFINITION_REF = re.compile(r'#/(\$defs|definitions)/[^/]+')
+"""A local `$ref` to a top-level definition, the only JSON pointer other than `#` that OpenAI strict mode resolves."""
+
 _sentinel = object()
 
 
@@ -633,6 +642,15 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict)
         self.root_ref = schema.get('$ref')
+        if self.root_ref is not None:
+            root_key = re.sub(r'^#/\$defs/', '', self.root_ref).replace('~1', '/').replace('~0', '~')
+            root_schema = self.defs.get(root_key)
+            if isinstance(root_schema, bool):
+                if not root_schema:
+                    raise UserError('OpenAI does not support boolean `false` root schemas, which reject all inputs.')
+                # Resolve boolean roots before the walk can rewrite their references to `#`.
+                self.schema = {key: value for key, value in schema.items() if key != '$ref'}
+                self.root_ref = None
 
     def walk(self) -> JsonSchema:
         # Note: OpenAI does not support anyOf at the root in strict mode
@@ -640,12 +658,19 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # that the root schema either has type 'object' or is recursive.
         result = super().walk()
 
+        # Draft-07 `definitions` (where zod v4, via the MCP TypeScript SDK, puts a recursive subschema) are referenced
+        # like `$defs`, so their entries need the same handling to be valid in strict mode.
+        if definitions := result.get('definitions'):
+            result['definitions'] = {key: self._handle(value) for key, value in definitions.items()}
+
         # For recursive models, we need to tweak the schema to make it compatible with strict mode.
         # Because the following should never change the semantics of the schema we apply it unconditionally.
         if self.root_ref is not None:
             result.pop('$ref', None)  # We replace references to the self.root_ref with just '#' in the transform method
-            root_key = re.sub(r'^#/\$defs/', '', self.root_ref)
-            result.update(self.defs.get(root_key) or {})
+            root_key = re.sub(r'^#/\$defs/', '', self.root_ref).replace('~1', '/').replace('~0', '~')
+            root_schema = self.defs.get(root_key)
+            assert not isinstance(root_schema, bool)
+            result.update(root_schema or {})
 
         return result
 
@@ -667,6 +692,14 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         if schema_ref := schema.get('$ref'):
             if schema_ref == self.root_ref:
                 schema['$ref'] = '#'
+            elif (
+                self.strict is None
+                and schema_ref.startswith('#/')
+                and not _TOP_LEVEL_DEFINITION_REF.fullmatch(schema_ref)
+            ):
+                # A pointer elsewhere in the schema, like the `#/properties/from` that `zod-to-json-schema`
+                # (used by the MCP TypeScript SDK) emits for a reused subschema, is rejected in strict mode.
+                self.is_strict_compatible = False
             if len(schema) > 1:
                 # OpenAI Strict mode doesn't support siblings to "$ref", but _does_ allow siblings to "anyOf".
                 # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":

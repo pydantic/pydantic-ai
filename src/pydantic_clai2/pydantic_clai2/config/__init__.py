@@ -10,6 +10,8 @@ UpdateChannel = Literal['stable', 'main']
 UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
 STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
+ToolCallDisplay = Literal['detailed', 'grouped']
+TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
 
 
 class Settings(BaseModel):
@@ -34,11 +36,25 @@ class Settings(BaseModel):
             'as @* does. PROVIDER@default:MODEL runs the default account alone.'
         ),
     )
+    code_mode: bool = Field(
+        default=True,
+        description=(
+            'Fold tools into a sandboxed run_code that runs each statement while the model writes. '
+            'Off, every tool is called natively.'
+        ),
+    )
     speculative_code_mode: bool = Field(
         default=False,
         description=(
-            'Fold tools into a sandboxed run_code that executes and speculates while the model writes. '
-            'Ctrl+X Ctrl+S toggles it.'
+            'Also start read-only calls in run_code before the model reaches them. Turns on code mode '
+            'for its runs. Ctrl+X Ctrl+S toggles it.'
+        ),
+    )
+    instructions: str = Field(
+        default='',
+        description=(
+            "Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. "
+            '/system_prompt edits them.'
         ),
     )
     session_namer: bool = Field(default=True, description='Name saved sessions in the background using a model.')
@@ -55,6 +71,14 @@ class Settings(BaseModel):
     )
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
+    tool_calls: ToolCallDisplay = Field(
+        default='detailed',
+        description=(
+            'How tool calls print: detailed gives each call its own line with arguments; '
+            'grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output '
+            'and display.tool_arg_chars; file diffs still print.'
+        ),
+    )
     tool_output: bool = Field(
         default=False, description='Show shell and grep output below tool summaries. File diffs are always shown.'
     )
@@ -101,20 +125,25 @@ SETTING_FIELDS = {
     'display.theme': 'theme',
     'display.spinner': 'spinner',
     'display.splash': 'splash',
+    'display.tool_calls': 'tool_calls',
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',
     'display.grep_lines': 'grep_lines',
     'display.tool_arg_chars': 'tool_arg_chars',
     'display.smooth_seconds': 'smooth_seconds',
     'run.tool_retries': 'tool_retries',
+    'run.code_mode': 'code_mode',
     'run.speculative_code_mode': 'speculative_code_mode',
+    'run.instructions': 'instructions',
     'accounts.pool': 'pool_accounts',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
     'updates.channel': 'update_channel',
 }
 
-STRING_SETTINGS = frozenset({'model', 'display.theme', 'display.spinner', 'updates.channel'})
+STRING_SETTINGS = frozenset(
+    {'model', 'run.instructions', 'display.theme', 'display.spinner', 'display.tool_calls', 'updates.channel'}
+)
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 
 

@@ -106,6 +106,12 @@ Set `MCPToolset(tool_error_behavior=...)` according to the server error semantic
 
 Structured server error content is serialized as JSON for both `'retry'` and `'failed'`. Protocol and transport errors (as opposed to completed tool errors) stay retryable even under `'failed'`.
 
+## Render MCP Apps in a Frontend
+
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are HTML pages a server attaches to tools. `MCPToolset` needs no setup: a call to a tool with `_meta.ui.resourceUri` keeps an `MCPAppToolResult` in `ToolReturnPart.metadata['mcp_app']` (resource URI, tool input, full result, toolset `id`), which the model never sees. The AG-UI adapter sends it as an `mcp-apps` activity, the Vercel AI adapter as a `data-mcp-apps` chunk. Read the page with `read_resource_for_app(uri)`, which returns the MCP result as is, keeping the MIME type and `_meta.ui` (CSP, permissions).
+
+Relay the page's requests with `call_tool_for_app(name, arguments)` (app-visible tools only, `isError` results returned, no `process_tool_call`) and `read_resource_for_app(uri)` (any resource); both return the MCP wire result to send back as is. Use one `MCPToolset` per server.
+
 ## Use Embeddings for RAG
 
 Use `Embedder(...)` for query/document embeddings when the user is building retrieval or semantic search.

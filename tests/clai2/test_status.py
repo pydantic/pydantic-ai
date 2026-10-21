@@ -11,13 +11,29 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
-from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
+from pydantic_ai import (
+    Agent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelRequestContext,
+    PartDeltaEvent,
+    PartStartEvent,
+    RunContext,
+)
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import (
+    ModelResponse,
+    NativeToolCallPart,
+    TextPart,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+)
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import _reset_status, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
@@ -56,6 +72,67 @@ def test_estimate_includes_tool_argument_deltas() -> None:
 def test_compact_context_usage(used: int | None, window: int | None, expected: str) -> None:
     status = Status(context_tokens=used, context_window=window)
     assert f'context: {expected} tokens' in status.text()
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
+
+
+def test_status_marks_lower_bound_cost_and_keeps_default_unchanged() -> None:
+    status = Status(model='m', cost=Decimal('0.0100'))
+    assert '$0.0100' in status.text()
+    assert '$0.0100' in status.toolbar()[4][1]
+    status.cost_is_lower_bound = True
+    assert '>=$0.0100' in status.text()
+    assert '>=$0.0100' in status.toolbar()[4][1]
+    status.cost = None
+    assert '$' not in status.text()
+
+
+async def test_retained_cost_lower_bound_survives_measured_turn_and_resets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class OmitFirstUsage(AbstractCapability[None]):
+        responses: int = 0
+
+        async def after_model_request(
+            self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            self.responses += 1
+            response.usage.cost = Decimal('0.01')
+            if self.responses == 1:
+                response.usage.unmeasured_requests = 1
+            return response
+
+    inputs(monkeypatch, ['one', '/capture', 'two', '/capture', '/new', '/capture', 'three', '/capture', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(custom_output_text='answer'), deps_type=type(None), capabilities=[OmitFirstUsage()]),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    readings: list[tuple[Decimal | None, bool]] = []
+
+    def capture(args: list[str]) -> str:
+        readings.append((shell.status.cost, shell.status.cost_is_lower_bound))
+        return ''
+
+    shell.commands.register(Command(name='capture', description='Read cost status', handler=capture))
+    await shell.run()
+    assert readings == [
+        (Decimal('0.01'), True),
+        (Decimal('0.02'), True),
+        (None, False),
+        (Decimal('0.01'), False),
+    ]
+
+
+def test_an_estimated_context_figure_is_marked() -> None:
+    status = Status(model='m', context_tokens=13_416, context_window=1_000_000, context_estimated=True)
+    assert 'context: ~13k/1m tokens' in status.text()
+    assert status.toolbar()[1] == (MUTED, '~13k/1m')
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
@@ -114,14 +191,19 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
     assert f'{sgr(WARNING)}9{sgr(WARNING)}0' in painted and f'{sgr(WARNING)}m' not in painted
 
 
-@pytest.mark.parametrize('command', ['/new', '/clear', '/resume'])
-def test_new_resets_the_figures_whatever_follows_it(command: str) -> None:
-    status = Status(context_tokens=90, context_window=100, context_alert=True, output_tokens=5, streamed_chars=8)
-    _reset_status(f'{command} please', status)
+def test_clearing_the_conversation_resets_its_figures() -> None:
+    status = Status(
+        context_tokens=90,
+        context_estimated=True,
+        context_window=100,
+        context_alert=True,
+        output_tokens=5,
+        cost=Decimal('0.01'),
+        cost_is_lower_bound=True,
+        streamed_chars=8,
+    )
+    status.clear_conversation()
     assert status == Status()
-    status.context_alert = True
-    _reset_status(f'{command}er', status)
-    assert status.context_alert
 
 
 async def test_model_change_clears_the_previous_context_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

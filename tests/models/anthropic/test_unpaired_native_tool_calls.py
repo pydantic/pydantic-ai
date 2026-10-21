@@ -42,7 +42,7 @@ from ..conftest import AnthropicModelFactory, message_shape
 from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from anthropic.types.beta import BetaMCPToolResultBlock, BetaTextBlock, BetaUsage
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -351,8 +351,8 @@ async def test_drop_unpaired_native_tool_calls(case: Case):
 async def test_mcp_call_answered_by_its_replayed_result_is_kept():
     """A replayed MCP result pairs its call, so neither block is dropped.
 
-    Asserted whole rather than through `message_shape`, which subscripts blocks: the result comes back
-    as an SDK model, and it is the `tool_use_id` on that model that has to match the call's `id`.
+    Asserted whole rather than through `message_shape`: it is the result's `tool_use_id` that has to
+    match the call's `id`.
     """
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'))
     _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
@@ -369,12 +369,12 @@ async def test_mcp_call_answered_by_its_replayed_result_is_kept():
                     'name': 'ask_question',
                     'input': {'question': 'What is the 10-year Treasury duration?'},
                 },
-                BetaMCPToolResultBlock(
-                    content=[BetaTextBlock(text='8.1', type='text')],
-                    is_error=False,
-                    tool_use_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
-                    type='mcp_tool_result',
-                ),
+                {
+                    'content': [{'type': 'text', 'text': '8.1'}],
+                    'is_error': False,
+                    'tool_use_id': 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    'type': 'mcp_tool_result',
+                },
                 {'id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe', 'type': 'tool_use', 'name': 'add', 'input': {'a': 2, 'b': 2}},
             ],
         }
@@ -572,11 +572,11 @@ async def test_dropped_call_hands_its_boundary_across_a_turn_that_cannot_carry_i
     )
 
 
-async def test_dropped_call_skips_a_block_that_is_not_a_mapping():
-    """A replayed MCP result renders as a Pydantic model, which subscripting would raise on.
+async def test_dropped_call_hands_its_boundary_to_a_replayed_mcp_result():
+    """A replayed MCP result before the dropped call takes over the breakpoint the call carried.
 
-    It shares an assistant turn with a native call whenever the model used both, so the boundary search
-    walks over blocks that aren't `dict`s at all, not just ones that can't carry `cache_control`.
+    It shares an assistant turn with a native call whenever the model used both, and as the nearest
+    preceding block that can carry `cache_control` it is where the boundary moves to.
     """
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'))
     history: list[ModelMessage] = [
@@ -602,23 +602,18 @@ async def test_dropped_call_skips_a_block_that_is_not_a_mapping():
         [
             {
                 'role': 'user',
-                'content': [
-                    {
-                        'text': 'Look up the 10-year Treasury duration, then add 2 and 2.',
-                        'type': 'text',
-                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
-                    }
-                ],
+                'content': [{'text': 'Look up the 10-year Treasury duration, then add 2 and 2.', 'type': 'text'}],
             },
             {
                 'role': 'assistant',
                 'content': [
-                    BetaMCPToolResultBlock(
-                        content=[BetaTextBlock(text='8.1', type='text')],
-                        is_error=False,
-                        tool_use_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
-                        type='mcp_tool_result',
-                    )
+                    {
+                        'content': [{'type': 'text', 'text': '8.1'}],
+                        'is_error': False,
+                        'tool_use_id': 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                        'type': 'mcp_tool_result',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
                 ],
             },
             {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import uuid
 from abc import abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -173,6 +174,18 @@ class _RestrictedRunContext(Protocol):
 
 
 MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
+
+_CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
+"""Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
+
+
+def conversation_id_from_run_id(run_id: str) -> str:
+    """Derive a run's default `conversation_id` from its `run_id`.
+
+    For engines whose default `run_id` is replay-stable, so a re-execution of the run gets the same
+    conversation ID without another draw. The derivation is also stable for a caller-supplied `run_id`.
+    """
+    return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
 
 
 class _BoundModelOperations(NamedTuple):
@@ -727,7 +740,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             value: Any = _ResolvedModelRequestContext(projection=projection, model=resolved_model)
         else:
             value = result.value
-        if not (ctx.usage - usage_before).has_values():
+        usage_delta = ctx.usage - usage_before
+        if not usage_delta.has_values() and not usage_delta.unmeasured_requests:
             # Recorded, not incremented: the operation accumulated this delta across the durable
             # boundary, where the activity's context can't reach the spans open back here.
             _usage_attribution.record_usage(ctx.usage, result.usage_delta)

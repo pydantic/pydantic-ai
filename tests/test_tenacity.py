@@ -687,7 +687,7 @@ class TestWaitRetryAfter:
         assert result == 60.0  # Capped at max_wait
         fallback.assert_not_called()
 
-    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1'])
+    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
     def test_invalid_retry_after_uses_fallback(self, retry_after: str):
         """Invalid `Retry-After` values fall back locally without a provider request."""
         fallback = Mock(return_value=4.0)

@@ -13,6 +13,7 @@ import anyio
 from pydantic import ValidationError
 
 from . import _utils, exceptions, messages as _messages, models
+from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
 from ._output import (
     OutputDataT_inv,
@@ -68,6 +69,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
+
+    # Set by `_abandon_model_stream()`: awaited for the response that replaces the abandoned model stream.
+    _replacement_response: Callable[[], Awaitable[_messages.ModelResponse | None]] | None = field(
+        default=None, init=False, repr=False
+    )
+    _model_pull_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
+    _model_pull_scope: anyio.CancelScope | None = field(default=None, init=False)
+    _model_stream_finished: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._refresh_initial_run_ctx_usage()
@@ -228,6 +237,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 provider_api_url=self.response.provider_url,
                 provider_name=self.response.provider_name,
                 genai_request_timestamp=self.response.timestamp,
+                price_context=self.response.provider_details,
             )
             if price is not None:
                 usage.cost = (usage.cost or Decimal(0)) + price.total_price
@@ -412,9 +422,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 # a quick benchmark shows it's faster to build up a string with concat when we're
                 # yielding at each step
                 deltas: list[str] = []
+                live_stream = self._raw_stream_response
                 async for text in deltas_iter:
-                    deltas.append(text)
-                    yield ''.join(deltas)
+                    if self._raw_stream_response is live_stream:
+                        deltas.append(text)
+                        yield ''.join(deltas)
+                    else:
+                        # The model stream was replaced mid-stream (see `_abandon_model_stream`), voiding its text.
+                        parts = self.response.parts
+                        yield ''.join(part.content for part in parts if isinstance(part, _messages.TextPart))
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
@@ -422,9 +438,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             # Token-limit checks run after every event and only look at token counts, so skip the per-event
             # cost calculation that the `usage` property does and pass the cheaper token-only usage.
             base_iter = _get_usage_checking_stream_response(
-                self._raw_stream_response,
+                self._model_events(),
                 self._usage_limits,
                 lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
+                lambda: context_input_tokens(self._raw_stream_response.get()),
             )
             # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
             # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
@@ -455,6 +472,54 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             with anyio.CancelScope(shield=True):
                 async with self._anext_lock:
                     await _utils.aclose_if_supported(events_iterator)
+
+    async def _abandon_model_stream(
+        self, replacement_response: Callable[[], Awaitable[_messages.ModelResponse | None]]
+    ) -> bool:
+        """Stop pulling the model stream, because its request is being torn down mid-stream.
+
+        A capability's `wrap_model_request` can stop its handler while the stream is being consumed, for
+        example a parallel input guardrail that blocks the prompt. Any in-flight pull is cancelled and drained,
+        so the model stream can be closed without racing it. The consumer's iteration then continues with the
+        events of the response `replacement_response` returns, ends if it returns `None`, or raises what it raises.
+
+        Returns whether the stream was cut short: `False` if the consumer had already received all of it.
+        """
+        if self._model_stream_finished:
+            return False
+        self._replacement_response = replacement_response
+        if self._model_pull_scope is not None:
+            self._model_pull_scope.cancel()
+        with anyio.CancelScope(shield=True):
+            async with self._model_pull_lock:
+                pass
+        return True
+
+    async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """The model stream's events, followed by its replacement's if the stream was abandoned."""
+        events = aiter(self._raw_stream_response)
+        while self._replacement_response is None:
+            event: ModelResponseStreamEvent | None = None
+            with anyio.CancelScope() as self._model_pull_scope:
+                async with self._model_pull_lock:
+                    try:
+                        event = await anext(events)
+                    except StopAsyncIteration:
+                        pass
+            if self._replacement_response is not None:
+                break
+            if event is None:
+                self._model_stream_finished = True
+                return
+            yield event
+
+        response = await self._replacement_response()
+        if response is not None:
+            self._raw_stream_response = models.CompletedStreamedResponse(
+                response, model_request_parameters=self._model_request_parameters, replay_events=True
+            )
+            async for event in self._raw_stream_response:
+                yield event
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
@@ -592,7 +657,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     '`stream_text()`, `stream_response()` or `get_output()` first.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
-            return AgentRunResult(
+            result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
                 _state=GraphAgentState(
@@ -605,6 +670,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
             )
+            # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
+            result.__dict__['_workspace'] = self.workspace
+            return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -1147,21 +1215,25 @@ class FinalResult(Generic[OutputDataT]):
 
 
 def _get_usage_checking_stream_response(
-    stream_response: models.StreamedResponse,
+    events: AsyncIterator[ModelResponseStreamEvent],
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
+    get_request_input_tokens: Callable[[], int],
 ) -> AsyncIterator[ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
-            async for item in stream_response:
-                limits.check_tokens(get_usage())
-                limits.check_per_request_input_tokens(stream_response.usage.input_tokens)
+            async for item in events:
+                # Omitted usage is warned about once the response completes, not on every event.
+                limits._check_token_limits(get_usage())  # pyright: ignore[reportPrivateUsage]
+                # `get_request_input_tokens` builds a response snapshot, so only pay for it when the limit is set.
+                if limits.per_request_input_tokens_limit is not None:
+                    limits.check_per_request_input_tokens(get_request_input_tokens())
                 yield item
 
         return _usage_checking_iterator()
     else:
-        return aiter(stream_response)
+        return events
 
 
 def _get_deferred_tool_requests(

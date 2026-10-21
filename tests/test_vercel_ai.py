@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import uuid
@@ -10,18 +11,19 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import Agent, CancellationToken, RunCancelled, capture_run_messages
+from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, ToolOutput, capture_run_messages
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -29,10 +31,13 @@ from pydantic_ai.messages import (
     CompactionPart,
     CustomEvent,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ImageUrl,
+    InstructionDeltaPart,
+    InstructionId,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -66,8 +71,10 @@ from pydantic_ai.messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    sanitize_messages,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,
@@ -111,10 +118,12 @@ with try_import() as starlette_import_successful:
         FileUIPart,
         ReasoningUIPart,
         RegenerateMessage,
+        StepStartUIPart,
         SubmitMessage,
         TextUIPart,
         ToolApprovalRequested,
         ToolApprovalResponded,
+        ToolApprovalRespondedPart,
         ToolInputAvailablePart,
         ToolInputStreamingPart,
         ToolOutputAvailablePart,
@@ -423,6 +432,11 @@ I'd be happy to help you use a tool! However, I need more information about what
                         args={'repo': 'pydantic-ai'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                     ),
+                    ToolCallPart(
+                        tool_name='get_table_of_contents',
+                        args={'repo': 'logfire'},
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                    ),
                 ],
                 timestamp=IsDatetime(),
                 metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
@@ -434,27 +448,13 @@ I'd be happy to help you use a tool! However, I need more information about what
                         content="[Scrubbed due to 'API Key']",
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                         timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='get_table_of_contents',
-                        args={'repo': 'logfire'},
-                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
+                    ),
                     ToolReturnPart(
                         tool_name='get_table_of_contents',
                         content="[Scrubbed due to 'Auth']",
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
                         timestamp=IsDatetime(),
-                    )
+                    ),
                 ]
             ),
             ModelResponse(
@@ -1564,6 +1564,84 @@ async def test_run_stream_text_and_thinking():
             '[DONE]',
         ]
     )
+
+
+async def test_vercel_ai_id_only_tool_call_delta_emits_no_args_fragment():
+    """An ID-only `DeltaToolCall` streams no argument bytes, so it must not contribute a `'null'` fragment."""
+    calls: list[int] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c')}  # ID-only update: no `args_delta`
+            yield {0: DeltaToolCall(json_args='1}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int) -> str:
+        calls.append(x)
+        return 'ok'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    args_fragments: list[str] = [
+        event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
+    ]
+    assert args_fragments == snapshot(['{"x":', '1}'])
+    assert json.loads(''.join(args_fragments)) == {'x': 1}
+    assert calls == [1]
+
+
+async def test_vercel_ai_null_string_args_delta_preserved_verbatim():
+    """A genuine `'null'` `args_delta` string must be emitted verbatim: the skip is `is None`, not falsiness."""
+    calls: list[int | None] = []
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='f', json_args='{"x":', tool_call_id='c')}
+            yield {0: DeltaToolCall(tool_call_id='c', json_args='null')}
+            yield {0: DeltaToolCall(json_args='}')}
+        else:
+            yield 'Done'
+
+    agent = Agent(model=FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def f(x: int | None) -> str:
+        calls.append(x)
+        return 'ok'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    args_fragments: list[str] = [
+        event['inputTextDelta'] for event in events if isinstance(event, dict) and event['type'] == 'tool-input-delta'
+    ]
+    assert args_fragments == snapshot(['{"x":', 'null', '}'])
+    assert json.loads(''.join(args_fragments)) == {'x': None}
+    assert calls == [None]
 
 
 async def test_run_stream_thinking_with_signature():
@@ -3403,6 +3481,71 @@ async def test_run_stream_on_complete_error():
     )
 
 
+async def test_run_stream_skipped_tool_returns():
+    """A function tool call skipped under `end_strategy='early'` streams its input and its recorded return.
+
+    Without them, the AI SDK leaves the call part in `input-streaming`, which isn't valid client history.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"location": "Paris"}', tool_call_id='call-weather'),
+            1: DeltaToolCall(name='final_result', json_args='{"value": "done"}', tool_call_id='call-output'),
+        }
+
+    class Output(BaseModel):
+        value: str
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function), output_type=ToolOutput(Output), end_strategy='early'
+    )
+
+    @agent.tool_plain
+    def get_weather(location: str) -> str:
+        # Skipped: an output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Weather?')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+
+    assert [event for event in events if event['type'].startswith('tool-')] == snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call-weather', 'toolName': 'get_weather'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-weather', 'inputTextDelta': '{"location": "Paris"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'call-output', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-output', 'inputTextDelta': '{"value": "done"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-output',
+                'toolName': 'final_result',
+                'input': {'value': 'done'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call-output', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-weather',
+                'toolName': 'get_weather',
+                'input': {'location': 'Paris'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'call-weather',
+                'output': 'Tool not executed - a final result was already processed.',
+            },
+        ]
+    )
+
+
 async def test_run_stream_cancelled():
     agent = Agent(model=TestModel())
 
@@ -4398,6 +4541,103 @@ async def test_adapter_dispatch_request_cancellation_token():
     )
 
 
+async def _stream_then_time_out(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    """Stream `'partial'`, then time out once the adapter has taken it, rather than racing a real timer against the stream."""
+    yield 'partial'
+    ctx = get_current_run_context()
+    assert ctx is not None and ctx._cancellation is not None  # pyright: ignore[reportPrivateUsage]
+    ctx._cancellation.expire()  # pyright: ignore[reportPrivateUsage]
+    await asyncio.Event().wait()
+    raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def test_run_stream_native_timeout():
+    adapter = VercelAIAdapter(
+        Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
+        SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+        ),
+    )
+
+    with pytest.raises(RunTimedOut):
+        async for _ in adapter.run_stream_native(timeout=60):
+            pass
+
+
+async def test_adapter_dispatch_request_timeout():
+    """A run that outlives `timeout=` ends like a first-party cancellation: an `abort` chunk, and `on_cancel` gets the `RunTimedOut`."""
+    run_input = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': run_input.model_dump_json().encode('utf-8')}
+
+    request = Request(
+        scope={
+            'type': 'http',
+            'method': 'POST',
+            'headers': [(b'content-type', b'application/json')],
+        },
+        receive=receive,
+    )
+    cancelled: list[RunCancelled] = []
+
+    response = await VercelAIAdapter.dispatch_request(
+        request,
+        agent=Agent(model=FunctionModel(stream_function=_stream_then_time_out)),
+        timeout=60,
+        on_cancel=cancelled.append,
+    )
+    assert isinstance(response, StreamingResponse)
+
+    chunks: list[str | dict[str, Any]] = []
+
+    async def send(data: MutableMapping[str, Any]) -> None:
+        body = cast(bytes, data.get('body', b'')).decode('utf-8').strip().removeprefix('data: ')
+        if body:
+            chunks.append('[DONE]' if body == '[DONE]' else json.loads(body))
+
+    await response.stream_response(send)
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': IsStr()},
+            {'type': 'text-delta', 'delta': 'partial', 'id': IsStr()},
+            {'type': 'text-end', 'id': IsStr()},
+            {'type': 'abort', 'reason': 'The agent run timed out.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert len(cancelled) == 1
+    assert isinstance(cancelled[0], RunTimedOut)
+    assert cancelled[0].all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='foo',
+                metadata={'__pydantic_ai__': {'ui_message_id': 'bar'}},
+            ),
+            ModelResponse(
+                parts=[TextPart(content='partial')],
+                usage=RequestUsage(output_tokens=1, input_tokens=50),
+                model_name='function::_stream_then_time_out',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id='foo',
+                state='interrupted',
+            ),
+        ]
+    )
+
+
 async def test_adapter_dispatch_request_explicit_run_id():
     """`run_id=` passed to `dispatch_request` stamps the run result and agent messages.
 
@@ -4735,63 +4975,16 @@ async def test_adapter_load_messages():
                         args={'repo': 'pydantic'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
                     ),
-                ],
-                timestamp=IsDatetime(),
-                metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="[Scrubbed due to 'API Key']",
-                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
                     ToolCallPart(
                         tool_name='get_table_of_contents',
                         args={'repo': 'pydantic-ai'},
                         tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="[Scrubbed due to 'API Key']",
-                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
+                    ),
                     ToolCallPart(
                         tool_name='get_table_of_contents',
                         args={'repo': 'logfire'},
                         tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                    )
-                ],
-                timestamp=IsDatetime(),
-            ),
-            ModelRequest(
-                parts=[
-                    ToolReturnPart(
-                        tool_name='get_table_of_contents',
-                        content="Can't do that",
-                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
-                        timestamp=IsDatetime(),
-                        outcome='failed',
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
+                    ),
                     NativeToolCallPart(
                         tool_name='web_search',
                         args={'query': 'What is Logfire?'},
@@ -4819,6 +5012,35 @@ async def test_adapter_load_messages():
                         provider_name='openai',
                         outcome='failed',
                     ),
+                ],
+                timestamp=IsDatetime(),
+                metadata={'__pydantic_ai__': {'ui_message_id': '3XlOBgFwaf7GsS4l'}},
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoYJMQ',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="[Scrubbed due to 'API Key']",
+                        tool_call_id='toolu_01XX3rjFfG77h3KCbVHoY',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_table_of_contents',
+                        content="Can't do that",
+                        tool_call_id='toolu_01W2yGpGQcMx7pXV2zZ4sz9g',
+                        timestamp=IsDatetime(),
+                        outcome='failed',
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
                     TextPart(
                         content='Here are the Table of Contents for both repositories:... Both products are designed to work together - Pydantic AI for building AI agents and Logfire for observing and monitoring them in production.'
                     ),
@@ -4950,6 +5172,149 @@ async def test_adapter_dump_messages():
                 'parts': [{'type': 'text', 'text': 'Hi there!', 'state': 'done', 'provider_metadata': None}],
             },
         ]
+    )
+
+
+async def test_adapter_dump_messages_omits_unset_optional_fields(tiny_image: BinaryImage):
+    """The AI SDK's `validateUIMessages` rejects `null` for optional part fields, so unset ones are omitted."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['Hello', tiny_image, ImageUrl(url='https://example.com/a.png')])]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='Thinking'),
+                TextPart(content='Hi'),
+                FilePart(content=tiny_image),
+                ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call_1'),
+                ToolCallPart(tool_name='noop', args={}, tool_call_id='call_2'),
+                ToolCallPart(tool_name='flaky', args={}, tool_call_id='call_3'),
+                NativeToolCallPart(tool_name='web_search', args={'query': 'x'}, tool_call_id='call_4'),
+                NativeToolReturnPart(tool_name='web_search', content={'results': []}, tool_call_id='call_4'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='Sunny', tool_call_id='call_1'),
+                ToolReturnPart(tool_name='noop', content=None, tool_call_id='call_2'),
+                RetryPromptPart(tool_name='flaky', content='Try again', tool_call_id='call_3'),
+            ]
+        ),
+        ModelResponse(parts=[ToolCallPart(tool_name='deferred', args={}, tool_call_id='call_5')]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages, sdk_version=6)
+    dumped = [msg.model_dump(mode='json', by_alias=True) for msg in ui_messages]
+
+    # `output: null` is a real tool result, which the AI SDK accepts and `load_messages` restores.
+    null_keys = [
+        (part['type'], key) for msg in dumped for part in msg['parts'] for key, value in part.items() if value is None
+    ]
+    assert null_keys == snapshot([('tool-noop', 'output')])
+    # An optional `metadataSchema` passed to `validateUIMessages` rejects `null` message metadata.
+    assert 'metadata' not in dumped[0]
+
+    reloaded = VercelAIAdapter.load_messages([UIMessage.model_validate(msg) for msg in dumped])
+    noop_return = next(
+        part for part in iter_message_parts(reloaded, ModelRequest, ToolReturnPart) if part.tool_call_id == 'call_2'
+    )
+    assert noop_return.content is None
+
+
+async def test_adapter_dump_messages_system_only_request_keeps_metadata():
+    """A request with only system parts carries its metadata on the system message, and it survives a reload."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='Be brief.')], metadata={'tenant': 'acme'}),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert [msg.model_dump(mode='json', by_alias=True) for msg in ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'system',
+                'metadata': {'tenant': 'acme'},
+                'parts': [{'type': 'text', 'text': 'Be brief.', 'state': 'done'}],
+            }
+        ]
+    )
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert reloaded[0].metadata == snapshot({'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': IsStr()}})
+
+
+def test_client_message_serializes_as_sent():
+    """A client-sent message, stored and sent back as JSON, keeps its explicit `metadata: null` and gains no `reason: null`.
+
+    Not a `dump_messages` test: the adapter always sets `reason` on the approvals it builds, and never sets `null`
+    metadata. An app's `metadataSchema` may be nullable, so the client's `null` must round-trip.
+    """
+    message = UIMessage.model_validate(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
+    assert message.model_dump(mode='json', by_alias=True) == snapshot(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'approval': {'id': 'approval_1', 'approved': True},
+                }
+            ],
+        }
+    )
+
+
+def test_python_mode_dump_keeps_unset_optional_fields():
+    """Only JSON output goes to the AI SDK, so Python-mode dumps keep their `None` fields."""
+    message = UIMessage(
+        id='msg_1',
+        role='assistant',
+        parts=[
+            TextUIPart(text='Hi'),
+            ToolApprovalRespondedPart(
+                type='tool-delete_file',
+                tool_call_id='call_1',
+                input={'path': 'a.txt'},
+                approval=ToolApprovalResponded(id='approval_1', approved=True),
+            ),
+        ],
+    )
+    assert message.model_dump(by_alias=True) == snapshot(
+        {
+            'id': 'msg_1',
+            'role': 'assistant',
+            'metadata': None,
+            'parts': [
+                {'type': 'text', 'text': 'Hi', 'state': None, 'providerMetadata': None},
+                {
+                    'type': 'tool-delete_file',
+                    'toolCallId': 'call_1',
+                    'title': None,
+                    'state': 'approval-responded',
+                    'input': {'path': 'a.txt'},
+                    'providerExecuted': None,
+                    'callProviderMetadata': None,
+                    'approval': {'id': 'approval_1', 'approved': True, 'reason': None},
+                },
+            ],
+        }
     )
 
 
@@ -5432,6 +5797,21 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
             id='file-url-media-type-not-inferable',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://e.com/report', 'media_type': None},
+            snapshot(ImageUrl(url='https://e.com/report')),
+            snapshot(
+                {
+                    'url': 'https://e.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': None,
+                    'identifier': '41cafe',
+                }
+            ),
+            id='file-url-media-type-not-inferable-null',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'},
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
@@ -5468,9 +5848,10 @@ async def test_adapter_load_tool_return_completes_documented_file_shapes(
     A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
     the type itself would — including when the client left the key `null` or empty, which is what
     `File.type` gives a browser that cannot tell — and an `uploaded-file` shape needs nothing
-    completed. The dump is asserted for every case because it is the leg the completion protects: a
-    URL with no readable media type is left as the mapping it is, where reconstructing it would raise
-    `Could not infer media type` here. A mapping the type rejects keeps exactly the keys the client
+    completed. The dump is asserted for every case, so every file reconstructed here is proven to dump
+    again. A URL with no readable media type is left as the client sent it: a mapping when `media_type`
+    is absent or empty, and a file with no media type when it is `null`, the value our own dump writes
+    for such a URL. A mapping the type rejects keeps exactly the keys the client
     sent: the completion validates the mapping as it stands, so it never writes a `media_type` into
     something that stays a plain mapping.
     """
@@ -6119,6 +6500,38 @@ async def test_adapter_dump_messages_with_thinking():
             },
         ]
     )
+
+
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_dump_messages_extensionless_url_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
+    """A URL whose media type can't be inferred dumps an empty `media_type`, and comes back as itself.
+
+    `FileUIPart.media_type` is a required string, so a URL Pydantic AI can't read a media type out of is
+    dumped with an empty one rather than raising. That value is also what the load side reads the URL's
+    kind from, and an empty one reads as no kind at all, so the kind rides along in `provider_metadata`
+    instead of every URL kind coming back as a document.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[url_type(url='https://example.com/file')])])
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    file_part = next(part for part in ui_messages[0].parts if isinstance(part, FileUIPart))
+    assert file_part.model_dump(exclude_none=True) == {
+        'type': 'file',
+        'media_type': '',
+        'url': 'https://example.com/file',
+        'provider_metadata': {'pydantic_ai': {'kind': url_type.kind}},
+    }
+
+    reloaded = VercelAIAdapter.load_messages(ui_messages)
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == [
+        UserPromptPart(content=[url_type(url='https://example.com/file')], timestamp=IsDatetime())
+    ]
+    # URL parts compare without their media type, so pin the whole dumped part rather than the part alone.
+    assert VercelAIAdapter.dump_messages(reloaded)[0].parts[-1] == file_part
 
 
 async def test_adapter_dump_messages_with_files():
@@ -11383,6 +11796,396 @@ async def test_tool_availability_delta_stream_matches_dumped_data_part() -> None
     )
     data_part = next(part for message in dumped for part in message.parts if isinstance(part, DataUIPart))
     assert chunk == {'type': data_part.type, 'data': data_part.data}
+
+
+async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A reveal survives the next turn when the client rebuilds history from the event stream.
+
+    The stream emits `data-tool-availability-delta` after the tool result, so the AI SDK's
+    `processUIMessageStream` keeps it on the assistant message, after the tool part. Loading that
+    message back must restore the delta next to the tool return that caused it, as in the server-side
+    history, so the revealed tool stays available.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='reveal', json_args='{}', tool_call_id='reveal-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def reveal() -> ToolReturn[str]:
+        return ToolReturn(return_value='ready', tools=['new_tool'])
+
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Reveal the tool')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+
+    tool_output = next(event for event in events if event['type'] == 'tool-output-available')
+    delta_chunk = next(event for event in events if event['type'] == 'data-tool-availability-delta')
+    text = ''.join(event['delta'] for event in events if event['type'] == 'text-delta')
+
+    # The assistant message the AI SDK builds from these chunks: one step per model response.
+    assistant_message = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[
+            StepStartUIPart(),
+            ToolOutputAvailablePart(
+                type='tool-reveal', tool_call_id=tool_output['toolCallId'], input={}, output=tool_output['output']
+            ),
+            DataUIPart(type=delta_chunk['type'], data=delta_chunk['data']),
+            StepStartUIPart(),
+            TextUIPart(text=text, state='done'),
+        ],
+    )
+    loaded = VercelAIAdapter.load_messages([user_message, assistant_message])
+
+    assert [[part.part_kind for part in message.parts] for message in loaded] == [
+        [part.part_kind for part in message.parts] for message in server_history
+    ]
+
+    def deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
+        return [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
+
+    assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
+    assert deltas(loaded) == deltas(server_history)
+
+
+def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> UIMessage:
+    """The assistant message the AI SDK's `processUIMessageStream` builds from these chunks.
+
+    A minimal port covering the chunk types the enqueued-messages tests produce: text, tool input and
+    output, step boundaries and non-transient data parts, each appended at its stream position.
+    """
+    parts: list[dict[str, Any]] = []
+    texts: dict[str, dict[str, Any]] = {}
+    tools: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        match chunk['type']:
+            case 'start-step':
+                parts.append({'type': 'step-start'})
+            case 'text-start':
+                texts[chunk['id']] = {'type': 'text', 'text': '', 'state': 'streaming'}
+                parts.append(texts[chunk['id']])
+            case 'text-delta':
+                texts[chunk['id']]['text'] += chunk['delta']
+            case 'text-end':
+                texts[chunk['id']]['state'] = 'done'
+            case 'tool-input-available':
+                tools[chunk['toolCallId']] = {
+                    'type': f'tool-{chunk["toolName"]}',
+                    'toolCallId': chunk['toolCallId'],
+                    'state': 'input-available',
+                    'input': chunk['input'],
+                }
+                parts.append(tools[chunk['toolCallId']])
+            case 'tool-output-available':
+                tools[chunk['toolCallId']].update(state='output-available', output=chunk['output'])
+            case str(data_type) if data_type.startswith('data-') and not chunk.get('transient'):
+                parts.append({'type': data_type, 'id': chunk.get('id'), 'data': chunk['data']})
+            case _:
+                pass
+    return UIMessage.model_validate({'id': message_id, 'role': 'assistant', 'parts': parts})
+
+
+def _model_visible(messages: Sequence[ModelMessage]) -> list[tuple[str, list[tuple[str, Any]]]]:
+    """Message boundaries, part kinds and content, without the IDs and timestamps a reload re-mints."""
+    return [
+        (
+            message.kind,
+            [
+                (
+                    part.part_kind,
+                    part.args_as_dict() if isinstance(part, ToolCallPart) else getattr(part, 'content', None),
+                )
+                for part in message.parts
+            ],
+        )
+        for message in messages
+    ]
+
+
+class _TurnScopedReminder(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        return request_context
+
+
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Literal['server', 'client']) -> None:
+    """A request-scoped reminder is for the model's current request, so it never reaches the frontend.
+
+    Not even when the frontend owns the system prompt: loaded back, it would become a lasting one. A reminder-only
+    enqueue sends no `data-enqueued-messages` part at all.
+    """
+    agent = Agent(TestModel(), capabilities=[_TurnScopedReminder()])
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(
+        agent, SubmitMessage(id='chat-1', messages=[user]), sdk_version=6, manage_system_prompt=manage_system_prompt
+    )
+
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+
+    assert [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages'] == []
+    assert 'Reminder' not in json.dumps(chunks)
+
+
+@pytest.mark.parametrize('manage_system_prompt', ['server', 'client'])
+async def test_enqueued_messages_round_trip_through_stream(manage_system_prompt: Literal['server', 'client']) -> None:
+    """Enqueued messages reach a client that rebuilds history from the stream, without becoming chat messages.
+
+    They ride in a `data-enqueued-messages` part, which the AI SDK keeps on the assistant message without
+    rendering it, and load back as their own requests at the position they were delivered in. An enqueued
+    system prompt is only sent when the frontend owns the system prompt, since it would otherwise be
+    stripped on the way back in.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='work', json_args='{}', tool_call_id='work-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool
+    def work(ctx: RunContext[object]) -> str:
+        ctx.enqueue('Background result: 42')
+        ctx.enqueue(SystemPromptPart(content='Announcement'))
+        ctx.enqueue(ModelResponse(parts=[TextPart('Synthetic reply')]), 'Synthetic follow-up')
+        return 'started'
+
+    user = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Go')])
+    adapter = VercelAIAdapter(
+        agent,
+        SubmitMessage(id='chat-1', messages=[user]),
+        sdk_version=6,
+        manage_system_prompt=manage_system_prompt,
+    )
+    server_history: list[ModelMessage] = []
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+
+    enqueued_chunks = [chunk for chunk in chunks if chunk['type'] == 'data-enqueued-messages']
+    assert enqueued_chunks[0] == snapshot(
+        {
+            'type': 'data-enqueued-messages',
+            'id': IsStr(),
+            'data': {
+                'messages': [
+                    {
+                        'id': IsStr(),
+                        'role': 'user',
+                        'metadata': {'pydantic_ai': {'timestamp': IsStr()}},
+                        'parts': [{'type': 'text', 'text': 'Background result: 42', 'state': 'done'}],
+                    }
+                ]
+            },
+        }
+    )
+    # A server-owned system prompt isn't sent to the frontend at all: it would be stripped on the way back.
+    streamed = [
+        [(message['role'], part['text']) for message in chunk['data']['messages'] for part in message['parts']]
+        for chunk in enqueued_chunks
+    ]
+    announcement = [[('system', 'Announcement')]] if manage_system_prompt == 'client' else []
+    assert streamed == [
+        [('user', 'Background result: 42')],
+        *announcement,
+        [('assistant', 'Synthetic reply'), ('user', 'Synthetic follow-up')],
+    ]
+    # Each delivery is keyed on its own enqueue call, so the nested message IDs don't collide.
+    nested_ids = [message['id'] for chunk in enqueued_chunks for message in chunk['data']['messages']]
+    assert len(set(nested_ids)) == len(nested_ids)
+    # Delivered after the tool result and before the step that responds to it, as in server history.
+    types = [chunk['type'] for chunk in chunks]
+    assert types.index('tool-output-available') < types.index('data-enqueued-messages') < types.index('text-start')
+
+    client_ui = [user, _reduce_assistant_message(chunks, 'assistant-1')]
+    reloaded = VercelAIAdapter(
+        agent,
+        SubmitMessage(id='chat-1', messages=client_ui),
+        manage_system_prompt=manage_system_prompt,
+    )
+    loaded = reloaded.sanitize_messages(reloaded.messages)
+    if manage_system_prompt == 'server':
+        # Server history keeps the enqueued system prompt (#10389), which the frontend was never sent.
+        with pytest.warns(UserWarning, match='Client-submitted system prompts were stripped'):
+            expected = sanitize_messages(server_history)
+    else:
+        expected = sanitize_messages(server_history, strip_system_prompts=False)
+    # Server history has the enqueued parts in the tool's request, right after its return. The client loads
+    # them back as their own request after it, which renders the same once the two are merged for the model.
+    assert _model_visible(_clean_message_history(loaded)) == _model_visible(_clean_message_history(expected))
+    assert _model_visible(loaded) == [
+        ('request', [('user-prompt', 'Go')]),
+        ('response', [('tool-call', {})]),
+        ('request', [('tool-return', 'started')]),
+        ('request', [('user-prompt', 'Background result: 42')]),
+        *([('request', [('system-prompt', 'Announcement')])] if manage_system_prompt == 'client' else []),
+        # An enqueued response stays its own message: the model's next text doesn't extend it.
+        ('response', [('text', 'Synthetic reply')]),
+        ('request', [('user-prompt', 'Synthetic follow-up')]),
+        ('response', [('text', 'done')]),
+    ]
+
+
+async def test_enqueued_messages_stream_strips_server_owned_system_prompts() -> None:
+    """A standalone stream defaults to a server-owned system prompt and keeps it off the wire.
+
+    Other parts of the same request, and whole responses, are still sent.
+    """
+    event = EnqueuedMessagesEvent(
+        enqueue_id='enqueue-1',
+        messages=(
+            ModelResponse(parts=[TextPart('synthetic')]),
+            ModelRequest(parts=[SystemPromptPart(content='hidden'), UserPromptPart(content='visible')]),
+            ModelRequest(parts=[InstructionDeltaPart(id=InstructionId(AgentInstructionSource()), content='hidden')]),
+        ),
+    )
+    event_stream = VercelAIEventStream()
+    chunks = [chunk async for chunk in event_stream.handle_enqueued_messages(event)]
+    assert [
+        [(message['role'], part['text']) for message in chunk.data['messages'] for part in message['parts']]
+        for chunk in chunks
+        if isinstance(chunk, DataChunk)
+    ] == [[('assistant', 'synthetic'), ('user', 'visible')]]
+
+
+def test_enqueued_messages_keep_their_own_message_ids() -> None:
+    """The assistant message's id lands on its own response, not on an enqueued message loaded before it."""
+    enqueued = VercelAIAdapter.dump_messages(
+        [ModelResponse(parts=[TextPart('synthetic')]), ModelRequest.user_text_prompt('injected')],
+        generate_message_id=lambda _message, role, index: f'enqueued-{role}-{index}',
+    )
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={'messages': [message.model_dump(mode='json', by_alias=True) for message in enqueued]},
+                ),
+                TextUIPart(text='reply'),
+            ],
+        ),
+        # Its text extends the previous response, which stays the target past the enqueued request after it.
+        UIMessage(
+            id='assistant-2',
+            role='assistant',
+            parts=[
+                TextUIPart(text='more'),
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={
+                        'messages': [
+                            {'id': 'enqueued-later', 'role': 'user', 'parts': [{'type': 'text', 'text': 'later'}]}
+                        ]
+                    },
+                ),
+            ],
+        ),
+    ]
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert [(message.kind, (message.metadata or {}).get('__pydantic_ai__')) for message in loaded] == snapshot(
+        [
+            ('response', {'ui_message_id': 'enqueued-assistant-0'}),
+            ('request', {'ui_message_id': 'enqueued-user-1'}),
+            ('response', {'ui_message_id': 'assistant-2'}),
+            ('request', {'ui_message_id': 'enqueued-later'}),
+        ]
+    )
+
+
+def test_enqueued_response_is_not_extended_by_the_next_step() -> None:
+    """A payload ending in a response, e.g. one whose trailing system prompt stayed on the server, is a boundary."""
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                DataUIPart(
+                    type='data-enqueued-messages',
+                    data={
+                        'messages': [
+                            {'id': 'enqueued-1', 'role': 'assistant', 'parts': [{'type': 'text', 'text': 'synthetic'}]}
+                        ]
+                    },
+                ),
+                StepStartUIPart(),
+                TextUIPart(text='reply'),
+            ],
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert [
+        (message.kind, _model_visible([message])[0][1], (message.metadata or {}).get('__pydantic_ai__'))
+        for message in loaded
+    ] == snapshot(
+        [
+            ('response', [('text', 'synthetic')], {'ui_message_id': 'enqueued-1'}),
+            ('response', [('text', 'reply')], {'ui_message_id': 'assistant-1'}),
+        ]
+    )
+
+
+def test_enqueued_messages_malformed_or_nested_payload_is_skipped() -> None:
+    """A client can put anything in the data part; malformed payloads load nothing, and nesting doesn't recurse."""
+    nested = {
+        'id': 'inner',
+        'role': 'user',
+        'parts': [
+            {'type': 'text', 'text': 'kept'},
+            {
+                'type': 'data-enqueued-messages',
+                'data': {'messages': [{'id': 'x', 'role': 'user', 'parts': [{'type': 'text', 'text': 'dropped'}]}]},
+            },
+        ],
+    }
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                TextUIPart(text='hello'),
+                DataUIPart(type='data-enqueued-messages', data={'messages': 'not-a-list'}),
+                DataUIPart(type='data-enqueued-messages', data=['not-a-dict']),
+                DataUIPart(type='data-enqueued-messages', data={'messages': [nested]}),
+            ],
+        )
+    ]
+
+    assert _model_visible(VercelAIAdapter.load_messages(ui_messages)) == snapshot(
+        [('response', [('text', 'hello')]), ('request', [('user-prompt', 'kept')])]
+    )
 
 
 @pytest.mark.parametrize('tool_call_id', ['', '   ', '\t\n'])

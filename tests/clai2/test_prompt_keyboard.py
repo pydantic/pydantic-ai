@@ -84,3 +84,44 @@ async def test_keyboard_protocols_are_released_for_menus_and_on_exit(fail: bool)
             assert await live.read() == 'first\nsecond'
             raise RuntimeError('editor failed')
     assert output.getvalue().count(disable) == 2
+
+
+@pytest.mark.parametrize(
+    ('undo', 'redo'),
+    [
+        ('\x1a', '\x19'),
+        ('\x1b[122;5u', '\x1b[122;6u'),
+        ('\x1b[122;9u', '\x1b[122;10u'),
+        ('\x1b[27;9;122~', '\x1b[27;10;90~'),
+    ],
+)
+async def test_undo_and_redo_keys_restore_deleted_draft_text(undo: str, redo: str) -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('one two three\x17\x17')
+        live.keys.read()
+        assert live.buffer.text == 'one '
+        pipe.send_text(undo)
+        live.keys.read()
+        assert live.buffer.text == 'one two '
+        pipe.send_text(undo * 4)
+        live.keys.read()
+        assert live.buffer.text == ''
+        pipe.send_text(redo + redo)
+        live.keys.read()
+        assert live.buffer.text == 'one two '
+        pipe.send_text('\r')
+        assert await live.read() == 'one two'
+        pipe.send_text(undo)
+        live.keys.read()
+        assert live.buffer.text == '', 'a submitted draft cannot be undone back into the editor'
+
+
+async def test_undo_restores_a_draft_cleared_with_ctrl_c() -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('keep me\x03')
+        with pytest.raises(KeyboardInterrupt):
+            await live.read()
+        assert live.buffer.text == ''
+        pipe.send_text('\x1a')
+        live.keys.read()
+        assert live.buffer.text == 'keep me'

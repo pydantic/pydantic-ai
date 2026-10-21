@@ -188,3 +188,36 @@ async def test_startup_resume_shows_history_below_the_startup_output(
     text = output.getvalue()
     assert text.index('/new starts a session') < text.index('> earlier turn') < text.index('saved answer')
     assert text.index('saved answer') < text.index('Resumed')
+
+
+def ping() -> str:
+    return 'ok'
+
+
+def pong() -> str:
+    return 'ok'
+
+
+async def test_resumed_tool_calls_replay_in_the_chosen_tool_call_style(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    prior = Session(
+        Agent(TestModel(custom_output_text='saved answer'), tools=[ping, pong]),
+        deps=None,
+        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        workspace=tmp_path,
+    )
+    await prior.prompt('earlier turn')
+    output = io.StringIO()
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        pipe.send_text('/exit\r')
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            console=Console(file=output),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            settings=Settings(model=None, session_namer=False, tool_calls='grouped'),
+            resume=prior.summary.id,
+        )
+    assert '● ping 1, pong 1\n\nsaved answer' in output.getvalue()

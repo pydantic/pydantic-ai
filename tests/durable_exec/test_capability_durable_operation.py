@@ -52,7 +52,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
@@ -924,6 +924,25 @@ class UsageOperation(AbstractCapability[Any]):
         ctx.usage.cost = (ctx.usage.cost or 0) + Decimal('0.25')
 
 
+class ProviderCounterUsageOperation(AbstractCapability[Any]):
+    id = 'provider_counter_usage_operation'
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        await self.record_usage(ctx)
+
+    @durable_operation('record_usage')
+    async def record_usage(self, ctx: RunContext[Any]) -> None:
+        ctx.usage.incr(
+            RequestUsage(
+                cache_write_tokens=6,
+                cache_write_1h_tokens=4,
+                output_tokens=5,
+                output_reasoning_tokens=3,
+                web_searches=2,
+            )
+        )
+
+
 async def test_non_durable_call_is_direct_and_preserves_identity() -> None:
     capability = Operations()
     agent = Agent(TestModel(), capabilities=[capability])
@@ -1329,6 +1348,27 @@ async def test_capability_operation_cache_identity_includes_context_and_model() 
     assert isinstance(inputs[2], RunContext)
 
 
+async def test_unmeasured_request_delta_is_applied_once() -> None:
+    class UnmeasuredRequestOperation(AbstractCapability[None]):
+        id = 'unmeasured'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.mark(ctx)
+
+        @durable_operation('mark')
+        async def mark(self, ctx: RunContext[None]) -> None:
+            ctx.usage.unmeasured_requests += 1
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='unmeasured_usage',
+        deps_type=type(None),
+        capabilities=[UnmeasuredRequestOperation(), RecordingDurability()],
+    )
+    result = await agent.run('hi')
+    assert result.usage.unmeasured_requests == 1
+
+
 async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
     capability = UsageOperation()
     agent = Agent(TestModel(), name='replayed_usage', capabilities=[capability, ReplayingDurability()])
@@ -1345,6 +1385,27 @@ async def test_recorded_usage_delta_is_applied_once_per_replayed_run() -> None:
             usage.details['custom_units'],
         ) == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
+
+
+async def test_usage_delta_keeps_every_counter() -> None:
+    """A replayed durable operation's usage reaches the run total with every counter, not only the common ones.
+
+    The operation's usage is recorded as the difference from a snapshot taken before it ran, and a replay
+    applies that delta to the run. So the subtraction has to keep the one-hour cache writes and reasoning
+    tokens, and the counters genai-prices extracts without a declared field, like `web_searches`.
+    """
+    agent = Agent(
+        TestModel(), name='counter_usage', capabilities=[ProviderCounterUsageOperation(), ReplayingDurability()]
+    )
+
+    # The second run replays the operation recorded by the first.
+    results = [await agent.run('test'), await agent.run('test')]
+
+    for result in results:
+        usage = result.usage
+        assert (usage.cache_write_tokens, usage.cache_write_1h_tokens) == (6, 4)
+        assert usage.output_reasoning_tokens == 3
+        assert getattr(usage, 'web_searches', 0) == 2
 
 
 @pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
@@ -2174,33 +2235,6 @@ async def test_dbos_capability_usage_delta_is_stable_on_replay(dbos: DBOS) -> No
 
     assert first == replayed == (2, 2, {'summary_tokens': 3, 'custom_units': 7}, Decimal('0.25'), 7)
     assert capability.calls == 1
-
-
-@pytest.fixture(scope='module')
-def prefect_test_server() -> Generator[None, None, None]:
-    """Run the module's Prefect flow tests against an isolated test server.
-
-    The implicit ephemeral server uses the shared default PREFECT_HOME and a short
-    connect timeout that flakes on slow CI runners; the test harness gives an isolated
-    database and a 60s startup budget, mirroring tests/durable_exec/test_prefect.py.
-
-    Ordering constraint: these tests share the 'prefect' xdist group with
-    tests/durable_exec/test_prefect.py, whose harness fixture is session-scoped and
-    autouse, so once entered it stays entered for the rest of the worker. Today this
-    module collects first purely because it sorts alphabetically ahead of test_prefect.py,
-    so this module-scoped harness enters and exits before that one starts. Renaming either
-    module so this one sorts after test_prefect.py would nest two Prefect harnesses.
-    """
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
-    from prefect.testing.utilities import prefect_test_harness
-
-    # The task-run recorder is a background writer against the same sqlite file the flows write to.
-    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
-    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
-    # here reads what it records: task run states reach the API through the task engine.
-    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
-        with prefect_test_harness(server_startup_timeout=60):
-            yield
 
 
 @requires_prefect

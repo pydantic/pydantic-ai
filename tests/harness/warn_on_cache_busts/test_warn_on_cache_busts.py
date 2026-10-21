@@ -18,8 +18,10 @@ import copy
 import pickle
 import warnings
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -43,11 +45,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.warn_on_cache_busts import (
     CacheBustWarning,
+    CacheNotEnabledWarning,
     WarnOnCacheBusts,
 )
 
@@ -931,3 +935,35 @@ async def test_both_on_one_agent_latch_and_rearm_together() -> None:
         'Cache hit collapsed at model request 2',
         'Cache hit collapsed at model request 5',
     ]
+
+
+def _uncached_agent(settings: dict[str, Any], monitor: WarnOnCacheBusts[None]) -> Agent[None, str]:
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')], usage=RequestUsage(input_tokens=5000), model_name='cached-model')
+
+    model = FunctionModel(fn, profile=ModelProfile(supports_cache=True))
+    return Agent(model, deps_type=type(None), model_settings=cast(ModelSettings, settings), capabilities=[monitor])
+
+
+def test_warns_once_when_caching_is_not_enabled():
+    """A long request to a model that needs caching configured, with none configured, warns once per conversation."""
+    agent = _uncached_agent({}, WarnOnCacheBusts())
+
+    with pytest.warns(CacheNotEnabledWarning) as record:
+        result = agent.run_sync('prompt')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        agent.run_sync('again', message_history=result.all_messages())
+
+    (warning,) = [w.message for w in record if isinstance(w.message, CacheNotEnabledWarning)]
+    assert str(warning) == snapshot(
+        'Prompt caching is not enabled at model request 1: 5000 input tokens were sent to \'function:fn:\' uncached. Enable it with `model_settings={"cache": True}` or the `Caching()` capability, or set `cache=False` to leave it off on purpose.'
+    )
+
+
+def test_no_not_enabled_warning_when_caching_is_left_off_on_purpose():
+    agent = _uncached_agent({'cache': False}, WarnOnCacheBusts())
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        agent.run_sync('prompt')

@@ -12,6 +12,10 @@ import pytest
     'mode',
     ['unchanged', 'success', 'custom', 'new_imports', 'stock', 'syntax', 'import', 'build', 'harness', 'transcript'],
 )
+@pytest.mark.subprocess(
+    reason='reloads the shell in a fresh interpreter so the test process keeps its own module identities'
+)
+@pytest.mark.slow(reason='each scenario imports and reloads the whole shell in a fresh interpreter')
 def test_reload_running_shell(tmp_path: Path, mode: str) -> None:
     run_script(tmp_path, 'reload_script.py', mode)
 
@@ -75,5 +79,6 @@ def run_script(tmp_path: Path, script: str, mode: str) -> None:
         'syntax',
     ],
 )
+@pytest.mark.subprocess(reason='checks how a fresh interpreter re-imports a changed module graph')
 def test_reload_changed_import_graph(tmp_path: Path, mode: str) -> None:
     run_script(tmp_path, 'reload_import_script.py', mode)

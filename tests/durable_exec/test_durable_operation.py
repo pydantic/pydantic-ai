@@ -296,6 +296,7 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     assert resolve(tool, 'configured') == {'base': 1}
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_mcp_tool_config_dispatches_durable_and_inline_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport

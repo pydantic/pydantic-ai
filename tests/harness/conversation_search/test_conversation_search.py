@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import re
 import warnings
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-import pydantic_ai.messages as messages_module
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
@@ -58,6 +58,8 @@ from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
     InMemoryStepStore,
+    PostgresConnection,
+    PostgresStepStore,
     RunRecord,
     SqliteStepStore,
     StepPersistence,
@@ -293,6 +295,12 @@ class TestSnapshotHistorySource:
         assert isinstance(InMemoryStepStore(), SnapshotStore)
         assert isinstance(FileStepStore(tmp_path / 'runs'), SnapshotStore)
         assert isinstance(SqliteStepStore(database=tmp_path / 'runs.db'), SnapshotStore)
+
+        class _UnusedPool:
+            def acquire(self) -> AbstractAsyncContextManager[PostgresConnection]:
+                raise AssertionError('the pool is not queried')  # pragma: no cover
+
+        assert isinstance(PostgresStepStore(_UnusedPool()), SnapshotStore)
 
     def test_rejects_store_without_snapshot_seam(self) -> None:
         # A store that lists runs but has not implemented `list_snapshots` (for
@@ -860,10 +868,7 @@ class TestSearchScope:
         assert 'TEXTTAIL' not in excerpts
         assert '...' in excerpts
 
-    @pytest.mark.skipif(
-        not hasattr(messages_module, 'InstructionDeltaPart'), reason='requires core instruction updates'
-    )
-    async def test_instruction_updates_stay_searchable_past_display_cutoff(self) -> None:  # pragma: lax no cover
+    async def test_instruction_updates_stay_searchable_past_display_cutoff(self) -> None:
         history = ModelMessagesTypeAdapter.validate_python(
             [
                 {
@@ -876,7 +881,7 @@ class TestSearchScope:
         )
         rendered = await _search(_StubSource({'r1': history}), 'DELTATAIL')
         assert 'Found 1 match(es)' in rendered
-        assert "System: Instruction block 'agent:state' is replaced" in rendered
+        assert 'System: <context id="agent:state">' in rendered
         assert 'DELTATAIL' not in rendered.split(':\n\n', 1)[1]
 
     async def test_max_matches_and_context_lines_honored(self) -> None:

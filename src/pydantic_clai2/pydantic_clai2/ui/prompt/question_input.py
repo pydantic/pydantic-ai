@@ -10,7 +10,7 @@ from prompt_toolkit.input import create_input
 
 from pydantic_clai2.ui.menus.menu_worker import worker_stopping
 from pydantic_clai2.ui.prompt.prompt_keys import PromptKeys
-from pydantic_clai2.ui.prompt.prompt_surface import SCROLL_KEYS
+from pydantic_clai2.ui.prompt.prompt_surface import TRANSCRIPT_KEYS
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -21,15 +21,15 @@ class Paste:
 
 
 @dataclass(frozen=True, kw_only=True)
-class Scroll:
-    """A page key or mouse report for the transcript above the question, never the answer."""
+class TranscriptKey:
+    """A page key or mouse report that scrolls or selects the transcript above the question, never the answer."""
 
     key: str
     data: str = ''
 
 
-QuestionKey: TypeAlias = str | Paste | Scroll
-"""What the question reader yields: a key name, pasted text, or a transcript scroll."""
+QuestionKey: TypeAlias = str | Paste | TranscriptKey
+"""What the question reader yields: a key name, pasted text, or transcript input."""
 
 
 @contextmanager
@@ -42,8 +42,8 @@ def question_input() -> Generator[Callable[[], QuestionKey]]:
         # Inline questions keep Ctrl-J as confirmation, unlike the multiline editor.
         if key == 'ctrl-j':
             key = 'enter'
-        if key in SCROLL_KEYS:
-            pending.put(Scroll(key=key, data=data))
+        if key in TRANSCRIPT_KEYS:
+            pending.put(TranscriptKey(key=key, data=data))
         else:
             pending.put(Paste(text=data) if key == 'paste' else key)
 

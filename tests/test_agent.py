@@ -117,6 +117,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
@@ -138,6 +139,7 @@ else:
         from pydantic_ai.providers.fireworks import FireworksProvider
         from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
+        from pydantic_ai.providers.meta import MetaProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
         from pydantic_ai.providers.ollama import OllamaProvider
@@ -151,7 +153,7 @@ else:
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
-        MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
+        MetaProvider = MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
 
@@ -8167,6 +8169,82 @@ def test_dynamic_true_reevaluate_system_prompt():
     assert res_two.new_messages() == res_two.all_messages()[-2:]
 
 
+def test_dynamic_system_prompt_does_not_mutate_caller_message_history():
+    """Test that dynamic system-prompt re-evaluation does not rewrite caller-owned history objects."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    dynamic_value = 'A'
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        return dynamic_value
+
+    res_one = agent.run_sync('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    dynamic_value = 'B'
+    res_two = agent.run_sync('World', message_history=history)
+
+    # The re-evaluated value still reaches the run's own messages.
+    assert [
+        part.content
+        for msg in res_two.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['B']
+
+    # The caller's history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['A']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
+async def test_concurrent_runs_sharing_history_isolate_dynamic_system_prompts():
+    """Test that concurrent runs sharing one history list do not leak dynamic system prompts into each other."""
+    agent = Agent('test', system_prompt='Foobar')
+
+    counter = [0]
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        counter[0] += 1
+        return f'D{counter[0]}'
+
+    res_one = await agent.run('Hello')
+    history = res_one.all_messages()
+    caller_requests = [(msg, msg.parts) for msg in history if isinstance(msg, ModelRequest)]
+
+    results = await asyncio.gather(
+        agent.run('A', message_history=history),
+        agent.run('B', message_history=history),
+    )
+
+    # Each run re-evaluated to its own fresh value.
+    assert sorted(
+        part.content
+        for result in results
+        for msg in result.all_messages()
+        for part in msg.parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ) == ['D2', 'D3']
+
+    # The shared history objects are left untouched.
+    assert [
+        part.content
+        for _, parts in caller_requests
+        for part in parts
+        if isinstance(part, SystemPromptPart) and part.dynamic_ref is not None
+    ] == ['D1']
+    for msg, parts in caller_requests:
+        assert msg.parts is parts
+
+
 def test_dynamic_system_prompt_no_changes():
     """Test coverage for _reevaluate_dynamic_prompts branch where no parts are changed
     and the messages loop continues after replacement of parts.
@@ -8329,6 +8407,31 @@ def test_custom_output_type_invalid() -> None:
         agent.run_sync('Hello', output_type=int)
 
 
+def test_history_with_extensionless_image_url_dumps_after_run() -> None:
+    """A run with an extensionless `ImageUrl` in its history and in a tool return completes, and its history serializes."""
+
+    def model(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(parts=[ToolCallPart('get_file', {})])
+
+    agent = Agent(FunctionModel(model))
+
+    @agent.tool_plain
+    def get_file() -> dict[str, ImageUrl]:
+        return {'file': ImageUrl(url='https://example.com/image')}
+
+    result = agent.run_sync(
+        'hello',
+        message_history=[ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/image')])])],
+    )
+    dumped = json.loads(result.all_messages_json())
+    assert dumped[0]['parts'][0]['content'][0]['media_type'] is None
+    assert dumped[3]['parts'][0]['content']['file']['media_type'] is None
+    # The dumped history validates back into URL parts and can be run again.
+    agent.run_sync('again', message_history=ModelMessagesTypeAdapter.validate_python(dumped))
+
+
 def test_binary_content_serializable():
     agent = Agent('test')
 
@@ -8376,8 +8479,10 @@ def test_binary_content_serializable():
                 'usage': {
                     'input_tokens': 56,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 4,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -8397,6 +8502,8 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]
@@ -8453,8 +8560,10 @@ def test_image_url_serializable_missing_media_type():
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 4,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -8474,6 +8583,8 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]
@@ -8536,8 +8647,10 @@ def test_image_url_serializable():
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 4,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -8557,6 +8670,8 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             },
         ]
@@ -9191,6 +9306,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
+        pytest.param(lambda: MetaProvider(api_key='t'), marks=[requires_openai], id='meta'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
         pytest.param(lambda: NebiusProvider(api_key='t'), marks=[requires_openai], id='nebius'),
         pytest.param(
@@ -10070,7 +10186,24 @@ def test_set_mcp_sampling_model():
     assert server1.sampling_model is function_model2
     assert server2.sampling_model is function_model2
 
+    agent.model = 'test'
+    agent.set_mcp_sampling_model()
+    assert isinstance(server1.sampling_model, TestModel)
+    assert server1.sampling_model.model_name == 'test'
+    assert server2.sampling_model is server1.sampling_model
 
+    class StaticModelCapability(AbstractCapability[None]):
+        def get_model(self) -> str:
+            return 'test'
+
+    static_agent = Agent(None, capabilities=[StaticModelCapability()], deps_type=type(None), toolsets=[toolset])
+    static_agent.set_mcp_sampling_model()
+    assert isinstance(server1.sampling_model, TestModel)
+    assert server1.sampling_model.model_name == 'test'
+    assert server2.sampling_model is server1.sampling_model
+
+
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_explicit_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -10094,6 +10227,7 @@ async def test_explicit_context_manager():
             assert server2.is_running
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_implicit_context_manager():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -10113,6 +10247,7 @@ async def test_implicit_context_manager():
         assert server2.is_running
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 def test_parallel_mcp_calls():
     try:
         from fastmcp.client.transports import StdioTransport
@@ -12625,26 +12760,35 @@ async def test_dynamic_tool_in_run_call():
 
 
 @pytest.mark.parametrize(
-    'tool_choice',
+    'tool_choice,match',
     [
-        pytest.param('required', id='required'),
-        pytest.param(['get_weather'], id='list'),
+        pytest.param('required', 'prevents the agent from producing a final response', id='required'),
+        pytest.param(['get_weather'], 'names no output tool', id='function-only-list'),
     ],
 )
-async def test_tool_choice_required_or_list_rejected_in_agent_run(tool_choice: Any):
-    """Verify that statically-set tool_choice='required' or list[str] raises UserError in agent.run().
+async def test_static_tool_choice_without_output_tool_rejected_in_agent_run(tool_choice: Any, match: str):
+    """A static forcing choice with no output tool cannot finish an agent run.
 
-    These settings exclude output tools and would force a tool call on every step, preventing
-    the agent from producing a final response. Users should use ToolOrOutput, set tool_choice
-    dynamically via a capability that returns a callable from get_model_settings(), or use
-    pydantic_ai.direct.model_request for single-shot calls.
+    Plain text output does not help because the model must call one of the listed tools on every step.
     """
     model = TestModel()
     agent = Agent(model)
 
     settings: ModelSettings = {'tool_choice': tool_choice}
-    with pytest.raises(UserError, match='prevents the agent from producing a final response'):
+    with pytest.raises(UserError, match=match):
         await agent.run('Hello', model_settings=settings)
+
+
+async def test_static_tool_choice_with_output_tool_accepted_in_agent_run():
+    """A static list can finish when it names an output tool from this run's output schema."""
+
+    def return_output(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {'response': 42})])
+
+    agent = Agent(FunctionModel(return_output), output_type=ToolOutput(int))
+    result = await agent.run('Hello', model_settings={'tool_choice': ['final_result']})
+
+    assert result.output == 42
 
 
 async def test_central_content_filter_handling():

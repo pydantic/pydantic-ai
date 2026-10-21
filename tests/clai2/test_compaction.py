@@ -1,32 +1,56 @@
 """The built-in `compaction` plugin, loaded with `load_plugin` and driven through one `chat()` run."""
 
 import io
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.compaction import FallbackCompaction, SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai.usage import RequestUsage
+from pydantic_ai_harness.compaction import (
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+    estimate_message_tokens,
+)
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
-from pydantic_clai2.builtin_plugins import compaction as compaction_plugin
 from pydantic_clai2.builtin_plugins.compaction import (
     CompactionPlugin,
     CompactionSettings,
     CompactionSource,
     build_chain,
 )
-from pydantic_clai2.commands import Commands
+from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, Transcript, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.ui.menus import dialogs
+from tests.clai2.menu_script import Script, pick, typed
 from tests.clai2.test_app_edges import inputs
 
 
@@ -48,11 +72,15 @@ def summary_prompt(summary_run: Sequence[ModelMessage]) -> str:
     return prompt.content
 
 
+REPLY = 'hi, ' + 'here is what I found. ' * 10
+"""Long enough that a short summary of it makes the history smaller."""
+
+
 def two_turns() -> list[ModelMessage]:
-    """Two request/response pairs; the chain always keeps the newest pair intact."""
+    """Two request/response pairs, the second prompt long enough that summarizing it saves tokens."""
     return [
         ModelRequest.user_text_prompt('hello there'),
-        ModelResponse(parts=[TextPart('hi')]),
+        ModelResponse(parts=[TextPart(REPLY)]),
         ModelRequest.user_text_prompt('and again'),
         ModelResponse(parts=[TextPart('yo')]),
     ]
@@ -75,12 +103,16 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
     with capture_run_messages() as summary_run:
         notice = await plugin.commands.execute_async(f'/compact {focus}')
     prompt = summary_prompt(summary_run)
-    assert 'User: hello there\nAssistant: hi\nUser: and again' in prompt
+    assert (
+        f'<message role="user">\nhello there\n</message>\n'
+        f'<message role="assistant">\n{REPLY}\n</message>\n'
+        '<message role="user">\nand again\n</message>'
+    ) in prompt
     if focus:
         assert prompt.endswith(f'Give particular weight to: {focus}')
     else:
         assert 'Give particular weight to:' not in prompt
-    assert notice.startswith('Compacted 4 messages down to 3; about ') and notice.endswith(' tokens saved.')
+    assert notice == 'Compacted 4 messages down to 3; about 48 of 60 tokens saved.'
     summary, first_request, last_response = transcript.messages
     assert isinstance(summary, ModelRequest) and isinstance(first_request, ModelRequest)
     [summary_part], [request_part] = summary.parts, first_request.parts
@@ -92,16 +124,84 @@ async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str)
 
 
 async def test_compact_says_when_there_is_nothing_to_do() -> None:
-    assert await make_plugin().commands.execute_async('/compact') == 'Nothing to compact: the conversation is empty.'
+    plugin = make_plugin()
+    assert plugin.commands.runs_live('/compact'), 'a long summary must keep the spinner up and stay cancellable'
+    assert await plugin.commands.execute_async('/compact') == 'Nothing to compact: the conversation is empty.'
     short = Transcript(messages=[ModelRequest.user_text_prompt('hi')], model='test')
     plugin = make_plugin(short)
     with capture_run_messages() as summary_run:
         notice = await plugin.commands.execute_async('/compact')
-    assert notice == 'Nothing to compact: the last 50,000 tokens are always kept.' and not summary_run
+    assert notice == 'Nothing to compact: compacting would not make the conversation smaller.' and not summary_run
     with pytest.raises(ValueError, match='Choose a model first'):
         await make_plugin(
             Transcript(messages=[ModelRequest.user_text_prompt('hi')]), protected_tokens=0
         ).commands.execute_async('/compact')
+
+
+def tool_rounds(rounds: int, return_chars: int) -> list[ModelMessage]:
+    """One prompt, then `rounds` tool calls and returns of `return_chars` characters each, then an answer."""
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('fix the bug ' * 50)]
+    for index in range(rounds):
+        messages.append(ModelResponse(parts=[ToolCallPart('read', {'n': index}, tool_call_id=f'call{index}')]))
+        messages.append(ModelRequest(parts=[ToolReturnPart('read', 'x' * return_chars, tool_call_id=f'call{index}')]))
+    messages.append(ModelResponse(parts=[TextPart('done')]))
+    return messages
+
+
+@pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
+async def test_compact_shrinks_a_history_just_over_the_protected_tail(strategy: str) -> None:
+    """186 messages a little over 50,000 tokens once became 187 with nothing saved; now half is compacted."""
+    before = tool_rounds(92, 2160)
+    assert len(before) == 186 and sum(estimate_message_tokens(before)) == 50_107
+    transcript = Transcript(messages=before, model=TestModel(custom_output_text='the gist'))
+    notice = await make_plugin(transcript, strategy=strategy).commands.execute_async('/compact')
+    after = transcript.messages
+    saved = 50_107 - sum(estimate_message_tokens(after))
+    assert len(after) < 100 and 24_000 < saved < 25_053
+    assert notice == f'Compacted 186 messages down to {len(after)}; about {saved:,} of 50,107 tokens saved.'
+
+
+async def test_compact_keeps_the_history_when_the_summary_is_no_smaller() -> None:
+    before = two_turns()
+    transcript = Transcript(messages=before, model=TestModel(custom_output_text='gist ' * 500))
+    with capture_run_messages() as summary_run:
+        notice = await make_plugin(transcript, protected_tokens=0).commands.execute_async('/compact')
+    assert notice == 'Nothing to compact: compacting would not make the conversation smaller.'
+    assert summary_run, 'the summary was written, then discarded'
+    assert transcript.messages == before and len(before) == 4
+
+
+async def test_compact_counts_tokens_the_provider_reported() -> None:
+    """Thinking that came back without text is most of this history; the protected tail and report count it."""
+    history: list[ModelMessage] = [ModelRequest.user_text_prompt('start')]
+    for turn in range(6):
+        history.append(
+            ModelResponse(
+                parts=[ThinkingPart(content='', signature='sig'), TextPart('ok')],
+                usage=RequestUsage(input_tokens=100 + 10_000 * turn, output_tokens=9_000),
+            )
+        )
+        history.append(ModelRequest.user_text_prompt(f'next {turn}'))
+    transcript = Transcript(messages=history, model=TestModel(custom_output_text='the gist'))
+    notice = await make_plugin(transcript, protected_tokens=15_000).commands.execute_async('/compact')
+    assert notice == 'Compacted 13 messages down to 6; about 39,990 of 59,002 tokens saved.'
+    summary, first, *tail = transcript.messages
+    assert isinstance(summary.parts[0], SystemPromptPart) and first is history[0]
+    assert tail == history[-4:], 'at least the last 15,000 reported tokens are kept verbatim'
+
+
+async def test_compact_is_traced_with_the_global_agent_instrumentation() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
+    try:
+        transcript = Transcript(messages=two_turns(), model=TestModel(custom_output_text='the gist'))
+        await make_plugin(transcript, protected_tokens=0).commands.execute_async('/compact')
+    finally:
+        Agent.instrument_all(False)
+    names = {span.name for span in exporter.get_finished_spans()}
+    assert {'compact_messages', 'invoke_agent summarizing_compaction'} <= names
 
 
 def assert_truncated_without_a_summary(transcript: Transcript) -> None:
@@ -225,7 +325,7 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
     agent = Agent(TestModel(custom_output_text='the gist'))
     session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
     await session.prompt('first')
-    await session.prompt('second')
+    await session.prompt('second ' * 20)
     before = session.messages
     plugin = make_plugin(session, strategy=strategy, protected_tokens=0)
 
@@ -238,8 +338,73 @@ async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: s
     assert restored.messages == session.messages
 
 
+async def test_gauge_marks_its_reading_estimated_until_a_response_reports_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first request's reading counts characters and no tool definitions, so it reads `~`."""
+    inputs(monkeypatch, ['hi', '/inspect', 'again', '/exit'])
+    readings: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        readings.append(shell.status.text())
+        yield 'hello'
+
+    shell = create_shell(
+        Agent(FunctionModel(stream_function=stream)),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(
+            PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
+        ),
+        project=ProjectSettings(),
+    )
+
+    def inspect(args: list[str]) -> str:
+        readings.append(shell.status.text())
+        return ''
+
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.loader.load_all()
+    try:
+        await shell.run()
+    finally:
+        await shell.loader.close('exit')
+    during_first, after_first, during_second = (reading.split('context: ')[1].split(' ')[0] for reading in readings)
+    assert during_first.startswith('~')
+    assert not after_first.startswith('~'), 'the response reported its usage'
+    assert not during_second.startswith('~'), 'anchored on the first response'
+
+
+async def test_gauge_clears_the_estimate_mark_within_a_turn() -> None:
+    """After a tool call, the turn's next request is anchored on the first response's usage."""
+    estimated: list[bool] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        estimated.append(plugin.host.status.context_estimated)
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='work', json_args='{}')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool_plain
+    def work() -> str:
+        return 'worked'
+
+    session = Session(agent, deps=None)
+    plugin = make_plugin(session)
+    session.plugins = plugin.capabilities
+    await session.prompt('hi')
+    assert estimated == [True, False]
+
+
 async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    inputs(monkeypatch, ['first', 'second', '/compact don\'t lose the "auth" notes', '/plugins list', '/exit'])
+    inputs(monkeypatch, ['first', 'second ' * 20, '/compact don\'t lose the "auth" notes', '/plugins list', '/exit'])
     output = io.StringIO()
     await chat(
         Agent(TestModel()),
@@ -297,16 +462,31 @@ async def test_configure_outside_a_terminal_explains_how() -> None:
     assert 'from a terminal' in await make_plugin().plugin.configure()
 
 
-@pytest.mark.parametrize('messages', [['Saved Threshold.'], []])
-async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, messages: list[str]) -> None:
-    host = PluginHost[None](name='compaction', console=Console(file=io.StringIO(), force_terminal=True), settings={})
+@pytest.mark.parametrize(
+    ('script', 'shown', 'saves'),
+    [
+        (
+            Script([pick('threshold'), MenuResult(cancelled=True)], [], [typed('0.5')]),
+            'Saved Threshold.',
+            [{'threshold': 0.5}],
+        ),
+        (Script([MenuResult(cancelled=True)], [], []), 'Compaction settings: nothing changed.', []),
+    ],
+)
+async def test_configure_shows_the_settings_menu(
+    monkeypatch: pytest.MonkeyPatch, script: Script, shown: str, saves: list[dict[str, JsonValue]]
+) -> None:
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[None](
+        name='compaction',
+        console=Console(file=io.StringIO(), force_terminal=True),
+        settings={},
+        save_settings=saved.append,
+    )
     plugin = load_plugin(CompactionPlugin, host).plugin
-
-    async def run_worker(work: Callable[[], list[str]]) -> list[str]:
-        return messages
-
-    monkeypatch.setattr(compaction_plugin, 'run_worker', run_worker)
-    assert await plugin.configure() == ('\n'.join(messages) or 'No compaction settings changed.')
+    monkeypatch.setattr(dialogs, 'RUNNERS', script.runners)
+    assert await plugin.configure() == shown
+    assert saved == saves
 
 
 async def test_configured_settings_rebuild_the_chain_for_the_next_turn(

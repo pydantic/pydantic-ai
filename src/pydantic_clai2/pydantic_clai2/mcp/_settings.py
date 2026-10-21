@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from string import Template
 from typing import Annotated, Literal
 
+import fastmcp
 import httpx
+from mcp.shared._httpx_utils import create_mcp_http_client
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, HttpUrl, TypeAdapter, model_validator
 
 ServerName = Annotated[str, Field(pattern=r'^[A-Za-z][A-Za-z0-9-]{0,63}$')]
@@ -17,9 +19,10 @@ OAUTH_TIMEOUT = 330.0
 """Seconds to allow for the initialize handshake when it includes a browser sign-in."""
 
 # FastMCP logs the OAuth URL and callback server at INFO through its own handler, over the prompt.
-# The browser opening is the signal; an explicit `FASTMCP_LOG_LEVEL` still wins for debugging.
+# The browser opening is the signal; an explicit `FASTMCP_LOG_LEVEL` still wins for debugging. (FastMCP sets
+# its logger's level as it's imported, which is why it's imported above: imported later, it would undo this.)
 if 'FASTMCP_LOG_LEVEL' not in os.environ:  # pragma: no branch
-    logging.getLogger('fastmcp').setLevel(logging.WARNING)
+    logging.getLogger(fastmcp.__name__).setLevel(logging.WARNING)
 
 
 class ServerSettings(BaseModel):
@@ -61,10 +64,6 @@ class RemoteServer(ServerSettings):
         if self.url.username or self.url.password:
             raise ValueError('OAuth URLs cannot carry credentials')
         return self
-
-    def init_timeout(self) -> float | None:
-        """The configured timeout, or enough time for a browser sign-in when using OAuth."""
-        return self.timeout or (OAUTH_TIMEOUT if self.auth else None)
 
 
 class HTTPServer(RemoteServer):
@@ -112,12 +111,15 @@ def http_client(
 ) -> httpx.AsyncClient:
     """Do not let a configured endpoint redirect MCP requests to another server.
 
+    The MCP SDK builds the client, so it is the HTTPX the installed FastMCP drives: legacy `httpx` under
+    FastMCP 3, `httpx2` under FastMCP 4, where a browser sign-in (`SignIn`) is an `httpx2.Auth` that a legacy
+    client rejects. The annotations name legacy `httpx`, the generation this workspace locks.
     FastMCP passes `follow_redirects=True` to every client factory; it is accepted and overridden.
     """
     del follow_redirects
-    return httpx.AsyncClient(
-        headers=headers, timeout=timeout or httpx.Timeout(30, read=300), auth=auth, follow_redirects=False
-    )
+    client = create_mcp_http_client(headers=headers, timeout=timeout, auth=auth)
+    client.follow_redirects = False
+    return client
 
 
 def references(server: Server) -> list[str]:

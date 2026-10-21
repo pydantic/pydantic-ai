@@ -162,6 +162,7 @@ def test_callback_replacement_events_serialize() -> None:
                 'usd': '0.50',
                 'priced': True,
                 'budgets': [],
+                'failed_attempt': False,
                 'event_kind': 'capability',
                 'kind': 'spend_limits.recorded',
             },

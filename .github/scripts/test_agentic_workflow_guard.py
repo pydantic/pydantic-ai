@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -26,13 +27,16 @@ from agentic_workflow_guard import (
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
     check_compiler_versions,
+    check_daily_aic_guardrail,
     check_dangling_needs,
     check_job_timeout_env,
     check_lock_regenerated,
+    check_logfire_wiring,
     check_prompt_paths,
     check_provider_engine_config,
     check_provider_health_identity,
     check_provider_health_monitor,
+    check_provider_health_recovery_wiring,
     check_provider_health_wiring,
     check_safe_output_job_max,
     check_timeout_declared,
@@ -41,6 +45,17 @@ from agentic_workflow_guard import (
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 WORKFLOWS_DIR = REPO_ROOT / '.github' / 'workflows'
+
+
+def test_ci_review_compiled_membership_admits_installed_app_without_widening_roles():
+    lock = yaml.safe_load((WORKFLOWS_DIR / 'pydantic-ai-pr-review.lock.yml').read_text(encoding='utf-8'))
+    steps = lock['jobs']['pre_activation']['steps']
+    check_membership = next(step for step in steps if step.get('id') == 'check_membership')
+
+    assert check_membership['env'] == {
+        'GH_AW_REQUIRED_ROLES': 'admin,maintainer,write',
+        'GH_AW_ALLOWED_BOTS': 'pydantic-docs',
+    }
 
 
 def _write(path: Path, text: str) -> Path:
@@ -864,6 +879,64 @@ jobs:
     assert check_ai_credits_accounting(lock) == []
 
 
+# --- daily AI-credits guardrail (the artifact scan that drained `GITHUB_TOKEN`) -
+
+
+def test_daily_aic_guardrail_rejects_the_compiled_default(tmp_path: Path):
+    """The shape every lock carried before `max-daily-ai-credits: -1`."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    env:
+      GH_AW_MAX_DAILY_AI_CREDITS: ${{ vars.GH_AW_DEFAULT_MAX_DAILY_AI_CREDITS || '5000' }}
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+""",
+    )
+
+    violations = check_daily_aic_guardrail(lock)
+
+    assert [v.check for v in violations] == ['daily-aic-guardrail']
+    assert '`max-daily-ai-credits: -1`' in violations[0].message
+
+
+def test_daily_aic_guardrail_rejects_a_disable_set_only_in_an_import(tmp_path: Path):
+    """An imported `-1` drops the threshold env but still compiles the step."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+""",
+    )
+
+    assert [v.check for v in check_daily_aic_guardrail(lock)] == ['daily-aic-guardrail']
+
+
+def test_daily_aic_guardrail_accepts_a_lock_without_the_step(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check workflow lock file
+        id: check-lock-file
+""",
+    )
+
+    assert check_daily_aic_guardrail(lock) == []
+
+
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):
     lock = _write(tmp_path / 'w.lock.yml', '# gh-aw-metadata: {"compiler_version":"v0.83.4"}\njobs: {}\n')
 
@@ -1087,6 +1160,49 @@ def test_main_exits_nonzero_and_prints_each_violation(
     assert '1 agentic-workflow policy violation(s).' in err
 
 
+def test_zai_workflow_requires_logfire_import(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-attention-triage.md',
+        '---\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n',
+    )
+    lock = _write(source.with_suffix('.lock.yml'), 'env: {}\n')
+
+    assert {violation.check for violation in check_logfire_wiring(workflows)} == {
+        'logfire-import',
+        'logfire-compiled',
+        'logfire-network',
+    }
+
+    _write(
+        source,
+        source.read_text(encoding='utf-8').replace(
+            '  - shared/engine-zai.md', '  - shared/engine-zai.md\n  - shared/otel-logfire.md'
+        ),
+    )
+    compiled_lock = """env:
+  OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev
+  OTEL_EXPORTER_OTLP_HEADERS: Authorization=${{ secrets.LOGFIRE_TOKEN }}
+  GH_AW_OTLP_ENDPOINTS: '[{"url":"https://logfire-api.pydantic.dev"}]'
+jobs:
+  agent:
+    steps:
+      - env:
+          GH_AW_ALLOWED_DOMAINS: logfire-api.pydantic.dev,logfire-eu.pydantic.dev,logfire-us.pydantic.dev,logfire-api.pydantic.info,logfire-eu.pydantic.info,logfire-us.pydantic.info
+"""
+    _write(lock, compiled_lock)
+    assert check_logfire_wiring(workflows) == []
+
+    _write(lock, compiled_lock.replace(',logfire-us.pydantic.info', ''))
+    assert [violation.check for violation in check_logfire_wiring(workflows)] == ['logfire-network']
+
+    _write(lock, 'env:\n  OTEL_EXPORTER_OTLP_ENDPOINT: https://logfire-api.pydantic.dev\n')
+    assert {violation.check for violation in check_logfire_wiring(workflows)} == {
+        'logfire-compiled',
+        'logfire-network',
+    }
+
+
 # --- the live repository ------------------------------------------------------
 
 
@@ -1302,6 +1418,95 @@ jobs:
     assert all(violation.path in (str(source), str(lock)) for violation in violations)
 
 
+def test_provider_health_recovery_wiring_requires_incident_bound_dispatch(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+---
+Prompt
+""",
+    )
+    health = _write(
+        workflows / 'shared' / 'provider-health.md',
+        "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
+    )
+
+    assert check_provider_health_recovery_wiring(workflows) == []
+
+    source.write_text(
+        source.read_text(encoding='utf-8').replace('required: false', 'required: true', 1), encoding='utf-8'
+    )
+    health.write_text('job: {}\n', encoding='utf-8')
+    assert {violation.path for violation in check_provider_health_recovery_wiring(workflows)} == {
+        str(source),
+        str(health),
+    }
+
+
+def test_provider_health_recovery_wiring_allows_ui_pull_request_only_model_canary(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'pydantic-ai-ui-security-review.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  workflow_dispatch: {}
+---
+Prompt
+""",
+    )
+    _write(
+        workflows / 'shared' / 'provider-health.md',
+        "job:\n  env:\n    PYDANTIC_AI_RECOVERY_ISSUE: ${{ inputs.recovery_issue || '' }}\n",
+    )
+
+    assert check_provider_health_recovery_wiring(workflows) == []
+
+    ordinary = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: Z.AI
+imports:
+  - shared/engine-zai.md
+on:
+  workflow_dispatch: {}
+---
+Prompt
+""",
+    )
+    violations = check_provider_health_recovery_wiring(workflows)
+    assert [(violation.path, violation.check) for violation in violations] == [
+        (str(ordinary), 'provider-health-recovery-input')
+    ]
+
+    ordinary.write_text(
+        ordinary.read_text(encoding='utf-8').replace(
+            'workflow_dispatch: {}',
+            'workflow_dispatch:\n    inputs:\n      recovery_issue:\n        type: number\n        required: false',
+            1,
+        ),
+        encoding='utf-8',
+    )
+    violations = check_provider_health_recovery_wiring(workflows)
+    assert [(violation.path, violation.check) for violation in violations] == [
+        (str(ordinary), 'provider-health-recovery-input')
+    ]
+
+
 def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     source = _write(
@@ -1481,7 +1686,9 @@ on:
     workflows: [Agent A, Agent B, Agent Provider Health]
     types: [completed]
   schedule: [{cron: '0 */6 * * *'}]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      recover_issue: {type: number, required: true}
 concurrency:
   group: provider-health
   cancel-in-progress: false
@@ -1491,7 +1698,8 @@ jobs:
       github.repository == 'pydantic/pydantic-ai' &&
       (github.event_name != 'workflow_run' ||
        github.event.workflow_run.event != 'pull_request' ||
-       github.event.workflow_run.head_repository.full_name == github.repository)
+       (github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.actor.login != 'dependabot[bot]'))
     env:
       PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
@@ -1509,6 +1717,7 @@ jobs:
         uses: actions/download-artifact@sha
         with:
           name: agent
+          run-id: ${{ github.event.workflow_run.id }}
       - if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
         run: |
           mkdir -p agent
@@ -1519,17 +1728,26 @@ jobs:
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: >-
           python3 .github/scripts/agent_provider_health.py monitor
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$RUN_ID"
           --run-attempt "$RUN_ATTEMPT"
-          --agent-artifact agent/agent-stdio.log
+          --conclusion "$CONCLUSION"
+          --health-artifact provider-health/provider-health.json
+          --agent-artifact agent
       - if: github.event_name == 'schedule'
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
         run: python3 .github/scripts/agent_provider_health.py monitor
       - if: github.event_name == 'workflow_dispatch'
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
-        run: python3 .github/scripts/agent_provider_health.py monitor --recover-issue 1
-""",
+          ISSUE_NUMBER: ${{ inputs.recover_issue }}
+        run: |
+          python3 .github/scripts/agent_provider_health.py monitor \
+            --repository "$GITHUB_REPOSITORY" \
+            --recover-issue "$ISSUE_NUMBER"
+  """,
     )
 
     violations = check_provider_health_monitor(workflows)
@@ -1578,10 +1796,15 @@ jobs:
     _write(
         monitor,
         trusted_config.replace(
-            'python3 .github/scripts/agent_provider_health.py monitor\n'
+            '        run: >-\n'
+            '          python3 .github/scripts/agent_provider_health.py monitor\n'
+            '          --repository "$GITHUB_REPOSITORY"\n'
+            '          --run-id "$RUN_ID"\n'
             '          --run-attempt "$RUN_ATTEMPT"\n'
-            '          --agent-artifact agent/agent-stdio.log',
-            'bash ./agent/payload',
+            '          --conclusion "$CONCLUSION"\n'
+            '          --health-artifact provider-health/provider-health.json\n'
+            '          --agent-artifact agent',
+            '        run: bash ./agent/payload',
             1,
         ),
     )
@@ -1612,8 +1835,28 @@ jobs:
     }
 
 
-def test_provider_health_monitor_rejects_credentialless_fork_runs(tmp_path: Path):
-    """The ungated monitor that opened #9753 must not pass CI policy checks."""
+@pytest.mark.parametrize(
+    ('gate', 'weakened_gate'),
+    [
+        # The ungated monitor that opened #9753 on a fork run.
+        (
+            "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
+            "      (github.event_name != 'workflow_run' ||\n"
+            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
+            "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
+            "if: github.repository == 'pydantic/pydantic-ai'",
+        ),
+        # The fork-only gate that opened #10181 on a Dependabot run.
+        (
+            '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
+            "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
+            '       github.event.workflow_run.head_repository.full_name == github.repository)',
+        ),
+    ],
+)
+def test_provider_health_monitor_rejects_credentialless_runs(tmp_path: Path, gate: str, weakened_gate: str):
+    """A monitor that reconciles runs without Actions secrets must not pass CI policy checks."""
     workflows = tmp_path / '.github' / 'workflows'
     for source in WORKFLOWS_DIR.glob('pydantic-ai-*.md'):
         _write(workflows / source.name, source.read_text(encoding='utf-8'))
@@ -1621,19 +1864,10 @@ def test_provider_health_monitor_rejects_credentialless_fork_runs(tmp_path: Path
     monitor = _write(workflows / 'agent-provider-health.yml', trusted_config)
     assert check_provider_health_monitor(workflows) == []
 
-    _write(
-        monitor,
-        trusted_config.replace(
-            "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
-            "      (github.event_name != 'workflow_run' ||\n"
-            "       github.event.workflow_run.event != 'pull_request' ||\n"
-            '       github.event.workflow_run.head_repository.full_name == github.repository)',
-            "if: github.repository == 'pydantic/pydantic-ai'",
-            1,
-        ),
-    )
+    assert gate in trusted_config
+    _write(monitor, trusted_config.replace(gate, weakened_gate, 1))
     assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
-        'provider-health-monitor-fork-gate'
+        'provider-health-monitor-credential-gate'
     ]
 
 

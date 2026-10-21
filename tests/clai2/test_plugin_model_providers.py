@@ -13,11 +13,11 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2._app import _ModelResolver  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Commands, set_completions
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, Plugin, PluginHost, SessionStart, SettingsProvider, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, model_settings_command
@@ -123,7 +123,6 @@ async def test_plugin_models_take_the_settings_from_providers_controls(tmp_path:
     context = CommandContext(
         settings=Settings(model=None),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
         settings_model=loader.settings_model,
     )
@@ -141,7 +140,7 @@ async def test_plugin_models_take_the_settings_from_providers_controls(tmp_path:
 
 async def test_resolver_routes_only_prefixed_names_to_plugins() -> None:
     echo_test = provider('echo-test')
-    resolver = _ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: {'echo-test': echo_test})
+    resolver = ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: {'echo-test': echo_test})
     assert await resolver.resolve('echo-test') == 'echo-test'
     assert await resolver.resolve('other:x') == 'other:x'
     model = await resolver.resolve('echo-test:fast')
@@ -171,7 +170,6 @@ def test_completions_and_the_add_model_menu_offer_plugin_models(tmp_path: Path) 
     context = CommandContext(
         settings=Settings(model=None),
         store=SettingsStore(tmp_path / 'config.db'),
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: None,
         plugin_models=lambda: ('echo-test:hello',),
     )
@@ -193,7 +191,7 @@ async def test_shell_runs_a_plugin_model(tmp_path: Path, monkeypatch: pytest.Mon
         async def prompt_async(self, label: str, **kwargs: object) -> str:
             return values.pop(0)
 
-    monkeypatch.setattr('pydantic_clai2._app.PromptSession', Prompt)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.terminal.PromptSession', Prompt)
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir(parents=True, exist_ok=True)
     (store.plugins_dir / 'echo.py').write_text(PLUGIN.replace('{PREFIX}', 'plugin'))

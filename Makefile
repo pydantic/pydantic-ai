@@ -19,6 +19,7 @@ install-all-python: ## Install and synchronize an interpreter for every python v
 	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 	UV_PROJECT_ENVIRONMENT=.venv314 uv sync --python 3.14 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
+	UV_PROJECT_ENVIRONMENT=.venv315 uv sync --python 3.15 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
@@ -73,11 +74,12 @@ test: ## Run tests without coverage (fast, for local dev)
 	COLUMNS=150 $(if $(PYTEST_PYTHON),UV_PROJECT_ENVIRONMENT=.venv$(subst .,,$(PYTEST_PYTHON))) uv run $(if $(PYTEST_PYTHON),--python $(PYTEST_PYTHON)) pytest -n auto --dist=loadgroup --durations=20
 
 .PHONY: test-all-python
-test-all-python: ## Run tests on Python 3.11 to 3.14
+test-all-python: ## Run tests on Python 3.11 to 3.15
 	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv314 uv run --python 3.14 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv315 uv run --python 3.15 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -97,6 +99,10 @@ integration-localstack: ## Run the harness LocalStack tests (needs Docker and LO
 .PHONY: integration-mongodb
 integration-mongodb: ## Run the harness MongoDB tests (`docker run -d -p 27017:27017 mongo:8`, or set MONGODB_TEST_URL)
 	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/mongodb
+
+.PHONY: integration-postgres
+integration-postgres: ## Run the harness Postgres tests (`docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:17`, or set POSTGRES_TEST_URL)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/postgres
 
 .PHONY: integration-redis
 integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)

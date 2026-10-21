@@ -15,37 +15,40 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.realtime._lifecycle import (
-    LIFECYCLE_EVENT_TYPES,
     InputAdded,
     InputLost,
     LifecycleEvent,
+    OutputItemDetails,
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
-    UserTurnDiscarded,
+    UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
 )
 
 from ..conftest import try_import
+from ..realtime_connections import lifecycle_events
 
 with try_import() as imports_successful:
     from pydantic_ai.messages import BinaryAudio
     from pydantic_ai.realtime._openai_lifecycle import OpenAILifecycle
-    from pydantic_ai.realtime._openai_protocol import response_metadata_answers, response_request_metadata
+    from pydantic_ai.realtime._openai_protocol import (
+        ACTIVE_RESPONSE_RETRIES,
+        response_metadata_answers,
+        response_request_metadata,
+    )
     from pydantic_ai.realtime.codec import (
         CancelResponse,
         CommitAudio,
         CreateResponse,
         RealtimeCodecEvent,
-        ResponseDone,
         TextContext,
         ToolResult,
     )
     from pydantic_ai.realtime.openai import OpenAIRealtimeConnection
 
     from .test_openai import FakeWebSocket
-    from .test_session import FakeRealtimeConnection
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
@@ -59,8 +62,10 @@ def created(response_id: str | None, *, answers: str | None = None) -> dict[str,
     return {'type': 'response.created', 'response': response}
 
 
-def done(response_id: str | None, *, status: str = 'completed') -> dict[str, Any]:
+def done(response_id: str | None, *, status: str = 'completed', reason: str | None = None) -> dict[str, Any]:
     response: dict[str, Any] = {'object': 'realtime.response', 'status': status, 'output': []}
+    if reason is not None:
+        response['status_details'] = {'type': status, 'reason': reason}
     if response_id is not None:
         response['id'] = response_id
     return {'type': 'response.done', 'response': response}
@@ -94,7 +99,7 @@ def frames(*frames: dict[str, Any]) -> list[str]:
 
 def describe(event: RealtimeCodecEvent | LifecycleEvent) -> LifecycleEvent | str:
     """A lifecycle event as itself, and a codec event as the name of its type."""
-    return event if isinstance(event, LIFECYCLE_EVENT_TYPES) else type(event).__name__
+    return event if isinstance(event, LifecycleEvent) else type(event).__name__
 
 
 async def codec(connection: OpenAIRealtimeConnection) -> list[RealtimeCodecEvent]:
@@ -108,7 +113,7 @@ class Stream:
     def __init__(self, *incoming: dict[str, Any], **kwargs: Any) -> None:
         self.ws = FakeWebSocket(frames(*incoming))
         self.connection = OpenAIRealtimeConnection(self.ws, **kwargs)  # pyright: ignore[reportArgumentType]
-        self._events = aiter(self.connection._lifecycle_events())  # pyright: ignore[reportPrivateUsage]
+        self._events = aiter(lifecycle_events(self.connection))
 
     def feed(self, *incoming: dict[str, Any]) -> None:
         """More frames from the server, read after those already scripted."""
@@ -230,7 +235,7 @@ async def test_a_push_to_talk_commit_starts_and_ends_its_turn_and_a_clear_discar
             UserTurnEnded(turn_id='item_u1'),
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u2'),
-            UserTurnDiscarded(turn_id='item_u2'),
+            UserTurnClosed(turn_id='item_u2'),
             'RealtimeSessionErrorEvent',
         ]
     )
@@ -401,6 +406,28 @@ async def test_an_unreadable_terminal_still_ends_the_response_it_closed() -> Non
     )
 
 
+async def test_an_unreadable_terminal_ends_a_response_created_without_an_id() -> None:
+    stream = Stream(
+        created(None),
+        {'type': 'response.done', 'response': 'garbled'},
+        created('resp_2'),
+        done('resp_2'),
+    )
+    assert await stream.rest() == snapshot(
+        [
+            ResponseStarted(response_id='pydantic_ai_response_1'),
+            ResponseEnded(response_id='pydantic_ai_response_1', status='lost'),
+            'RealtimeSessionErrorEvent',
+            ResponseStarted(response_id='resp_2'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_2', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
 async def test_a_malformed_frame_only_the_lifecycle_reads_is_ignored() -> None:
     stream = Stream({'type': 'input_audio_buffer.committed'}, created('resp_1'), done('resp_1'))
     assert await stream.rest() == snapshot(
@@ -525,7 +552,7 @@ async def test_a_closed_connection_loses_what_was_open() -> None:
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u1'),
             ResponseEnded(response_id='resp_1', status='lost'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeSessionErrorEvent',
         ]
     )
@@ -588,7 +615,7 @@ async def test_a_reconnect_settles_what_the_new_socket_will_never_answer() -> No
             InputAdded(input_id=2),
             InputLost(input_ids=(1,)),
             ResponseEnded(response_id='resp_2', status='lost'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeSessionReconnectEvent',
             InputLost(input_ids=(3,)),
             'RealtimeSessionErrorEvent',
@@ -633,10 +660,8 @@ async def test_a_reconnect_ends_the_spoken_turns_whose_transcript_it_loses(trans
         reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
         **kwargs,
     )
-    events = [event for event in await stream.rest() if isinstance(event, UserTurnDiscarded)]
-    assert events == (
-        [UserTurnDiscarded(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u2')] if transcribes else []
-    )
+    events = [event for event in await stream.rest() if isinstance(event, UserTurnClosed)]
+    assert events == ([UserTurnClosed(turn_id='item_u1'), UserTurnClosed(turn_id='item_u2')] if transcribes else [])
 
 
 async def test_a_reconnect_loses_an_unstarted_request_the_caller_cancelled() -> None:
@@ -657,12 +682,6 @@ async def test_a_reconnect_loses_an_unstarted_request_the_caller_cancelled() -> 
         ]
     )
     assert replacement.sent == []
-
-
-async def test_a_version_1_connection_yields_its_codec_events_as_its_lifecycle_stream() -> None:
-    connection = FakeRealtimeConnection([ResponseDone()])
-    assert connection._lifecycle_version == 1  # pyright: ignore[reportPrivateUsage]
-    assert [event async for event in connection._lifecycle_events()] == [ResponseDone()]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_response_request_metadata() -> None:
@@ -713,7 +732,7 @@ async def test_speech_starts_that_never_stopped_merge_into_the_next() -> None:
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_a'),
             'RealtimeInputSpeechStartEvent',
-            UserTurnDiscarded(turn_id='item_a'),
+            UserTurnClosed(turn_id='item_a'),
             UserTurnStarted(turn_id='item_b'),
             'RealtimeInputSpeechEndEvent',
             UserTurnEnded(turn_id='item_b'),
@@ -737,9 +756,9 @@ async def test_xai_places_a_spoken_turn_when_it_adds_its_item() -> None:
         [
             'RealtimeInputSpeechStartEvent',
             UserTurnStarted(turn_id='item_u1'),
-            UserTurnEnded(turn_id='item_u1'),
+            UserTurnEnded(turn_id='item_u1', still_speaking=True),
             ResponseStarted(response_id='resp_1', user_turn_id='item_u1'),
-            UserTurnDiscarded(turn_id='item_u1'),
+            UserTurnClosed(turn_id='item_u1'),
             'RealtimeInputSpeechEndEvent',
             'RealtimeInputSpeechEndEvent',
             'ResponseDone',
@@ -751,51 +770,100 @@ async def test_xai_places_a_spoken_turn_when_it_adds_its_item() -> None:
     )
 
 
-async def test_a_request_refused_for_a_response_the_provider_started_is_answered_by_it() -> None:
-    """The refusal arrives before the server-VAD response's `response.created`, which answers the input."""
-    refused = refusal('pydantic_ai.response.0')
+def active_refusal(event_id: str) -> dict[str, Any]:
+    refused = refusal(event_id)
     refused['error']['code'] = 'conversation_already_has_active_response'
-    stream = Stream(refused, created('resp_vad'), done('resp_vad'))
+    return refused
+
+
+def requests_sent(ws: FakeWebSocket) -> list[dict[str, Any]]:
+    return [frame for frame in map(json.loads, ws.sent) if frame['type'] == 'response.create']
+
+
+SPOKEN_TURN = (
+    {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u'},
+    {'type': 'conversation.item.added', 'item': {'id': 'item_u', 'type': 'message', 'role': 'user'}},
+)
+"""A spoken turn server VAD commits, which the response it starts on its own answers."""
+
+OUR_ITEM_ADDED = {
+    'type': 'conversation.item.added',
+    'item': {'id': 'pydantic_ai_item_0', 'type': 'message', 'role': 'user'},
+}
+
+
+async def test_a_request_refused_after_the_response_that_overtook_it_is_asked_again() -> None:
+    """As recorded live: server VAD starts a response before our item is added, and refuses our request after it ends.
+
+    That response never saw the input, so it answers nothing of ours: the request is asked for again, and the
+    response that starts answers the input. The refusal is handled, so it is reported to nobody.
+    """
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        OUR_ITEM_ADDED,
+        done('resp_vad'),
+        active_refusal('pydantic_ai.response.0'),
+        created('resp_2', answers='0'),
+        done('resp_2'),
+    )
     await stream.connection.send('Hello?')
-    assert await stream.rest() == snapshot(
+    events = await stream.rest()
+    assert [event for event in events if isinstance(event, (ResponseStarted, InputAdded)) or 'Error' in str(event)] == (
+        snapshot(
+            [
+                ResponseStarted(response_id='resp_vad', user_turn_id='item_u'),
+                InputAdded(input_id=0),
+                ResponseStarted(response_id='resp_2', answers=(0,)),
+                'RealtimeSessionErrorEvent',
+            ]
+        )
+    )
+    assert [request['event_id'] for request in requests_sent(stream.ws)] == [
+        'pydantic_ai.response.0',
+        'pydantic_ai.response.0',
+    ]
+
+
+async def test_a_request_refused_while_the_response_that_overtook_it_goes_on_waits_for_its_end() -> None:
+    """The refusal can also come while that response is under way, or before it is even reported."""
+    for incoming in (
+        (created('resp_vad'), OUR_ITEM_ADDED, active_refusal('pydantic_ai.response.0')),
+        (active_refusal('pydantic_ai.response.0'), created('resp_vad'), OUR_ITEM_ADDED),
+    ):
+        stream = Stream(*SPOKEN_TURN, *incoming)
+        await stream.connection.send('Hello?')
+        await stream.take(len(incoming) + 1)
+        assert len(requests_sent(stream.ws)) == 1
+        stream.feed(done('resp_vad'), created('resp_2', answers='0'))
+        events = await stream.rest()
+        assert len(requests_sent(stream.ws)) == 2
+        assert [event for event in events if isinstance(event, ResponseStarted)] == [
+            ResponseStarted(response_id='resp_2', answers=(0,))
+        ]
+
+
+async def test_a_request_the_provider_keeps_refusing_is_given_up_on() -> None:
+    """Each response server VAD starts refuses it again: after `ACTIVE_RESPONSE_RETRIES` times, the refusal is reported."""
+    incoming: list[dict[str, Any]] = [*SPOKEN_TURN]
+    for number in range(ACTIVE_RESPONSE_RETRIES + 1):
+        incoming += [created(f'resp_vad{number}'), done(f'resp_vad{number}'), active_refusal('pydantic_ai.response.0')]
+    stream = Stream(*incoming)
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert len(requests_sent(stream.ws)) == ACTIVE_RESPONSE_RETRIES + 1
+    assert [
+        event
+        for event in events
+        if isinstance(event, ResponseRequestRefused) or event in ('InputRejected', 'RealtimeSessionErrorEvent')
+    ] == snapshot(
         [
             'InputRejected',
             'RealtimeSessionErrorEvent',
-            ResponseStarted(response_id='resp_vad', answers=(0,), basis='inferred'),
-            'ResponseDone',
-            ResponseEnded(
-                response_id='resp_vad',
-                status='completed',
-                finish_reason='stop',
-                provider_details={'status': 'completed'},
-            ),
+            ResponseRequestRefused(input_ids=(0,)),
             'RealtimeSessionErrorEvent',
         ]
     )
-
-
-async def test_a_request_refused_for_a_response_the_provider_never_reports_stays_refused() -> None:
-    """The next response is ours after all, or no response comes before the connection is gone."""
-    refused = refusal('pydantic_ai.response.0')
-    refused['error']['code'] = 'conversation_already_has_active_response'
-    stream = Stream(refused, created('resp_1', answers='1'))
-    await stream.connection.send('Hello?')
-    await stream.connection.send('Again?')
-    events = await stream.rest()
-    assert [event for event in events if isinstance(event, (ResponseRequestRefused, ResponseStarted))] == snapshot(
-        [ResponseRequestRefused(input_ids=(0,)), ResponseStarted(response_id='resp_1', answers=(1,))]
-    )
-
-    async def dial() -> Any:
-        return FakeWebSocket([])
-
-    for reconnect in (None, {'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1}):
-        stream = Stream(refused, dial=dial, reconnect=reconnect)
-        await stream.connection.send('Hello?')
-        events = await stream.rest()
-        assert [event for event in events if isinstance(event, ResponseRequestRefused)] == [
-            ResponseRequestRefused(input_ids=(0,))
-        ]
 
 
 async def test_a_reconnect_loses_a_request_the_connection_no_longer_counts_as_active() -> None:
@@ -825,6 +893,32 @@ async def test_a_reconnect_loses_a_request_the_connection_no_longer_counts_as_ac
     stream.feed(done('resp_1'))
     events = await stream.rest()
     assert [event for event in events if isinstance(event, InputLost)] == snapshot([InputLost(input_ids=(1,))])
+
+
+async def test_an_assistant_messages_phase_is_kept_for_its_part() -> None:
+    """gpt-realtime-2.x labels each assistant message `commentary` or `final_answer`."""
+
+    def item_added(item: object) -> dict[str, Any]:
+        return {'type': 'response.output_item.added', 'response_id': 'resp_1', 'item': item}
+
+    message: dict[str, Any] = {'type': 'message', 'role': 'assistant', 'content': []}
+    stream = Stream(
+        created('resp_1'),
+        item_added({**message, 'id': 'item_a1', 'phase': 'commentary'}),
+        item_added({**message, 'id': 'item_a2'}),
+        item_added({**message, 'phase': 'final_answer'}),
+        item_added('not an item'),
+        {
+            'type': 'response.output_item.added',
+            'response_id': '',
+            'item': {**message, 'id': 'item_a3', 'phase': 'final_answer'},
+        },
+        done('resp_1'),
+    )
+    events = [event for event in await stream.rest() if isinstance(event, OutputItemDetails)]
+    assert events == snapshot(
+        [OutputItemDetails(response_id='resp_1', item_id='item_a1', provider_details={'phase': 'commentary'})]
+    )
 
 
 async def test_what_we_sent_ahead_of_our_commit_joins_the_conversation_before_its_turn() -> None:
@@ -891,11 +985,7 @@ async def test_a_commit_that_fails_to_go_out_places_nothing() -> None:
     await connection.send('First.')
     with pytest.raises(OSError):
         await connection.send(CommitAudio())
-    events = [
-        event
-        async for event in connection._lifecycle_events()  # pyright: ignore[reportPrivateUsage]
-        if isinstance(event, (InputAdded, UserTurnEnded))
-    ]
+    events = [event async for event in lifecycle_events(connection) if isinstance(event, (InputAdded, UserTurnEnded))]
     assert events == snapshot([UserTurnEnded(turn_id='item_u1')])
 
 
@@ -914,7 +1004,7 @@ async def test_a_turn_cleared_before_it_joined_never_does() -> None:
         {'type': 'input_audio_buffer.committed', 'item_id': 'item_idle', 'previous_item_id': None},
     )
     events = [event for event in await stream.rest() if not isinstance(event, str)]
-    assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')])
+    assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnClosed(turn_id='item_u1')])
     assert stream.connection._lifecycle._idle_items == set()  # pyright: ignore[reportPrivateUsage]
 
 
@@ -924,13 +1014,309 @@ def test_a_failed_commit_drops_only_what_it_noted() -> None:
     lifecycle.message_sent(0)
     first = lifecycle.audio_commit_sent()
     second = lifecycle.audio_commit_sent()
-    # The two notes are equal, so only identity tells them apart.
-    assert first == second
+    # The two note the same inputs, so only identity tells them apart.
+    assert first.sent_before == second.sent_before
     lifecycle.audio_commit_failed(second)
-    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
+    assert [id(noted) for noted in lifecycle._commits] == [id(first)]  # pyright: ignore[reportPrivateUsage]
     third = lifecycle.audio_commit_sent()
     lifecycle.audio_commit_failed(first)
-    assert [id(noted) for noted in lifecycle._sent_before_commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
+    assert [id(noted) for noted in lifecycle._commits] == [id(third)]  # pyright: ignore[reportPrivateUsage]
     lifecycle.socket_replaced()
     lifecycle.audio_commit_failed(third)
-    assert not lifecycle._sent_before_commits  # pyright: ignore[reportPrivateUsage]
+    assert not lifecycle._commits  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_reconnect_asks_again_for_a_request_a_provider_response_overtook() -> None:
+    """The old socket dropped before refusing (or starting) our request: the new one is asked for it."""
+    replacement = FakeWebSocket([])
+
+    async def dial() -> Any:
+        return replacement
+
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert ResponseStarted(response_id='resp_vad', user_turn_id='item_u') in events
+    assert [request['event_id'] for request in requests_sent(replacement)] == ['pydantic_ai.response.0']
+
+
+def test_giving_up_on_a_request_already_settled_refuses_nothing() -> None:
+    lifecycle = OpenAILifecycle()
+    lifecycle.requests_dropped([0])
+    lifecycle.requests_refused([0])
+    assert lifecycle.take_pending() == snapshot([InputLost(input_ids=(0,))])
+
+
+async def test_a_request_a_provider_response_overtook_and_then_refused_for_good_is_not_asked_again() -> None:
+    """Refused for any other reason, it is settled: a reconnect doesn't ask for it again."""
+    replacement = FakeWebSocket([])
+
+    async def dial() -> Any:
+        return replacement
+
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        refusal('pydantic_ai.response.0'),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert ResponseRequestRefused(input_ids=(0,)) in events
+    assert requests_sent(replacement) == []
+
+
+async def test_a_request_a_provider_response_overtook_is_lost_with_the_connection() -> None:
+    """Neither refused nor started when the connection closes for good: no response will answer it."""
+    stream = Stream(*SPOKEN_TURN, created('resp_vad'))
+    await stream.connection.send('Hello?')
+    assert InputLost(input_ids=(0,)) in await stream.rest()
+
+
+# The frames below are cut from live probes of OpenAI's and Azure's GA API under server VAD (October 2026): a commit
+# of ours went out at the moment marked, and the frames are those the server sent, in order, with their ids
+# shortened. Under server VAD, the provider commits only speech its VAD heard: VAD's own commit always comes right
+# after the `speech_stopped` for its item, and the acknowledgement of a commit of ours never does.
+
+
+def speech_started(item_id: str) -> dict[str, Any]:
+    return {'type': 'input_audio_buffer.speech_started', 'item_id': item_id, 'audio_start_ms': 0}
+
+
+def speech_stopped(item_id: str) -> dict[str, Any]:
+    return {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 4992}
+
+
+def audio_committed(item_id: str) -> dict[str, Any]:
+    return {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None}
+
+
+def audio_item_added(item_id: str) -> dict[str, Any]:
+    return {
+        'type': 'conversation.item.added',
+        'item': {'id': item_id, 'type': 'message', 'role': 'user', 'content': [{'type': 'input_audio'}]},
+    }
+
+
+def commit_empty(event_id: str | None) -> dict[str, Any]:
+    return {
+        'type': 'error',
+        'error': {
+            'type': 'invalid_request_error',
+            'code': 'input_audio_buffer_commit_empty',
+            'message': 'Error committing input audio buffer: buffer too small.',
+            'event_id': event_id,
+        },
+    }
+
+
+_AUDIO = BinaryAudio(data=b'\x01\x00' * 2_400, media_type='audio/pcm')
+
+
+def turn_events(events: list[LifecycleEvent | str]) -> list[LifecycleEvent | str]:
+    return [
+        event for event in events if isinstance(event, (UserTurnStarted, UserTurnEnded, UserTurnClosed, InputAdded))
+    ]
+
+
+async def test_vad_commit_and_a_refusal_naming_ours_leave_our_mid_speech_commit_waiting() -> None:
+    """`race_then_speech`: a commit sent as VAD stopped (refused as empty, naming it), the user speaking on, a second
+    commit mid-speech, and the session closing before that one's acknowledgement (`committed` for the new turn) is
+    read. VAD's commit acknowledges neither of ours, and the refusal takes back the commit it names, so the second
+    is still waiting: it ends the turn under way."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        commit_empty('pydantic_ai.commit.1'),
+        speech_started('item_y'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert [json.loads(sent).get('event_id') for sent in stream.ws.sent if 'commit' in sent] == snapshot(
+        ['pydantic_ai.commit.1', 'pydantic_ai.commit.3']
+    )
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_y'),
+            UserTurnEnded(turn_id='item_y'),
+        ]
+    )
+
+
+async def test_a_refusal_naming_no_commit_of_ours_takes_back_the_oldest() -> None:
+    """A provider that echoes no id of ours (or none at all) refuses its oldest commit not acknowledged: the one sent
+    as VAD stopped, so the one mid-speech still ends the turn under way."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        commit_empty(None),
+        speech_started('item_y'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_y'),
+            UserTurnEnded(turn_id='item_y'),
+        ]
+    )
+
+
+async def test_an_unacknowledged_commit_under_vad_with_no_speech_under_way_makes_no_turn() -> None:
+    """`after_commit`: VAD committed the turn (and started its reply), then a commit of ours went out of the audio
+    streamed after it: silence, which the provider refuses as empty. The session closing before the refusal is read
+    records no turn for it."""
+    stream = Stream(speech_started('item_x'), speech_stopped('item_x'), audio_committed('item_x'), created('resp_1'))
+    await stream.connection.send(_AUDIO)
+    assert turn_events(await stream.take(5)) == snapshot(
+        [UserTurnStarted(turn_id='item_x'), UserTurnEnded(turn_id='item_x')]
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot([])
+
+
+async def test_a_commit_mid_speech_is_acknowledged_with_the_turn_under_way() -> None:
+    """`mid_speech`: our commit commits the turn VAD heard start (no `speech_stopped` before its `committed`), and VAD
+    goes on with a new item, which it stops and commits itself, never having reported its start."""
+    stream = Stream(
+        speech_started('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        speech_stopped('item_z'),
+        audio_committed('item_z'),
+        audio_item_added('item_z'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_z'),
+            UserTurnEnded(turn_id='item_z'),
+        ]
+    )
+    assert not stream.connection._lifecycle._commits  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_commit_as_new_speech_starts_is_acknowledged_with_it() -> None:
+    """`onset`: VAD committed the turn, our commit went out as the user started again, and the provider reports that
+    speech starting and commits it for ours; VAD then commits the rest itself."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        speech_started('item_y'),
+        audio_committed('item_y'),
+        audio_item_added('item_y'),
+        speech_stopped('item_z'),
+        audio_committed('item_z'),
+    )
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    assert turn_events(await stream.rest()) == snapshot(
+        [
+            UserTurnStarted(turn_id='item_x'),
+            UserTurnEnded(turn_id='item_x'),
+            UserTurnStarted(turn_id='item_y'),
+            UserTurnEnded(turn_id='item_y'),
+            UserTurnStarted(turn_id='item_z'),
+            UserTurnEnded(turn_id='item_z'),
+        ]
+    )
+    assert not stream.connection._lifecycle._commits  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_input_sent_ahead_of_a_commit_is_placed_by_its_own_acknowledgement_after_a_vad_commit() -> None:
+    """VAD's commit comes before the acknowledgement of a text input sent ahead of our commit: the provider had the
+    input after it committed the turn (it acknowledges each in order), so the input follows the reply VAD started."""
+    stream = Stream(
+        speech_started('item_x'),
+        speech_stopped('item_x'),
+        audio_committed('item_x'),
+        audio_item_added('item_x'),
+        created('resp_1'),
+        user_message_added(),
+        commit_empty('pydantic_ai.commit.2'),
+    )
+    await stream.connection.send(TextContext('Some context.'))
+    await stream.connection.send(_AUDIO)
+    await stream.connection.send(CommitAudio())
+    events = await stream.rest()
+    assert [event for event in events if isinstance(event, (UserTurnEnded, InputAdded, ResponseStarted))] == snapshot(
+        [
+            UserTurnEnded(turn_id='item_x'),
+            ResponseStarted(response_id='resp_1', user_turn_id='item_x'),
+            InputAdded(input_id=0),
+        ]
+    )
+
+
+@pytest.mark.parametrize('refused_first', [False, True])
+async def test_a_request_overtaken_by_a_response_the_user_cut_off_is_dropped(refused_first: bool) -> None:
+    """The user barged in on the response that overtook our request: their speech takes the turn, as it does from a
+    request deferred behind that response, so the request is dropped whenever its refusal comes."""
+    cancelled = done('resp_vad', status='cancelled', reason='turn_detected')
+    refused = active_refusal('pydantic_ai.response.0')
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        OUR_ITEM_ADDED,
+        *((refused, cancelled) if refused_first else (cancelled, refused)),
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert InputLost(input_ids=(0,)) in events
+    assert 'RealtimeSessionErrorEvent' not in events[:-1]
+    assert len(requests_sent(stream.ws)) == 1
+
+
+@pytest.mark.parametrize(
+    ('reason', 'asked_again'),
+    [
+        # The user barged in on the response that overtook the request: their speech took the turn.
+        ('turn_detected', False),
+        # Cancelled for another reason (xAI cancels a response of its own to start ours): still owed.
+        (None, True),
+    ],
+)
+async def test_a_reconnect_asks_again_for_an_overtaken_request_unless_the_user_cut_that_response_off(
+    reason: str | None, asked_again: bool
+) -> None:
+    replacement = FakeWebSocket([])
+
+    async def dial() -> Any:
+        return replacement
+
+    stream = Stream(
+        *SPOKEN_TURN,
+        created('resp_vad'),
+        OUR_ITEM_ADDED,
+        done('resp_vad', status='cancelled', reason=reason),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1},
+    )
+    await stream.connection.send('Hello?')
+    events = await stream.rest()
+    assert bool(requests_sent(replacement)) is asked_again
+    # Lost with the reconnect, or (asked again) with the replacement, which closes before answering.
+    assert InputLost(input_ids=(0,)) in events

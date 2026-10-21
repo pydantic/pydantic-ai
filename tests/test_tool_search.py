@@ -25,7 +25,7 @@ from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 import pydantic_ai.agent as agent_module
-from pydantic_ai import Agent, FunctionToolset, ToolCallPart
+from pydantic_ai import Agent, FunctionToolset, Tool, ToolCallPart
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelRetry, ToolRetryError, Un
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
+    InstructionBaselinePart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -88,7 +89,7 @@ from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .cassette_utils import request_json
-from .conftest import iter_message_parts, message, message_part, try_import
+from .conftest import RequestCapture, iter_message_parts, message, message_part, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -2914,6 +2915,37 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
     assert [p.content for p in bar_returns] == [1]
 
 
+@pytest.mark.vcr
+async def test_openai_gpt_5_4_nano_deferred_tool_uses_local_search(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+) -> None:
+    """`gpt-5.4-nano` rejects native `tool_search` with a 400, unlike the rest of the gpt-5.4 family,
+    so a deferred tool is discovered through local `search_tools` and the run completes.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIResponsesModel('gpt-5.4-nano', provider=provider))
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather for a city."""
+        return f'Sunny in {city}'
+
+    result = await agent.run('What is the weather in Paris? Find a tool for it.')
+
+    messages = result.all_messages()
+    assert list(iter_message_parts(messages, ModelResponse, ToolSearchCallPart))
+    assert not list(iter_message_parts(messages, ModelResponse, NativeToolSearchCallPart))
+    weather_returns = [
+        p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'get_weather'
+    ]
+    assert [p.content for p in weather_returns] == ['Sunny in Paris']
+    first_request_tools = request_capture.body('/responses')['tools']
+    assert isinstance(first_request_tools, list)
+    assert [(tool.get('type'), tool.get('name')) for tool in first_request_tools if isinstance(tool, dict)] == [
+        ('function', 'search_tools')
+    ]
+
+
 def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:
     agent: Agent[None, str] = Agent(
         model,
@@ -3072,6 +3104,9 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     for msg in messages:
         part_trace: list[dict[str, Any]] = []
         for part in msg.parts:
+            if isinstance(part, InstructionBaselinePart):
+                # Records the instructions the request was sent, not a step of the conversation.
+                continue
             if isinstance(part, UserPromptPart):
                 part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
             elif isinstance(part, LoadCapabilityCallPart):
@@ -3465,6 +3500,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         for msg in messages:
             part_trace: list[dict[str, Any]] = []
             for part in msg.parts:
+                if isinstance(part, InstructionBaselinePart):
+                    continue
                 if isinstance(part, UserPromptPart):
                     part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
                 elif isinstance(part, LoadCapabilityCallPart):
@@ -5712,6 +5749,20 @@ def test_synthesize_local_promotes_base_tool_return_with_tool_kind_in_request() 
     assert part.content == {'discovered_tools': [{'name': 'foo'}]}
 
 
+def test_synthesize_local_leaves_a_failed_tool_search_return_a_base_part() -> None:
+    """A tool-search return that isn't a success keeps its `tool_kind` but its content is an error,
+    so the request-side promotion leaves it a base `ToolReturnPart` unchanged."""
+    failed = ToolReturnPart(
+        tool_name='search_tools', content='search failed', tool_call_id='c1', tool_kind='tool-search', outcome='failed'
+    )
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['a']}, tool_call_id='c1')]),
+        ModelRequest(parts=[failed]),
+    ]
+    translated = synthesize_local_tool_search_messages(history)
+    assert translated[1].parts == [failed]
+
+
 async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
     """`ToolSearch(parameter_description=...)` flows through to the local `search_tools`
     function tool's `queries` parameter description on the wire — verifies the
@@ -6296,10 +6347,8 @@ def test_discriminator_unknown_tool_kind_falls_through_to_part_kind() -> None:
     doesn't contain `(part_kind, 'unknown-kind')`, so the discriminator returns the bare
     `part_kind` rather than a typed-subclass tag.
 
-    Calls the discriminator directly because constructing a valid ModelMessage with
-    `tool_kind='unknown-kind'` would fail Pydantic's `ToolPartKind` Literal validation
-    upstream — the registry-miss branch is internal logic, not a deserialization path
-    that any well-formed input would take.
+    Calls the discriminator directly; the deserialization path for unregistered kinds is
+    covered in `tests/test_typed_tool_parts.py`.
     """
 
     return_raw = {
@@ -8093,3 +8142,79 @@ def test_tool_availability_delta_synthesis_deconflicts_duplicate_client_ids():
         if isinstance(part, ToolSearchCallPart)
     ]
     assert len(call_ids) == len(set(call_ids)) == 2
+
+
+async def _keyword_search_results(
+    corpora: Sequence[Sequence[tuple[str, str | None]]], queries: Sequence[Sequence[str]], *, max_results: int = 10
+) -> list[ToolSearchReturnContent]:
+    """Run sequential local keyword searches, serving `corpora[i]` to the `i`-th search."""
+
+    async def lookup() -> str:  # pragma: no cover
+        return 'unused'
+
+    shared_schema = Tool(lookup).function_schema
+
+    def completed(messages: Sequence[ModelMessage]) -> list[ToolSearchReturnPart]:
+        return [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolSearchReturnPart)
+        ]
+
+    async def catalog(ctx: RunContext[None]) -> FunctionToolset[None]:
+        corpus = corpora[min(len(completed(ctx.messages)), len(corpora) - 1)]
+        return FunctionToolset(
+            tools=[
+                Tool(lookup, name=name, description=description, defer_loading=True, function_schema=shared_schema)
+                for name, description in corpus
+            ]
+        )
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        done = len(completed(messages))
+        if done < len(queries):
+            return ModelResponse(
+                parts=[ToolCallPart('search_tools', {'queries': queries[done]}, tool_call_id=f's{done}')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset())),
+        deps_type=type(None),
+        toolsets=[catalog],
+        capabilities=[ToolSearch(max_results=max_results)],
+    )
+    result = await agent.run('search')
+    return [part.content for part in completed(result.all_messages())]
+
+
+@pytest.mark.parametrize(
+    'second,expected',
+    [
+        pytest.param([('one', 'beta'), ('two', 'alpha')], 'two', id='description'),
+        pytest.param([('alpha_two', None), ('one', 'beta')], 'alpha_two', id='name'),
+        pytest.param([('two', 'alpha')], 'two', id='membership'),
+    ],
+)
+async def test_keyword_search_sees_corpus_changes_within_a_run(
+    second: list[tuple[str, str | None]], expected: str
+) -> None:
+    """A corpus that changes between searches in one run is searched as it is at each call."""
+    first = [('one', 'alpha'), ('two', 'beta')]
+    results = await _keyword_search_results([first, second], [['alpha'], ['alpha']])
+    assert results == [{'discovered_tools': [{'name': 'one'}]}, {'discovered_tools': [{'name': expected}]}]
+
+
+async def test_keyword_search_ties_follow_current_corpus_order() -> None:
+    first = [('a', 'alpha'), ('b', 'alpha'), ('c', 'alpha')]
+    results = await _keyword_search_results([first, first[::-1]], [['alpha'], ['alpha']], max_results=1)
+    assert results == [{'discovered_tools': [{'name': 'a'}]}, {'discovered_tools': [{'name': 'c'}]}]
+
+
+@pytest.mark.parametrize('max_results,expected', [(-1, ['z', 'b']), (0, []), (2, ['z', 'b']), (10, ['z', 'b', 'a'])])
+async def test_keyword_search_max_results_slicing(max_results: int, expected: list[str]) -> None:
+    corpus = [('z', 'alpha beta'), ('a', 'alpha'), ('b', 'alpha beta'), ('k', 'unmatched')]
+    results = await _keyword_search_results([corpus], [['alpha', 'beta']], max_results=max_results)
+    assert results == [{'discovered_tools': [{'name': name} for name in expected]}]

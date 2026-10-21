@@ -1,4 +1,7 @@
-"""Speculative CodeMode wiring, ported from Code Puppy's `enable_speculative_code_mode`.
+"""CodeMode wiring, ported from Code Puppy's `enable_speculative_code_mode`.
+
+`run.code_mode` binds it with eager execution alone; `run.speculative_code_mode` adds speculative
+launches of `SPECULATIVE_TOOLS` and the guidance that teaches the snippet shape they reward.
 
 Every tool the run has, plugin and MCP tools included, becomes a function inside harness
 `CodeMode`'s `run_code` except `write_file` and `edit_file`, which stay native so their diffs
@@ -17,11 +20,14 @@ and, when the run's `FileSystem` allows it (`_mount_mode`) and the run's workspa
 a mount of the workspace's working directory at its real path (`_workspace_mount`). A sandbox
 plugin's workspace is not mounted: the host directory is not the filesystem its tools act on.
 There is no network in the sandbox; anything remote goes through a wrapped tool such as `shell`.
+
+With `ReplStates`, the session's REPL outlives the run: `CodeMode` restores it on the next prompt, and
+the guidance says so only to runs whose state is kept.
 """
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, TypeGuard
+from typing import TYPE_CHECKING, Literal, TypeGuard
 
 from pydantic_monty import MountDir, OSAccess
 
@@ -34,7 +40,6 @@ from pydantic_ai.capabilities import (
     WrapToolExecuteHandler,
 )
 from pydantic_ai.messages import AgentStreamEvent, RetryPromptPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.anthropic import AnthropicModelSettings
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.workspaces import Workspace
@@ -46,15 +51,21 @@ from pydantic_ai_harness.code_mode import (
     SpeculativeCallMissedEvent,
 )
 from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.guardrails import ToolGuardrail
 from pydantic_ai_harness.subagents import DelegationTasks, SubAgents
 from pydantic_clai2.customization import CustomizationGuide, read_clai_customization_guide
 from pydantic_clai2.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
+from pydantic_clai2.runtime.repl_state import ReplStates
 from pydantic_clai2.runtime.sandbox_calls import (
     DelegationCallStartedEvent,
     SandboxCallFinishedEvent,
     SandboxCallStartedEvent,
 )
 from pydantic_clai2.runtime.speculation import SpeculationCounters
+
+if TYPE_CHECKING:
+    # Typing only: `pydantic_ai.models.anthropic` loads the Anthropic SDK.
+    from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'list_files': FileSystem,
@@ -80,7 +91,7 @@ Other code-running tools, such as a workflow or capability-authoring plugin, kee
 """
 
 GUIDANCE = """\
-Speculative execution is on. Use `write_file` and `edit_file` as native tools,
+{mode} is on. Use `write_file` and `edit_file` as native tools,
 outside `run_code`; they are not available as functions inside the sandbox.
 Every other tool, including `shell`, is a function inside `run_code`, a
 persistent sandboxed Python REPL. Call `run_code` with a Python snippet to use them; do
@@ -97,7 +108,15 @@ The sandbox also has direct capabilities, no function call needed:
   function like `shell` (e.g. `curl`).
 
 Use raw Python strings for regex patterns so backslashes are not invalid escapes.
+For a multiline shell command, always pass it as a raw triple-quoted string
+with the keyword form, e.g. shell(command=r'''...'''), so its newlines and
+quotes cannot make the snippet fail with a Python syntax or quote-mismatch
+error before the command runs.
 
+{how}"""
+"""Guidance for the sandbox: `{mode}` names the switch, `{how}` the snippet shape that suits it."""
+
+_SPECULATIVE_HOW = """\
 How to work. The runtime watches your code AS YOU WRITE IT and starts
 eligible calls before the snippet is finished, so the SHAPE of your code
 determines how fast it runs:
@@ -136,13 +155,46 @@ determines how fast it runs:
    names, keep processing blocks brief, and never rebind a name a pending
    call's line already used. `print(...)` what matters and make the
    snippet's final expression the value you want returned.
-7. State persists between snippets within a run: variables and functions
-   carry over. Do not re-fetch what you already hold. Prefer the read
+7. {state} Do not re-fetch what you already hold. Prefer the read
    functions over `pathlib` for discovery (they start early); use
    `pathlib` for surgical follow-ups on paths you already hold.
 8. Read before you write, and verify after you change: re-read the file
    or run the tests in a follow-up snippet.
 """
+"""Code Puppy's snippet shape: literal read calls launch before the snippet reaches them."""
+
+_EAGER_HOW = """\
+How to work. The runtime runs each statement of your code AS SOON AS IT
+CLOSES, while you are still writing the rest of the snippet, so the SHAPE of
+your code determines how fast it runs:
+
+1. Emit small, flat statements, one per line. A tool call starts the
+   moment its statement is complete, while you write the lines below it.
+2. Go BIG in one `run_code` call. Do not split work across many small
+   snippets: every extra round trip to the model wastes the runway that
+   makes early execution pay.
+3. Put a slow build or test command on its own early line so it runs while
+   you write the rest of the snippet.
+   Obtain required approval BEFORE emitting a side-effectful statement;
+   later code cannot undo it. Run independent calls concurrently with
+   `await asyncio.gather(...)` (positional awaitables only; no other
+   task-creation APIs exist in the sandbox).
+4. Keep mutable state small and local. `print(...)` what matters and make
+   the snippet's final expression the value you want returned.
+5. {state} Do not re-fetch what you already hold.
+6. Read before you write, and verify after you change: re-read the file
+   or run the tests in a follow-up snippet.
+"""
+"""The snippet shape for eager execution alone: each statement runs as it closes, nothing earlier."""
+
+_RUN_STATE = """\
+State persists between snippets within a run: variables and functions
+   carry over."""
+_SESSION_STATE = """\
+State persists between snippets and is saved with the session:
+   variables, functions, and imports carry over to later prompts, also
+   after the session is resumed. `restart: true` clears it."""
+"""The `{state}` line of each snippet shape: a sub-agent's or unsaved run's REPL ends with the run."""
 
 
 _MountMode = Literal['read-write', 'read-only']
@@ -168,9 +220,11 @@ _WORKSPACE_GUIDANCE: Mapping[str | None, str] = {
 `'remote'` when it would but the workspace is a sandbox rather than this machine."""
 
 
-def guidance(mount: _MountMode | Literal['remote'] | None) -> str:
-    """Code Puppy's guidance, describing the workspace the sandbox actually has."""
-    return GUIDANCE.format(workspace=_WORKSPACE_GUIDANCE[mount])
+def guidance(mount: _MountMode | Literal['remote'] | None, *, speculate: bool = True, keeps_state: bool = False) -> str:
+    """Code Puppy's guidance, describing the workspace the sandbox has, whether it speculates, and whether the REPL is saved."""
+    mode, how = ('Speculative execution', _SPECULATIVE_HOW) if speculate else ('Code mode', _EAGER_HOW)
+    how = how.format(state=_SESSION_STATE if keeps_state else _RUN_STATE)
+    return GUIDANCE.format(mode=mode, how=how, workspace=_WORKSPACE_GUIDANCE[mount])
 
 
 def _is_local(workspace: Workspace) -> bool:
@@ -183,7 +237,7 @@ def _is_capability(capability: AgentCapability[AgentDepsT]) -> TypeGuard[Abstrac
     return isinstance(capability, AbstractCapability)
 
 
-def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | None:
+def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]] | None) -> _MountMode | None:
     """Mount only what the run's `FileSystem` already lets its tools reach, or nothing.
 
     `pathlib` calls on a mount never pass through `FileSystem`'s checks, so an unconditional
@@ -193,8 +247,13 @@ def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | 
     `pathlib` reads any file's content. It is writable only when it may also write every file there: `write_file` registered, not `read_only`, and no
     `read_only_patterns`. A mount cannot express `allowed_patterns` or `denied_patterns`, so either one
     leaves the sandbox unmounted, as do zero or several file systems and any capability function
-    or `DynamicCapability`, which may only resolve to a file system at run time.
+    or `DynamicCapability`, which may only resolve to a file system at run time. A `ToolGuardrail`
+    is a restriction `pathlib` would bypass too: one over `read_file` leaves nothing mounted, and
+    one over a tool that writes, `run_code` included, keeps the mount read-only. `granted` is `None`
+    when the agent does not expose its capabilities, which may guard tools too: nothing is mounted.
     """
+    if granted is None:
+        return None
     leaves: list[AbstractCapability[AgentDepsT]] = []
     for capability in granted:
         if not _is_capability(capability):
@@ -207,8 +266,30 @@ def _mount_mode(granted: Sequence[AgentCapability[AgentDepsT]]) -> _MountMode | 
     tools = set(file_system.tools)
     if file_system.allowed_patterns or file_system.denied_patterns or 'read_file' not in tools:
         return None
-    writable = 'write_file' in tools and not file_system.read_only and not file_system.read_only_patterns
+    if _guarded(leaves, frozenset({'read_file'})):
+        return None
+    writable = (
+        'write_file' in tools
+        and not file_system.read_only
+        and not file_system.read_only_patterns
+        and not _guarded(leaves, _WRITING_TOOLS)
+    )
     return 'read-write' if writable else 'read-only'
+
+
+_WRITING_TOOLS = frozenset({'write_file', 'edit_file', 'shell', 'run_code'})
+"""Tools whose guard a writable mount would bypass; eager `pathlib` writes run before `run_code`'s."""
+
+
+def _guarded(leaves: Sequence[AbstractCapability[AgentDepsT]], names: frozenset[str]) -> bool:
+    """Whether a `ToolGuardrail` checks or hides any tool in `names`."""
+    for leaf in leaves:
+        if not isinstance(leaf, ToolGuardrail):
+            continue
+        checks = leaf.guard is not None or leaf.result_guard is not None
+        if not names.isdisjoint(leaf.hidden) or (checks and (leaf.tools is None or not names.isdisjoint(leaf.tools))):
+            return True
+    return False
 
 
 async def _workspace_mount(workspace: Workspace, mode: _MountMode | None) -> MountDir | None:
@@ -283,17 +364,22 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     counters: SpeculationCounters
     mount: _MountMode | None = None
     """The sandbox's `_mount_mode`, so the guidance describes it."""
+    speculate: bool = True
+    """Whether read-only calls launch early, so the guidance teaches the snippet shape that suits it."""
+    repl_states: ReplStates | None = None
+    """Where `WorkspaceCodeMode` keeps the session's REPL, so the guidance says whether state outlives the run."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
-        """Code Puppy's guidance, with CLAI's tool and argument names and the run's actual mount."""
+        """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
 
         def describe(ctx: RunContext[AgentDepsT]) -> str:
             local = self.mount is None or _is_local(ctx.workspace)
-            return guidance(self.mount if local else 'remote')
+            keeps_state = self.repl_states is not None and self.repl_states.keeps(ctx)
+            return guidance(self.mount if local else 'remote', speculate=self.speculate, keeps_state=keeps_state)
 
         return describe
 
-    def get_model_settings(self) -> AnthropicModelSettings:
+    def get_model_settings(self) -> 'AnthropicModelSettings':
         """Anthropic buffers a tool call's input by default, which leaves eager execution no runway.
 
         Other providers stream tool arguments already and ignore the setting.
@@ -405,25 +491,32 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
 
 
 def speculative_capabilities(
-    counters: SpeculationCounters, granted: Sequence[AgentCapability[AgentDepsT]]
+    counters: SpeculationCounters,
+    granted: Sequence[AgentCapability[AgentDepsT]] | None,
+    *,
+    speculate: bool = True,
+    repl_states: ReplStates | None = None,
 ) -> 'list[AbstractCapability[AgentDepsT]]':
-    """Fold tools into `run_code` with eager execution and read-only speculation.
+    """Fold tools into `run_code` with eager execution, and read-only speculation when `speculate`.
 
-    `granted` is every other capability the run binds; the sandbox mount follows its `FileSystem`.
+    `granted` is every other capability the run binds, or `None` when they are not all known; the
+    sandbox mount follows their `FileSystem` and guardrails. `repl_states` keeps each session's REPL
+    between prompts; without it the REPL ends with the run.
     """
     mode = _mount_mode(granted)
     return [
         WorkspaceCodeMode(
             tools=_sandboxed,
             # `SpeculativeExecution.prepare_tools` writes the declarations from `SPECULATIVE_TOOLS`.
-            speculate='declared',
+            speculate='declared' if speculate else None,
             # Eager runs each streamed statement as it closes; speculation launches the
             # read-only calls beyond that frontier, and the eager feed claims them.
             eager=True,
             mount_mode=mode,
             os_access=OSAccess(),
+            repl_store=repl_states,
         ),
         EagerTiming(),
-        SpeculativeExecution(counters, mode),
+        SpeculativeExecution(counters, mode, speculate, repl_states),
         ShowSandboxCalls(),
     ]

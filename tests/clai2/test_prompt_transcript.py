@@ -276,7 +276,8 @@ def test_printed_skips_output_already_in_scrollback_and_cleared_output() -> None
     block.write('answer\n')
     buffer.clear()
     buffer.write('after clear\n')
-    assert Text.from_ansi(buffer.printed(width=40)).plain == 'after clear'
+    # Rich 15.0.0's `from_ansi` keeps a trailing newline (https://github.com/Textualize/rich/pull/4076).
+    assert [Text.from_ansi(line).plain for line in buffer.printed(width=40).splitlines()] == ['after clear']
     assert buffer.printed(width=40) == ''
     block.freeze()
     assert plain(buffer) == ['after clear', '']
@@ -345,7 +346,9 @@ def test_pre_live_transcript_migrates_in_place_preserving_styles_and_partial_ans
     transcript.write('m green\x1b[0m\n')
     assert plain(transcript) == ['old output', 'pending green', '']
     assert '\x1b[32m' in transcript.frame(width=80, height=24).rows[1]
-    assert Text.from_ansi(transcript.printed(width=80)).plain == 'pending green', 'old output was already emitted'
+    # Rich 15.0.0's `from_ansi` keeps a trailing newline (https://github.com/Textualize/rich/pull/4076).
+    printed = [Text.from_ansi(line).plain for line in transcript.printed(width=80).splitlines()]
+    assert printed == ['pending green'], 'old output was already emitted'
     output = io.StringIO()
     console = Console(file=output)
     with transcript.capture(console):

@@ -583,7 +583,7 @@ def wait_retry_after(
 
                         if wait_seconds > 0:
                             return min(wait_seconds, max_wait)
-                    except (ValueError, TypeError, AssertionError):
+                    except (ValueError, TypeError, AssertionError, OverflowError):
                         # If date parsing fails, fall back to fallback strategy
                         pass
 

@@ -5,6 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
 
@@ -1660,6 +1661,16 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
     return outputs_flat
 
 
+def _function_return_types(func: Callable[..., Any]) -> Sequence[Any]:
+    """The output types described by `func`'s return annotation, or `str` when it has none."""
+    # A `partial`'s hints would resolve in the `functools` namespace, so read them off the wrapped function.
+    if isinstance(func, partial):
+        func = func.func
+    if return_annotation := get_function_type_hints(func).get('return', None):
+        return types_from_output_spec(return_annotation)
+    return [str]
+
+
 def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
     outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
@@ -1674,18 +1685,14 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif isinstance(output, PromptedOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         elif isinstance(output, TextOutput):
-            outputs_flat.append(str)
+            outputs_flat.extend(_function_return_types(output.output_function))
         elif isinstance(output, ToolOutput):
             outputs_flat.extend(types_from_output_spec(output.output))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         # A union's members keep their `Annotated` metadata, as they do when listed: `X | Y` is `[X, Y]`.
         elif union_types := _utils.get_union_args(output, unwrap_members=False):
             outputs_flat.extend(union_types)
         elif inspect.isfunction(output) or inspect.ismethod(output):
-            type_hints = get_function_type_hints(output)
-            if return_annotation := type_hints.get('return', None):
-                outputs_flat.extend(types_from_output_spec(return_annotation))
-            else:
-                outputs_flat.append(str)
+            outputs_flat.extend(_function_return_types(output))
         elif (choices := _ChoicesActions.of(output)) is not None:
             # What a `Choices` set with callable values asks the model for is a key; what the action it
             # stands for returns is only known once it has run, so the keys are what a schema can describe.

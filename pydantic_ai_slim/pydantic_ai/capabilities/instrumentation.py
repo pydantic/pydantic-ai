@@ -21,6 +21,9 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
+    mcp_telemetry_history_ids,
+    mcp_telemetry_url_ids,
+    model_request_telemetry_url_ids,
     model_response_span_capture,
     open_model_request_span,
     record_exception as _record_exception,
@@ -110,7 +113,10 @@ class Instrumentation(AbstractCapability[Any]):
     prefix moved while it should still have been warm. A sustained collapse emits the event
     once, until a healthy read-back re-stabilizes the cache. The established prefix is tracked
     per conversation and per provider, endpoint, and model, so the first request of a run that
-    continues a conversation is judged against what the previous run cached.
+    continues a conversation is judged against what the previous run cached. A request long enough
+    to cache on a model that needs prompt caching configured, but has none configured, sets
+    `pydantic_ai.cache.not_enabled` and emits a `pydantic_ai.cache.not_enabled` span event, once per
+    conversation.
     """
 
     _safe_at_runtime: ClassVar[bool] = True
@@ -346,9 +352,20 @@ class Instrumentation(AbstractCapability[Any]):
         new_message_index = self._new_message_index
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        mcp_url_ids = (
+            frozenset(model_request_telemetry_url_ids(self._last_model_request_parameters))
+            if self._last_model_request_parameters is not None
+            else frozenset(
+                mcp_telemetry_url_ids(
+                    ctx.capabilities.values(), ctx.tool_manager.toolset if ctx.tool_manager is not None else None
+                )
+            )
+        )
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(
-                settings.messages_to_otel_messages(list(message_history))
+                settings.messages_to_otel_messages(
+                    list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
+                )
             ).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }
@@ -472,6 +489,20 @@ class Instrumentation(AbstractCapability[Any]):
         # has a `0.0` hit ratio, and that cold-start cost belongs in the run's cache-efficiency picture.
         span.set_attribute('pydantic_ai.cache.hit_ratio', health.hit_ratio)
         span.set_attribute('pydantic_ai.cache.established_tokens', health.established_tokens)
+
+        if health.not_enabled:
+            span.set_attribute('pydantic_ai.cache.not_enabled', True)
+            not_enabled_attributes = {
+                'input_tokens': response.usage.input_tokens,
+                'provider_name': response.provider_name,
+                'model_name': response.model_name,
+            }
+            # OTel attributes cannot be `None`.
+            span.add_event(
+                'pydantic_ai.cache.not_enabled',
+                attributes={key: value for key, value in not_enabled_attributes.items() if value is not None},
+            )
+            return
 
         collapse = health.collapse
         if collapse is None:

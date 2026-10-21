@@ -11,14 +11,12 @@ from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.keys import Key
 from termflow.tui.menu import MenuResult
-from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError, UserError
 from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2._app import _ModelResolver, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.auth import CodexAuth, login_command
 from pydantic_clai2.config.credential_store import has_credentials, save_codex_credentials
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -26,11 +24,21 @@ from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.errors import error_message
 from pydantic_clai2.models import accounts as accounts_module, key_profiles
 from pydantic_clai2.models.accounts import Account, LoginChoice, accounts, login_choices, pool, remember, sign_out
+from pydantic_clai2.models.resolver import ModelResolver
 from pydantic_clai2.plugins import ModelProvider, PluginLogin
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.ui.menus import accounts_menu
-from pydantic_clai2.ui.menus.accounts_menu import AccountsMenu, choose_account, new_account, open_accounts_menu
+from pydantic_clai2.ui.menus.accounts_menu import (
+    AccountsMenu,
+    choose_account,
+    new_account,
+    open_accounts_menu,
+    rename_account,
+)
+from pydantic_clai2.ui.menus.dialogs import TerminalDialogs
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, Runners, is_save_and_close
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, run_model_flow
+from tests.clai2.dialog_script import Back, Pick, ScriptedDialogs, Type
 from tests.clai2.menu_script import Script, make_context, pick, typed
 from tests.clai2.test_plugin_menu import FakeMenu, unstyled
 
@@ -174,7 +182,7 @@ async def test_login_records_accounts_it_signs_in(tmp_path: Path, monkeypatch: p
         await login_command(['openai-codex@*'], codex=codex, store=store)
 
 
-def keyed_resolver(tmp_path: Path, *, store: SettingsStore | None = None) -> _ModelResolver:
+def keyed_resolver(tmp_path: Path, *, store: SettingsStore | None = None) -> ModelResolver:
     def resolve_profile(name: str, profile: str) -> Model:
         return TestModel(custom_output_text=f'{profile} answered {name}')
 
@@ -182,7 +190,7 @@ def keyed_resolver(tmp_path: Path, *, store: SettingsStore | None = None) -> _Mo
         return TestModel()
 
     providers = {'claude-code': ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile)}
-    return _ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: providers, store=store)
+    return ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: providers, store=store)
 
 
 async def test_all_accounts_fall_back_in_list_order(tmp_path: Path) -> None:
@@ -206,7 +214,7 @@ async def test_all_accounts_fall_back_in_list_order(tmp_path: Path) -> None:
     assert (await Agent(model).run('hi')).output == 'side answered opus'
 
 
-def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> _ModelResolver:
+def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> ModelResolver:
     def resolve(name: str) -> Model:
         return TestModel(custom_output_text=f'default answered {name}')
 
@@ -214,7 +222,7 @@ def pooling_resolver(store: SettingsStore, pooled: Callable[[], bool]) -> _Model
         return TestModel(custom_output_text=f'{profile} answered {name}')
 
     providers = {'claude-code': ModelProvider(prefix='claude-code', resolve=resolve, resolve_profile=resolve_profile)}
-    return _ModelResolver(
+    return ModelResolver(
         console=Console(file=io.StringIO()), plugins=lambda: providers, store=store, pool_accounts=pooled
     )
 
@@ -395,27 +403,27 @@ async def test_open_accounts_menu_adds_signs_in_renames_and_signs_out(tmp_path: 
         return f'Signed in as {args[0]}.'
 
     default = next(item for item in accounts(store) if item.profile is None)
-    codex = LoginChoice(login='openai-codex', provider='openai-codex', kind='subscription', profiles=True)
     script = menu_script(
         [
-            pick('add'),
-            pick(codex),  # the provider list: a name is suggested, and kept
+            pick('add'),  # the provider list: a name is suggested, and kept
             pick(default),  # Enter on an account signs in again
             pick('add'),
-            pick(codex),
             MenuResult(item=MenuItem('rename', value=accounts_menu._Rename(default))),  # pyright: ignore[reportPrivateUsage]
             MenuResult(item=MenuItem('sign out', value=accounts_menu._SignOut(default))),  # pyright: ignore[reportPrivateUsage]
             MenuResult(item=MenuItem('sign out', value=accounts_menu._SignOut(default))),  # pyright: ignore[reportPrivateUsage]
             pick('add'),
-            MenuResult(cancelled=True),  # the provider list closes without a choice
             MenuResult(cancelled=True),
         ],
-        choices=[pick(False), pick(True)],
+        choices=[
+            pick('openai-codex'),
+            pick('openai-codex'),
+            pick(False),
+            pick(True),
+            MenuResult(cancelled=True),  # the provider list closes without a choice
+        ],
         texts=['account-2', 'broken', 'Personal'],
     )
-    rename = accounts_menu._rename  # pyright: ignore[reportPrivateUsage]
-    kept = Script(lists=[], choices=[], texts=[TextInputResult(cancelled=True)])
-    assert rename(store, default, kept.runners) is None
+    assert await rename_account(store, default, ScriptedDialogs([Back()])) == ''
     result = await open_accounts_menu(store, login=login, plugins=dict, forget=forgotten.append, runners=script.runners)
     assert logins == [['openai-codex@account-2'], ['openai-codex'], ['openai-codex@broken']]
     assert result.splitlines() == [
@@ -432,40 +440,45 @@ async def test_open_accounts_menu_adds_signs_in_renames_and_signs_out(tmp_path: 
 async def test_open_accounts_menu_reports_an_account_it_cannot_add(tmp_path: Path) -> None:
     store = store_at(tmp_path)
     remember(store, login='solo', profile=None, plugin=plugin_login(name='solo', profiles=False, models=()))
-    solo = LoginChoice(login='solo', provider='solo', kind='plugin', profiles=False)
 
     async def login(args: list[str]) -> str:
         raise AssertionError('nothing to sign in')  # pragma: no cover
 
-    script = menu_script([pick('add'), pick(solo), MenuResult(cancelled=True)])
-    assert await open_accounts_menu(store, login=login, plugins=dict, forget=print, runners=script.runners) == (
-        'No changes.'
-    )
+    script = menu_script([pick('add'), MenuResult(cancelled=True)], choices=[pick('solo')])
+    plugins = {'solo': plugin_login(name='solo', profiles=False, models=())}
+    assert await open_accounts_menu(
+        store, login=login, plugins=lambda: plugins, forget=print, runners=script.runners
+    ) == ('No changes.')
 
 
-def test_new_account_names_and_defaults(tmp_path: Path) -> None:
+async def test_new_account_names_and_defaults(tmp_path: Path) -> None:
     store = store_at(tmp_path)
-    codex = LoginChoice(login='openai-codex', provider='openai-codex', kind='subscription', profiles=True)
     openai = LoginChoice(login='openai', provider='openai', kind='api key', profiles=True)
     # No default account yet: sign in to it, with no name to type.
-    assert new_account(store, {}, menu_script([pick(codex)]).runners) == 'openai-codex'
+    assert await new_account(store, {}, ScriptedDialogs([Pick(value='openai-codex')])) == 'openai-codex'
     save_codex_credentials(account='openai-codex', value=CODEX)
     save_codex_credentials(account='openai-codex@account-2', value=CODEX)
-    script = menu_script([pick(codex)], texts=['  account-3 '])
-    assert new_account(store, {}, script.runners) == 'openai-codex@account-3'
+    dialogs = ScriptedDialogs([Pick(value='openai-codex'), Type(text='  account-3 ')])
+    assert await new_account(store, {}, dialogs) == 'openai-codex@account-3'
+    assert dialogs.asked[1].initial == 'account-3', 'the first free name is suggested'
     # An API-key provider's default is the environment, so its first account gets a name.
-    assert new_account(store, {}, menu_script([pick(openai)], texts=['team']).runners) == 'openai@team'
-    cancelled = Script(lists=[pick(openai)], choices=[], texts=[TextInputResult(cancelled=True)])
-    assert new_account(store, {}, cancelled.runners) is None
-    assert new_account(store, {}, menu_script([pick('heading')]).runners) is None
+    assert await new_account(store, {}, ScriptedDialogs([Pick(value='openai'), Type(text='team')])) == 'openai@team'
+    assert await new_account(store, {}, ScriptedDialogs([Pick(value='openai'), Back()])) is None
+    assert await new_account(store, {}, ScriptedDialogs([Back()])) is None
+    # The terminal checks the name as it is typed; one that slips past is still refused.
+    typed_bad = Script(lists=[], choices=[pick('openai')], texts=[typed('Bad')])
+    with pytest.raises(ValueError, match='lowercase'):
+        await new_account(store, {}, TerminalDialogs(typed_bad.runners))
     problem = accounts_menu._name_problem  # pyright: ignore[reportPrivateUsage]
     assert problem('account-2', {'account-2'}) == 'account-2 is already an account here.'
     assert problem('Bad', set()) is not None and 'lowercase' in str(problem('Bad', set()))
     assert problem('default', set()) == 'default is the account without a name.'
     assert problem('work', set()) is None
     details = accounts_menu._choice_details  # pyright: ignore[reportPrivateUsage]
-    assert 'Models run as openai@NAME:MODEL.' in details(MenuItem('openai', value=openai))
-    assert details(MenuItem('API keys', disabled=True)) == ''
+    assert details(openai) == (
+        'API key. Asks for a key or a /keys entry. Other settings come from the environment. '
+        'Models run as openai@NAME:MODEL.'
+    )
 
 
 def test_choose_account(tmp_path: Path) -> None:

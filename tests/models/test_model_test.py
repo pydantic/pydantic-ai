@@ -673,6 +673,40 @@ def test_falsy_const_tool_args() -> None:
     assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
 
 
+def test_json_pointer_ref_tool_args() -> None:
+    """A local JSON-pointer `$ref` is followed like a `$defs` one when generating tool arguments.
+
+    The MCP TypeScript SDK sends this shape for a zod v3 tool `{ from: Address, to: Address }`: the reused
+    subschema points at its first occurrence instead of `$defs`.
+    """
+    address = {
+        'type': 'object',
+        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+        'required': ['street', 'city'],
+        'additionalProperties': False,
+    }
+    calls: list[dict[str, Any]] = []
+
+    def ship_order(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'shipped'
+
+    tool = Tool.from_schema(
+        ship_order,
+        name='ship_order',
+        description=None,
+        json_schema={
+            'type': 'object',
+            'properties': {'from': address, 'to': {'$ref': '#/properties/from'}},
+            'required': ['from', 'to'],
+            'additionalProperties': False,
+        },
+    )
+
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'from': {'street': 'a', 'city': 'a'}, 'to': {'street': 'a', 'city': 'a'}}])
+
+
 def test_list_form_items_tool_args() -> None:
     """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element, up to `maxItems`.
 

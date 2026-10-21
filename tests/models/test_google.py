@@ -18,8 +18,11 @@ import pytest
 from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
+    AsyncByteStream as HTTPX2AsyncByteStream,
     AsyncClient as HTTPX2AsyncClient,
+    ConnectError as HTTPX2ConnectError,
     MockTransport as HTTPX2MockTransport,
+    ReadError as HTTPX2ReadError,
     Request as HTTPX2Request,
     Response as HTTPX2Response,
 )
@@ -66,6 +69,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -74,7 +78,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     InstructionPart,
 )
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import (
     FileSearchTool,
     WebFetchTool,
@@ -124,6 +128,7 @@ with try_import() as imports_successful:
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -994,8 +999,10 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'usage': {
                     'input_tokens': 14,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -1056,6 +1063,8 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
+                'failed_attempts': None,
                 'workspace_ref': None,
             }
         ]
@@ -1141,7 +1150,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     input_tool_tokens=119,
                     input_text_tool_tokens=119,
                     web_searches=1,
-                    cost=Decimal('0.00431'),
+                    cost=Decimal('0.03931'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1230,7 +1239,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     input_tool_tokens=286,
                     input_text_tool_tokens=286,
                     web_searches=1,
-                    cost=Decimal('0.00398875'),
+                    cost=Decimal('0.03898875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1386,7 +1395,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     input_tool_tokens=102,
                     input_text_tool_tokens=102,
                     web_searches=1,
-                    cost=Decimal('0.00667875'),
+                    cost=Decimal('0.04167875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1633,7 +1642,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     input_tool_tokens=319,
                     input_text_tool_tokens=319,
                     web_searches=1,
-                    cost=Decimal('0.00612'),
+                    cost=Decimal('0.04112'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -3475,15 +3484,12 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
 
 
 def test_map_usage():
-    assert (
-        _metadata_as_usage(
-            GenerateContentResponse(),
-            # Test the 'google' provider fallback
-            provider='',
-            provider_url='',
-        )
-        == RequestUsage()
-    )
+    assert _metadata_as_usage(
+        GenerateContentResponse(),
+        # Test the 'google' provider fallback
+        provider='',
+        provider_url='',
+    ) == RequestUsage(unmeasured_requests=1)
 
     response = GenerateContentResponse(
         usage_metadata=GenerateContentResponseUsageMetadata(
@@ -3724,7 +3730,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     output_tokens=706,
                     output_reasoning_tokens=456,
                     web_searches=1,
-                    cost=Decimal('0.0021805'),
+                    cost=Decimal('0.0161805'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -4167,6 +4173,7 @@ def test_google_process_response_empty_candidates(google_provider: GoogleProvide
     assert result == snapshot(
         ModelResponse(
             parts=[],
+            usage=RequestUsage(unmeasured_requests=1),
             model_name='gemini-2.5-pro',
             timestamp=IsDatetime(),
             provider_name='google',
@@ -4236,7 +4243,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _provider_url='',
     )
 
-    async for _ in streamed_response._get_event_iterator():  # pyright: ignore[reportPrivateUsage]
+    async for _ in streamed_response:
         pass
 
     return streamed_response.usage
@@ -4253,6 +4260,14 @@ class _UsageRetentionCase:
 
 
 _USAGE_RETENTION_CASES = [
+    _UsageRetentionCase(
+        id='usage_absent_on_every_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(candidates=0, text='hel', with_metadata=False),
+            _usage_chunk(candidates=0, text='lo', with_metadata=False),
+        ],
+        expected=snapshot(RequestUsage(unmeasured_requests=1)),
+    ),
     _UsageRetentionCase(
         id='cached_tokens_dropped_by_later_chunk',
         make_chunks=lambda: [
@@ -5369,6 +5384,71 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert len(requests) == 1
 
 
+class _HTTPX2StreamBreakingOff(HTTPX2AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_google_connect_error_is_wrapped(allow_model_requests: None, stream: bool):
+    """`google.genai` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        raise HTTPX2ConnectError('connection refused', request=request)
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with Agent(model).run_stream('test'):
+                    pass  # pragma: no cover
+            else:
+                await Agent(model).run('test')
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'connect'
+    assert exc_info.value.message == 'connection refused'
+    assert isinstance(exc_info.value.__cause__, HTTPX2ConnectError)
+
+
+async def test_google_stream_read_error_mid_stream_is_wrapped(allow_model_requests: None):
+    """A connection that breaks off mid-stream surfaces as `ModelAPIError`, not the raw `httpx2` error."""
+    chunk = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hello'}]}, 'index': 0}]}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(
+            200,
+            headers={'content-type': 'text/event-stream'},
+            stream=_HTTPX2StreamBreakingOff(
+                f'data: {json.dumps(chunk)}\r\n\r\n'.encode(), HTTPX2ReadError('connection reset')
+            ),
+        )
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with Agent(model).run_stream('test') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
+    assert exc_info.value.message == 'connection reset'
+    assert isinstance(exc_info.value.__cause__, HTTPX2ReadError)
+
+
 async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):
     """An API error from `count_tokens` is mapped like one from the request, not raised as the SDK's own error."""
     error_response = {'error': {'code': 429, 'message': 'Resource exhausted', 'status': 'RESOURCE_EXHAUSTED'}}
@@ -5904,17 +5984,33 @@ async def test_google_stream_safety_filter(
     assert response_msg['provider_details']['safety_ratings'][0]['category'] == 'HARM_CATEGORY_HATE_SPEECH'
 
 
-def test_google_provider_sets_http_options_timeout(google_provider: GoogleProvider):
-    """Test that GoogleProvider sets HttpOptions.timeout to prevent requests hanging indefinitely.
+@pytest.mark.parametrize('route', ['gemini-api', 'google-cloud', 'gateway'])
+def test_google_provider_sets_http_options_timeout(route: str, gemini_api_key: str):
+    """Test that the Google providers set HttpOptions.timeout to prevent requests hanging indefinitely.
 
     The google-genai SDK's HttpOptions.timeout defaults to None, which causes the SDK to
     explicitly pass timeout=None to httpx, overriding any timeout configured on the httpx
     client. This would cause requests to hang indefinitely.
 
+    The client a Google provider creates, directly or on the Gateway's Google route, waits 20 minutes rather
+    than `DEFAULT_HTTP_TIMEOUT`, as Google recommends for long decode, and so does a client recreated after it
+    is closed.
+
     See https://github.com/pydantic/pydantic-ai/issues/4031
     """
-    http_options = google_provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
-    assert http_options.timeout == DEFAULT_HTTP_TIMEOUT * 1000
+    if route == 'gemini-api':
+        provider = GoogleProvider(api_key=gemini_api_key)
+    elif route == 'google-cloud':
+        provider = GoogleCloudProvider(project='test-project')
+    else:
+        provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
+    http_options = provider.client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
+    assert http_options.timeout == 20 * 60 * 1000
+    factory = provider._http_client_factory  # pyright: ignore[reportPrivateUsage]
+    assert factory is not None
+    recreated = factory()
+    assert recreated.timeout.read == 20 * 60
+    assert recreated.timeout.connect == 5
 
 
 def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str):

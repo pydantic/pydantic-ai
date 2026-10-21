@@ -6,22 +6,28 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
+from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_clai2 import StreamRenderer
+from pydantic_clai2 import DEFAULT_PLUGINS, StreamRenderer
+from pydantic_clai2.builtin_plugins.coder import DEFAULT_SKILL_FOLDERS, CoderSettings
+from pydantic_clai2.builtin_plugins.day_ai import DayAISource
 from pydantic_clai2.builtin_plugins.logfire import LogfireAccount, LogfireSettings, LogfireSource
-from pydantic_clai2.commands import config_command, plugins_command
-from pydantic_clai2.config import PluginSettings, Settings, features
+from pydantic_clai2.builtin_plugins.logfire_mcp import LogfireMCPSettings
+from pydantic_clai2.builtin_plugins.notion import NotionSource
+from pydantic_clai2.builtin_plugins.ordinal import OrdinalSource
+from pydantic_clai2.commands import Commands, config_command, plugins_command
+from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, features
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.plugin_requirements import apply_requirements, stored_requirements
 from pydantic_clai2.config.settings_store import SettingsStore, StoredAccount
 from pydantic_clai2.models.model_settings import model_settings_from_json
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, SessionStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
@@ -51,6 +57,7 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         assert loaded is not None
         settings = loaded.plugin.host.settings(LogfireSettings)
         assert (settings.user_tag, settings.account) == ('logfire-account', None)  # No identity to tag with.
+        assert settings.httpx is False
         assert store.plugins() == [previous]  # Loading an old declaration does not rewrite it.
         source = LogfireSource(loaded.plugin.host)
         rows = {row.key: row for row in source.rows()}
@@ -64,12 +71,19 @@ async def test_logfire_user_tag_settings_survive_older_builds(
         )
         assert saved.settings['account'] is None
         requirements = store.plugin_requirements('observability')
-        assert requirements == {'user_tag': ['logfire-user-tag'], 'account': ['logfire-user-tag']}
+        assert requirements == {
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'httpx': ['logfire-httpx'],
+            'variables_key': ['logfire-variables-key'],
+        }
         old_view = apply_requirements(
             saved.settings, stored_requirements(requirements, saved.settings), defaults={}, supported=frozenset()
         )
         assert old_view.settings == {
-            key: value for key, value in saved.settings.items() if key not in ('user_tag', 'account')
+            key: value
+            for key, value in saved.settings.items()
+            if key not in ('user_tag', 'account', 'httpx', 'variables_key')
         }
         monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
         await loader.reload('observability')
@@ -82,6 +96,59 @@ async def test_logfire_user_tag_settings_survive_older_builds(
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+async def test_httpx_opt_in_is_ignored_by_older_builds(tmp_path: Path, recorder: Recorder) -> None:
+    loader, store = observability_loader(tmp_path)
+    try:
+        await loader.load_all()
+        host = _observability_host(loader)
+        source = LogfireSource(host)
+        row = next(row for row in source.rows() if row.key == 'httpx')
+        source.apply(row, 'true')
+        [saved] = store.plugins()
+        assert saved.settings['httpx'] is True
+        requirements = store.plugin_requirements('observability')
+        assert requirements == {
+            'httpx': ['logfire-httpx'],
+            'user_tag': ['logfire-user-tag'],
+            'account': ['logfire-user-tag'],
+            'variables_key': ['logfire-variables-key'],
+        }
+        old_view = apply_requirements(
+            saved.settings,
+            stored_requirements(requirements, saved.settings),
+            defaults={'httpx': False},
+            supported=frozenset({'logfire-user-tag'}),
+        )
+        assert old_view.settings['httpx'] is False
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
+
+
+async def test_variables_key_is_ignored_by_older_builds(tmp_path: Path, recorder: Recorder) -> None:
+    """A build without `variables_key` forbids unknown settings, so the key is tagged for it to drop instead."""
+    loader, store = observability_loader(tmp_path)
+    try:
+        await loader.load_all()
+        source = LogfireSource(_observability_host(loader))
+        row = next(row for row in source.rows() if row.key == 'variables_key')
+        source.apply(row, 'LOGFIRE_API_KEY_TEAM')
+        [saved] = store.plugins()
+        assert saved.settings['variables_key'] == {'name': 'LOGFIRE_API_KEY_TEAM'}
+        requirements = store.plugin_requirements('observability')
+        old_view = apply_requirements(
+            saved.settings,
+            stored_requirements(requirements, saved.settings),
+            defaults={},
+            supported=frozenset({'logfire-user-tag', 'logfire-httpx'}),
+        )
+        assert 'variables_key' not in old_view.settings
+        assert old_view.ignored == {'variables_key': frozenset({'logfire-variables-key'})}
+        assert store.plugins() == [saved]
+    finally:
+        await loader.close('exit')
 
 
 @pytest.mark.parametrize('ui_events', [None, False, True])
@@ -118,6 +185,35 @@ async def test_logfire_ui_events_default_preserves_saved_overrides(
     finally:
         await loader.close('exit')
     assert recorder.exporters and all(exporter.closed for exporter in recorder.exporters)
+
+
+@pytest.mark.parametrize('include_content', [None, False, True])
+async def test_logfire_content_default_is_off_and_keeps_saved_opt_ins(
+    tmp_path: Path, recorder: Recorder, include_content: bool | None
+) -> None:
+    loader, store = observability_loader(tmp_path)
+    # Declarations that omitted the content flags were saved when they defaulted on; they now leave content out,
+    # deliberately, so an ambient `LOGFIRE_TOKEN` alone never exports prompts. An explicit choice is kept.
+    previous = PluginSettings(
+        id='observability', factory='pydantic_clai2.builtin_plugins.logfire', settings={'send_to_logfire': False}
+    )
+    if include_content is not None:
+        previous.settings['include_content'] = include_content
+        previous.settings['include_binary_content'] = include_content
+    store.save_plugin(previous)
+    expected = include_content is True
+    try:
+        await loader.load_all()
+        settings = _observability_host(loader).settings(LogfireSettings)
+        assert (settings.include_content, settings.include_binary_content) == (expected, expected)
+        assert store.plugins() == [previous]  # No migration or write on load.
+        source = LogfireSource(_observability_host(loader))
+        source.apply(next(row for row in source.rows() if row.key == 'service_name'), 'changed-project')
+        [saved] = store.plugins()
+        # Saved explicitly, so older builds, which defaulted content on, keep the same choice.
+        assert (saved.settings['include_content'], saved.settings['include_binary_content']) == (expected, expected)
+    finally:
+        await loader.close('exit')
 
 
 def _observability_host(loader: PluginLoader[None]) -> PluginHost[None]:
@@ -187,6 +283,10 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().spinner == 'working'
     # Databases from before `/update` follow stable releases.
     assert store.load().update_channel == 'stable'
+    # Databases from before grouped tool calls keep one line per call.
+    assert store.load().tool_calls == 'detailed'
+    # Databases from before `/system_prompt` add no instructions of the user's own.
+    assert store.load().instructions == ''
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -291,6 +391,7 @@ def test_unknown_saved_settings_survive_edits(tmp_path: Path, key: str, value_js
         ('display.spinner', '""'),
         ('display.spinner', '3'),
         ('run.speculative_code_mode', '"yes"'),
+        ('run.instructions', '42'),
         ('accounts.pool', '"off"'),
     ],
 )
@@ -303,6 +404,20 @@ def test_invalid_known_settings_fail_without_data_loss(tmp_path: Path, key: str,
     with pytest.raises(ValidationError):
         store.load()
     assert store.path.read_bytes() == snapshot
+
+
+def test_saved_instructions_survive_a_build_without_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / 'config.db'
+    SettingsStore(path).set('run.instructions', 'Line one\nLine two')
+    older = {key: name for key, name in SETTING_FIELDS.items() if key != 'run.instructions'}
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_clai2.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_clai2.config.settings_store.SETTING_FIELDS', older)
+        store = SettingsStore(path)
+        assert store.load() == Settings()
+        store.set('display.thinking', False)
+        store.reset('display.thinking')
+    assert SettingsStore(path).overrides() == {'run.instructions': 'Line one\nLine two'}
 
 
 def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_path: Path) -> None:
@@ -660,3 +775,198 @@ def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None
     assert store.plugins()[0].enabled
     plugins_command(store, ['remove', 'logfire'])
     assert store.plugins() == []
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        'https://logfire-eu.pydantic.dev/mcp',
+        'https://logfire.example.com/mcp',
+        'https://logfire.example.com/x/mcp',
+        # Not as the picker writes them, but browser sign-ins are stored under these exact URLs.
+        'https://logfire-eu.pydantic.dev/mcp/',
+        'https://Logfire-EU.pydantic.dev/mcp',
+        'https://logfire.pydantic.dev/mcp',
+    ],
+)
+def test_logfire_mcp_settings_from_older_builds_load_under_the_same_id(tmp_path: Path, url: str) -> None:
+    """The plugin is shown as Logfire, but keeps the `logfire_mcp` id, and every MCP URL older builds saved loads as is.
+
+    The URL is the OAuth resource a browser sign-in is stored under, so normalizing it would sign the user out.
+
+    `logfire` cannot become its id: it is the `observability` plugin's stored id, which older builds still read.
+    """
+    store = SettingsStore(tmp_path / 'config.db')
+    legacy = (
+        '{"id":"logfire_mcp","factory":"pydantic_clai2.builtin_plugins.logfire_mcp","enabled":true,'
+        f'"settings":{{"key":null,"url":"{url}","oauth":true,"read_only":false,"include_instructions":true}}}}'
+    )
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('logfire_mcp', legacy))
+    [saved] = store.plugins()
+    assert saved == PluginSettings.model_validate_json(legacy)
+    settings = PluginHost[None](name='logfire_mcp', console=Console(), settings=saved.settings).settings(
+        LogfireMCPSettings
+    )
+    assert (settings.url, settings.read_only) == (url, False)
+    # `/plugins ... logfire` still means `observability`, as in older builds.
+    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
+    plugins_command(store, ['disable', 'logfire'])
+    assert {plugin.id: plugin.enabled for plugin in store.plugins()} == {'logfire_mcp': True, 'observability': False}
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-skill-folders'])
+async def test_saved_skill_folders_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before skills existed gets the default folders; a build lacking the feature drops a saved list."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"]}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false}}',
+            ),
+        )
+    store.save_plugin(store.plugins()[0], requires={'skill_folders': frozenset({'coder-skill-folders'})})
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', frozenset[str]())
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    folders = {
+        name: entry.loaded.plugin.host.settings(CoderSettings).skill_folders
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert folders == {
+        'coder': ['team-skills'] if supported else list(DEFAULT_SKILL_FOLDERS),
+        'older': list(DEFAULT_SKILL_FOLDERS),
+    }
+    # `/plugins` shows the notice; startup does not print it.
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved skill_folders (needs coder-skill-folders); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-disabled-skills'])
+async def test_saved_disabled_skills_load_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before skill toggles existed offers every skill; a build lacking the feature drops the list."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false, "skill_folders": ["team-skills"], '
+                '"disabled_skills": ["pre-push-review"]}}',
+            ),
+        )
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'older',
+                '{"id": "older", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "sub_agents": false}}',
+            ),
+        )
+    store.save_plugin(
+        store.plugins()[0],
+        requires={
+            'skill_folders': frozenset({'coder-skill-folders'}),
+            'disabled_skills': frozenset({'coder-disabled-skills'}),
+        },
+    )
+    saved = store.plugins()
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-disabled-skills'})
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO(), width=200),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+
+    await loader.load_all()
+
+    entries = {entry.name: entry for entry in loader.entries() if entry.name in {'coder', 'older'}}
+    # Through the host: an earlier `loader.reload('coder')` in this process may have replaced the module's class.
+    loaded = {
+        name: entry.loaded.plugin.host.settings(CoderSettings)
+        for name, entry in entries.items()
+        if entry.loaded is not None
+    }
+    assert {name: (settings.skill_folders, settings.disabled_skills) for name, settings in loaded.items()} == {
+        'coder': (['team-skills'], ['pre-push-review'] if supported else []),
+        'older': (list(DEFAULT_SKILL_FOLDERS), []),
+    }
+    assert entries['coder'].ignored == (
+        None if supported else 'coder: ignored saved disabled_skills (needs coder-disabled-skills); using defaults.'
+    )
+    assert store.plugins() == saved
+    await loader.close('exit')
+
+
+@pytest.mark.parametrize(
+    ('name', 'previous', 'saved'),
+    [
+        ('day_ai', {'auth': None}, {'auth': 'oauth', 'include_instructions': False}),
+        (
+            'notion',
+            {'auth': None, 'read_only': True},
+            {'auth': 'oauth', 'read_only': True, 'include_instructions': False},
+        ),
+        ('ordinal', {'sign_in': 'auto'}, {'sign_in': 'browser', 'include_instructions': False}),
+    ],
+)
+async def test_automatic_sign_in_saved_by_older_builds_means_the_browser(
+    tmp_path: Path, name: str, previous: dict[str, JsonValue], saved: dict[str, JsonValue]
+) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == name)
+    declaration = builtin.model_copy(update={'enabled': True, 'settings': previous})
+    store.save_plugin(declaration)
+    loader = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(builtin,),
+    )
+    try:
+        await loader.load_all()
+        [entry] = loader.entries()
+        assert entry.loaded is not None, 'the automatic choice older builds saved still loads'
+        assert store.plugins() == [declaration], 'loading does not rewrite it'
+        host = entry.loaded.plugin.host
+        source = {'day_ai': DayAISource, 'notion': NotionSource, 'ordinal': OrdinalSource}[name](host)
+        [instructions] = [row for row in source.rows() if row.key == 'include_instructions']
+        source.apply(instructions, 'false')
+        # An unrelated edit saves the browser sign-in, a value older builds read too.
+        assert [plugin.settings for plugin in store.plugins()] == [saved]
+    finally:
+        await loader.close('exit')

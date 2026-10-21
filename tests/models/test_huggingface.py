@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -20,9 +20,12 @@ from pydantic_ai import (
     DocumentUrl,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
+    ModelTimeoutError,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -30,6 +33,7 @@ from pydantic_ai import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    TransportPhase,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
@@ -47,6 +51,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_e
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
+    import huggingface_hub.utils._http
     from huggingface_hub import (
         AsyncInferenceClient,
         ChatCompletionInputMessage,
@@ -61,7 +66,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.errors import HfHubHTTPError, OverloadedError
+    from huggingface_hub.errors import GenerationError, HfHubHTTPError, OverloadedError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -486,6 +491,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
@@ -647,10 +653,90 @@ async def test_image_as_binary_content_input(
     )
 
 
+class _StreamBreakingOff(httpx.AsyncByteStream):
+    """A response body that sends `first` and then breaks off with `error`."""
+
+    def __init__(self, first: bytes, error: Exception):
+        self.first = first
+        self.error = error
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self.first
+        raise self.error
+
+
+_TEXT_CHUNK = {
+    'id': '1',
+    'object': 'chat.completion.chunk',
+    'created': 0,
+    'model': 'm',
+    'system_fingerprint': 'x',
+    'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': 'Hello'}, 'finish_reason': None}],
+}
+
+
+def _connect_error(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError('connection refused', request=request)
+
+
+def _timeout(request: httpx.Request) -> httpx.Response:
+    # `huggingface_hub` converts `TimeoutError` to `InferenceTimeoutError`.
+    raise TimeoutError
+
+
+def _stream_breaking_off(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        stream=_StreamBreakingOff(f'data: {json.dumps(_TEXT_CHUNK)}\n\n'.encode(), httpx.ReadError('connection reset')),
+    )
+
+
+@pytest.mark.parametrize(
+    ('handler', 'stream', 'cause_name', 'error_class', 'phase'),
+    [
+        pytest.param(_connect_error, False, 'ConnectError', ModelConnectionError, 'connect', id='connect'),
+        pytest.param(_connect_error, True, 'ConnectError', ModelConnectionError, 'connect', id='stream-connect'),
+        # `InferenceTimeoutError` doesn't say at which stage the request timed out.
+        pytest.param(_timeout, False, 'InferenceTimeoutError', ModelTimeoutError, None, id='timeout'),
+        pytest.param(_stream_breaking_off, True, 'ReadError', ModelConnectionError, 'read', id='mid-stream'),
+    ],
+)
+async def test_model_transport_error(
+    allow_model_requests: None,
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+    stream: bool,
+    cause_name: str,
+    error_class: type[ModelConnectionError],
+    phase: TransportPhase | None,
+) -> None:
+    """`huggingface_hub` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
+    monkeypatch.setattr(
+        huggingface_hub.utils._http,
+        '_GLOBAL_ASYNC_CLIENT_FACTORY',
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    hf_client = AsyncInferenceClient(base_url='http://localhost/v1', api_key='test-key')
+    agent = Agent(HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=hf_client, api_key='test-key')))
+    with pytest.raises(ModelAPIError) as exc_info:
+        if stream:
+            async with agent.run_stream('hello') as result:
+                await result.get_output()
+        else:
+            await agent.run('hello')
+
+    assert type(exc_info.value) is error_class
+    assert exc_info.value.phase == phase
+    assert type(exc_info.value.__cause__).__name__ == cause_name
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     error = HfHubHTTPError(
         message='test_error',
-        response=Mock(status_code=500, content={'error': 'test error'}, headers=httpx.Headers({'x-request-id': 'abc'})),
+        response=Mock(
+            status_code=500, content=b'{"error": "test error"}', headers=httpx.Headers({'x-request-id': 'abc'})
+        ),
     )
     mock_client = MockHuggingFace.create_mock(error)
     m = HuggingFaceModel('not_a_model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -658,18 +744,30 @@ def test_model_status_error(allow_model_requests: None) -> None:
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
     exc = exc_info.value
-    assert str(exc) == snapshot("status_code: 500, model_name: not_a_model, body: {'error': 'test error'}")
+    assert str(exc) == snapshot('status_code: 500, model_name: not_a_model, body: b\'{"error": "test error"}\'')
     assert exc.headers == {'x-request-id': 'abc'}
 
 
+@pytest.mark.parametrize(
+    ('error_kind', 'error_class'),
+    [
+        pytest.param('overloaded', ModelOverloadedError, id='overloaded'),
+        pytest.param('generation', ModelAPIError, id='generation'),
+    ],
+)
 @pytest.mark.parametrize('first_chunk', [True, False], ids=['first-chunk', 'mid-stream'])
-async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, first_chunk: bool) -> None:
-    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces as
-    `ModelAPIError`, with no status code invented for it.
+async def test_stream_error_object_raises_model_api_error(
+    allow_model_requests: None,
+    first_chunk: bool,
+    error_kind: Literal['overloaded', 'generation'],
+    error_class: type[ModelAPIError],
+) -> None:
+    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces with
+    `in_stream` set: an overloaded server gets the 429 it answers with before a stream opens, other errors no status.
 
     https://github.com/pydantic/pydantic-ai/issues/8722
     """
-    error = OverloadedError('Model is overloaded')
+    error = (OverloadedError if error_kind == 'overloaded' else GenerationError)('Model is overloaded')
     stream: list[MockStreamEvent] = [error] if first_chunk else [text_chunk('Hello'), error]
     mock_client = MockHuggingFace.create_stream_mock(stream)
     model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
@@ -677,8 +775,15 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == 'Model is overloaded'
+    assert isinstance(exc_info.value, error_class)
+    assert exc_info.value.in_stream is True
+    if error_kind == 'overloaded':
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == 429
+        assert exc_info.value.body == 'Model is overloaded'
+    else:
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == 'Model is overloaded'
     assert exc_info.value.__cause__ is error
 
 
@@ -817,6 +922,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='invalid-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',
@@ -844,6 +950,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final-response')],
+                usage=RequestUsage(unmeasured_requests=1),
                 model_name='hf-model',
                 timestamp=IsNow(tz=UTC),
                 provider_name='huggingface',

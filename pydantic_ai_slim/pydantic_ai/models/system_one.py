@@ -2,15 +2,15 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from decimal import Decimal
 from math import isfinite
-from typing import Annotated, Literal, assert_never, cast
+from typing import Annotated, ClassVar, Literal, assert_never, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
 
+from .. import _model_errors
 from .._http import to_httpx2_timeout
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.system_one import SystemOneProvider
@@ -29,6 +29,8 @@ from .decision import (
     NoulQuestion,
     ScoreAnswer,
     ScoreQuestion,
+    _probability_bounds,  # pyright: ignore[reportPrivateUsage]
+    _score_fits,  # pyright: ignore[reportPrivateUsage]
     _wire,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -80,6 +82,12 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     # `max_choice_options` and `max_score_levels` stay `None`: limits belong to the model behind the URL, so they come
     # from the profile for the model name, and where it sets none the API refuses a request over them itself.
 
+    # The API's schema requires `instructions` on every question, even one whose options say what it asks.
+    requires_instructions: ClassVar[bool] = True
+
+    # The API takes a `temperature`, but no retry count: the provider's client makes a single attempt.
+    unsupported_settings = DecisionModel.unsupported_settings - {'temperature'} | {'max_retries'}
+
     _model_name: SystemOneModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)
     _api_key: str | None = field(repr=False)
@@ -127,6 +135,8 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:  # noqa: C901
         """Send one request to the `/v1/systemone` endpoint."""
+        if request.images:
+            raise UserError('System One does not support image input.')
         body: dict[str, object] = {
             'state': request.state,
             'model': self._model_name,
@@ -164,13 +174,17 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         try:
             response = await self.client.send(http_request)
         except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self._model_name, message=f'{type(e).__name__}: {e}') from e
+            raise _model_errors.connection_error(
+                self._model_name, f'{type(e).__name__}: {e}', e, timeout=isinstance(e, httpx2.TimeoutException)
+            ) from e
 
         if response.is_error:
-            raise ModelHTTPError(
+            error_body = _error_body(response)
+            raise ModelHTTPError.for_category(
+                _model_errors.http_status_category(response.status_code, str(error_body)),
                 status_code=response.status_code,
                 model_name=self._model_name,
-                body=_error_body(response),
+                body=error_body,
                 headers=dict(response.headers),
             )
         try:
@@ -215,34 +229,11 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
                 if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
                     # A displayed score and its probabilities may each be rounded. Check whether any distribution
                     # within their rounding intervals could produce that score, using at least Jev's two decimals.
-                    values: list[Decimal] = [
-                        Decimal(str(answer.probabilities[level])) for level in range(len(question.criteria))
+                    probabilities_by_level: list[float] = [
+                        answer.probabilities[level] for level in range(len(question.criteria))
                     ]
-                    half_units: list[Decimal] = [
-                        Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values
-                    ]
-                    lower: list[Decimal] = [
-                        max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)
-                    ]
-                    upper: list[Decimal] = [
-                        min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)
-                    ]
-                    remaining = Decimal(1) - sum(lower, Decimal(0))
-                    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
-                    if valid:
-                        bounds: list[Decimal] = []
-                        for levels in (range(len(values)), reversed(range(len(values)))):
-                            rest = remaining
-                            mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
-                            for level in levels:
-                                taken = min(rest, upper[level] - lower[level])
-                                mean += level * taken
-                                rest -= taken
-                            bounds.append(mean)
-                        score = Decimal(str(answer.score))
-                        score_decimals = max(2, -int(score.as_tuple().exponent))
-                        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
-                        valid = score + score_half_unit >= bounds[0] and score - score_half_unit <= bounds[1]
+                    lower, upper = _probability_bounds(probabilities_by_level)
+                    valid = _score_fits(lower, upper, answer.score)
             if not valid:
                 raise UnexpectedModelBehavior(
                     f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',

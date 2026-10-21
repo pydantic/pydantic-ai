@@ -432,7 +432,11 @@ class MontyExecutor:
         for cid in pending_ids:
             if cid in self._pre_resolved:
                 results[cid] = self._pre_resolved.pop(cid)
-            elif self.global_sequential:
+
+        # Sequential modes resume the deferred calls in dispatch order: `_pending` is
+        # insertion-ordered, but `pending_call_ids` may list the ids in any order.
+        if self.global_sequential:
+            for cid in [cid for cid in self._pending if cid in pending_ids]:
                 results[cid] = await _await_external(self._pending.pop(cid))
 
         # Gather any remaining parallel tasks concurrently. They stay in `_pending` until
@@ -463,6 +467,6 @@ def _wrap_gathered(outcome: Any) -> ExternalReturnValue | ExternalException:
     """Wrap an `asyncio.gather(return_exceptions=True)` outcome for Monty."""
     if isinstance(outcome, Exception):
         return ExternalException(exception=outcome)
-    if isinstance(outcome, BaseException):  # pragma: no cover
+    if isinstance(outcome, BaseException):
         raise outcome
     return ExternalReturnValue(return_value=outcome)

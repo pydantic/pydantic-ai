@@ -29,10 +29,12 @@ from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartStartEvent,
     SpeechPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,7 +43,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSession, RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
@@ -269,6 +271,40 @@ async def test_text_reaches_the_model_as_context(
     assert session.usage.audio_seconds > 0
 
 
+async def test_a_text_only_session_streams_its_own_silence(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """With `openai_live_idle_audio`, text reaches the model with no microphone at all.
+
+    Live's timeline only advances while audio arrives. The connection streams silence in the
+    microphone's place, so the text lands and the model speaks, just as it does with the silence the
+    test above streams by hand.
+    """
+    provider, _ = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    agent = Agent(_BACKEND, instructions='Relay what you are told, in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        await session.send('Tell the user their package arrives on Friday.')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'Friday' in spoken
+
+
 async def test_history_seeding(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
 ) -> None:
@@ -328,6 +364,9 @@ async def test_an_image_is_described_by_the_backend(
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
                     break
+        # The reply the image asked for is over: nothing is owed any more.
+        core = session._core  # pyright: ignore[reportPrivateUsage]
+        assert core is not None and not core.wait_tokens()
 
     spoken = ' '.join(
         part.transcript or ''
@@ -414,6 +453,57 @@ async def test_the_backend_searches_the_web(
     assert '936' in follow_up.output
 
 
+async def test_the_backend_summarizes_its_reasoning(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """`reasoning_summary` reaches the backend, which accepts it and summarizes its reasoning.
+
+    The reasoning recorded ahead of each search then reads as the summary, as on a direct Responses run
+    that requests one.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_delegation={'reasoning_summary': 'auto'}, openai_live_turn_silence_ms=1000
+        ),
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    # The summary is requested next to the backend's other settings.
+    assert _session_starts(cassette)[0]['delegation']['responses']['reasoning'] == snapshot({'summary': 'auto'})
+    # Only reasoning the backend did summarize carries text: here, the reasoning before the first search.
+    # Curly apostrophes are straightened, since pre-commit would rewrite them in the snapshot below.
+    thinking = [part.content.replace('\u2019', "'") for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking == snapshot(
+        [
+            """\
+**Searching for Amsterdam population**
+
+I need to check Wikipedia specifically for the current population of Amsterdam. There's a bit of ambiguity about whether I'm looking for the city or the municipality, which makes it a little tricky. I'm thinking the population is likely around 933,680 as of January 2025, but I need to confirm that by searching. Let's go ahead and get that information to be sure!\
+""",
+            '',
+            '',
+            '',
+        ]
+    )
+
+
 async def test_an_image_a_tool_returns_reaches_the_backend(
     openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
     assets_path: Path,
@@ -472,7 +562,7 @@ _BrowserPeer = tuple[str, Callable[[str], Awaitable[None]], Callable[[], None]]
 
 
 @asynccontextmanager
-async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # pragma: no cover
+async def _speaking_browser(pcm: bytes, *, rate: int = 24000) -> AsyncGenerator[_BrowserPeer]:  # pragma: no cover
     """Negotiate a real WebRTC call with `aiortc`, standing in for a browser whose user asks a question.
 
     Recording only. Live's timeline moves with the audio it receives, and on a WebRTC call that audio
@@ -483,7 +573,7 @@ async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # prag
     """
     aiortc = importlib.import_module('aiortc')
     av = importlib.import_module('av')
-    rate, frame_samples = 24000, 480  # 20 ms frames of the 24 kHz clip
+    frame_samples = rate // 50  # 20 ms frames of the clip
     state = {'position': -1}
 
     class _Microphone(aiortc.MediaStreamTrack):
@@ -615,6 +705,60 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
 
 
 @pytest.mark.vcr
+async def test_webrtc_call_continues_the_bound_history(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """History bound with `agent.realtime(...)` is seeded when the offer starts the Live session.
+
+    Live takes history only then, so the sideband opened from the same object seeds nothing, and the model
+    answers from the history it was started with.
+    """
+    provider, cassette = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(_BACKEND, instructions='Answer in a few words.')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My name is Ada.')]),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Nice to meet you, Ada.')]),
+    ]
+    realtime = agent.realtime(model, message_history=history)
+    pcm = assets_path.joinpath('remind_me_my_name_16khz.pcm').read_bytes()
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(pcm, rate=16000) as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    async with browser() as (offer, connect, speak):
+        answer = await realtime.answer_webrtc_offer(offer)
+        await connect(answer.sdp)
+
+        async with realtime.session(provider_session=answer.session) as session:
+            speak()
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch
+                    if isinstance(event, RealtimeTurnCompleteEvent):
+                        break
+
+    # The sideband seeded nothing: Live replayed the history the offer started the session with.
+    assert [i for i in cassette.interactions if isinstance(i, CassetteMessage) and i.direction == 'sent'] == []
+    messages = session.all_messages()
+    assert messages[:2] == history
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in messages[2:]
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'Ada' in spoken
+
+
+@pytest.mark.vcr
 async def test_webrtc_hang_up_ends_the_call(
     openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -725,3 +869,56 @@ async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
     assert replacement['input'] == first['input']
     assert replacement['delegation'] == first['delegation']
     assert 'turquoise' in answer.lower()
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_sent_mid_reply_is_answered_by_that_reply(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Live speaks to text placed on its timeline mid-reply in that same reply, not in one of its own.
+
+    Live acknowledges the text (`session.commentary.appended`), and the reply under way goes on to answer it:
+    that reply settles the text's reply obligation, so the wait for it ends with that reply instead of waiting
+    for another that never comes.
+    """
+    provider, _ = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    agent = Agent(_BACKEND, instructions='Keep replies short.')
+
+    messages: list[ModelMessage] = []
+    speaking = anyio.Event()
+
+    async def watch(session: RealtimeSession) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
+                speaking.set()
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('Tell me a three-sentence story about a cat.')
+        with anyio.fail_after(60):
+            await speaking.wait()
+            await session.send('Actually, what is 2 plus 2?')
+            await session.wait_for_reply()
+        messages = session.all_messages()
+        tasks.cancel_scope.cancel()
+
+    assert [
+        [part.transcript for part in message.parts if isinstance(part, SpeechPart)]
+        if isinstance(message, ModelResponse)
+        else [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+        for message in messages
+        if isinstance(message, (ModelRequest, ModelResponse))
+    ] == snapshot(
+        [
+            ['Tell me a three-sentence story about a cat.'],
+            [
+                " Once, a cat chased a bouncing beam of sunlight across a kitchen floor. Actually, what is two plus two? It's four."
+            ],
+            ['Actually, what is 2 plus 2?'],
+        ]
+    )

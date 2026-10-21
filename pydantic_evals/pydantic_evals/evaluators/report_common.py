@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Iterator
 from dataclasses import dataclass
+from math import isnan
 from typing import Any, Literal, assert_never, cast
 
 from ..reporting import ReportCase
@@ -80,6 +82,29 @@ def _extract_scored_cases(
             continue
         scored_cases.append((score, is_positive))
     return scored_cases
+
+
+def _iter_threshold_counts(
+    scored_cases: list[tuple[float, bool]], thresholds: list[float]
+) -> Iterator[tuple[float, int, int]]:
+    # NaNs are unordered, so cumulative counts would change the comparison semantics.
+    if any(isnan(score) for score, _ in scored_cases):
+        for threshold in thresholds:
+            tp = sum(1 for s, p in scored_cases if s >= threshold and p)
+            fp = sum(1 for s, p in scored_cases if s >= threshold and not p)
+            yield threshold, tp, fp
+        return
+
+    sorted_cases = sorted(scored_cases, key=lambda case: case[0], reverse=True)
+    tp = fp = index = 0
+    for threshold in thresholds:
+        while index < len(sorted_cases) and sorted_cases[index][0] >= threshold:
+            if sorted_cases[index][1]:
+                tp += 1
+            else:
+                fp += 1
+            index += 1
+        yield threshold, tp, fp
 
 
 def _downsample(points: list[tuple[float, ...]], n: int) -> list[tuple[float, ...]]:
@@ -200,9 +225,7 @@ class PrecisionRecallEvaluator(ReportEvaluator):
         # Start with anchor at (recall=0, precision=1) — the "no predictions" point
         max_score = unique_thresholds[0]
         all_points: list[PrecisionRecallPoint] = [PrecisionRecallPoint(threshold=max_score, precision=1.0, recall=0.0)]
-        for threshold in unique_thresholds:
-            tp = sum(1 for s, p in scored_cases if s >= threshold and p)
-            fp = sum(1 for s, p in scored_cases if s >= threshold and not p)
+        for threshold, tp, fp in _iter_threshold_counts(scored_cases, unique_thresholds):
             fn = total_positives - tp
             precision = tp / (tp + fp) if (tp + fp) > 0 else 1.0
             recall = tp / (fn + tp) if (fn + tp) > 0 else 0.0
@@ -273,9 +296,7 @@ class ROCAUCEvaluator(ReportEvaluator):
         # Compute TPR/FPR at every unique score for exact AUC
         unique_thresholds = sorted({s for s, _ in scored_cases}, reverse=True)
         all_fpr_tpr: list[tuple[float, float]] = [(0.0, 0.0)]
-        for threshold in unique_thresholds:
-            tp = sum(1 for s, p in scored_cases if s >= threshold and p)
-            fp = sum(1 for s, p in scored_cases if s >= threshold and not p)
+        for _, tp, fp in _iter_threshold_counts(scored_cases, unique_thresholds):
             tpr = tp / total_positives
             fpr = fp / total_negatives
             all_fpr_tpr.append((fpr, tpr))

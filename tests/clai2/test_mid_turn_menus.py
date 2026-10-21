@@ -18,22 +18,22 @@ from rich.text import Text
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session, chat
-from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspacePlugin
 from pydantic_clai2.builtin_plugins.grain import GrainPlugin
 from pydantic_clai2.builtin_plugins.pylon import PylonPlugin
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.config import Settings
+from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, load_plugin
+from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
 from pydantic_clai2.plugins.loader import TURN_NOTICE
+from pydantic_clai2.runtime.session_runtime import create_shell
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
@@ -161,9 +161,10 @@ def test_session_changes_saved_during_a_turn_wait_for_it_to_end() -> None:
         applied('model', Settings(model='test:second'))
         applied('run.tool_retries', Settings(tool_retries=7))
         applied('model', Settings(model='test:third'))
+        applied('run.instructions', Settings(instructions='Be brief.'))
         applied('display.theme', Settings(theme='default'))
-        assert (session.model, session.tool_retries) == ('test:first', None)
-    assert (session.model, session.tool_retries) == ('test:third', 7)
+        assert (session.model, session.tool_retries, session.instructions) == ('test:first', None, '')
+    assert (session.model, session.tool_retries, session.instructions) == ('test:third', 7, 'Be brief.')
     applied('run.request_limit', Settings(request_limit=12))
     assert session.usage_limits is not None and session.usage_limits.request_limit == 12
 
@@ -232,7 +233,7 @@ async def test_model_settings_saved_mid_turn_reach_the_running_models_next_reque
             await streamed.wait()
             pipe.send_text('/exit\r')
             await done.wait()
-    assert seen == [{'seed': 1}, {'seed': 1, 'max_tokens': 42}]
+    assert seen == [{'cache': True, 'seed': 1}, {'cache': True, 'seed': 1, 'max_tokens': 42}]
     assert 'Saved max_tokens for test.' in output.getvalue()
 
 
@@ -310,6 +311,136 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
             await done.wait()
     text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
     assert text.index('> /menu') < text.index('Finished work') < text.index('menu closed') < text.index('Goodbye.')
+
+
+def test_only_opted_in_available_commands_run_live() -> None:
+    commands = Commands()
+    commands.register(Command(name='slow', description='Slow', handler=lambda args: 'done', live=True))
+    commands.register(
+        Command(name='hidden', description='Hidden', handler=lambda args: 'done', live=True, available=lambda: False)
+    )
+    commands.register(Command(name='menu', description='Menu', handler=lambda args: 'done'))
+    assert commands.runs_live('/slow focus words')
+    assert not commands.runs_live('/hidden')
+    assert not commands.runs_live('/menu')
+    assert not commands.runs_live('/missing')
+    assert not commands.runs_live('/')
+
+
+async def test_live_command_keeps_the_editor_working_and_cancellable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow command such as `/compact` keeps the prompt on screen with the spinner and stops on Ctrl-C.
+
+    The draft typed meanwhile shows while it runs and is still there once it stops.
+    """
+    started, working, drafted, kept, done = (anyio.Event() for _ in range(5))
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...]) -> None:
+            plain = [Text.from_ansi(row).plain.rstrip() for row in rows]
+            busy = any(row.startswith(' Working ') for row in plain)
+            if started.is_set() and busy:
+                working.set()
+                if 'keep me' in plain:
+                    drafted.set()
+            elif drafted.is_set() and 'keep me' in plain:
+                kept.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+
+    async def slow(args: list[str]) -> str:
+        if args:
+            return f'finished {args[0]}'
+        started.set()
+        await anyio.sleep_forever()
+        raise AssertionError('unreachable')  # pragma: no cover
+
+    output = io.StringIO()
+
+    async def run() -> None:
+        await chat(
+            Agent(TestModel(), deps_type=type(None)),
+            deps=None,
+            plugins=[_MenuCommand(Command(name='slow', description='Slow', handler=slow, live=True))],
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('/slow quickly\r')
+            pipe.send_text('/slow\r')
+            await working.wait()
+            pipe.send_text('keep me')
+            await drafted.wait()
+            pipe.send_text('\x1b')
+            await kept.wait()
+            pipe.send_text('\x15/exit\r')
+            await done.wait()
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert text.index('finished quickly') < text.index('Command cancelled.') < text.index('Goodbye.')
+
+
+class _SubmitThenWait(Plugin):
+    def get_commands(self) -> Sequence[Command]:
+        async def submit(args: list[str]) -> str:
+            self.host.submit_prompt('run me')
+            await anyio.sleep_forever()
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        return (Command(name='submit', description='Submit, then wait', handler=submit, live=True),)
+
+
+async def test_cancelling_a_command_discards_the_prompt_it_submitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prompt from `host.submit_prompt` runs only once its command returns, so Esc on the command drops it."""
+    working, stopped, done = (anyio.Event() for _ in range(3))
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...]) -> None:
+            busy = any(Text.from_ansi(row).plain.startswith(' Working ') for row in rows)
+            if busy:
+                working.set()
+            elif working.is_set():
+                stopped.set()
+            super().paint(rows)
+
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
+    requests: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        requests.append(messages)
+        return ModelResponse(parts=[TextPart('ran')])
+
+    output = io.StringIO()
+
+    async def run() -> None:
+        await chat(
+            Agent(FunctionModel(respond), deps_type=type(None)),
+            deps=None,
+            console=Console(file=output, force_terminal=True, width=80, height=24),
+            store=SettingsStore(tmp_path / 'config.db'),
+            builtin_plugins=(PluginSettings(id='submitter', factory=f'{__name__}:{_SubmitThenWait.__qualname__}'),),
+        )
+        done.set()
+
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            pipe.send_text('/submit\r')
+            await working.wait()
+            pipe.send_text('\x1b')
+            await stopped.wait()
+            pipe.send_text('/exit\r')
+            await done.wait()
+    assert requests == []
+    text = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    assert text.index('Command cancelled.') < text.index('Goodbye.')
 
 
 async def test_overlay_commands_take_the_screen_without_waiting_for_themselves() -> None:

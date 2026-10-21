@@ -24,7 +24,7 @@ gpt-realtime.
 
 To use OpenAI realtime models, install `pydantic-ai-slim` with the `openai-realtime` optional
 group, which bundles the `openai` package together with the realtime WebSocket transport. GPT-Live's
-event types arrived in `openai` 3.12, and the group floors it there:
+event types arrived in `openai` 3.12; the group currently requires `openai>=3.26.0`:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai-realtime]"
@@ -58,7 +58,7 @@ The provider prefix alone cannot tell the two protocols apart, so the model name
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.6-sol', instructions='You are a helpful voice assistant.')
+agent = Agent('{{ openai:medium }}', instructions='You are a helpful voice assistant.')
 
 # GPT-Live, through `OpenAILiveModel`:
 live = agent.realtime('openai:gpt-live-1')
@@ -90,11 +90,11 @@ The *backend* model, the one that does the delegated work, is a second model nam
 it from the first of these that names one:
 
 1. `openai_live_delegation={'model': ...}` in the [settings](#gpt-live-settings).
-2. A model named after a `+` in the realtime model name: `'openai:gpt-live-1+gpt-6-luna'` delegates to
-   `gpt-6-luna`.
+2. A model named after a `+` in the realtime model name: `'openai:gpt-live-1+{{ openai:small.name }}'` delegates to
+   `{{ openai:small.name }}`.
 3. The agent's own model, since the backend runs the agent's instructions and tools. It counts when it
    is an OpenAI model reached the same way as the Live model, directly or through the same gateway
-   route, so an agent built on `'openai:gpt-5.6-sol'` delegates to `gpt-5.6-sol`. That holds with
+   route, so an agent built on `'{{ openai:medium }}'` delegates to `{{ openai:medium.name }}`. That holds with
    `defer_model_check=True` too: the name is resolved when the session connects, as the agent's own
    run would resolve it.
 4. `'auto'`: the model Pydantic AI currently recommends
@@ -113,13 +113,13 @@ the model, rather than leaving a call that can talk but never look anything up.
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-5.6-sol', instructions='You look things up.')
+agent = Agent('{{ openai:medium }}', instructions='You look things up.')
 
-# Delegates to the agent's model, gpt-5.6-sol:
+# Delegates to the agent's model, {{ openai:medium.name }}:
 realtime = agent.realtime('openai:gpt-live-1')
 
-# Delegates to gpt-6-luna instead:
-realtime = agent.realtime('openai:gpt-live-1+gpt-6-luna')
+# Delegates to {{ openai:small.name }} instead:
+realtime = agent.realtime('openai:gpt-live-1+{{ openai:small.name }}')
 ```
 
 ### How delegation works
@@ -165,7 +165,7 @@ realtime = agent.realtime(
         openai_live_instructions=(
             'Speak warmly and briefly. Say you are checking before you delegate a lookup.'
         ),
-        openai_live_delegation={'model': 'gpt-5.6-sol', 'reasoning_effort': 'low'},
+        openai_live_delegation={'model': '{{ openai:medium.name }}', 'reasoning_effort': 'low'},
     ),
 )
 ```
@@ -229,19 +229,14 @@ history nor waited for by [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSess
 split it, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
-was sent and recorded in history, not when the model took it in: as the warning below explains, that
-only happens once audio is flowing.
+was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
+than in a reply of its own: text sent while the model is speaking is answered by that reply once it says anything more,
+and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] ends with it. Since Live can also take
+text as context without answering it, bound `wait_for_reply()` with a timeout rather than relying on a reply always
+following.
 
-!!! warning "Text only lands while audio is flowing"
-    A Live session's timeline advances with its audio, so text sent to a session whose microphone is
-    not streaming is deferred rather than delivered. Keep
-    [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] running for the life of the
-    call, streaming silence if the user is not speaking. That is why a text-driven session with no
-    audio input, the shape the [text-to-audio example](../examples/realtime-text-to-audio.md) uses,
-    does not work on Live. It is also why
-    [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] after a `send()` waits
-    until audio is flowing, and, since Live can take text as context without answering it, bound
-    that wait with a timeout rather than relying on a reply always following.
+Live's timeline only advances while it receives audio, so a session with no microphone, like the
+[text-to-audio example](../examples/realtime-text-to-audio.md), needs `openai_live_idle_audio=True`.
 
 Seeding is text-only in the same spirit: [`message_history=`](history.md#seeding-a-session) replays
 text, transcripts, and thinking text, with tool rounds rendered as readable text because the protocol
@@ -332,7 +327,7 @@ settings = OpenAILiveModelSettings(
     openai_voice='marin',
     openai_live_turn_silence_ms=1_500,
     openai_live_store=True,
-    openai_live_delegation={'model': 'gpt-5.6-sol', 'verbosity': 'low'},
+    openai_live_delegation={'model': '{{ openai:medium.name }}', 'verbosity': 'low'},
 )
 model = OpenAILiveModel('gpt-live-1', settings=settings)
 ```
@@ -341,9 +336,10 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | --- | --- |
 | `openai_voice` | The Live voice, e.g. `marin` (the provider default). Immutable once the session has started |
 | `openai_live_instructions` | How the Live model speaks: pacing, style, and when to delegate |
-| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
+| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI retains the session, which lets it be forked or downloaded later and a dropped connection [reconnect](#gpt-live-feature-support-and-limitations) with the conversation intact. Defaults to `False` |
+| `openai_live_idle_audio` | Stream silence while `send_audio()` is quiet, so text lands without a microphone. Live bills silence like speech. Defaults to `False` |
 | `openai_live_data_channel` | Which events a [WebRTC](#browser-webrtc) browser may send and receive over its data channel. Defaults to none, since the sideband runs the session |
 
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
@@ -388,6 +384,33 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 cacheable prefix as the session grows. OpenAI realtime does not expose `temperature` through
 Pydantic AI.
 
+#### Pruning finished tool rounds {#pruning-tool-items}
+
+The API keeps the whole conversation server-side and bills each response for all of it, so a tool-heavy
+agent pays again for every earlier tool call and result on every later response. Set
+[`openai_prune_tool_items`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_prune_tool_items]
+to delete a tool round's items once the model has answered it: when a response completes without calling a
+tool, the session deletes each answered call together with its output, and any content the tool returned besides
+it. To keep some tools' items, for results the model may need to refer back to, name them in
+[`openai_keep_tool_items`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_keep_tool_items]:
+
+```python
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+
+model = OpenAIRealtimeModel(
+    'gpt-realtime',
+    settings=OpenAIRealtimeModelSettings(
+        openai_prune_tool_items=True,
+        openai_keep_tool_items={'get_customer_profile'},
+    ),
+)
+```
+
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] still holds every tool round
+(see [history](history.md)), and a reconnect's replay leaves the pruned ones out. The trace records each deletion
+as a [`prune tool items` span](observability.md). Azure OpenAI's GA endpoint supports both settings too;
+[Azure Voice Live](azure.md) ignores them.
+
 Input transcription defaults to `'auto'`, which uses `gpt-live-transcribe`; set a supported
 transcription model ID to pin it or `None` to disable it. `gpt-live-transcribe` streams the
 transcript as the user speaks, but its final transcript can arrive after the reply's
@@ -409,9 +432,13 @@ On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSetti
 effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
 GA `gpt-realtime` ignores the setting.
 
-Neither family surfaces readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
+Neither family streams readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
 GPT-Live does record the backend's encrypted reasoning ahead of each web search, so the history can
-continue on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+continue on an [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. To have that
+reasoning carry readable text, request a summary with `openai_live_delegation={'reasoning_summary': ...}`
+(`'auto'`, `'concise'`, or `'detailed'`), as
+[`openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary]
+does on a direct Responses request. The backend summarizes only some of its reasoning, so some of these parts can still be empty.
 
 ## Browser WebRTC
 
@@ -430,8 +457,10 @@ binding the agent's session configuration (instructions, tools, voice, VAD) serv
   that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
   gpt-realtime only: GPT-Live has no client secrets.
 
-A GPT-Live session is configured once, by the offer, so a sideband attaching to it can't seed
-`message_history`; the browser's data channel stays closed unless `openai_live_data_channel` opens it.
+A GPT-Live session is configured once, by the offer, so history bound with
+`agent.realtime(model, message_history=...)` is seeded there, and a sideband opened with different
+history refuses to attach. The browser's data channel stays closed unless `openai_live_data_channel`
+opens it.
 
 See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband) for the topology, the
 secure offer-relay flow, and the sideband trust model, and the
@@ -449,7 +478,7 @@ the provider-agnostic workflows.
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Limited parameter support | Mono PCM16 at 24 kHz by default, input and output; 16 kHz by setting both `audio_input_sample_rate` and `audio_output_sample_rate` to `16000` through [`profile=`](overview.md#provider-support). The API also offers 8 kHz G.711, which Pydantic AI does not expose |
-| Text input | Limited parameter support | [Context, not a user turn](#text-is-context-not-a-user-turn): capped at 500 tokens, delivered only while audio flows, and possibly spoken even with `respond=False` |
+| Text input | Limited parameter support | [Context, not a user turn](#text-is-context-not-a-user-turn): capped at 500 tokens, delivered only while audio flows (see `openai_live_idle_audio`), and possibly spoken even with `respond=False` |
 | Text output | Unsupported | Live always speaks; read the answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] |
 | Image input | Limited parameter support | [For the backend, with `respond=True`](#images-go-to-the-backend) |
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
@@ -474,6 +503,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
 - An image sent without `respond=True`, text over the 500-token cap, and seeded history that contains
   audio or images.
+- A WebRTC sideband whose `message_history` differs from what the offer seeded, including none at all
+  when the offer seeded some.
 
 ### gpt-realtime {#gpt-realtime-feature-support-and-limitations}
 
@@ -509,7 +540,15 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   goes on. When Live reports such a failure only as a session-level error that names no delegation
   (for instance `Responses handoff incomplete.` when the backend runs out of `max_output_tokens`),
   Pydantic AI treats the delegated work in flight as the work that failed, with code
-  `live_delegation_failed`, so the turn still ends.
+  `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
+  result is recorded in history, but goes nowhere: the turn doesn't wait for it.
+- The backend continues a delegated round only once it has every call's output, and Live has no
+  command to cancel a delegation, so a tool that raises leaves its round unfinished. Pydantic AI gives
+  the round up, so the exchange [ends as on every other provider](tools.md#function-tools): the rest of
+  its results ask for no reply, and turn boundaries are inferred again. Live itself keeps the round
+  open, and in our testing went on answering text but delegated no more work for the rest of the
+  session. To let the model recover, turn the exception into a result with
+  [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error].
 
 ### gpt-realtime {#gpt-realtime-provider-specific-quirks}
 
@@ -527,7 +566,7 @@ To route through the [Pydantic AI Gateway](../gateway.md), use a `gateway/`-pref
 The gateway does not route GPT-Live yet, so `'gateway/openai:gpt-live-1'` fails to connect. Connect
 through `provider='openai'` or an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for
 now. Once it does, the backend follows the same rule as a direct connection: an agent built on
-`'gateway/openai:gpt-6-luna'` delegates to `gpt-6-luna`, because both go through the same gateway
+`'gateway/{{ openai:small }}'` delegates to `{{ openai:small.name }}`, because both go through the same gateway
 route.
 
 gpt-realtime routes through the gateway today:
