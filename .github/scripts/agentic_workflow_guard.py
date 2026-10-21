@@ -119,8 +119,8 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
 
 # The script gh-aw's daily AI-credits guardrail step runs. Match it rather than the step id,
-# which v0.92 renamed from `daily-effective-workflow-guardrail` to
-# `daily-ai-credits-workflow-guardrail`.
+# which changes across releases: `daily-effective-workflow-guardrail` in v0.86.2,
+# `daily-ai-credits-workflow-guardrail` in v0.92.6.
 DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')

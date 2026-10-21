@@ -910,7 +910,7 @@ jobs:
 
 
 def test_daily_aic_guardrail_rejects_the_renamed_step_after_a_compiler_upgrade(tmp_path: Path):
-    """gh-aw v0.92 renamed the step id; the step still runs the same guardrail script."""
+    """gh-aw v0.92.6 compiles the step under a new id; it still runs the same guardrail script."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         """
