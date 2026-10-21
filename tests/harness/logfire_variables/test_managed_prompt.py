@@ -30,7 +30,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.messages import ModelMessage, ModelRequest
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import InstructionDeltaPart, ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import ManagedPrompt
@@ -160,6 +162,62 @@ def test_prompt_prefix_in_slug_warns_and_is_stripped() -> None:
 def test_invalid_slug_raises() -> None:
     with pytest.raises(ValueError, match='invalid variable name'):
         ManagedPrompt('has spaces', default=DEFAULT)
+
+
+def test_id_is_derived_from_the_prompt_name() -> None:
+    assert ManagedPrompt('derived-id', default=DEFAULT).id == 'managed-prompt-derived_id'
+    assert ManagedPrompt(logfire.var(name='prompt__derived_var', type=str, default=DEFAULT)).id == (
+        'managed-prompt-derived_var'
+    )
+    assert ManagedPrompt(logfire.var(name='derived_custom', type=str, default=DEFAULT)).id == (
+        'managed-prompt-derived_custom'
+    )
+    assert ManagedPrompt('derived_explicit', default=DEFAULT, id='support').id == 'support'
+
+
+def test_two_with_the_same_name_raise_when_the_agent_is_built() -> None:
+    with pytest.raises(UserError, match="Capability id 'managed-prompt-twice' is used by multiple capabilities"):
+        Agent(
+            TestModel(), capabilities=[ManagedPrompt('twice', default=DEFAULT), ManagedPrompt('twice', default=DEFAULT)]
+        )
+
+
+async def test_two_with_different_names_each_keep_their_block() -> None:
+    seen: list[set[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append({str(part.id) for part in info.model_request_parameters.instruction_parts or ()})
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[ManagedPrompt('first_block', default='First.'), ManagedPrompt('second_block', default='Second.')],
+    )
+    await agent.run('hello')
+
+    assert seen == [{'capability:managed-prompt-first_block', 'capability:managed-prompt-second_block'}]
+
+
+async def test_new_version_between_runs_is_appended() -> None:
+    capability = ManagedPrompt('appended_slug', default=DEFAULT)
+    agent = Agent(TestModel(), capabilities=[capability])
+    first = await agent.run('hello')
+
+    with capability._variable.override('Be terse.'):  # pyright: ignore[reportPrivateUsage]
+        second = await agent.run('hello again', message_history=first.all_messages())
+
+    # The conversation keeps the instructions it started with, and the new version follows as a change.
+    assert instructions_seen(second.new_messages()) == [DEFAULT]
+    changes = [
+        part
+        for message in second.new_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+    assert [(str(part.id), part.content) for part in changes] == [
+        ('capability:managed-prompt-appended_slug', 'Be terse.')
+    ]
 
 
 async def test_resolves_default_into_instructions() -> None:
