@@ -7,6 +7,7 @@ import math
 import posixpath
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from typing import TypeVar
 
 import anyio
 
@@ -18,6 +19,8 @@ try:
     import sniffio as _sniffio
 except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
     _sniffio = None
+
+_T = TypeVar('_T')
 
 
 def safe_credential_reason(error: Exception) -> str:
