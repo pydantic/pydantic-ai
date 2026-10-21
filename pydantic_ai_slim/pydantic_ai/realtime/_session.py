@@ -22,6 +22,7 @@ from typing_extensions import TypeAliasType
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import context_window_fraction
 from .._tool_execution import (
@@ -78,7 +79,6 @@ from ..messages import (
 )
 from ..models import (
     ModelRequestParameters,
-    _wrap_in_system_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
@@ -506,7 +506,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
             if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                 texts.append(part.content)
             elif isinstance(part, SystemPromptPart):
-                texts.append(_wrap_in_system_tags(part.content))
+                texts.append(wrap(SYSTEM_TAG, part.content))
             else:
                 raise error
     if not texts:
@@ -1314,7 +1314,8 @@ class RealtimeSession:
         rather than played: discarded by a barge-in or by the view's buffer overflowing, or emitted before
         the view subscribed. The wait also ends if the view is closed or abandoned, or the session closes.
         Requires exactly one active
-        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator.
+        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator; once the
+        connection has failed and ended that iterator, this raises the failure instead.
         """
         tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
         while not self._closed and not tap.ended:
@@ -1385,6 +1386,10 @@ class RealtimeSession:
             await self._exchange_progress.wait()
 
     def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
+        if not self._audio_taps and self._pump_error is not None:
+            # The failure that ended receiving also ended the caller's view: report that, not a missing view.
+            # Not recorded as delivered, so the event stream (or close) still raises it.
+            raise self._pump_error
         if len(self._audio_taps) != 1:
             raise UserError(
                 f'{method} needs exactly one active `stream_audio()` iterator to {purpose}, '
@@ -1405,7 +1410,8 @@ class RealtimeSession:
         chunk less than was really heard, never more. A consumer that instead buffers ahead reads
         too far; count actual device consumption yourself in that case. Made to be passed to
         [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] on
-        barge-in. Requires exactly one active `stream_audio()` iterator, like that call.
+        barge-in. Requires exactly one active `stream_audio()` iterator, like that call; once the
+        connection has failed and ended that iterator, reading this raises the failure instead.
         """
         return self._single_audio_tap('`played_audio_bytes`', 'report the playback position of').played_bytes
 

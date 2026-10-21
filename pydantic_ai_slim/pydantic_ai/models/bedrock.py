@@ -743,6 +743,9 @@ _CACHE_SETTINGS_KEYS = (
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
+    # The Converse API has no audio content block.
+    _unsupported_file_inputs = frozenset({'audio'})
+
     unsupported_settings = frozenset(
         {
             'extra_body',

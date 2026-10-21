@@ -149,7 +149,9 @@ print(agent.run_sync('deploy').output)
 
 Key parameters:
 - `InputGuardrail(guard, parallel=False)`: `parallel=True` races the guard with the model call
-  (no added latency on pass; tokens spent if it trips late); `replace` is refused in parallel mode.
+  (no added latency on pass; tokens spent if it trips late; a request that raises or is retried
+  first still waits for the verdict); `replace` is refused in parallel mode.
+  `CodeMode` tool calls started by `eager` or `speculate` during the stream wait for its verdict.
 - `OutputGuardrail(guard)`: guard receives the output object unchanged (a Pydantic model for
   structured output, not a string). Scan its JSON:
   `lambda out: redact_secrets(out.model_dump_json()).action == 'allow'` blocks on a match; to redact,
@@ -460,7 +462,8 @@ print(agent.run_sync('Set up storage').output)
 - `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
   `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
   `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
-- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. Two `AskUser` on one agent
+- Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. An answerer that raises still
+  emits the answered event, with `failed=True`, before its error propagates. Two `AskUser` on one agent
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.
 

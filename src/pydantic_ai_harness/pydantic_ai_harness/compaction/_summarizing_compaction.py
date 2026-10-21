@@ -119,7 +119,12 @@ _HARNESS_DATA_INSTRUCTION = (
 _BRIDGE_PREFIX = 'This summary was produced by a different model than the one continuing the task.'
 
 _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.v1'
-"""Model-request metadata marking a user turn retained by `keep_user_messages`."""
+"""Marks a user turn retained by `keep_user_messages`, on its request's `metadata` and on its text items.
+
+Continuing a history merges adjacent requests and keeps only the framework's own metadata namespace,
+so the request-level marker is lost there; the copy's `TextContent` items carry the same marker as
+their `metadata`, the way pins do, so a retained copy is still recognized inside a merged request.
+"""
 
 # Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
 # with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
@@ -232,9 +237,10 @@ def _format_messages(
             for part in msg.parts:
                 if isinstance(part, UserPromptPart) and (origin := _harness_data_origin(part)) is not None:
                     elements.append(_harness_data_element(origin, _user_prompt_text(part), tool_return_max_chars))
-                elif kept:
+                elif kept or (isinstance(part, UserPromptPart) and _is_kept_user_part(part)):
                     # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
-                    # earlier version kept is summarized instead, and `_kept_user_messages` drops it.
+                    # earlier version kept is summarized instead, and `_kept_user_messages` drops it. A kept copy
+                    # merged into a later request is recognized by the marker on its text.
                     continue
                 elif isinstance(part, UserPromptPart):
                     elements.append(_message_element('user', _user_prompt_text(part)))
@@ -428,8 +434,47 @@ def _adds_nothing_to_summarize(message: ModelMessage, kept: Sequence[ModelMessag
 
 
 def _is_kept_user_message(message: ModelRequest) -> bool:
-    """Return whether *message* is an earlier `keep_user_messages` retention copy."""
+    """Return whether *message* is an earlier `keep_user_messages` retention copy, as it was stored."""
     return message.metadata is not None and message.metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
+
+
+def _is_kept_user_part(part: ModelRequestPart) -> bool:
+    """Return whether *part* is an earlier `keep_user_messages` retention copy, wherever its request went."""
+    return (
+        isinstance(part, UserPromptPart)
+        and not isinstance(part.content, str)
+        and any(isinstance(item, TextContent) and _is_kept_marker(item.metadata) for item in part.content)
+    )
+
+
+def _is_kept_marker(metadata: object) -> bool:
+    """Whether a `TextContent.metadata` value carries the `keep_user_messages` marker."""
+    if metadata == _KEPT_USER_MESSAGE_METADATA:
+        return True
+    return is_str_dict(metadata) and metadata.get(_KEPT_USER_MESSAGE_METADATA) is True
+
+
+def _mark_kept(part: UserPromptPart) -> UserPromptPart:
+    """*part* with its text marked as a `keep_user_messages` copy; other items are left as they are.
+
+    A plain string becomes a single `TextContent`, which the model reads the same way. A `TextContent`
+    without metadata gets the marker as its metadata; one whose metadata is a dict gets the marker as an
+    extra key, so the caller's keys stay. One whose metadata is any other value has no model-invisible
+    place for a marker, so a part with no other text keeps only the request-level marker, which the
+    history cleanup that merges requests drops: a known limit until core provenance lands.
+    """
+    items = [part.content] if isinstance(part.content, str) else part.content
+    marked: list[UserContent] = []
+    for item in items:
+        if isinstance(item, str):
+            marked.append(TextContent(item, metadata=_KEPT_USER_MESSAGE_METADATA))
+        elif isinstance(item, TextContent) and item.metadata is None:
+            marked.append(replace(item, metadata=_KEPT_USER_MESSAGE_METADATA))
+        elif isinstance(item, TextContent) and is_str_dict(item.metadata):
+            marked.append(replace(item, metadata={**item.metadata, _KEPT_USER_MESSAGE_METADATA: True}))
+        else:
+            marked.append(item)
+    return replace(part, content=marked)
 
 
 async def drain_summary_events(
@@ -735,12 +780,14 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 continue
             kept: list[ModelRequestPart] = []
             for part in user_parts:
-                if isinstance(part.content, str):
-                    truncated = self._truncate(part.content)
-                    kept.append(part if truncated == part.content else replace(part, content=truncated))
+                if _is_kept_user_part(part):
+                    # Already a retained copy, merged into a later request: keep it as it is.
+                    kept.append(part)
+                elif isinstance(part.content, str):
+                    kept.append(_mark_kept(replace(part, content=self._truncate(part.content))))
                 else:
-                    bounded, changed = self._bound_sequence(part.content)
-                    kept.append(replace(part, content=bounded) if changed else part)
+                    bounded, _ = self._bound_sequence(part.content)
+                    kept.append(_mark_kept(replace(part, content=bounded)))
             metadata = {**(msg.metadata or {}), _KEPT_USER_MESSAGE_METADATA: True}
             out.append(replace(msg, parts=kept, metadata=metadata))
         return out
