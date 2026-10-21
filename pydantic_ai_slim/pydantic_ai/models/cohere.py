@@ -133,6 +133,9 @@ class CohereModel(Model[AsyncClientV2]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # Cohere's chat API takes text only.
+    _unsupported_file_inputs = frozenset({'image', 'document', 'audio', 'video'})
+
     unsupported_settings = frozenset(
         {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
     )

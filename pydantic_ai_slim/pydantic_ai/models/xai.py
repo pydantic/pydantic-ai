@@ -344,6 +344,9 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 class XaiModel(Model[AsyncClient]):
     """A model that uses the xAI SDK to interact with xAI models."""
 
+    # The xAI SDK has no audio or video content.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
+
     unsupported_settings = frozenset(
         {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
     )

@@ -385,8 +385,11 @@ class TestCodeMode:
             assert all(example in description for example in expected_examples)
             assert 'e.g. `result =' not in description
             if has_async:
-                assert 'use `await asyncio.gather(...)` with positional awaitables' in description
+                assert 'call them by name without redefining or importing them.' in description
+                assert '\n\nTo run' in description
+                assert 'concurrently, first `import asyncio`, then use `await asyncio.gather(...)`' in description
             else:
+                assert 'Call them directly (do **not** redefine or import them).' in description
                 assert 'asyncio.gather' not in description
 
     async def test_run_code_executes_call_through_monty(self) -> None:
