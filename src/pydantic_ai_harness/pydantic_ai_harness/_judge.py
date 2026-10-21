@@ -45,8 +45,9 @@ _CHARS_PER_TOKEN = 4
 
 # TODO: switch to `pydantic_ai._framing.neutralize_closing_tag` once it lands
 # (https://github.com/pydantic/pydantic-ai/pull/10547), adding `tool_call` and `conversation` to its tags.
-# Until then this matches its semantics: only the `<` of a closing tag is escaped.
-_CLOSING_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*/\s*(?:tool_call|conversation)(?=[\s/>]|$))', re.IGNORECASE)
+# Until then this matches its semantics (only the `<` of a closing tag is escaped), and also matches
+# backslashes before the slash, since the arguments are JSON, where `\/` is a standard escape for `/`.
+_CLOSING_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*\\*/\s*(?:tool_call|conversation)(?=[\s/>]|$))', re.IGNORECASE)
 
 _CONFIDENCE_ADAPTER = TypeAdapter(dict[str, float])
 
@@ -91,7 +92,10 @@ def tool_call_prompt(
 
 
 def _neutralize_closing_tags(text: str) -> str:
-    """Escape the `<` of every closing `tool_call` or `conversation` tag as `&lt;`, and leave everything else."""
+    r"""Escape the `<` of every closing `tool_call` or `conversation` tag as `&lt;`, and leave everything else.
+
+    A closer with backslashes before its slash (`<\/tool_call>`) counts as one too.
+    """
     return _CLOSING_BLOCK_TAG_OPENER.sub('&lt;', text)
 
 
