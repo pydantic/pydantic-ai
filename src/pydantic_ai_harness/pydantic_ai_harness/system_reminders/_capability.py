@@ -361,21 +361,21 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
 
 @dataclass
 class GoalReanchor(Generic[AgentDepsT]):
-    """Zero-cost dynamic reminder that re-states the run's first user request as the anchor.
+    """Zero-cost dynamic reminder that points the model back at the run's first user request.
 
-    No model call and no dependencies: it reads the first user message from `ctx.messages`
-    and asks the model to check its next action advances that goal. Falls back to a static
-    line when there is no user message yet. Add it to `SystemReminders.dynamic_reminders`.
+    No model call and no dependencies: it asks the model to check its next action advances the
+    user's first request, which is already in the conversation, so it never repeats the user's text
+    in system voice. Falls back to a static line when there is no user message yet. Add it to
+    `SystemReminders.dynamic_reminders`.
     """
 
     fallback: str = 'Stay on task.'
 
     def __call__(self, ctx: RunContext[AgentDepsT]) -> str | None:
-        goal = _first_user_text(ctx.messages)
-        if goal is None:
+        if _first_user_text(ctx.messages) is None:
             return self.fallback
-        # The goal is the user's text, so only the note is system voice: the goal goes on the user channel.
-        return _QuotedReminder(_GOAL_NOTE, _quote('original_request', goal))
+        # The request is already in the history, so the note points at it rather than repeating the user's text.
+        return _GOAL_NOTE
 
 
 _LLM_INSTRUCTIONS = (
@@ -386,8 +386,8 @@ _LLM_INSTRUCTIONS = (
 )
 
 _GOAL_NOTE = (
-    "The user's original request is in the accompanying `<original_request>` tag. Check that your next action "
-    'advances it. If it is already satisfied, produce the final answer.'
+    "Re-read the user's original request, their first message in this conversation, and check that your next "
+    'action advances it. If it is already satisfied, produce the final answer.'
 )
 
 _LLM_REMINDER_NOTE = (
@@ -509,17 +509,25 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     return reminder.content
 
 
-def _reminder_parts(texts: Sequence[str]) -> tuple[SystemPromptPart | TextContent, ...]:
-    """The parts a firing enqueues: its reminders in system voice, then the content they quote as data.
+def _reminder_parts(texts: Sequence[str]) -> list[SystemPromptPart | TextContent]:
+    """The parts a firing enqueues, every one carrying the same origin metadata.
 
-    The system prompt is request-scoped, and only the framework's own wording goes in it. Quoted content,
-    such as the user's goal or a model's generated reminder, goes on the user channel. Every part carries
-    the same origin metadata, which survives merged requests and continued conversations.
+    Reminders in the framework's or the operator's own wording are one request-scoped system prompt.
+    A reminder that quotes content it didn't write, such as a model's generated reminder, is a record
+    of two parts kept together in the history: the framework's note in system voice and the quoted
+    content on the user channel. Neither is request-scoped, so no later request, compaction or summary
+    sees the quoted content without the note that says what it is.
     """
     metadata = {'origin': _REMINDER_ORIGIN}
-    notes = [text.note if isinstance(text, _QuotedReminder) else text for text in texts]
-    data = [TextContent(text.data, metadata=dict(metadata)) for text in texts if isinstance(text, _QuotedReminder)]
-    return SystemPromptPart('\n\n'.join(notes), scope='request', metadata=metadata), *data
+    plain = [text for text in texts if not isinstance(text, _QuotedReminder)]
+    parts: list[SystemPromptPart | TextContent] = []
+    if plain:
+        parts.append(SystemPromptPart('\n\n'.join(plain), scope='request', metadata=metadata))
+    for text in texts:
+        if isinstance(text, _QuotedReminder):
+            parts.append(SystemPromptPart(text.note, metadata=dict(metadata)))
+            parts.append(TextContent(text.data, metadata=dict(metadata)))
+    return parts
 
 
 def _is_reminder_data(part: UserPromptPart) -> bool:
