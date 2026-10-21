@@ -3180,6 +3180,10 @@ class InstructionBaselinePart:
     part_kind: Literal['instruction-baseline'] = 'instruction-baseline'
     """Part type identifier, used as a discriminator for deserialization."""
 
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Contribute nothing to traces: the instructions it records are reported with the request itself."""
+        return []
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 

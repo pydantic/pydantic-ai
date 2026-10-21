@@ -996,6 +996,9 @@ def test_messages_to_otel_messages_leave_out_instruction_baselines():
     otel_messages = InstrumentationSettings(include_content=True).messages_to_otel_messages(messages)
     assert [message['role'] for message in otel_messages] == ['user', 'assistant']
 
+    # Asked directly, as a caller rendering parts one by one would, it contributes nothing either.
+    assert InstructionBaselinePart(instructions=[]).otel_message_parts(InstrumentationSettings()) == []
+
     # Nor does one split the parts around it into two messages.
     split = ModelRequest(
         parts=[UserPromptPart(content='One.'), InstructionBaselinePart(instructions=[]), UserPromptPart(content='Two.')]
