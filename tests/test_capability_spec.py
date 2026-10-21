@@ -1684,7 +1684,7 @@ def test_model_json_schema_with_capabilities():
                         'thinking': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Thinking',
                         },
@@ -2143,7 +2143,7 @@ def test_model_json_schema_with_capabilities():
                         'effort': {
                             'anyOf': [
                                 {'type': 'boolean'},
-                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh'], 'type': 'string'},
+                                {'enum': ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'type': 'string'},
                             ],
                             'title': 'Effort',
                         },

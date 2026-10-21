@@ -1118,6 +1118,11 @@ def openai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def moonshotai_api_key() -> str:
+    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 

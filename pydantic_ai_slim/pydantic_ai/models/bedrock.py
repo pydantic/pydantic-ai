@@ -1235,6 +1235,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'high',
                     'high': 'high',
                     'xhigh': 'high',
+                    'max': 'high',
                 }
                 existing['reasoning_config'] = level_map[thinking]
 
@@ -2241,7 +2242,9 @@ def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingL
                 and 'output_config' not in existing
             ):
                 effort = resolve_anthropic_effort(
-                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                    thinking,
+                    supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                    supports_max=profile.get('anthropic_supports_max_effort', True),
                 )
                 existing['output_config'] = {'effort': effort}
     elif thinking is False:

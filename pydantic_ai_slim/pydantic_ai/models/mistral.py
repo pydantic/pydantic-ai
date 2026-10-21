@@ -194,6 +194,7 @@ _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     'medium': 'high',
     'high': 'high',
     'xhigh': 'high',
+    'max': 'high',
 }
 """Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
 

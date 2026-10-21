@@ -1869,7 +1869,7 @@ def _backend_reasoning_effort(
     The backend is the model that reasons, so `thinking` is resolved against *its* profile, exactly as a
     direct Responses request to it would be: a backend that doesn't reason ignores it, `thinking=False`
     leaves a backend that always reasons at its default, and `'minimal'` becomes `'low'` where the
-    backend has no minimal effort.
+    backend has no minimal effort. `'max'` becomes `'xhigh'`: the delegation's effort levels stop at `'xhigh'`.
     """
     if (effort := delegation_settings.get('reasoning_effort')) is not None:
         return effort
@@ -1882,7 +1882,7 @@ def _backend_reasoning_effort(
         return None
     if thinking is False and thinking_always_enabled:
         return None
-    return _resolve_openai_thinking_effort(thinking, profile)
+    return _resolve_openai_thinking_effort(thinking, profile, supports_max=False)
 
 
 def _resolve_openai_model(model_id: str) -> Model | None:

@@ -488,7 +488,9 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+        # Gemini has nothing above `HIGH`; map the higher levels to it.
+        'xhigh': 'HIGH',
+        'max': 'HIGH',
     }
     return level_by_effort[thinking]
 
@@ -1062,6 +1064,7 @@ class GoogleModel(Model[Client]):
                 'medium': 8192,
                 'high': 24576,
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
+                'max': 24576,
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
 

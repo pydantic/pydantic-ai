@@ -275,6 +275,8 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
         # Resolved against the backend's profile, as a direct Responses request to it would be.
         pytest.param('gpt-5.6-sol', 'minimal', 'low', id='no-minimal-effort'),
         pytest.param('gpt-5', 'minimal', 'minimal', id='minimal-effort'),
+        # The delegation's efforts stop at `xhigh`, even for a backend whose Responses API takes `max`.
+        pytest.param('gpt-6.1-sol', 'max', 'xhigh', id='max-effort'),
         # A backend that always reasons can't be turned off, so `False` leaves it at its default.
         pytest.param('gpt-5', False, None, id='always-reasons'),
         # A backend that doesn't reason is sent no effort at all.

@@ -73,6 +73,9 @@ def bedrock_mantle_model_profile(model_name: str) -> ModelProfile:
             # Disable the base profile's native tools to fail with a clean UserError rather than an opaque
             # provider error.
             supported_native_tools=frozenset(),
+            # The direct Responses API accepts `reasoning.effort='max'` on GPT-5.6 and GPT-6, but it is unverified
+            # on Mantle, so unified `thinking='max'` sends `'xhigh'` here.
+            openai_responses_supports_max_reasoning_effort=False,
         ),
     )
 

@@ -160,7 +160,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     """Enable or configure reasoning/thinking, mirroring the unified
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
 
-    `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
+    `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`/`'max'`
     selects an effort level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI,
     Azure AI Voice Live, and xAI).
     OpenAI and Gemini apply it only to models whose profile reports
