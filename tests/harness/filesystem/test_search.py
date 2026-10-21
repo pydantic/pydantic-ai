@@ -463,6 +463,23 @@ async def test_include_glob_with_a_slash_keeps_rg_to_its_directories(
     assert await tools.search_files('needle', include_glob='src/*.py', workspace=workspace) == 'src/pkg/m.py:1:needle'
 
 
+async def test_include_glob_with_a_slash_keeps_ignore_files_and_hidden_paths(tmp_path: Path) -> None:
+    """Searching only the glob's directories still skips what `.gitignore` lists, and `./` names nothing hidden."""
+    subprocess.run(['git', '-C', str(tmp_path), 'init', '-q'], check=True)
+    (tmp_path / '.gitignore').write_text('src/gen/\n')
+    (tmp_path / 'src' / 'gen').mkdir(parents=True)
+    (tmp_path / 'src' / 'gen' / 'x.py').write_text('needle\n')
+    (tmp_path / 'src' / '.cache').mkdir()
+    (tmp_path / 'src' / '.cache' / 'b.py').write_text('needle\n')
+    (tmp_path / 'src' / 'a.py').write_text('needle\n')
+    tools = FileSystem[None]().get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    workspace = LocalWorkspaceBackend(tmp_path)
+    assert await tools.search_files('needle', include_glob='src/*.py', workspace=workspace) == 'src/a.py:1:needle'
+    assert await tools.search_files('needle', include_glob='./src/*.py', workspace=workspace) == 'src/a.py:1:needle'
+    assert await tools.search_files('needle', include_glob='nowhere/*.py', workspace=workspace) == 'No matches found.'
+
+
 async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
     """A hidden directory the glob names is searched, as the walker and the POSIX fallback already do."""
     (tmp_path / '.github' / 'workflows').mkdir(parents=True)

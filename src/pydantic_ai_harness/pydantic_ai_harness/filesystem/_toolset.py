@@ -233,11 +233,11 @@ class _Scope:
 
 
 def _directories_holding(glob: str, prefix: str) -> list[str]:
-    """`rg` globs covering every path below `prefix` that `glob` can match with `fnmatch`, or none to search it all.
+    """Directories below `prefix` holding every path `glob` can match with `fnmatch`, or none when that is all of them.
 
     Every `fnmatch` match of `glob` starts with its leading directories that hold no wildcard, so
-    `src/*.py` needs only `src/**`. A path is matched both as it is below `prefix` and with `prefix`
-    joined in front, so each spelling gets its own glob.
+    `src/*.py` needs only `src`. A path is matched both as it is below `prefix` and with `prefix`
+    joined in front, so each spelling gets its own directory.
     """
     literal: list[str] = []
     for part in glob.split('/')[:-1]:
@@ -246,14 +246,14 @@ def _directories_holding(glob: str, prefix: str) -> list[str]:
         literal.append(part)
     if not literal:
         return []
-    globs = ['/'.join(literal) + '/**']
+    directories = ['/'.join(literal)]
     if prefix != '.':
         above = prefix.split('/')
         if literal[: len(above)] == above[: len(literal)]:
             if len(literal) <= len(above):
                 return []  # With `prefix` in front, every path starts with the glob's directories.
-            globs.append('/'.join(literal[len(above) :]) + '/**')
-    return globs
+            directories.append('/'.join(literal[len(above) :]))
+    return sorted(directories)
 
 
 def _fall_back_from_ripgrep(scope: _Scope) -> None:
@@ -281,6 +281,15 @@ def _is_hidden(relative: str) -> bool:
 def _explicit_hidden(pattern: str) -> bool:
     """Whether the caller explicitly names a dot-prefixed glob component."""
     return any(part.startswith('.') for part in pattern.split('/'))
+
+
+def _ripgrep_hidden(glob: str | None) -> list[str]:
+    """`--hidden` when `glob` names a hidden file or directory, which `rg` would otherwise never enter.
+
+    Unlike `_explicit_hidden`, a `.` or `..` component, as in `./src/*.py`, names nothing hidden.
+    """
+    named = glob is not None and any(part.startswith('.') and part not in ('.', '..') for part in glob.split('/'))
+    return ['--hidden'] if named else []
 
 
 def _sort_key(path: str) -> list[str]:
@@ -1629,13 +1638,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # miss `src/pkg/m.py`. Such a glob is matched with `fnmatch` below instead, as without `rg`,
         # unless it uses syntax only `rg` understands.
         fnmatch_only = bool(include_glob and '/' in include_glob and not _RG_ONLY_GLOB.search(include_glob))
-        if include_glob and fnmatch_only:
-            # `rg` still skips what the glob cannot match, so the output cap is spent on candidates.
-            command_globs = _directories_holding(include_glob, prefix) if entry.is_dir else []
-        elif include_glob:
-            command_globs = [include_glob.removeprefix(prefix + '/') if prefix != '.' else include_glob]
-        else:
-            command_globs = []
+        command_glob = include_glob.removeprefix(prefix + '/') if include_glob and prefix != '.' else include_glob
+        targets = [target]
+        if (
+            include_glob
+            and fnmatch_only
+            and entry.is_dir
+            and (directories := _directories_holding(include_glob, prefix))
+        ):
+            # `rg` searches only the directories the glob's matches are in, so matches elsewhere cannot
+            # fill its output cap. They are targets, not a `--glob`, which would override ignore files.
+            targets = [d for d in directories if await self._stat(scope, posixpath.join(cwd, d)) is not None]
 
         def selected(record: Record) -> bool:
             path = posixpath.normpath(record.path)
@@ -1659,32 +1672,35 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
-            results, capped, unreadable = await run_ripgrep(
-                scope.workspace,
-                [
-                    '--line-number',
-                    '--with-filename',
-                    '--sort',
-                    'path',
-                    '--max-columns',
-                    str(_MAX_MATCH_COLUMNS),
-                    '--max-columns-preview',
-                    *(argument for glob in command_globs for argument in ('--glob', glob)),
-                    *(['--hidden'] if include_hidden else []),
-                    '--regexp',
-                    pattern,
-                    '--',
-                    target,
-                ],
-                cwd=cwd,
-                limit=self._max_search_results,
-                accept=lambda record: (
-                    self._match_line(scope, cwd, record, include_hidden=include_hidden)
-                    if (not fnmatch_only or selected(record)) and permitted(record)
-                    else None
-                ),
-                prepare=prepare,
-            )
+            if not targets:  # None of the glob's directories exists.
+                results, capped, unreadable = [], False, []
+            else:
+                results, capped, unreadable = await run_ripgrep(
+                    scope.workspace,
+                    [
+                        '--line-number',
+                        '--with-filename',
+                        '--sort',
+                        'path',
+                        '--max-columns',
+                        str(_MAX_MATCH_COLUMNS),
+                        '--max-columns-preview',
+                        *(['--glob', command_glob] if command_glob and not fnmatch_only else []),
+                        *_ripgrep_hidden(include_glob),
+                        '--regexp',
+                        pattern,
+                        '--',
+                        *targets,
+                    ],
+                    cwd=cwd,
+                    limit=self._max_search_results,
+                    accept=lambda record: (
+                        self._match_line(scope, cwd, record, include_hidden=include_hidden)
+                        if (not fnmatch_only or selected(record)) and permitted(record)
+                        else None
+                    ),
+                    prepare=prepare,
+                )
         except RipgrepMissing:
             _fall_back_from_ripgrep(scope)
             results, capped, unreadable = await run_posix_search(
@@ -1851,9 +1867,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise NotADirectoryError(f'Path {path!r} is not a directory.')
         prepare, permitted = self._batch_authorizer(scope, resolved)
         include_hidden = bool(glob and _explicit_hidden(glob))
-        arguments = ['--files', '--sort', 'path', *(['--glob', glob] if glob is not None else [])]
-        if include_hidden:
-            arguments.append('--hidden')
+        arguments = [
+            '--files',
+            '--sort',
+            'path',
+            *(['--glob', glob] if glob is not None else []),
+            *_ripgrep_hidden(glob),
+        ]
         try:
             if scope.lacks_ripgrep:
                 raise RipgrepMissing
@@ -2012,8 +2032,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         ]
         if glob is not None:
             arguments.extend(['--glob', glob])
-        if include_hidden:
-            arguments.append('--hidden')
+        arguments.extend(_ripgrep_hidden(glob))
         if file_type is not None:
             arguments.extend(['--type', file_type])
         if ignore_case:
