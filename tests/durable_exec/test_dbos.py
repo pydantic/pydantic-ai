@@ -1012,7 +1012,8 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
         match=re.escape(
             "Capability id 'a.com' is used by multiple capabilities that derived it from their configuration, "
             'such as `MCP` capabilities for servers on the same host. Ids identify one capability within a run, '
-            'so pass an explicit `id=` to each.'
+            'so pass an explicit `id=` to each: a distinct one for different servers, or the same one where '
+            'they configure one server, for example with a rotated credential in the URL.'
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]

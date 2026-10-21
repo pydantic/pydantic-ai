@@ -1630,7 +1630,9 @@ def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapa
         return (
             f'Capability id {capability_id!r} is used by multiple capabilities that derived it from their '
             'configuration, such as `MCP` capabilities for servers on the same host. Ids identify one '
-            'capability within a run, so pass an explicit `id=` to each.'
+            'capability within a run, so pass an explicit `id=` to each: a distinct one for different '
+            'servers, or the same one where they configure one server, for example with a rotated '
+            'credential in the URL.'
         )
     return (
         f'Capability id {capability_id!r} is used by multiple capabilities. '
