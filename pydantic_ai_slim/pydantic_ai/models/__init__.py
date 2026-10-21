@@ -1127,10 +1127,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
-        Translates each retry part into the part that carries it on the wire: a `RetryFeedbackPart`
-        becomes a `<validation_errors>`-fenced `UserPromptPart` where the feedback quotes the model's
-        own output, and a mid-conversation `SystemPromptPart` where it carries a message the agent's
-        author wrote. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
+        Translates each retry part into the part that carries it on the wire, by its `retry.cause`: a
+        `RetryFeedbackPart` for a `'validation_error'` or `'model_retry'` becomes a `UserPromptPart`
+        fenced in `<validation_errors>` or `<retry_feedback>` behind an application attribution line,
+        since either can quote the model's own output, and only `'no_output'`, whose text is the
+        framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
         when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
 
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as

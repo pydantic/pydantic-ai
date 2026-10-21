@@ -5173,7 +5173,7 @@ def _client_safe_retry_feedback(part: ModelRequestPart) -> ModelRequestPart:
     if (
         isinstance(part, RetryFeedbackPart)
         and part.retry.cause == 'no_output'
-        and part.content not in _NO_OUTPUT_FEEDBACK_TEXTS
+        and not (isinstance(part.content, str) and part.content in _NO_OUTPUT_FEEDBACK_TEXTS)
     ):
         return replace(part, content=_NO_OUTPUT_FEEDBACK_FALLBACK)
     return part
