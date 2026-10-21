@@ -506,6 +506,149 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
     ]
 
 
+RETURNS_POLICY = b'The return window is thirty days from purchase.'
+SHIPPING_POLICY = b'Orders ship within two business days.'
+
+
+@pytest.mark.parametrize(
+    ('documents', 'document_index', 'expected_index'),
+    [
+        pytest.param([RETURNS_POLICY], 0, 0, id='unchanged'),
+        pytest.param([RETURNS_POLICY], 1, 0, id='earlier-document-left-out'),
+        pytest.param([SHIPPING_POLICY, RETURNS_POLICY], 0, 1, id='document-moved-later'),
+        pytest.param([SHIPPING_POLICY], 0, None, id='document-left-out'),
+        pytest.param([RETURNS_POLICY, RETURNS_POLICY], 1, 1, id='duplicate-at-original-index'),
+        pytest.param([RETURNS_POLICY, RETURNS_POLICY], 2, None, id='duplicate-elsewhere'),
+    ],
+)
+async def test_anthropic_document_citation_replay_follows_its_document(
+    allow_model_requests: None, documents: list[bytes], document_index: int, expected_index: int | None
+):
+    """Document citations go to the document that still holds their cited text, wherever history moved it.
+
+    Anthropic numbers documents by their position in the request, so leaving out earlier history (as compaction or a
+    history processor does) moves them. A mock pins each case, since a live run can't choose where documents land.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    [
+                        'What is the return window?',
+                        *(BinaryContent(data=document, media_type='text/plain') for document in documents),
+                    ]
+                )
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Thirty days.',
+                    provider_name='anthropic',
+                    provider_details={
+                        'citations': [_document_citation('thirty days', 21, 32, document_index=document_index)]
+                    },
+                    citations=[Citation(sources=[DocumentCitationSource(excerpts=['thirty days'])])],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, ModelSettings(citations=True), ModelRequestParameters())
+
+    answer = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1]['content'][0]
+    assert [citation['document_index'] for citation in answer.get('citations', [])] == (
+        [] if expected_index is None else [expected_index]
+    )
+
+
+async def test_anthropic_counts_fetched_pages_for_citation_replay(allow_model_requests: None):
+    """A fetched page is numbered like any other document, including in the response that fetched it.
+
+    The live numbering was probed on 2026-10-21: `[document, fetched page, document]` cites the second document as
+    index 2. A mock pins that each response's citations keep their own indices when replayed.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    page = 'The MIT License (MIT)'
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart(['Fetch the license.', BinaryContent(data=RETURNS_POLICY, media_type='text/plain')])]
+        ),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name='web_fetch',
+                    args={'url': 'https://example.com/LICENSE'},
+                    tool_call_id='srvtoolu_1',
+                    provider_name='anthropic',
+                ),
+                NativeToolReturnPart(
+                    tool_name='web_fetch',
+                    content={
+                        'type': 'web_fetch_result',
+                        'url': 'https://example.com/LICENSE',
+                        'content': {
+                            'type': 'document',
+                            'source': {'type': 'text', 'media_type': 'text/plain', 'data': page},
+                            'title': None,
+                            'citations': {'enabled': True},
+                        },
+                    },
+                    tool_call_id='srvtoolu_1',
+                    provider_name='anthropic',
+                ),
+                TextPart(
+                    'MIT, and thirty days.',
+                    provider_name='anthropic',
+                    provider_details={
+                        'citations': [
+                            {**_document_citation(page, 0, len(page), document_index=1), 'document_title': None},
+                            _document_citation('thirty days', 21, 32),
+                        ]
+                    },
+                    citations=[Citation(sources=[DocumentCitationSource(excerpts=['thirty days'])])],
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(
+            parts=[UserPromptPart(['And shipping?', BinaryContent(data=SHIPPING_POLICY, media_type='text/plain')])]
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(
+                    'Two business days.',
+                    provider_name='anthropic',
+                    provider_details={'citations': [_document_citation('two business days', 19, 36, document_index=2)]},
+                    citations=[Citation(sources=[DocumentCitationSource(excerpts=['two business days'])])],
+                )
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('Continue.')]),
+    ]
+
+    await model.request(history, ModelSettings(citations=True), ModelRequestParameters())
+
+    messages = get_mock_chat_completion_kwargs(mock_client)[0]['messages']
+    assert [
+        [citation['document_index'] for citation in block['citations']]
+        for message in messages
+        if message['role'] == 'assistant'
+        for block in message['content']
+        if block['type'] == 'text'
+    ] == [[1, 0], [2]]
+
+
 async def test_anthropic_document_citations_need_citations_setting_for_replay(allow_model_requests: None):
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
