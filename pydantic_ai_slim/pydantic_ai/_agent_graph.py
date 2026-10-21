@@ -2626,7 +2626,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # This can happen with models that support thinking mode when they don't provide
                 # actionable output alongside their thinking content. so we tell the model to try again.
                 m = _messages.RetryFeedbackPart(
-                    content=f'Please {" or ".join(alternatives)}.',
+                    content=_messages._no_output_feedback_text(alternatives),  # pyright: ignore[reportPrivateUsage]
                     retry=_messages.RetryInfo(cause='no_output'),
                 )
                 raise ToolRetryError(m)

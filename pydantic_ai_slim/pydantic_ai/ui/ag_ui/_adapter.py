@@ -1077,7 +1077,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           via `ToolMessage.error`, `'denied'` and `'retried'` reload as `'failed'`, and
           `'interrupted'` reloads as `'success'`.
         - `RetryFeedbackPart` dumps as a message in the voice the model is shown it in — a
-          `UserMessage` for a `'validation_error'`, a `SystemMessage` otherwise — with the part
+          `UserMessage` for a `'validation_error'` or `'model_retry'`, a `SystemMessage` for
+          `'no_output'` feedback in the framework's own words — with the part
           itself in that message's `encrypted_value`; it reloads as a `RetryFeedbackPart` only from
           there, so a message the client wrote stays a plain prompt part. Below 0.1.11 the carrier
           doesn't exist, so it reloads as that plain part holding the rendered text, and the dump

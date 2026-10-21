@@ -1134,7 +1134,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         path and reloads as a `ToolReturnPart` with `outcome='retried'`.
 
         A `RetryFeedbackPart` dumps as a message in the voice the model is shown it in — `role='user'`
-        for a `'validation_error'`, `role='system'` otherwise — with the part itself in that part's
+        for a `'validation_error'` or `'model_retry'`, `role='system'` for `'no_output'` feedback in
+        the framework's own words — with the part itself in that part's
         `providerMetadata`; it reloads as a `RetryFeedbackPart` only from there, so a message the
         client wrote stays a plain prompt part.
 

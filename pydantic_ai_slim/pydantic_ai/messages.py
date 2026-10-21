@@ -1473,7 +1473,9 @@ RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_
 - `'validation_error'`: the output failed validation against the expected schema. The feedback
   quotes what the model itself wrote, which may in turn quote untrusted user input, so it goes in
   the user voice inside a `<validation_errors>` fence rather than in the harness's own.
-- `'no_output'`: the response carried nothing usable as output (e.g. thinking only).
+- `'no_output'`: the response carried nothing usable as output (e.g. thinking only). The agent
+  loop's fixed text goes in the system voice; a `'no_output'` part with any other content, such as
+  one your own code builds, is fenced in the user voice like a `'model_retry'`.
 - `'model_retry'`: an output validator, output function, or model hook raised
   [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]. Its message commonly interpolates the output it
   rejects, so it goes in the user voice too, inside a `<retry_feedback>` fence.
@@ -2588,7 +2590,7 @@ class RetryFeedbackPart:
         into, and the `<system>` tagging a provider without a mid-conversation system message needs.
         """
         content = _retry_feedback_text(self)
-        if self.retry.cause == 'no_output':
+        if _retry_feedback_speaks_for_the_harness(self):
             return content
         return _fenced_retry_feedback(
             content, tag='validation_errors' if self.retry.cause == 'validation_error' else 'retry_feedback'
@@ -2627,7 +2629,7 @@ def _fenced_retry_feedback(content: str, *, tag: _FeedbackTag) -> str:
     return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
 
 
-def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:  # pyright: ignore[reportUnusedFunction]
+def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:
     """Whether this feedback reaches the model in the harness's voice rather than the user's.
 
     A `'validation_error'` quotes back the output the model itself wrote, and a `'model_retry'`
@@ -2635,12 +2637,50 @@ def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:  # 
     go in the user voice inside the fence
     [`RetryFeedbackPart.model_response`][pydantic_ai.messages.RetryFeedbackPart.model_response] puts
     them in — near enough to a person's turn in authority, and marked off from one by the tag. Only
-    `'no_output'` carries fixed framework text, which is the authority a system message already has.
+    `'no_output'` feedback carries fixed framework text, which is the authority a system message
+    already has, and only when its content is one of the texts the agent loop writes: the cause alone
+    is a claim any code building the part can make, so a `'no_output'` part with any other content is
+    fenced in the user voice like a `'model_retry'`.
 
     Every channel asks the same question and answers it here: `prepare_messages` picks the part,
     the realtime seeders pick whether to `<system>`-tag the text, the UI adapters pick the role.
     """
-    return part.retry.cause == 'no_output'
+    return (
+        part.retry.cause == 'no_output' and isinstance(part.content, str) and part.content in _NO_OUTPUT_FEEDBACK_TEXTS
+    )
+
+
+_NO_OUTPUT_ALTERNATIVE_SLOTS: tuple[tuple[str, ...], ...] = (
+    ('return text',),
+    ('include your response in a tool call', 'call a tool'),
+    ('return an image',),
+)
+"""What the agent loop can ask for when a response held nothing usable, in the order it lists them."""
+
+
+def _no_output_feedback_text(alternatives: Sequence[str]) -> str:
+    """The fixed text of `'no_output'` feedback, naming what the response could have been instead."""
+    return f'Please {" or ".join(alternatives)}.'
+
+
+def _no_output_feedback_texts() -> frozenset[str]:
+    """Every text `_no_output_feedback_text` can produce from the alternatives the agent loop offers."""
+    texts: set[str] = set()
+
+    def walk(slot: int, chosen: tuple[str, ...]) -> None:
+        if slot == len(_NO_OUTPUT_ALTERNATIVE_SLOTS):
+            texts.add(_no_output_feedback_text(chosen))
+            return
+        walk(slot + 1, chosen)
+        for alternative in _NO_OUTPUT_ALTERNATIVE_SLOTS[slot]:
+            walk(slot + 1, (*chosen, alternative))
+
+    walk(0, ())
+    return frozenset(texts)
+
+
+_NO_OUTPUT_FEEDBACK_TEXTS = _no_output_feedback_texts()
+"""Every text the agent loop writes into `'no_output'` feedback, the only ones rendered in the system voice."""
 
 
 # TODO(v3): remove `_LegacyRetryPromptFields` along with `RetryPromptPart`.
