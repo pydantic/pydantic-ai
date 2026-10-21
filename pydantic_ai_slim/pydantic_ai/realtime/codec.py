@@ -636,11 +636,19 @@ class RealtimeConnection(ABC):
 
         For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
         a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
-        response), and the session then counts one reply per tool-calling response against `request_limit`,
-        and none once one of its calls settles without a result. Defaults to `False`, which counts one per
-        result, as a connection that asks for a response after each one needs.
+        response; GPT-Live continues its delegated backend once per round of calls), and the session then
+        counts one reply per tool-calling response against `request_limit`, and none once one of its calls
+        settles without a result. Defaults to `False`, which counts one per result, as a connection that
+        asks for a response after each one needs.
         """
         return False
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        """The session settled this call without sending its result (the tool raised): none will follow.
+
+        For a connection that holds state until a round's results are all in. Does nothing by default.
+        Private until the realtime refactor settles.
+        """
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:
