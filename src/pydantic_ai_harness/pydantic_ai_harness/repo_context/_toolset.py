@@ -15,21 +15,8 @@ class RepoContextToolset(FunctionToolset[AgentDepsT]):
     """Exposes a single tool that reports where the repo's CE assets live."""
 
     def __init__(
-        self,
-        asset_roots: Sequence[str],
-        tool_name: str,
-        *,
-        workspace_dir: Path | None = None,
-        id: str | None = None,
+        self, asset_roots: Sequence[str], tool_name: str, *, workspace_dir: Path | None = None, id: str | None = None
     ) -> None:
-        """Create the toolset.
-
-        Args:
-            asset_roots: Root directories to scan, relative to the working directory.
-            tool_name: Name of the inventory tool.
-            workspace_dir: Deprecated and ignored.
-            id: The toolset's id.
-        """
         super().__init__(id=id)
         if workspace_dir is not None:
             warn_argument_ignored('RepoContextToolset', 'workspace_dir', SET_WORKING_DIR_ON_THE_WORKSPACE, stacklevel=3)

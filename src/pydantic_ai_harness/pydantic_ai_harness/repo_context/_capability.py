@@ -188,10 +188,14 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             home = Path(await workspace.resolve(workspace_path(Path(self.home_dir))))
         self._context_files = await discover_instruction_files(workspace, working_dir, home, self.filenames)
 
-    def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str | None] | None:
+    def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
-        if not self.autoload_instructions and not self.expose_inventory_tool:
-            return None
+        if not self.autoload_instructions:
+            if not self.expose_inventory_tool:
+                return None
+            if not self._asset_roots_in_working_dir:
+                # Nothing can replace the inventory tool, so the hint stays static and inside the cached prefix.
+                return _INVENTORY_HINT.format(tool_name=self.inventory_tool_name)
 
         def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
             return self._render_instructions(ctx)

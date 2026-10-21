@@ -464,7 +464,8 @@ every activity reattaches to that environment.
 Loads `CLAUDE.md`/`AGENTS.md` into instructions at run start (stable within a run; a change between
 runs of a conversation is appended rather than rewritten). With `expose_inventory_tool=True` it
 exposes `inventory_agent_context()` (locates `.claude`/`.agents`/`.codex`/`.grok` skills, agents,
-hooks), which is left out when `FileSystem` is on the agent (`unless_tool_kind=READ_FILE_KIND`).
+hooks), which is left out when `FileSystem` is on the agent and its asset roots are inside the working
+directory (the defaults are; `unless_tool_kind=READ_FILE_KIND`).
 
 ```python
 from pydantic_ai_harness import RepoContext

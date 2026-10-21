@@ -334,6 +334,12 @@ class TestToolset:
         assert '`.claude/`' in instructions[0]
         assert 'inventory_agent_context' not in instructions[0]
 
+    def test_inventory_hint_is_static_when_nothing_can_replace_the_tool(self) -> None:
+        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True, asset_roots=('../shared',))
+        instructions = cap.get_instructions()
+        assert isinstance(instructions, str)
+        assert 'inventory_agent_context' in instructions
+
     async def test_inventory_kept_for_roots_outside_the_working_dir(self, tmp_path: Path) -> None:
         offered: list[set[str]] = []
 
