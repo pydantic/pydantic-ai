@@ -23,7 +23,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -40,7 +41,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.trajectory_judge import AllGood, Steer, TrajectoryJudge, TrajectoryVerdict
-from tests.conftest import try_import
+from tests.conftest import legacy_retry_prompt_part, try_import
 
 with try_import() as anthropic_imports:
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
@@ -1239,8 +1240,10 @@ class TestTranscript:
             ModelRequest(
                 parts=[
                     ToolReturnPart(tool_name='lookup', content={'k': 'v'}, tool_call_id='c1'),
-                    RetryPromptPart(content='bad args', tool_name='lookup', tool_call_id='c2'),
-                    RetryPromptPart(content='not done yet'),
+                    ToolReturnPart(tool_name='lookup', content='bad args', tool_call_id='c2', outcome='retried'),
+                    RetryFeedbackPart(content='not done yet', retry=RetryInfo(cause='model_retry')),
+                    legacy_retry_prompt_part('legacy bad args', tool_name='lookup', tool_call_id='c3'),
+                    legacy_retry_prompt_part('legacy not done'),
                 ]
             ),
         ]
@@ -1264,6 +1267,8 @@ class TestTranscript:
         assert 'bad args' in transcript
         assert 'retry (output):' in transcript
         assert 'not done yet' in transcript
+        assert 'legacy bad args' in transcript
+        assert 'legacy not done' in transcript
         assert 'assistant: wrap-up' in transcript
         assert 'sys-secret' not in transcript
         assert 'thinking-secret' not in transcript
@@ -1306,7 +1311,12 @@ class TestTranscript:
             pytest.param(
                 [
                     ModelRequest(parts=[UserPromptPart('Fix the login bug only.')]),
-                    ModelRequest(parts=[RetryPromptPart('bad output'), UserPromptPart('follow-up')]),
+                    ModelRequest(
+                        parts=[
+                            RetryFeedbackPart('bad output', retry=RetryInfo(cause='model_retry')),
+                            UserPromptPart('follow-up'),
+                        ]
+                    ),
                 ],
                 'user: Fix the login bug only.\n[...]\n',
                 id='follow-up-after-retry',

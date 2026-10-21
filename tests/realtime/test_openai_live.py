@@ -46,7 +46,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -89,7 +90,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import IsNow, try_import
+from ..conftest import IsNow, legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -925,6 +926,8 @@ async def test_a_call_that_raised_gives_up_its_round() -> None:
     connection._tool_call_unanswered('c1')  # pyright: ignore[reportPrivateUsage]
     assert not connection._delegations  # pyright: ignore[reportPrivateUsage]
     assert connection._silence_timeout() is not None  # pyright: ignore[reportPrivateUsage]
+    # Settled outside any provider message: no usage report follows, so a later one can't be taken for its settling.
+    assert not connection._lifecycle._settles  # pyright: ignore[reportPrivateUsage]
     await connection.send(ToolResult('c2', output='rainy'))
     assert connection.sent == []
 
@@ -1889,13 +1892,20 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
     """A retry carries the outcome of the call before it.
 
     Dropping it seeds the `ToolCallPart` as a call that was never answered, so the backend reads a
-    round that failed as one that succeeded and does not try again.
+    round that failed as one that succeeded and does not try again. A legacy `RetryPromptPart` a
+    caller built by hand seeds exactly like the part it is translated into.
     """
     messages = [
         ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Utrecht'}, tool_call_id='1')]),
-        ModelRequest(parts=[RetryPromptPart(content='unknown city', tool_name='weather', tool_call_id='1')]),
-        # A retry with no tool name is output validation rather than a tool round.
-        ModelRequest(parts=[RetryPromptPart(content='not a number')]),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name='weather', content='unknown city', tool_call_id='1', outcome='retried')]
+        ),
+        # Feedback that answers no call is output validation rather than a tool round.
+        ModelRequest(parts=[RetryFeedbackPart(content='not a number', retry=RetryInfo(cause='model_retry'))]),
+        ModelRequest(parts=[RetryFeedbackPart(content='not an int', retry=RetryInfo(cause='validation_error'))]),
+        ModelResponse(parts=[ToolCallPart(tool_name='weather', args={'city': 'Delft'}, tool_call_id='2')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('still unknown', tool_name='weather', tool_call_id='2')]),
+        ModelRequest(parts=[legacy_retry_prompt_part('still not a number')]),
     ]
 
     assert seed_input_items(messages, provider_name='openai') == snapshot(
@@ -1906,8 +1916,20 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
             },
             {
                 'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"unknown city"}'}],
+            },
+            {
+                'role': 'user',
                 'content': [
-                    {'type': 'input_text', 'text': '`weather` failed: unknown city\n\nFix the errors and try again.'}
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+not a number
+</retry_feedback>\
+""",
+                    }
                 ],
             },
             {
@@ -1915,7 +1937,34 @@ def test_seeding_keeps_a_failed_tool_round() -> None:
                 'content': [
                     {
                         'type': 'input_text',
-                        'text': 'The previous attempt failed: Validation feedback:\nnot a number\n\nFix the errors and try again.',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+not an int
+</validation_errors>\
+""",
+                    }
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [{'type': 'output_text', 'text': 'Called `weather` with {"city":"Delft"}.'}],
+            },
+            {
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Result of `weather`: {"error":"still unknown"}'}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'type': 'input_text',
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+still not a number
+</retry_feedback>\
+""",
                     }
                 ],
             },
