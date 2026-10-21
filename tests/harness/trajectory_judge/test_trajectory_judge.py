@@ -67,7 +67,11 @@ _FRAMING = (
 @pytest.fixture(autouse=True)
 def _fixed_ref(monkeypatch: pytest.MonkeyPatch) -> None:
     """Give every steer the same `ref`, so expected text can be written out; a test calls `monkeypatch.undo()` to opt out."""
-    monkeypatch.setattr(secrets, 'token_hex', lambda nbytes=None: _REF)
+
+    def token_hex(nbytes: int | None = None) -> str:
+        return _REF
+
+    monkeypatch.setattr(secrets, 'token_hex', token_hex)
 
 
 def _steer_response(message: str) -> ModelResponse:
