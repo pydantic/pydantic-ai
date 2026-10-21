@@ -273,9 +273,10 @@ class Memory(AbstractCapability[AgentDepsT]):
                 return request_context
 
             main_content = '' if main is None else main.content
-            rendered = self._render_snapshot(main, subfiles, files_truncated)
+            snapshot = self._render_snapshot(main, subfiles, files_truncated)
+            rendered = None if snapshot is None else snapshot[0]
             # An empty snapshot is only worth recording when it replaces one the model would still read as current.
-            if rendered == self._empty_snapshot() and latest is None:
+            if snapshot is not None and snapshot[1] and latest is None:
                 rendered = None
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
@@ -294,20 +295,19 @@ class Memory(AbstractCapability[AgentDepsT]):
                 )
         return request_context
 
-    def _empty_snapshot(self) -> str:
-        """The snapshot that says this memory is empty, under its heading so several memories stay apart."""
-        heading = f'## {self.heading}\n\n' if self.heading else ''
-        return f'{_MEMORY_DATA_PREFIX}{heading}{_EMPTY_MEMORY}{_MEMORY_DATA_SUFFIX}'
-
-    def _render_snapshot(self, main: MemoryFile | None, subfiles: list[str], files_truncated: bool) -> str | None:
-        """The framed snapshot, or `None` when the guidance leaves no budget for one."""
+    def _render_snapshot(
+        self, main: MemoryFile | None, subfiles: list[str], files_truncated: bool
+    ) -> tuple[str, bool] | None:
+        """The framed snapshot and whether it says memory is empty, or `None` when it doesn't fit the budget."""
         main_content = '' if main is None else main.content
         guidance = self._render_guidance()
         content_budget = self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
         if content_budget <= 0:
             return None
         if not (main_content or subfiles or files_truncated):
-            return self._empty_snapshot()
+            # Under its heading, so several memories on one agent stay apart.
+            empty = f'## {self.heading}\n\n{_EMPTY_MEMORY}' if self.heading else _EMPTY_MEMORY
+            return None if len(empty) > content_budget else (f'{_MEMORY_DATA_PREFIX}{empty}{_MEMORY_DATA_SUFFIX}', True)
         rendered = render_memory_prompt(
             main_content,
             subfiles,
@@ -318,7 +318,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             main_truncated=main is not None and main.truncated,
             files_truncated=files_truncated,
         )[:content_budget]
-        return f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}'
+        return f'{_MEMORY_DATA_PREFIX}{rendered}{_MEMORY_DATA_SUFFIX}', False
 
     @durable_operation('load_snapshot')
     async def _load_snapshot(

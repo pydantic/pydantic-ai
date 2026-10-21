@@ -1231,6 +1231,20 @@ class TestInjection:
         third = await agent.run('third', message_history=second.all_messages())
         assert _memory_contexts(third.all_messages())[3:] == ['<memory>\n## Org notes\n\n[memory is empty]\n</memory>']
 
+    async def test_empty_snapshot_that_does_not_fit_the_budget_is_omitted(self) -> None:
+        store = InMemoryStore()
+        mutation = await _seed(store, 'main/MEMORY.md', '- a fact')
+        agent = Agent(
+            TestModel(call_tools=[]), capabilities=[Memory(store=store, guidance='', heading='H' * 20, max_tokens=5)]
+        )
+        first = await agent.run('first')
+        assert len(_memory_contexts(first.all_messages())) == 1
+        await store.delete('main/MEMORY.md', expected_version=mutation.version)
+
+        second = await agent.run('second', message_history=first.all_messages())
+
+        assert len(_memory_contexts(second.all_messages())) == 1
+
     async def test_resumed_run_appends_no_snapshot_after_tool_results(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
