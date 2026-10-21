@@ -16,7 +16,7 @@ interleavings at random.
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from decimal import Decimal
 from typing import Any
 
@@ -49,7 +49,14 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import try_import
-from .test_session import BlockingRealtimeConnection, FakeRealtimeConnection, RealtimeSession, drain_events
+from .test_session import (
+    _LIVENESS_TIMEOUT,  # pyright: ignore[reportPrivateUsage]
+    BlockingRealtimeConnection,
+    FakeRealtimeConnection,
+    RealtimeSession,
+    _until,  # pyright: ignore[reportPrivateUsage]
+    drain_events,
+)
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -58,8 +65,6 @@ with try_import() as anthropic_imports_successful:
 with try_import() as openai_imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
-
-_LIVENESS_TIMEOUT = 5
 
 
 def _call(call_id: str = 'bg_1', tool_name: str = 'slow') -> ToolCall:
@@ -83,12 +88,6 @@ def _shape(messages: Sequence[ModelMessage]) -> list[tuple[str, list[str]]]:
         )
         for message in messages
     ]
-
-
-async def _until(condition: Callable[[], bool]) -> None:
-    with anyio.fail_after(_LIVENESS_TIMEOUT):
-        while not condition():
-            await asyncio.sleep(0.01)
 
 
 class _QueuedConnection(FakeRealtimeConnection):
@@ -141,7 +140,7 @@ async def test_speech_after_the_call_is_recorded_before_its_result() -> None:
             _call(),
             OutputTranscript(text='This might take a moment.', is_final=True),
         )
-        await _until(lambda: 'bg_1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
         # The model is still talking in the calling response, and the tool still runs.
         assert _shape(session.all_messages()) == snapshot([('ModelRequest', ['Find me a flight.'])])
         tools.finish('bg_1')
@@ -218,7 +217,7 @@ async def test_speech_the_result_cut_into_is_not_the_reply() -> None:
         consumer = asyncio.create_task(drain_events(session))
         await session.send('Find me a flight.')
         conn.say(_call(), OutputTranscript(text='I am look', is_final=False))
-        await _until(lambda: 'bg_1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
         tools.finish('bg_1')
         await _until(lambda: bool(conn.results()))
         conn.say(OutputTranscript(text='ing it up.', is_final=False), ResponseDone(interrupted=True))
@@ -318,7 +317,7 @@ async def test_request_limit_at_the_result_still_records_a_return() -> None:
     async with session:
         await session.send('Find me a flight.')
         conn.say(_call(), OutputTranscript(text='This might take a moment.', is_final=False))
-        await _until(lambda: 'bg_1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
         tools.finish('bg_1')
         with pytest.raises(UsageLimitExceeded, match='request_limit'):
             with anyio.fail_after(_LIVENESS_TIMEOUT):
@@ -347,6 +346,8 @@ async def test_asap_message_from_the_tool_goes_out_before_its_result() -> None:
     session: _RealtimeSession
 
     async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        # Finishes once the model talks past the call, as a slow tool would.
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
         session.enqueue('a note for the model')
         return 'result'
 
@@ -432,7 +433,7 @@ async def test_typed_turn_while_the_call_runs() -> None:
         consumer = asyncio.create_task(drain_events(session))
         await session.send('Find me a flight.')
         conn.say(_call(), OutputTranscript(text='Please hold', is_final=False))
-        await _until(lambda: 'bg_1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
         await session.send('What is the capital of Portugal?')
         wait = asyncio.create_task(session.wait_for_reply())
         conn.say(OutputTranscript(text=' on.', is_final=False), ResponseDone())
@@ -508,7 +509,9 @@ async def test_session_closed_while_the_call_runs_records_the_calling_response()
     session = RealtimeSession(conn, _Tools().runner)
     async with session:
         consumer = asyncio.create_task(drain_events(session))
-        await _until(lambda: 'bg_1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        # The model is talking past the call, which still runs.
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
+        assert 'bg_1' in session._pending_tool_calls  # pyright: ignore[reportPrivateUsage]
         assert session.all_messages() == []
         await session.close()
         await consumer
@@ -562,7 +565,7 @@ async def test_speech_between_two_results_follows_both() -> None:
     async with session:
         consumer = asyncio.create_task(drain_events(session))
         conn.say(_call('a'), _call('b'), OutputTranscript(text='Checking both.', is_final=True))
-        await _until(lambda: 'b' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
         tools.finish('a')
         await _until(lambda: len(conn.results()) == 1)
         conn.say(OutputTranscript(text='The first is in.', is_final=True))
@@ -670,7 +673,8 @@ async def test_speech_while_tool_ran_hands_off(
     agent = Agent(model, instructions='Answer in one short sentence.')
 
     @agent.tool_plain
-    def get_weather(city: str) -> str:  # pragma: no cover - the history already has its result
+    # Never called: the history already has its result.
+    def get_weather(city: str) -> str:  # pragma: no cover
         return 'unknown'
 
     result = await agent.run(
@@ -690,7 +694,7 @@ async def test_typed_turn_after_the_result_cut_into_speech_gets_the_next_reply()
     async with session:
         consumer = asyncio.create_task(drain_events(session))
         conn.say(_call(), OutputTranscript(text='Look', is_final=False))
-        await _until(lambda: 'bg_1' in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: session._core.speaking_part() is not None)  # pyright: ignore[reportPrivateUsage]
         tools.finish('bg_1')
         await _until(lambda: bool(conn.results()))
         await session.send('Never mind, is it sunny?')
