@@ -971,7 +971,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Called inside `wrap_model_request` before each model call.
+        """Called inside `wrap_model_request` once per request step, before any attempt at the model call.
 
         Can modify the model, request-only messages, settings, and parameters. Persistent history
         changes must be made through [`RunContext.messages`][pydantic_ai.tools.RunContext.messages].
@@ -980,7 +980,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Exceptions propagate through the wrap chain and are not passed to `on_model_request_error`. A
         [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] requests another model attempt and counts
-        against the output retry budget.
+        against the output retry budget. Work that depends on the model that will actually serve
+        the request belongs in
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request],
+        which runs before each attempt.
         """
         return request_context
 
@@ -1016,7 +1019,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        """Called inside `wrap_model_request` after each model response or recovered error.
+        """Called inside `wrap_model_request` after each attempt's model response or recovered error.
 
         Can modify the response before wrap hooks post-process it and before further agent processing.
         A wrap hook that returns without calling its handler skips this hook.
@@ -1024,6 +1027,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the response and
         ask the model to try again. The original response is still appended to message history
         so the model can see what it said. Retries count against the output side of the agent's retry budget.
+
+        Raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to reject the response
+        and make another attempt, optionally on another model, as `ModelFallback` does. The rejected
+        response is not added to message history, but its usage is still counted. A streamed response
+        has already reached the consumer, so raising `RetryModelRequest` for one is a `UserError`.
         """
         return response
 
@@ -1036,8 +1044,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> ModelResponse:
         """Wraps the complete model-request lifecycle.
 
-        Calling `handler(request_context)` runs `before_model_request`, the model call with
-        `on_model_request_error` recovery, and `after_model_request`. Returning without calling
+        Calling `handler(request_context)` runs `before_model_request`, then one or more attempts,
+        each of which runs `prepare_model_request`, the model call with `on_model_request_error`
+        recovery, and `after_model_request`. A hook makes another attempt by raising
+        [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]. Returning without calling
         `handler` skips that inner lifecycle. A wrapper may call it only once.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
@@ -1053,19 +1063,21 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         request_context: ModelRequestContext,
         error: Exception,
     ) -> ModelResponse:
-        """Called when the core model call fails with an exception.
+        """Called when an attempt's core model call fails with an exception.
 
         This is the error counterpart to
         [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request].
         Recovery runs inside the wrapped handler, so wrap hooks observe the recovered response,
-        not the handled exception. Exceptions from `before_model_request`, `after_model_request`,
-        or `wrap_model_request` are outside this hook's scope.
+        not the handled exception. Exceptions from `before_model_request`, `prepare_model_request`,
+        `after_model_request`, or `wrap_model_request` are outside this hook's scope.
 
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** a [`ModelResponse`][pydantic_ai.messages.ModelResponse] to suppress
         the error and use the response as if the model call succeeded.
         **Raise** [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to retry the model request
         with a retry prompt instead of recovering or propagating.
+        **Raise** [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to make another
+        attempt, optionally on another model, as `ModelFallback` does.
 
         Not called for [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest]
         or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
