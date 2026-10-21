@@ -552,8 +552,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   result is recorded in history, but goes nowhere: the turn doesn't wait for it.
 - The backend continues a delegated round only once it has every call's output, and Live has no
   command to cancel a delegation: left unfinished, the round keeps Live from delegating anything
-  more for the rest of the session. So when a tool raises, the model *does* get a result, unlike on
-  the [other providers](tools.md#function-tools): the call's output is the error history records,
+  more for the rest of the session. So when a tool raises, the model *does* get a result, as on
+  Gemini Live and unlike on the [other providers](tools.md#function-tools): the call's output is the error history records,
   `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
   again), and Live speaks what it makes of it. The exception is still raised from the session as
   usual, and a [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was

@@ -18,8 +18,11 @@ failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] answer the call w
 [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying `outcome='retried'`, matching a
 standard agent run. Other tool exceptions end the exchange the call was part of: the model never gets the result, so
 [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for its
-answer. GPT-Live is the exception: its backend can't move on without a result for every call, so the
-model gets the failure history records ([details](openai.md#gpt-live-provider-specific-quirks)).
+answer. Gemini Live and GPT-Live are the exception: a call left without a result stays open (Gemini
+waits on it, or makes it again on the next input, and GPT-Live's backend can't move on), so the model
+gets the failure history records, `{"error":"The tool raised an unhandled error."}`, as the call's
+result and answers it ([GPT-Live details](openai.md#gpt-live-provider-specific-quirks)). A
+[`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] still sends nothing.
 While the event stream is being iterated, the exception is raised from `async for`, and the
 session goes on receiving: a consumer that catches it and iterates again keeps a working session,
 and a reply asked for afterwards is answered as usual. Otherwise the session stops receiving, the
