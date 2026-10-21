@@ -29,6 +29,7 @@ from pydantic_core import to_json
 from typing_extensions import Protocol, TypedDict
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -1298,6 +1299,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
+    # Chat Completions has no video content part.
+    _unsupported_file_inputs = frozenset({'video'})
+
     unsupported_settings = frozenset({'top_k'})
 
     _model_name: OpenAIModelName = field(repr=False)
@@ -1398,6 +1402,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             user = self._profile
             if user is None or (not callable(user) and 'openai_chat_supports_document_input' not in user):
                 _profile = merge_profile(_profile, OpenAIModelProfile(openai_chat_supports_document_input=False))
+        if not _profile.get('openai_chat_supports_document_input', True):
+            # Without a `file` content part, a text document is still inlined into the prompt as text,
+            # so documents are narrowed to those rather than turned off.
+            document_media_types = _profile.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
+            _profile = merge_profile(
+                _profile,
+                ModelProfile(supported_document_media_types=document_media_types & TEXT_DOCUMENT_MEDIA_TYPES),
+            )
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
@@ -2518,6 +2530,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     # keeps serving them: a latent directive that never fired before the boundary still governs
     # post-compaction replies without being re-sent (live-verified).
     compaction_retains_standing_prompt = True
+    # Audio content goes nowhere the API reads it and video has no input type, so neither is sent.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
