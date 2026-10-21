@@ -596,9 +596,8 @@ def _insert_cache_point_before_trailing_documents(
         return False
 
 
-# Document formats that Claude on Bedrock renders as text, and moves to the front of the message unless a `cachePoint`
-# precedes them. See `bedrock_document_cache_point_variant`.
-_HOISTED_DOCUMENT_FORMATS = frozenset({'txt', 'md', 'csv', 'html'})
+def _is_pdf(block: Any) -> bool:
+    return block.get('document', {}).get('format') == 'pdf'
 
 
 def _add_automatic_cache_point(
@@ -612,15 +611,15 @@ def _add_automatic_cache_point(
     same without it. See `bedrock_document_cache_point_variant`.
     """
     if variant == 'anthropic':
-        if content[-1].get('document', {}).get('format') == 'pdf':
+        if _is_pdf(content[-1]):
             content.append(cache_point)
             return
         start = len(content)
-        while start > 0 and content[start - 1].get('document', {}).get('format') in _HOISTED_DOCUMENT_FORMATS:
+        while start > 0 and 'document' in content[start - 1] and not _is_pdf(content[start - 1]):
             start -= 1
         if (
             0 < start < len(content)
-            and not any(key in content[start - 1] for key in ('document', 'video'))
+            and not _is_pdf(content[start - 1])
             and not any('cachePoint' in block for block in content)
         ):
             # Bedrock moves these documents to the front of the message either way, so moving them ahead of the
@@ -1975,11 +1974,11 @@ class BedrockConverseModel(Model[BaseClient]):
                         raise UserError(
                             'CachePoint cannot be preceded by another CachePoint - there must be content between cache points when using Bedrock.'
                         )
-                    _insert_cache_point_before_trailing_documents(
-                        content,
-                        BedrockConverseModel._get_cache_point(item.ttl),
-                        raise_if_cannot_insert=True,
-                    )
+                    cache_point = BedrockConverseModel._get_cache_point(item.ttl)
+                    if self.profile.get('bedrock_document_cache_point_variant') == 'anthropic' and _is_pdf(content[-1]):
+                        content.append(cache_point)
+                    else:
+                        _insert_cache_point_before_trailing_documents(content, cache_point, raise_if_cannot_insert=True)
                 else:
                     assert_never(item)
         # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Message.html

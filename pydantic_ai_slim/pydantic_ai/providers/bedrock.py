@@ -277,16 +277,16 @@ class BedrockModelProfile(ModelProfile, total=False):
     """
 
     bedrock_document_cache_point_variant: Literal['anthropic'] | None
-    """Where an automatic `bedrock_cache_messages` cache point goes when the message ends with documents.
+    """Where a cache point goes when the message ends with documents.
 
     Bedrock rejects a `cachePoint` directly after some document blocks, so it can't always go at the end:
 
-    - `'anthropic'`: a `cachePoint` may follow a PDF, so it's appended. Bedrock renders txt, md, csv and html
-      documents as text, moves them to the front of the message unless a `cachePoint` precedes them, and rejects
-      a `cachePoint` after them. When the message has no earlier `cachePoint`, such trailing documents are moved
-      ahead of the non-document block before them and the `cachePoint` is appended: the rendered prompt is
-      unchanged, and matches the next request's, which no longer has this `cachePoint`, so that request reads
-      the cache.
+    - `'anthropic'`: a `cachePoint` may follow a PDF, so it's appended, for a `CachePoint` too. Bedrock renders
+      documents of every other format as text, moves them to the front of the message unless a `cachePoint`
+      precedes them, and rejects a `cachePoint` after them. When the message has no earlier `cachePoint`, an
+      automatic `bedrock_cache_messages` cache point goes at the end, with such trailing documents moved ahead of
+      the block before them, unless that's a PDF: the rendered prompt is unchanged, and matches the next request's,
+      which no longer has this `cachePoint`, so that request reads the cache.
     - `None`: the `cachePoint` goes before the trailing documents and videos.
 
     Default: `None`.
