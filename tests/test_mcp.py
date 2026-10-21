@@ -21,7 +21,7 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 from unittest.mock import AsyncMock
 
 import anyio
@@ -1795,20 +1795,27 @@ class TestRunContextAuth:
         server: FastMCP[None] = FastMCP('auth_echo')
 
         @server.tool
-        async def whoami(ctx: Context) -> str:
+        async def whoami() -> str:
             # Hold every run's call until all of them are in flight, so the runs overlap.
             nonlocal arrived
             arrived += 1
             if arrived == len(users):
                 all_arrived.set()
             await all_arrived.wait()
-            return f'{get_http_request().headers["authorization"]} {id(ctx.session)}'
+            return get_http_request().headers['authorization']
 
-        app = server.http_app()
+        entered_clients: list[Client[Any]] = []
+
+        class RecordingMCPToolset(MCPToolset[str]):
+            async def __aenter__(self) -> Self:
+                entered_clients.append(self.client)
+                return await super().__aenter__()
+
+        app = server.http_app(stateless_http=True, json_response=True)
         client = _asgi_http_client(app)
         try:
             async with app.router.lifespan_context(app):
-                toolset = MCPToolset[str]('http://testserver/mcp', http_client=client, auth=lambda ctx: ctx.deps)
+                toolset = RecordingMCPToolset('http://testserver/mcp', http_client=client, auth=lambda ctx: ctx.deps)
                 agent = Agent(TestModel(call_tools=['whoami']), deps_type=str, toolsets=[toolset])
                 async with agent:
                     # Entering the agent doesn't connect a toolset that resolves `auth` per run.
@@ -1818,9 +1825,10 @@ class TestRunContextAuth:
         finally:
             await client.aclose()
 
-        outputs = [json.loads(result.output)['whoami'].split(' ') for result in results]
-        assert [output[:2] for output in outputs] == [['Bearer', user] for user in users]
-        assert len({output[2] for output in outputs}) == len(users)
+        assert [result.output for result in results] == [f'{{"whoami":"Bearer {user}"}}' for user in users]
+        # Each run connected a copy with a client of its own; the attached toolset's was never used.
+        run_clients = {id(entered) for entered in entered_clients} - {id(toolset.client)}
+        assert len(run_clients) == len(users)
 
     async def test_headers_function_is_resolved_into_a_per_run_copy(self):
         async def headers(ctx: RunContext[str]) -> dict[str, str]:

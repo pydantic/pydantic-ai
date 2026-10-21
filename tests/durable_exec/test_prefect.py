@@ -5043,13 +5043,14 @@ async def test_prefect_mcp_auth_function_connects_each_run_as_its_own_user(block
     async def whoami() -> str:
         return get_http_request().headers['authorization']
 
-    app = server.http_app()
+    app = server.http_app(stateless_http=True, json_response=True)
+    # A `localhost` URL keeps the module's VCR cassettes from intercepting the in-process requests.
     client: httpx.AsyncClient | httpx2.AsyncClient
     if is_mcp_sdk_v2():
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
     else:
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
-    toolset = MCPToolset[str]('http://testserver/mcp', id='auth_mcp', http_client=client, auth=lambda ctx: ctx.deps)
+    toolset = MCPToolset[str]('http://localhost/mcp', id='auth_mcp', http_client=client, auth=lambda ctx: ctx.deps)
     agent = Agent(
         TestModel(call_tools=['whoami']),
         name='prefect_mcp_auth',
