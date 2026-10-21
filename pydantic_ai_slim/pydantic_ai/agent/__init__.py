@@ -4077,8 +4077,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     stacklevel=2,
                 )
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
-            instruction_parts = [part for part in instruction_parts if part.content]
-            resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
+            instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
+            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
             request_messages = [
                 *(message_history or ()),
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
@@ -4086,6 +4086,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,
                 native_tools=native_tools,
+                # Set even when empty: unset parts make providers read `ModelRequest.instructions` from
+                # `message_history`, which a client may have supplied.
+                instruction_parts=instruction_parts,
                 _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), tool_manager.toolset),
                 _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(tool_manager.tools),
                 _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(tool_manager.toolset),
