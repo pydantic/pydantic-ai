@@ -117,10 +117,7 @@ models:
     input: 0.6
     output: 2.4
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
-# Off: gh-aw's daily AI-credits guardrail lists every run's artifacts from the past 24h on
-# each activation (~700 REST calls on CI Review), and AI credits don't measure the Z.AI
-# Coding Plan's quota (`shared/provider-health.md` gates that). Only a `-1` in the
-# workflow's own frontmatter removes the guardrail; an imported one leaves its steps.
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
