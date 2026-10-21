@@ -9736,7 +9736,7 @@ async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() ->
         else:
             yield 'done'
 
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset[Any]()
 
     @toolset.tool_plain
     def unlock() -> str:
@@ -9756,7 +9756,13 @@ async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() ->
     loaded = AGUIAdapter.load_messages([user, *_reduce_events(events)])
 
     def deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
-        return list(iter_message_parts(messages, ModelRequest, ToolAvailabilityDeltaPart))
+        return [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
 
     assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['later'])])
     assert deltas(loaded) == deltas(server_history)
