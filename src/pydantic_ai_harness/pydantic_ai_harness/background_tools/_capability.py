@@ -15,7 +15,14 @@ import anyio.lowlevel
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult, RawToolArgs
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentNode,
+    CapabilityOrdering,
+    NodeResult,
+    RawToolArgs,
+    SetToolMetadata,
+)
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -35,7 +42,12 @@ from pydantic_ai.tools import (
     ToolSelector,
     matches_tool_selector,
 )
-from pydantic_ai_harness._background_completion import make_background_completion
+from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
+from pydantic_ai_harness._background_completion import (
+    escape_tool_result_body,
+    make_background_completion,
+    tool_result_tags,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -103,17 +115,20 @@ _SignalledError = ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedE
 """Errors a background task reports to the model as a failed result instead of ending the run."""
 
 
-def _format_background_error(error: _SignalledError) -> str:
-    """Describe a tool-signalled failure to the model."""
+def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> TextContent:
+    """Describe a tool-signalled failure to the model, framed as the call's failed result."""
     if isinstance(error, (ApprovalRequired, CallDeferred)):
-        return f'{type(error).__name__} was raised; background tools cannot defer a running task.'
-    if isinstance(error, (ModelRetry, ToolFailed)):
-        content: object = error.message
-    elif isinstance(error, ToolRetryError):
-        content = error.tool_retry.content
+        message = f'{type(error).__name__} was raised; background tools cannot defer a running task.'
     else:
-        content = error.tool_failed.content
-    return content if isinstance(content, str) and content else type(error).__name__
+        if isinstance(error, (ModelRetry, ToolFailed)):
+            content: object = error.message
+        elif isinstance(error, ToolRetryError):
+            content = error.tool_retry.content
+        else:
+            content = error.tool_failed.content
+        message = escape_tool_result_body(content) if isinstance(content, str) and content else type(error).__name__
+    open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
+    return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
 
 
 def _format_background_result(
@@ -128,16 +143,19 @@ def _format_background_result(
         extra_content = None
 
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
-    return_text = return_part.model_response_str()
-    content: list[UserContent] = [return_text, *return_part.files]
+    # The frame's attributes name the call the "running in background" reply announced, so the result needs no
+    # preamble. `ToolReturn.content` follows the frame unwrapped, as core sends it: content the tool author chose
+    # to add for the model.
+    open_tag, close_tag = tool_result_tags(tool_name, task_id)
+    completion_text = f'{open_tag}\n{escape_tool_result_body(return_part.model_response_str())}'
+    files = return_part.files
+    if not files:
+        completion_text = f'{completion_text}\n{close_tag}'
+    content: list[UserContent] = [completion_text, *files, close_tag] if files else [completion_text]
     if isinstance(extra_content, str):
         content.append(extra_content)
     elif extra_content is not None:
         content.extend(extra_content)
-
-    prefix = f"Background tool '{tool_name}' (task {task_id}) completed.\nResult:"
-    completion_text = f'{prefix} {return_text}'
-    content[0] = completion_text
 
     if all(isinstance(item, str) for item in content):
         return (make_background_completion('\n'.join(item for item in content if isinstance(item, str)), task_id),)
@@ -234,8 +252,20 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             return 'optional'
         return None
 
-    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    def get_ordering(self) -> CapabilityOrdering:
+        # Outside `SetToolMetadata`, so the tools reach `_prepare_tools` with its metadata.
+        return CapabilityOrdering(wraps=[SetToolMetadata])
+
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+        return PreparedToolset(toolset, self._prepare_tools)
+
+    async def _prepare_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
         self._prepared_modes.clear()
+        # Core skips a deferred capability's hooks until it is loaded, but not its wrapper toolset.
+        if self.defer_loading is True and self.id not in ctx.active_capability_ids:
+            return tool_defs
         prepared: list[ToolDefinition] = []
         for tool_def in tool_defs:
             mode = await self._background_mode(ctx, tool_def)
@@ -319,12 +349,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                         ctx.tool_manager.failed_tools.add(tool_name)
                         raise
                 except (ApprovalRequired, CallDeferred, ToolRetryError, ToolFailedError, ModelRetry, ToolFailed) as e:
-                    outcome = (
-                        make_background_completion(
-                            f"Background tool '{tool_name}' (task {task_id}) failed: {_format_background_error(e)}",
-                            task_id,
-                        ),
-                    )
+                    outcome = (_format_background_failure(tool_name, task_id, e),)
                 except anyio.get_cancelled_exc_class() as e:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.
