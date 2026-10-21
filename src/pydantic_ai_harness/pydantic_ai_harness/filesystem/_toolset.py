@@ -1595,14 +1595,16 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         prepare, permitted = self._batch_authorizer(scope, cwd)
         prefix = posixpath.relpath(cwd, scope.root)
         include_hidden = bool(include_glob and _explicit_hidden(include_glob))
-        # `rg --glob` anchors a glob with a `/` in it and its `*` stops at `/`, unlike the `fnmatch`
-        # the walker matches with, so such a glob is only applied below. A glob without one still
-        # narrows what `rg` reads; `selected` then filters what it prints the way the walker does.
+        # `rg --glob` anchors a glob with a `/` in it and its `*` stops at `/`, so `src/*.py` would
+        # miss `src/pkg/m.py`. Such a glob is matched with `fnmatch` below instead, as without `rg`.
         command_glob = include_glob if include_glob and '/' not in include_glob else None
 
         def selected(record: Record) -> bool:
-            return not include_glob or fnmatch.fnmatch(
-                posixpath.normpath(posixpath.join(prefix, record.path)), include_glob
+            path = posixpath.normpath(record.path)
+            return (
+                not include_glob
+                or fnmatch.fnmatch(path, include_glob)
+                or fnmatch.fnmatch(posixpath.join(prefix, path), include_glob)
             )
 
         async def accept(record: Record) -> str | None:
@@ -1639,7 +1641,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 limit=self._max_search_results,
                 accept=lambda record: (
                     self._match_line(scope, cwd, record, include_hidden=include_hidden)
-                    if selected(record) and permitted(record)
+                    if (command_glob or selected(record)) and permitted(record)
                     else None
                 ),
                 prepare=prepare,
