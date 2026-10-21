@@ -1017,8 +1017,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return upstream
         if upstream is None:
             return catalog_part
-        if isinstance(upstream, (str, InstructionPart)):
-            return [upstream, catalog_part]
+        assert not isinstance(upstream, str | InstructionPart), '`WrapperToolset.get_instructions` returns a list'
         return [*upstream, catalog_part]
 
     def _catalog_instruction(self) -> InstructionPart | None:
