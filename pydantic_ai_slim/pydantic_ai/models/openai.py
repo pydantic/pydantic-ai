@@ -2455,8 +2455,30 @@ def _continuation_digest(history: _Hasher, parts: Sequence[ModelResponsePart]) -
     hasher = history.copy()
     for part in parts:
         hasher.update(b'\n')
-        hasher.update(_RESPONSE_PART_ADAPTER.dump_json(_part_without_application_metadata(part), exclude_none=True))
+        hasher.update(
+            _RESPONSE_PART_ADAPTER.dump_json(
+                _part_without_application_metadata(_call_as_sent(part) if isinstance(part, ToolCallPart) else part),
+                exclude_none=True,
+            )
+        )
     return hasher.hexdigest()
+
+
+def _call_as_sent(part: ToolCallPart) -> ToolCallPart:
+    """`part` as the server holds it: a base call, without the `tool_kind` the agent graph stamps on after `request()`.
+
+    The digest is taken in `request()`, and the graph then promotes the call to its kind's typed subclass. Neither
+    the kind nor the subclass is sent, so leaving them in would make a response compared later never match.
+    """
+    args = part.args if part.args is None or isinstance(part.args, str) else {**part.args}
+    return ToolCallPart(
+        tool_name=part.tool_name,
+        args=args,
+        tool_call_id=part.tool_call_id,
+        id=part.id,
+        provider_name=part.provider_name,
+        provider_details=part.provider_details,
+    )
 
 
 def _without_application_metadata(message: ModelMessage) -> ModelMessage:
