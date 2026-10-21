@@ -249,10 +249,23 @@ def _probability_bounds(probabilities: Collection[float]) -> tuple[list[Decimal]
     return lower, upper
 
 
+_FLOAT_TOLERANCE = Decimal('1e-6')
+"""Slack for float normalization residuals in full-precision answers.
+
+The System One `sum()` gate and the choice sum check already tolerate deviations of this
+size from exact `Decimal` arithmetic. Full-precision `repr` round-trips carry residuals of
+about 1e-16, far below the displayed precision the validators reason about, so the score
+check absorbs them instead of rejecting self-consistent answers.
+"""
+
+
 def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float) -> bool:  # pyright: ignore[reportUnusedFunction]
     """Whether rounded probabilities can sum to one and produce the displayed score."""
     remaining = Decimal(1) - sum(lower, Decimal(0))
-    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+    width = sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+    # Full-precision answers carry float normalization residuals of about 1e-16 beyond these
+    # rounding intervals, the size of deviation the sum() gate and choice check already allow.
+    valid = -_FLOAT_TOLERANCE <= remaining <= width + _FLOAT_TOLERANCE
     if valid:
         bounds: list[Decimal] = []
         for levels in (range(len(lower)), reversed(range(len(lower)))):
@@ -266,7 +279,12 @@ def _score_fits(lower: Sequence[Decimal], upper: Sequence[Decimal], score: float
         displayed_score = Decimal(str(score))
         score_decimals = max(2, -int(displayed_score.as_tuple().exponent))
         score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
-        valid = displayed_score + score_half_unit >= bounds[0] and displayed_score - score_half_unit <= bounds[1]
+        # `repr` carries the score's float dot product, which can sit a residual away from the
+        # exact weighted mean of the displayed probabilities.
+        valid = (
+            displayed_score + score_half_unit + _FLOAT_TOLERANCE >= bounds[0]
+            and displayed_score - score_half_unit - _FLOAT_TOLERANCE <= bounds[1]
+        )
     return valid
 
 

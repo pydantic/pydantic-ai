@@ -713,6 +713,74 @@ async def test_rounded_score_can_match_rounded_probabilities(
     assert result.output == Mood(frustration=1)
 
 
+async def test_full_precision_score_answer_accepted(allow_model_requests: None):
+    """Full-precision probabilities carrying a float normalization residual still validate. Regression for #10890."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            frustration={
+                'type': 'score',
+                'score': 1.8424885311360866,
+                'confidence': 0.7637327967041296,
+                'probabilities': {'0': 0.03918100636308579, '1': 0.07914945613774199, '2': 0.8816695374991723},
+            }
+        )
+
+    result = await Agent(mock_model(handler), output_type=Mood).run('This is the third time I am asking. Fix it NOW.')
+    assert result.output == Mood(frustration=2)
+
+
+async def test_full_precision_score_mismatch_still_rejected(allow_model_requests: None):
+    """The tolerance only absorbs float residuals; a score that disagrees with the probabilities still fails."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            frustration={
+                'type': 'score',
+                'score': 0.8424885311360866,
+                'confidence': 0.7637327967041296,
+                'probabilities': {'0': 0.03918100636308579, '1': 0.07914945613774199, '2': 0.8816695374991723},
+            }
+        )
+
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One API'):
+        await Agent(mock_model(handler), output_type=Mood).run('This is the third time I am asking. Fix it NOW.')
+
+
+async def test_union_output_two_decimal_score_accepted(allow_model_requests: None):
+    """A two-decimal score keeps validating when a union output adds the route question."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            **{
+                'Ticket.urgent': {'type': 'noul', 'noul': 0.97},
+                'Ticket.area': {
+                    'type': 'choice',
+                    'choice': 'billing',
+                    'confidence': 0.88,
+                    'probabilities': {'billing': 0.94, 'bug': 0.06},
+                },
+                'Mood.frustration': {
+                    'type': 'score',
+                    'score': 1.7,
+                    'confidence': 0.55,
+                    'probabilities': {'0': 0.05, '1': 0.2, '2': 0.75},
+                },
+                'route': {
+                    'type': 'choice',
+                    'choice': 'Mood',
+                    'confidence': 0.7,
+                    'probabilities': {'Ticket': 0.3, 'Mood': 0.7},
+                },
+            }
+        )
+
+    result = await Agent(mock_model(handler), output_type=Ticket | Mood).run(
+        'Charged twice. This is the third time I am asking.'
+    )
+    assert result.output == Mood(frustration=2)
+
+
 @pytest.mark.parametrize(
     'probabilities',
     [
