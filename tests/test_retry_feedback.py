@@ -23,7 +23,7 @@ from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai import Agent, BinaryImage, ModelRequestContext, RunContext, capture_run_messages
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.capabilities import Hooks
@@ -71,6 +71,7 @@ from .conftest import (
     RequestCapture,
     iter_message_parts,
     legacy_retry_prompt_part,
+    message,
     message_part,
     try_import,
 )
@@ -2063,6 +2064,50 @@ def test_the_no_output_texts_that_keep_the_system_voice():
             'Please return text.',
         ]
     )
+
+
+_NO_OUTPUT_CONFIGURATIONS: dict[str, tuple[Any, bool, str]] = {
+    'text': (str, False, 'Please return text.'),
+    'text-and-tools': (str, True, 'Please return text or call a tool.'),
+    'output-tool': (ToolOutput(Answer), False, 'Please include your response in a tool call.'),
+    'output-tool-and-tools': (ToolOutput(Answer), True, 'Please include your response in a tool call.'),
+    'image': (BinaryImage, False, 'Please return an image.'),
+    'text-or-image': ([str, BinaryImage], True, 'Please return text or call a tool or return an image.'),
+}
+
+
+@pytest.mark.parametrize('configuration', list(_NO_OUTPUT_CONFIGURATIONS))
+async def test_the_loops_no_output_text_keeps_the_system_voice_for_every_output_configuration(configuration: str):
+    """Whatever the agent can return, the `'no_output'` feedback the loop writes is one of the framework texts."""
+    output_type, with_tool, expected = _NO_OUTPUT_CONFIGURATIONS[configuration]
+
+    def think_only(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ThinkingPart('hmm')])
+
+    model = FunctionModel(
+        think_only, profile=ModelProfile(supports_inline_system_prompts=True, supports_image_output=True)
+    )
+    agent = Agent(
+        model,
+        output_type=output_type,
+        retries={'output': 1},
+    )
+    if with_tool:
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'nothing'  # pragma: no cover
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior):
+            await agent.run('go')
+
+    feedback = message_part(messages, RetryFeedbackPart, message_index=2)
+    assert (feedback.retry.cause, feedback.content) == ('no_output', expected)
+    assert feedback.content in _NO_OUTPUT_FEEDBACK_TEXTS
+    [*_, prepared_request] = model.prepare_messages(messages[:3], ModelRequestParameters())
+    [prepared] = message([prepared_request], ModelRequest).parts
+    assert prepared == SystemPromptPart(content=feedback.content, timestamp=IsDatetime())
 
 
 @openai_installed

@@ -2650,10 +2650,15 @@ def _retry_feedback_speaks_for_the_harness(part: RetryFeedbackPart) -> bool:
     )
 
 
+_NO_OUTPUT_RETURN_TEXT = 'return text'
+_NO_OUTPUT_USE_OUTPUT_TOOL = 'include your response in a tool call'
+_NO_OUTPUT_CALL_A_TOOL = 'call a tool'
+_NO_OUTPUT_RETURN_IMAGE = 'return an image'
+
 _NO_OUTPUT_ALTERNATIVE_SLOTS: tuple[tuple[str, ...], ...] = (
-    ('return text',),
-    ('include your response in a tool call', 'call a tool'),
-    ('return an image',),
+    (_NO_OUTPUT_RETURN_TEXT,),
+    (_NO_OUTPUT_USE_OUTPUT_TOOL, _NO_OUTPUT_CALL_A_TOOL),
+    (_NO_OUTPUT_RETURN_IMAGE,),
 )
 """What the agent loop can ask for when a response held nothing usable, in the order it lists them."""
 

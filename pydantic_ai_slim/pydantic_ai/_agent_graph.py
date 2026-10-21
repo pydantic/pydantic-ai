@@ -2603,24 +2603,24 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield event
                     return
                 elif output_schema.toolset:
-                    alternatives.append('include your response in a tool call')
+                    alternatives.append(_messages._NO_OUTPUT_USE_OUTPUT_TOOL)  # pyright: ignore[reportPrivateUsage]
                 elif ctx.deps.tool_manager.tools is None or ctx.deps.tool_manager.tools:
                     # tools is None when the tool manager is unprepared (e.g. UserPromptNode
                     # skips to CallToolsNode, bypassing for_run_step); in that case we
                     # default to suggesting tools to be safe
-                    alternatives.append('call a tool')
+                    alternatives.append(_messages._NO_OUTPUT_CALL_A_TOOL)  # pyright: ignore[reportPrivateUsage]
 
                 if output_schema.allows_image:
                     if image := next((file for file in files if isinstance(file, _messages.BinaryImage)), None):
                         self._next_node = await self._handle_image_response(ctx, image)
                         return
-                    alternatives.append('return an image')
+                    alternatives.append(_messages._NO_OUTPUT_RETURN_IMAGE)  # pyright: ignore[reportPrivateUsage]
 
                 if text_processor := output_schema.text_processor:
                     if text:
                         self._next_node = await self._handle_text_response(ctx, text, text_processor)
                         return
-                    alternatives.insert(0, 'return text')
+                    alternatives.insert(0, _messages._NO_OUTPUT_RETURN_TEXT)  # pyright: ignore[reportPrivateUsage]
 
                 # handle responses with only parts that don't constitute output.
                 # This can happen with models that support thinking mode when they don't provide
