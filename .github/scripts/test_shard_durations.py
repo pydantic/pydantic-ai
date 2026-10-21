@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -58,10 +59,13 @@ class FakeApi:
         self.runs = runs
         self.zips = zips
         self.paths: list[str] = []
+        self.rate_limit_paths: list[str] = []
         self.failures: dict[str, Exception] = {}
 
-    def __call__(self, path: str) -> bytes:
+    def __call__(self, path: str, *, show_rate_limit: bool = False) -> bytes:
         self.paths.append(path)
+        if show_rate_limit:
+            self.rate_limit_paths.append(path)
         if path in self.failures:
             raise self.failures[path]
         if path == CURRENT_RUN_PATH:
@@ -90,13 +94,22 @@ def _fetch_args(directory: Path, baselines: Sequence[tuple[str, int]]) -> list[s
 
 
 @pytest.fixture
-def fetch_environment(monkeypatch: pytest.MonkeyPatch):
+def step_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / 'github-output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(path))
+    return path
+
+
+@pytest.fixture
+def fetch_environment(monkeypatch: pytest.MonkeyPatch, step_output: Path):
     monkeypatch.setenv('GITHUB_REPOSITORY', REPO)
     monkeypatch.setenv('GITHUB_RUN_ID', '999')
 
 
 @pytest.mark.usefixtures('fetch_environment')
-def test_batch_fetch_shares_reads_and_preserves_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_batch_fetch_shares_reads_and_preserves_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, step_output: Path
+):
     artifacts: list[Artifact] = []
     zips: dict[int, bytes] = {}
     for name, shards in BASELINES:
@@ -117,9 +130,14 @@ def test_batch_fetch_shares_reads_and_preserves_outputs(tmp_path: Path, monkeypa
     assert len(api.paths) == 46
 
     api.paths.clear()
+    api.rate_limit_paths.clear()
+    step_output.unlink()
     batch = tmp_path / 'batch'
     batch.mkdir()
     assert shard_durations.main(_fetch_args(batch, BASELINES)) == 0
+    assert api.rate_limit_paths == [CURRENT_RUN_PATH]
+    # A `main` run caches this baseline only when no prefix failed.
+    assert step_output.read_text(encoding='utf-8') == 'errors=0\n'
     batch_paths = Counter(api.paths)
     assert batch_paths[CURRENT_RUN_PATH] == batch_paths[HISTORY_PATH] == 1
     assert batch_paths[f'repos/{REPO}/actions/runs/200/artifacts?per_page=100'] == 1
@@ -183,6 +201,7 @@ def test_batch_fetch_failures_are_cached_and_scoped(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    step_output: Path,
     failed_path: str,
     failure: Exception,
 ):
@@ -205,6 +224,7 @@ def test_batch_fetch_failures_are_cached_and_scoped(
     assert json.loads((tmp_path / 'c.json').read_text()) == ({'c': 3.0} if isolated else {})
     assert api.paths.count(failed_path) == 1
     assert capsys.readouterr().out.count('::warning::') == (1 if isolated else 3)
+    assert step_output.read_text(encoding='utf-8') == f'errors={1 if isolated else 3}\n'
 
 
 @pytest.mark.usefixtures('fetch_environment')
@@ -247,7 +267,7 @@ def test_batch_fetch_invalid_responses_remain_nonfatal(
         zips={20: b'invalid ZIP', 21: _zip({'b': 2.0})},
     )
 
-    def invalid_response(path: str) -> bytes:
+    def invalid_response(path: str, *, show_rate_limit: bool = False) -> bytes:
         content = api(path)
         return b'invalid JSON' if path == failed_path and not path.endswith('/zip') else content
 
@@ -266,7 +286,9 @@ def test_batch_fetch_rejects_unmatched_options(tmp_path: Path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_baseline_workflow_invocation_and_dependencies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_baseline_workflow_invocation_and_dependencies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, step_output: Path
+):
     workflow = yaml.safe_load((Path(__file__).parents[1] / 'workflows' / 'ci.yml').read_text())
     jobs = workflow['jobs']
     job = jobs['test-durations-baseline']
@@ -274,11 +296,11 @@ def test_baseline_workflow_invocation_and_dependencies(tmp_path: Path, monkeypat
     assert 'test-durations-baseline' not in jobs['classify'].get('needs', [])
     for consumer in ['test-all-extras', 'test-lowest-versions']:
         assert jobs[consumer]['needs'] == ['classify', 'test-durations-baseline']
-    step = next(step for step in job['steps'] if 'run' in step)
+    steps = {step.get('id'): step for step in job['steps']}
     # Capture the shell's actual argv without starting a Python interpreter.
     capture = tmp_path / 'args'
     subprocess.run(
-        ['bash', '-e', '-c', 'python3() { printf "%s\\0" "$@" >> "$FETCH_ARGS"; }\n' + step['run']],
+        ['bash', '-e', '-c', 'python3() { printf "%s\\0" "$@" >> "$FETCH_ARGS"; }\n' + steps['fetch']['run']],
         cwd=tmp_path,
         env={**os.environ, 'FETCH_ARGS': str(capture)},
         check=True,
@@ -289,12 +311,41 @@ def test_baseline_workflow_invocation_and_dependencies(tmp_path: Path, monkeypat
     assert upload['name'] == 'test-durations-baseline'
     assert upload['path'] == 'test-durations'
     assert upload['if-no-files-found'] == 'error'
+
+    # A restored baseline skips the REST fetch; `main` saves what it fetched under the same key and path.
+    key_step = steps['key']
+    assert (
+        key_step['env']['PREFIX'] == "test-durations-baseline-${{ hashFiles('.github/scripts/shard_durations.py') }}-"
+    )
+    key_output = tmp_path / 'key-output'
+    subprocess.run(
+        ['bash', '-e', '-c', key_step['run']],
+        env={**os.environ, 'PREFIX': 'test-durations-baseline-abc-', 'GITHUB_OUTPUT': str(key_output)},
+        check=True,
+    )
+    assert re.fullmatch(
+        r'prefix=test-durations-baseline-abc-\nkey=test-durations-baseline-abc-\d{10}\n',
+        key_output.read_text(encoding='utf-8'),
+    )
+    restore = steps['restore']
+    save = next(step for step in job['steps'] if step.get('uses', '').startswith('actions/cache/save@'))
+    assert restore['uses'].replace('/restore@', '/save@') == save['uses']
+    assert restore['with']['key'] == save['with']['key'] == '${{ steps.key.outputs.key }}'
+    assert restore['with']['path'] == save['with']['path'] == upload['path']
+    assert '&& steps.key.outputs.prefix ||' in restore['with']['restore-keys']
+    assert steps['fetch']['if'] == "steps.restore.outputs.cache-matched-key == ''"
+    assert save['if'] == (
+        "github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' "
+        "&& steps.fetch.outputs.errors == '0'"
+    )
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv('GITHUB_REPOSITORY', raising=False)
     assert shard_durations.main(args[1:]) == 0
     assert {path.name: path.read_text() for path in Path('test-durations').iterdir()} == {
         f'{name}.json': '{}' for name, _ in BASELINES
     }
+    assert step_output.read_text(encoding='utf-8') == f'errors={len(BASELINES)}\n'
 
 
 def test_fetch_merges_shards_of_newest_complete_main_run():
@@ -346,7 +397,7 @@ def test_report_writes_the_step_summary(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 def test_fetch_failure_does_not_fail_the_job(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], step_output: Path
 ):
     monkeypatch.delenv('GITHUB_REPOSITORY', raising=False)
     output = tmp_path / 'durations.json'
@@ -354,6 +405,30 @@ def test_fetch_failure_does_not_fail_the_job(
     # Every shard reads this file, so an empty one still makes them all fall back the same way.
     assert json.loads(output.read_text()) == {}
     assert 'splitting by module size' in capsys.readouterr().out
+    assert step_output.read_text(encoding='utf-8') == 'errors=1\n'
+
+
+def test_gh_api_shows_the_rate_limit_headers(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    body = b'{"created_at": "2026-10-21T03:00:00Z"}'
+    # `gh api --include` ends the status line with LF and each header with CRLF.
+    included = (
+        b'HTTP/2.0 200 OK\nContent-Type: application/json\r\nX-Ratelimit-Limit: 15000\r\n'
+        b'X-Ratelimit-Remaining: 4055\r\nX-Ratelimit-Reset: 1792552704\r\nX-Ratelimit-Resource: core\r\n'
+        b'X-Ratelimit-Used: 10945\r\n\r\n' + body
+    )
+    commands: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=included if '--include' in command else body)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert shard_durations.gh_api('repos/x', show_rate_limit=True) == body
+    assert shard_durations.gh_api('repos/x') == body
+    assert commands == [['gh', 'api', '--include', 'repos/x'], ['gh', 'api', 'repos/x']]
+    assert capsys.readouterr().out == (
+        'REST rate limit: resource=core limit=15000 remaining=4055 used=10945 reset=2026-10-21T03:18:24+00:00\n'
+    )
 
 
 def test_module_weights_sum_tests_and_estimate_new_modules(tmp_path: Path):

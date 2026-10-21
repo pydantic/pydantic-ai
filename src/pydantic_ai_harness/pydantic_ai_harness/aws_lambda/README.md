@@ -10,6 +10,8 @@ Lambda keeps a log of durable operations. When an execution resumes, the handler
 the top and completed steps return their stored results rather than executing. Without
 checkpointing, a resumed run would repeat every model request and tool call.
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
 ## Installation
 
 uv:
@@ -117,10 +119,12 @@ on the Lambda handler thread, so all steps are created in one continuous sequenc
 hands its work back to the agent loop and blocks until it finishes, which keeps the loop free while
 the handler thread waits.
 
-The async body can await two agent runs, use `asyncio.gather`, or perform async post-processing
-between runs, and all of those sections share the same bridge and step sequence. A synchronous
-handler must call `run_durable` separately for each async section, and concurrent calls are
-rejected.
+The async body can await several agent runs and do async work between them, and all of those
+sections share the same bridge and step sequence. Await the runs one after another, not
+concurrently with `asyncio.gather` or tasks: a resumed execution matches checkpoints by the order
+steps are reached, so concurrent runs that reach their steps in a different order on replay are
+served each other's recorded results. A synchronous handler must call `run_durable` separately for
+each async section, and concurrent calls are rejected.
 
 Three consequences are worth knowing:
 
@@ -169,8 +173,8 @@ Step names are built from the agent's `name` and each toolset's `id`:
 | `{name}__event_stream_handler` | one event delivered to an `event_stream_handler` |
 
 A model operation that does not use the agent's default model records its model id in the step name
-(for example, `{name}__model.request.{model_id}`), so a resumed execution maps each checkpoint back
-to the model it was recorded for. The default model keeps the plain, suffix-less name.
+(for example, `{name}__model.request.{model_id}`), so the execution history shows which model each
+checkpoint came from. The default model keeps the plain, suffix-less name.
 
 ## Constraints
 
@@ -198,12 +202,13 @@ to the model it was recorded for. The default model keeps the plain, suffix-less
   resumes. Inside a durable handler the run is switched to sequential tool execution. Outside one
   the agent keeps its configured parallelism.
 - **Changing the shape of the run breaks in-flight executions.** A resumed execution matches
-  checkpoints by the order operations are reached, so anything that changes the number or order of
-  steps breaks executions started under the old code: adding or removing a tool or MCP server,
-  flipping a `metadata={'aws_lambda': False}` opt-out, adding an `event_stream_handler` (which
-  switches the model step to `model.request_stream` and adds handler steps), or changing the model
-  so the step-name suffix changes. Renaming the agent or a toolset `id` changes the recorded names
-  too. Deploy under a new published version and let in-flight executions drain on the old one.
+  checkpoints by the order operations are reached, not by step name, so anything that changes the
+  number or order of steps breaks executions started under the old code: adding or removing a tool
+  or MCP server, flipping a `metadata={'aws_lambda': False}` opt-out, or adding an
+  `event_stream_handler` (which switches the model step to `model.request_stream` and adds handler
+  steps). The mismatch is not detected: a step is served another step's recorded result, which
+  usually fails to decode but can silently return the wrong data. Deploy under a new published
+  version and let in-flight executions drain on the old one.
 - **Step results must survive the SDK serializer.** Results are checkpointed through the Lambda
   SDK's serializer. Tool results are encoded by Pydantic first, so structured returns such as
   `ToolReturn` and `BinaryContent` round-trip; a value Pydantic cannot serialize does not.
@@ -216,6 +221,10 @@ to the model it was recorded for. The default model keeps the plain, suffix-less
   `event_stream_handler` (which runs inside the model step for model events and its own step for
   agent events), because a resumed execution serves the recorded step output and would drop the
   enqueued messages. Enqueue from handler-level code instead.
+- **Checkpoints hold run data.** Model responses, tool results, and the error messages of failed
+  steps (which can include a provider's error response body) are stored in the execution's durable
+  state for the `RetentionPeriodInDays` of the durable configuration. Anyone who can read the
+  execution history can read them, so keep the retention period short for sensitive workloads.
 - **Budgets.** A durable execution allows 3,000 operations and 100 MB of cumulative checkpointed
   state. A turn costs one model step plus one step per tool call, so the operation budget is
   generous, but large tool results consume the state budget: return a reference (an S3 key, say)
