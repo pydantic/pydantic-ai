@@ -19,7 +19,7 @@ from typing_extensions import TypeVar as DefaultTypeVar, get_original_bases
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.usage import RunUsage
@@ -266,6 +266,10 @@ class PluginCatalog(Protocol):
         ...
 
 
+SendInput = Callable[[str, Sequence[BinaryContent]], None]
+"""How a host enters input at its session's prompt: the text, and the images attached to it."""
+
+
 PluginScope = Literal['session', 'process']
 """How many instances of a plugin CLAI builds: one per live session, or one for the whole process."""
 
@@ -338,8 +342,8 @@ class LiveSession(Protocol):
         """
         ...
 
-    def send_input(self, text: str, /) -> None:
-        """Enter `text` at the session's prompt, as `PluginHost.send_input` does."""
+    def send_input(self, text: str, /, *, images: Sequence[BinaryContent] = ()) -> None:
+        """Enter `text` at the session's prompt, with `images` attached, as `PluginHost.send_input` does."""
         ...
 
     def interrupt(self) -> bool:
@@ -804,7 +808,7 @@ class PluginHost(Generic[DepsT]):
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
         requirements: Requirements | None = None,
         submit_prompt: Callable[[str], None] | None = None,
-        send_input: Callable[[str], None] | None = None,
+        send_input: SendInput | None = None,
         interrupt: Callable[[], bool] = lambda: False,
         commands: Commands | None = None,
         sessions: SessionCatalog | None = None,
@@ -903,7 +907,7 @@ class PluginHost(Generic[DepsT]):
             raise RuntimeError(f'Plugin {self.name!r} has no shell to run a prompt in.')
         self._submit_prompt(text)
 
-    def send_input(self, text: str, /) -> None:
+    def send_input(self, text: str, /, *, images: Sequence[BinaryContent] = ()) -> None:
         """Enter `text` at the prompt as Enter does, as if it was typed there, at any time from the shell's event loop.
 
         For a plugin that is another way to type, such as a remote UI. The text is trimmed, a bare
@@ -916,10 +920,14 @@ class PluginHost(Generic[DepsT]):
         one built without `send_input=`, or a CLAI whose output is not a terminal, which reads its
         prompts line by line. A bare command that opens a menu, such as `/model`, opens it in the
         terminal, where only the keyboard or `interrupt` closes it.
+
+        `images` go with the prompt, as images pasted at the prompt do: the model gets them after the
+        text, and the text may be blank. Raises `ValueError` when `text` is a `/command` or `!` line,
+        which take no images, or when the images would exceed the 32 MiB that may wait to be sent.
         """
         if self._send_input is None:
             raise RuntimeError(f'Plugin {self.name!r} has no prompt to enter input at.')
-        self._send_input(text)
+        self._send_input(text, images)
 
     async def default_model(self) -> Model | str | None:
         """The model a new session starts with: the saved `model` setting, resolved as `/model NAME` does.

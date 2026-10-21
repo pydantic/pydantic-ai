@@ -45,6 +45,7 @@ def _fake_github_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _quota_response(
     *,
+    limit_type: str = 'TOKENS_LIMIT',
     interval_percentage: object = 1,
     weekly_percentage: object = 16,
     interval_reset: object = 1_791_012_926_973,
@@ -56,14 +57,14 @@ def _quota_response(
     if limits is None:
         limits = [
             {
-                'type': 'TOKENS_LIMIT',
+                'type': limit_type,
                 'unit': 3,
                 'number': 5,
                 'percentage': interval_percentage,
                 'nextResetTime': interval_reset,
             },
             {
-                'type': 'TOKENS_LIMIT',
+                'type': limit_type,
                 'unit': 6,
                 'number': 1,
                 'percentage': weekly_percentage,
@@ -212,9 +213,10 @@ class FakeHTTPResponse:
         return self.payload
 
 
-def test_zai_quota_parses_observed_windows_and_ignores_mcp_limit() -> None:
+@pytest.mark.parametrize('limit_type', ['TOKENS_LIMIT', 'CREDIT_LIMIT'])
+def test_zai_quota_parses_observed_windows_and_ignores_mcp_limit(limit_type: str) -> None:
     """The observed Coding Plan windows map into the trusted quota DTO."""
-    quota = _parse_zai_quota(_quota_response())
+    quota = _parse_zai_quota(_quota_response(limit_type=limit_type))
 
     assert quota.status == 'healthy'
     assert quota.interval_remaining_percent == 99
@@ -310,6 +312,7 @@ def test_zai_quota_null_reset_on_consumed_window_stays_invalid() -> None:
         assert quota.diagnostic == 'invalid_reset_time'
 
 
+@pytest.mark.parametrize('limit_type', ['TOKENS_LIMIT', 'CREDIT_LIMIT'])
 @pytest.mark.parametrize(
     ('interval_percentage', 'weekly_percentage', 'expected_reset'),
     [
@@ -319,11 +322,13 @@ def test_zai_quota_null_reset_on_consumed_window_stays_invalid() -> None:
     ],
 )
 def test_zai_quota_exhaustion_uses_latest_exhausted_window_reset(
-    interval_percentage: object, weekly_percentage: object, expected_reset: str
+    limit_type: str, interval_percentage: object, weekly_percentage: object, expected_reset: str
 ) -> None:
     """Exhausted windows keep the latest reset needed to recover."""
     quota = _parse_zai_quota(
-        _quota_response(interval_percentage=interval_percentage, weekly_percentage=weekly_percentage)
+        _quota_response(
+            limit_type=limit_type, interval_percentage=interval_percentage, weekly_percentage=weekly_percentage
+        )
     )
 
     assert quota.status == 'exhausted'
@@ -428,6 +433,22 @@ def test_zai_quota_unavailable_or_ambiguous_is_unknown(payload: object) -> None:
         (_quota_response(interval_percentage=10**1000), 'invalid_percentage'),
         (_quota_response(interval_reset=10**1000), 'invalid_reset_time'),
         (_quota_response(limits=[]), 'missing_windows'),
+        (_quota_response(limit_type='CREDIT_LIMIT', interval_percentage=None), 'invalid_percentage'),
+        (_quota_response(limit_type='CREDIT_LIMIT', interval_reset=None), 'invalid_reset_time'),
+        (
+            _quota_response(
+                limits=[
+                    {
+                        'type': 'CREDIT_LIMIT',
+                        'unit': 3,
+                        'number': 5,
+                        'percentage': 1,
+                        'nextResetTime': 1_792_478_501_101,
+                    },
+                ]
+            ),
+            'missing_windows',
+        ),
     ],
 )
 def test_zai_quota_parser_attaches_fixed_diagnostic(payload: object, diagnostic: str) -> None:
@@ -1590,6 +1611,7 @@ def test_monitor_rejects_health_artifact_from_different_run_id(tmp_path: Path, m
     ('payload', 'expected_ready'),
     [
         (_quota_response(), True),
+        (_quota_response(limit_type='CREDIT_LIMIT'), True),
         (_quota_response(success=False), False),
     ],
 )

@@ -1098,6 +1098,7 @@ def test_resolved_id_serialization_round_trip(id: InstructionId, serialized: str
     assert payload == {
         'content': 'Instructions.',
         'dynamic': True,
+        'on_change': 'rewrite',
         'name': id.name,
         'id': serialized,
         'part_kind': 'instruction',
@@ -1137,7 +1138,10 @@ def test_repr_omits_unset_id():
 
 
 async def test_deferred_capability_instructions_stay_hidden():
-    """Deferred capabilities contribute no parts until loaded, identified or not."""
+    """Deferred capabilities contribute no parts until loaded, identified or not.
+
+    The catalog listing them is keyed by the framework, so a change to it between runs is appended.
+    """
 
     agent = Agent(
         instructions='Agent instructions.',
@@ -1148,10 +1152,15 @@ async def test_deferred_capability_instructions_stay_hidden():
         InstructionPart(content='Agent instructions.', id=agent_instruction_id()),
         InstructionPart(
             content="""\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- deferred\
+- deferred
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             dynamic=True,
+            on_change='append',
+            id=InstructionId(CapabilityInstructionSource('deferred_capabilities')),
         ),
     ]
 

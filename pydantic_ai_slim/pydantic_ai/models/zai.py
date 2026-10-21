@@ -190,7 +190,7 @@ class ZaiModel(OpenAIChatModel):
 
     @override
     def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
-        return _ZaiChatCompletion.model_validate(response.model_dump())
+        return _ZaiChatCompletion.model_validate(response.model_dump(warnings=False))
 
     @override
     def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:

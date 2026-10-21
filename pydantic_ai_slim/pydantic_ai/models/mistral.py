@@ -10,7 +10,7 @@ import httpx2
 import pydantic_core
 from pydantic import JsonValue
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .. import UnexpectedModelBehavior, _model_errors, _utils
 from .._run_context import RunContext
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -19,7 +19,11 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ..exceptions import ModelAPIError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -29,6 +33,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -60,6 +66,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -128,13 +135,34 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         # The SDK's base class also covers the `HTTPValidationError` it raises for a 422 and the
         # `ResponseValidationError` it raises for a 200 body it can't parse, not just `SDKError`.
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
+            try:
+                error = pydantic_core.from_json(e.body)
+            except ValueError:
+                error = None
+            code = error.get('code') if _utils.is_str_dict(error) else None
+            error_type = error.get('type') if _utils.is_str_dict(error) else None
+            # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+            code = str(code) if isinstance(code, str | int) else None
+            message = error.get('message') if _utils.is_str_dict(error) else None
+            category = (
+                ModelContextWindowExceededError
+                if code == '3051'
+                else _model_errors.http_status_category(status_code, message)
+            )
+            raise ModelHTTPError.for_category(
+                category,
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+                headers=dict(e.headers),
+                provider_error_code=code,
+                provider_error_type=error_type if isinstance(error_type, str) else None,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
-        raise ModelAPIError(model_name=model_name, message=transport_error_message(e)) from e
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
 LatestMistralModelNames = Literal[
@@ -648,6 +676,8 @@ class MistralModel(Model[Mistral]):
                         tool_call_id=part.tool_call_id,
                         content=part.model_response(),
                     )
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
@@ -817,6 +847,7 @@ class MistralStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
+    _usage_received: bool | None = field(default=False, init=False)
 
     _delta_content: str = field(default='', init=False)
 
@@ -829,7 +860,10 @@ class MistralStreamedResponse(StreamedResponse):
                 self.provider_details = {'timestamp': self._provider_timestamp}
             chunk: MistralCompletionEvent
             async for chunk in self._response:
-                self._usage += _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name)
+                self._add_usage(
+                    _map_usage(chunk.data, self._provider_name, self._provider_url, self._model_name),
+                    reported=chunk.data.usage is not None,
+                )
 
                 if chunk.data.id:  # pragma: no branch
                     self.provider_response_id = chunk.data.id
@@ -1021,7 +1055,7 @@ def _map_usage(
 ) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
     if response.usage is None:
-        return RequestUsage()
+        return RequestUsage(unmeasured_requests=1)
     usage_data = response.usage.model_dump(exclude_none=True)
     details: dict[str, int] = {
         k: v

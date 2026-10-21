@@ -29,10 +29,12 @@ from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartStartEvent,
     SpeechPart,
     ThinkingPart,
     ToolCallPart,
@@ -41,7 +43,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSession, RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
@@ -867,3 +869,56 @@ async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
     assert replacement['input'] == first['input']
     assert replacement['delegation'] == first['delegation']
     assert 'turquoise' in answer.lower()
+
+
+@pytest.mark.realtime_ws_hold_open
+async def test_text_sent_mid_reply_is_answered_by_that_reply(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Live speaks to text placed on its timeline mid-reply in that same reply, not in one of its own.
+
+    Live acknowledges the text (`session.commentary.appended`), and the reply under way goes on to answer it:
+    that reply settles the text's reply obligation, so the wait for it ends with that reply instead of waiting
+    for another that never comes.
+    """
+    provider, _ = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(openai_live_idle_audio=True, openai_live_turn_silence_ms=2500),
+    )
+    agent = Agent(_BACKEND, instructions='Keep replies short.')
+
+    messages: list[ModelMessage] = []
+    speaking = anyio.Event()
+
+    async def watch(session: RealtimeSession) -> None:
+        async for event in session:  # pragma: no branch
+            if isinstance(event, PartStartEvent) and isinstance(event.part, SpeechPart):
+                speaking.set()
+
+    async with agent.realtime(model).session() as session, anyio.create_task_group() as tasks:
+        tasks.start_soon(watch, session)
+        await session.send('Tell me a three-sentence story about a cat.')
+        with anyio.fail_after(60):
+            await speaking.wait()
+            await session.send('Actually, what is 2 plus 2?')
+            await session.wait_for_reply()
+        messages = session.all_messages()
+        tasks.cancel_scope.cancel()
+
+    assert [
+        [part.transcript for part in message.parts if isinstance(part, SpeechPart)]
+        if isinstance(message, ModelResponse)
+        else [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+        for message in messages
+        if isinstance(message, (ModelRequest, ModelResponse))
+    ] == snapshot(
+        [
+            ['Tell me a three-sentence story about a cat.'],
+            [
+                " Once, a cat chased a bouncing beam of sunlight across a kitchen floor. Actually, what is two plus two? It's four."
+            ],
+            ['Actually, what is 2 plus 2?'],
+        ]
+    )

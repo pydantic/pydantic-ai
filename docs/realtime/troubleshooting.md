@@ -66,3 +66,11 @@ handle after the drop. See [Gemini session resumption](gemini.md#session-resumpt
 Cascade models such as `gpt-5` and `gpt-4.1` speak only through Azure text-to-speech voices, so
 they reject `openai_voice`. Choose their voice with `azure_voice_live_voice` instead. See
 [Voice Live voices](azure.md#voices).
+
+## ElevenLabs Agents fails to connect
+
+The connect-time preflight raises a [`UserError`][pydantic_ai.exceptions.UserError] naming what to change: an
+override toggle the agent doesn't permit (see
+[Configuration ownership](elevenlabs.md#configuration-ownership)), or a difference between the session's tools and
+the agent's client tools (see [Tool synchronization](elevenlabs.md#tool-synchronization)). A bad API key or an
+unknown agent id raises a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] instead.

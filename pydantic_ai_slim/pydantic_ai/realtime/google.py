@@ -19,6 +19,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import time
 import warnings
+from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
@@ -55,6 +56,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -110,7 +113,7 @@ from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, RealtimeFrame, StaleEvent
+from ._lifecycle import InputId, LifecycleEvent, RealtimeFrame, StaleEvent
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
@@ -352,6 +355,16 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     this set, the first of the two is reported as the tool-call response's usage rather than a turn
     boundary, so the exchange isn't reported complete before the answer is spoken. Set by default on
     Vertex AI only, where it was verified.
+    """
+    google_input_cuts_off_reply: bool
+    """Whether text or a tool result that reaches the model mid-generation cuts the reply off. Default: `False`.
+
+    The model then reports the reply `interrupted` and complete (cancelling the tool calls it was waiting on, on
+    `gemini-3.1-flash-live-preview`) and answers the input in the next turn, so the cut-off reply answers only the
+    request that started it. Verified live for `gemini-3.1-flash-live-preview` and `gemini-3.8-live`, which also report
+    the user's speech (`voice_activity`) when that is what cut the reply off. Vertex's `gemini-live-2.5-flash` cuts
+    a reply off too, but doesn't say whether speech did it, so it is left off; the native-audio models finish the
+    reply instead, and answer the input after it.
     """
     google_supports_async_tool_call_scheduling: bool
     """Whether the model takes a `scheduling` field on an async tool call's result. Default: `False`.
@@ -602,9 +615,12 @@ async def _seed_request_parts(
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
-        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+        if isinstance(
+            part, (SystemPromptPart, InstructionDeltaPart, InstructionBaselinePart, ToolAvailabilityDeltaPart)
+        ):
             # System prompts are seeded through session instructions, and tool-availability news
             # from a prior standard run is stale here: the session advertises its own tools.
+            # Instruction deltas likewise belong to the standard run; the session resolves current instructions.
             continue
         elif isinstance(part, UserPromptPart):
             parts.extend(
@@ -1446,6 +1462,15 @@ class _TypedTurn:
     sending: bool = True
 
 
+class _CutOffLifecycle(InferredLifecycle):
+    """The inferred lifecycle of a Gemini Live model that cuts its reply off for an input that reaches it mid-generation.
+
+    See `GoogleRealtimeModelProfile.google_input_cuts_off_reply`.
+    """
+
+    inputs_cut_off_replies = True
+
+
 class GoogleRealtimeConnection(RealtimeConnection):
     """A live connection to the Gemini Live API, backed by a `google-genai` session."""
 
@@ -1500,6 +1525,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # after the exchange that answered it ended. A handle's arrival time says nothing about which inputs it
         # covers, but a server that withholds handles mid-turn only issues one once a turn is over.
         self._uncovered_typed_turns: list[_TypedTurn] = []
+        # How much audio has gone out on this connection, in seconds: where Gemini's `voice_activity` offsets point.
+        self._audio_seconds = 0.0
+        # Where in that audio each recent input other than audio went out, oldest first (see `_voice_activity`).
+        self._sent_at: deque[tuple[float, InputId]] = deque(maxlen=64)
         # Whether the server withholds handles while it works on a turn, seen as an update without a
         # handle while a typed turn is outstanding. Gemini 2.5 takes up every typed turn that way, and a
         # session resumed from the handle before it doesn't have the turn. 3.8 never does, and (verified
@@ -1543,7 +1572,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # completes.
         self._tool_call_turn_unanswered = False
         # Which response, user turn, and input each message is about (see `frames()`).
-        self._lifecycle = InferredLifecycle(transcribes=input_transcription_enabled)
+        cuts_off = cast('GoogleRealtimeModelProfile', self._profile).get('google_input_cuts_off_reply', False)
+        self._lifecycle = (_CutOffLifecycle if cuts_off else InferredLifecycle)(transcribes=input_transcription_enabled)
 
     @property
     def _can_reconnect(self) -> bool:
@@ -1593,6 +1623,10 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 if turn is not None and turn in self._uncovered_typed_turns:
                     self._uncovered_typed_turns.remove(turn)
                 raise
+            if isinstance(content, BinaryAudio):
+                self._audio_seconds += len(content.data) / (2 * INPUT_SAMPLE_RATE)
+            else:
+                self._sent_at.append((self._audio_seconds, input_index))
         if turn is not None:
             turn.sending = False
         # Gemini acknowledges nothing: where the input joined the conversation is known now, if it is.
@@ -1777,6 +1811,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 unanswered = [turn.input_index for turn in uncovered if not turn.answered]
                 lost_typed_turns = unanswered[1:] if self._turn_open else unanswered
                 self._uncovered_typed_turns = []
+                # The new session's audio, and the offsets it reports, start over.
+                self._audio_seconds = 0.0
+                self._sent_at.clear()
                 # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state.
                 state_restored = state_resumed and not lost_tool_calls and not uncovered
                 if await self._try_reconnect():
@@ -1959,8 +1996,26 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # (matching OpenAI's codec, which emits usage before the turn boundary).
         return events
 
+    def _voice_activity(self, activity: genai_types.VoiceActivity | None) -> None:
+        """Gemini 3.x heard the user start (or stop) speaking, at `audio_offset` into the audio sent.
+
+        It reports that just ahead of the `interrupted` that cuts a reply off for speech, and not for a typed turn that
+        does (seen live). Inputs sent before that point in the audio can't have cut the reply off; the reply answers
+        them. (The report can be read only after inputs sent since, so where it is read says nothing.)
+        """
+        if activity is None or activity.voice_activity_type != genai_types.VoiceActivityType.ACTIVITY_START:
+            return
+        offset = activity.audio_offset
+        if offset is None or not offset.endswith('s'):
+            self._lifecycle.speech_heard()
+            return
+        seconds = float(offset.removesuffix('s'))
+        before = [input_id for at, input_id in self._sent_at if at < seconds]
+        self._lifecycle.speech_heard(after=before[-1] if before else -1)
+
     def _map_message(self, message: genai_types.LiveServerMessage) -> list[RealtimeCodecEvent]:
         events: list[RealtimeCodecEvent] = []
+        self._voice_activity(message.voice_activity)
         if message.server_content is not None:
             events.extend(self._map_server_content(message.server_content))
         if message.tool_call is not None:

@@ -1,6 +1,6 @@
 ---
 name: pydantic-ai-harness
-description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Sprites, smolvm), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, step persistence, and background agents on Render Workflows. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, stays within limits, or runs model and tool operations as chained Render task runs.
+description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Sprites, Daytona, smolvm), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, step persistence, and background agents on Render Workflows. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, stays within limits, or runs model and tool operations as chained Render task runs.
 license: MIT
 compatibility: Requires Python 3.11+
 metadata:
@@ -84,7 +84,7 @@ from pydantic_ai_harness.modal_sandbox import ModalSandbox
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
 ```
 
-`E2BSandbox`, `SpritesSandbox`, and `SmolSandbox` (a local microVM) work the same way. See
+`E2BSandbox`, `SpritesSandbox`, `DaytonaSandbox`, and `SmolSandbox` (a local microVM) work the same way. See
 [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) for credentials, lifetimes, and sharing a
 workspace between runs.
 
@@ -201,7 +201,7 @@ Load the references for the capabilities the task uses; each is self-contained.
 
 | I want to... | Reference |
 |---|---|
-| Build a coding agent, give an agent file or shell tools, run it in a Modal/E2B/Sprites/smolvm sandbox, or load repo instructions | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) |
+| Build a coding agent, give an agent file or shell tools, run it in a Modal/E2B/Sprites/Daytona/smolvm sandbox, or load repo instructions | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) |
 | Let the model run Python that calls tools, or sandbox model-written code | [Code Mode](./references/CODE-MODE.md) |
 | Add sub-agents, planning, a model-written workflow over sub-agents, an advisor model, or background tools | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) |
 | Keep a long run within its context window, trim or summarize history, limit large tool outputs, or catch prompt-cache busts | [Context Management](./references/CONTEXT-MANAGEMENT.md) |
@@ -223,7 +223,7 @@ This installs `pydantic-ai-slim` at the matching version, so no separate Pydanti
 The `anthropic` and `cli` extras pass through to Pydantic AI; for another provider add its
 `pydantic-ai-slim` extra, for example `uv add "pydantic-ai-slim[openai]"`. Capabilities
 with optional dependencies declare their own extra, for example `[coder]`, `[codemode]`, `[modal]`,
-`[e2b]`, `[sprites]`, `[smol]`, `[dynamic-workflow]`, `[skills]`, `[researcher]`, `[exa]`, `[playwright]`, or `[github]`.
+`[e2b]`, `[sprites]`, `[daytona]`, `[smol]`, `[dynamic-workflow]`, `[skills]`, `[researcher]`, `[exa]`, `[playwright]`, or `[github]`.
 Each reference gives the exact install line.
 
 ## Imports
@@ -241,7 +241,7 @@ dependencies. Supporting types such as stores and policies are only in the submo
 
 - **Check whether core is enough first.** Web search, web fetch, MCP, thinking, tool search, and workspaces are core capabilities in `pydantic_ai.capabilities`, and provider-native compaction is core too (`OpenAICompaction`, `AnthropicCompaction`), as is `ProcessHistory(processor)` for hand-rolled history trimming. Reach for the harness when the agent should edit files, run commands or code, delegate, remember, or run long.
 - **Attach a workspace for workspace capabilities.** `Coder`, `FileSystem`, `Shell`, `RepoContext`, and `Macroscope` act in the run's workspace, and none picks one for you. Add `LocalWorkspace(...)` from `pydantic_ai.capabilities` or a sandbox capability, or the run fails at its start with a message naming what to attach.
-- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `ModalSandbox`, `E2BSandbox`, `SpritesSandbox`, or `SmolSandbox` when the agent's commands must not reach the host.
+- **Use a sandbox for untrusted work.** `LocalWorkspace` isolates nothing, and `Coder`'s shell is unrestricted. Use `ModalSandbox`, `E2BSandbox`, `SpritesSandbox`, `DaytonaSandbox`, or `SmolSandbox` when the agent's commands must not reach the host.
 - **Read the reference before writing code.** Each capability has its own parameters, extras, and limits; load the matching reference from the routing table first.
 - **Combine instead of rebuilding.** `Coder` and `Researcher` are combined capabilities; start from one and add capabilities next to it, or rebuild it from its parts when a setting must change.
 - **Plan for long runs.** For multi-hour agents pair a workspace stack with context management (`ClearToolResults`, `SummarizingCompaction`, `ToolOutputLimits`) and, where runs must survive restarts, durable execution or `StepPersistence`.
@@ -267,7 +267,7 @@ any:
 
 | Reference | Capabilities |
 |---|---|
-| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
+| [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `DaytonaSandbox` (`.daytona_sandbox`, `[daytona]`); `SmolSandbox` (`.smol_sandbox`, `[smol]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`) |
 | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction`, `FallbackCompaction`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |

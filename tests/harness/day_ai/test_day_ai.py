@@ -124,6 +124,11 @@ class TestDayAI:
         with pytest.raises(UserError, match='`client` owns the connection'):
             DayAI[str | None](client='https://example.com/mcp', auth=auth)
 
+    def test_empty_auth_with_client_uses_the_client(self) -> None:
+        # `''` means unset, as it does without a client.
+        toolset = DayAI[None](client='https://example.com/mcp', auth='').get_toolset()
+        assert _http_transport(toolset).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [
@@ -162,5 +167,5 @@ class TestPerRunAuth:
 
     async def test_function_returning_oauth_raises(self) -> None:
         capability = DayAI[str | None](auth=per_user_token)
-        with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
+        with pytest.raises(UserError, match="must return an access token, not 'oauth'"):
             await connections_for(capability, 'oauth')

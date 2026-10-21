@@ -229,9 +229,11 @@ history nor waited for by [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSess
 split it, or give long material to the backend as a tool result instead.
 [`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
-was sent, not when the model took it in. Since Live can take text as context
-without answering it, bound [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
-with a timeout rather than relying on a reply always following.
+was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
+than in a reply of its own: text sent while the model is speaking is answered by that reply once it says anything more,
+and [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] ends with it. Since Live can also take
+text as context without answering it, bound `wait_for_reply()` with a timeout rather than relying on a reply always
+following.
 
 Live's timeline only advances while it receives audio, so a session with no microphone, like the
 [text-to-audio example](../examples/realtime-text-to-audio.md), needs `openai_live_idle_audio=True`.
@@ -382,6 +384,33 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 cacheable prefix as the session grows. OpenAI realtime does not expose `temperature` through
 Pydantic AI.
 
+#### Pruning finished tool rounds {#pruning-tool-items}
+
+The API keeps the whole conversation server-side and bills each response for all of it, so a tool-heavy
+agent pays again for every earlier tool call and result on every later response. Set
+[`openai_prune_tool_items`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_prune_tool_items]
+to delete a tool round's items once the model has answered it: when a response completes without calling a
+tool, the session deletes each answered call together with its output, and any content the tool returned besides
+it. To keep some tools' items, for results the model may need to refer back to, name them in
+[`openai_keep_tool_items`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings.openai_keep_tool_items]:
+
+```python
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
+
+model = OpenAIRealtimeModel(
+    'gpt-realtime',
+    settings=OpenAIRealtimeModelSettings(
+        openai_prune_tool_items=True,
+        openai_keep_tool_items={'get_customer_profile'},
+    ),
+)
+```
+
+[`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] still holds every tool round
+(see [history](history.md)), and a reconnect's replay leaves the pruned ones out. The trace records each deletion
+as a [`prune tool items` span](observability.md). Azure OpenAI's GA endpoint supports both settings too;
+[Azure Voice Live](azure.md) ignores them.
+
 Input transcription defaults to `'auto'`, which uses `gpt-live-transcribe`; set a supported
 transcription model ID to pin it or `None` to disable it. `gpt-live-transcribe` streams the
 transcript as the user speaks, but its final transcript can arrive after the reply's
@@ -511,7 +540,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   goes on. When Live reports such a failure only as a session-level error that names no delegation
   (for instance `Responses handoff incomplete.` when the backend runs out of `max_output_tokens`),
   Pydantic AI treats the delegated work in flight as the work that failed, with code
-  `live_delegation_failed`, so the turn still ends.
+  `live_delegation_failed`, so the turn still ends. A tool call the failed backend asked for keeps running, and its
+  result is recorded in history, but goes nowhere: the turn doesn't wait for it.
 
 ### gpt-realtime {#gpt-realtime-provider-specific-quirks}
 

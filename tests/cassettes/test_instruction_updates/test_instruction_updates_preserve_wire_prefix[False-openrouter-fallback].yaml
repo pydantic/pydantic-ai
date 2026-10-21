@@ -1,0 +1,687 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "567"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        model: deepseek/deepseek-chat
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727130-qepQSN434137eTaxCqqb
+        object: chat.completion
+        created: 1790727130
+        model: deepseek/deepseek-chat
+        provider: StreamLake
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: A
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 93
+          completion_tokens: 2
+          total_tokens: 95
+          cost: 0.0000259956
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000259956
+            upstream_inference_prompt_cost: 0.0000239382
+            upstream_inference_completions_cost: 2.0574e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:12.735292+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "826"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727132-KBPECURk8HgSHstN7OtK
+        object: chat.completion
+        created: 1790727132
+        model: deepseek/deepseek-chat
+        provider: DeepInfra
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: B
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 136
+          completion_tokens: 2
+          total_tokens: 138
+          cost: 0.0000453
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000453
+            upstream_inference_prompt_cost: 0.00004352
+            upstream_inference_completions_cost: 1.78e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:17.262273+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "947"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        model: deepseek/deepseek-chat
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727137-1L1dGn7gpMMmZskKkfdy
+        object: chat.completion
+        created: 1790727137
+        model: deepseek/deepseek-chat
+        provider: DeepInfra
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: B
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 153
+          completion_tokens: 2
+          total_tokens: 155
+          cost: 0.00005074
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00005074
+            upstream_inference_prompt_cost: 0.00004896
+            upstream_inference_completions_cost: 1.78e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:19.900256+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1182"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        - role: assistant
+          content: B
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727139-UyZVnooqQDLu1R3jPUnU
+        object: chat.completion
+        created: 1790727139
+        model: deepseek/deepseek-chat
+        provider: StreamLake
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: A
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 196
+          completion_tokens: 2
+          total_tokens: 198
+          cost: 0.0000525078
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000525078
+            upstream_inference_prompt_cost: 0.0000504504
+            upstream_inference_completions_cost: 2.0574e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:21.387700+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1491"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        - role: assistant
+          content: B
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context></system>
+        - role: assistant
+          content: A
+        - role: user
+          content: A pallet of bottled water arrived at the dock. Where to?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727141-ttMA7URQRkKYf9hPsT31
+        object: chat.completion
+        created: 1790727141
+        model: deepseek/deepseek-chat
+        provider: DeepInfra
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: UNASSIGNED
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 239
+          completion_tokens: 5
+          total_tokens: 244
+          cost: 0.00008093
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00008093
+            upstream_inference_prompt_cost: 0.00007648
+            upstream_inference_completions_cost: 4.45e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:24.203990+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1765"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        - role: assistant
+          content: B
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context></system>
+        - role: assistant
+          content: A
+        - role: user
+          content: A pallet of bottled water arrived at the dock. Where to?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+            </context></system>
+        - role: assistant
+          content: UNASSIGNED
+        - role: user
+          content: Finally, a small parcel of replacement laptop batteries. Which warehouse?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse C.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1790727144-T2XHbP2ZckEvEpo6G7c6
+        object: chat.completion
+        created: 1790727144
+        model: deepseek/deepseek-chat
+        provider: StreamLake
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: C
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 296
+          completion_tokens: 2
+          total_tokens: 298
+          cost: 0.0000782478
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 64
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000782478
+            upstream_inference_prompt_cost: 0.0000761904
+            upstream_inference_completions_cost: 2.0574e-6
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-09-30T00:12:26.338593+00:00

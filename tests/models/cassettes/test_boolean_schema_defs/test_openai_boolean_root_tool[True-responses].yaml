@@ -1,0 +1,312 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "363"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4.1-mini
+        stream: false
+        input:
+        - role: user
+          content: Call accept with x=7, then say done.
+        tool_choice: auto
+        tools:
+        - name: accept
+          parameters:
+            type: object
+            properties:
+              x:
+                type: integer
+            required:
+            - x
+            additionalProperties: false
+            $defs:
+              X: true
+          type: function
+          description: Accept an integer
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1705"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0a9e9eeb823fa9e8006ad79d130e5487d299a8f4bd466da035
+        object: response
+        created_at: 1792515347
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792515348
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-mini-2025-04-14
+        moderation: null
+        output:
+        - id: fc_0a9e9eeb823fa9e8006ad79d14921087d28ac0ed407962e590
+          type: function_call
+          status: completed
+          arguments: "{\"x\":7}"
+          call_id: call_AbITAVyT7hz0gHDplqCNcOvP
+          name: accept
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Accept an integer
+          name: accept
+          output_schema: null
+          parameters:
+            type: object
+            properties:
+              x:
+                type: integer
+            required:
+            - x
+            additionalProperties: false
+            $defs:
+              X: true
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 45
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 14
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 59
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-20T16:55:48.841267+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "566"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-4.1-mini
+        stream: false
+        input:
+        - role: user
+          content: Call accept with x=7, then say done.
+        - name: accept
+          arguments: "{\"x\":7}"
+          call_id: call_AbITAVyT7hz0gHDplqCNcOvP
+          type: function_call
+        - type: function_call_output
+          call_id: call_AbITAVyT7hz0gHDplqCNcOvP
+          output: Accepted 7
+        tool_choice: auto
+        tools:
+        - name: accept
+          parameters:
+            type: object
+            properties:
+              x:
+                type: integer
+            required:
+            - x
+            additionalProperties: false
+            $defs:
+              X: true
+          type: function
+          description: Accept an integer
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1404"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d875c3c56c87bf0006ad79d1513a887d285e0e2d3983081df
+        object: response
+        created_at: 1792515349
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792515350
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-4.1-mini-2025-04-14
+        moderation: null
+        output:
+        - id: msg_0d875c3c56c87bf0006ad79d1652ec87d2ba7bc326d6602b11
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Done.
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: null
+          effort: null
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Accept an integer
+          name: accept
+          output_schema: null
+          parameters:
+            type: object
+            properties:
+              x:
+                type: integer
+            required:
+            - x
+            additionalProperties: false
+            $defs:
+              X: true
+          strict: true
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 66
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 4
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 70
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-20T16:55:50.566345+00:00

@@ -21,6 +21,9 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
+    mcp_telemetry_history_ids,
+    mcp_telemetry_url_ids,
+    model_request_telemetry_url_ids,
     model_response_span_capture,
     open_model_request_span,
     record_exception as _record_exception,
@@ -349,9 +352,20 @@ class Instrumentation(AbstractCapability[Any]):
         new_message_index = self._new_message_index
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        mcp_url_ids = (
+            frozenset(model_request_telemetry_url_ids(self._last_model_request_parameters))
+            if self._last_model_request_parameters is not None
+            else frozenset(
+                mcp_telemetry_url_ids(
+                    ctx.capabilities.values(), ctx.tool_manager.toolset if ctx.tool_manager is not None else None
+                )
+            )
+        )
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(
-                settings.messages_to_otel_messages(list(message_history))
+                settings.messages_to_otel_messages(
+                    list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
+                )
             ).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }

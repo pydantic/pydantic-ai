@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date, time, timedelta
@@ -15,6 +16,13 @@ from pydantic_core import PydanticSerializationError
 __all__ = ('format_as_xml',)
 
 from pydantic.fields import ComputedFieldInfo, FieldInfo
+
+_NAME_START_CHARS = (
+    'A-Z_a-z\xc0-\xd6\xd8-\xf6\xf8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c\u200d\u2070-\u218f'
+    '\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\U00010000-\U000effff'
+)
+# An XML 1.0 `NCName`: a `Name` without colons, which would otherwise be read as a namespace prefix.
+_XML_NAME = re.compile(f'[{_NAME_START_CHARS}][{_NAME_START_CHARS}\\-.0-9\xb7\u0300-\u036f\u203f\u2040]*')
 
 
 def format_as_xml(
@@ -33,11 +41,17 @@ def format_as_xml(
     Supports: `str`, `bytes`, `bytearray`, `bool`, `int`, `float`, `Decimal`, `date`, `datetime`, `time`, `timedelta`,
     `UUID`, `Enum`, `Mapping`, `Iterable`, `dataclass`, and `BaseModel`.
 
+    Mapping keys are used as element names when they are valid XML names without a colon (an XML `NCName`, e.g.
+    `name` or `first_name`). Any other key, like `'my key'`, `'1abc'` or an `int`, is instead written to the `key`
+    attribute of an element named after `item_tag`, e.g. `<item key="my key">1</item>`, so it is escaped like
+    any other attribute value and can't inject tags or break the element structure.
+
     Args:
         obj: Python Object to serialize to XML.
         root_tag: Outer tag to wrap the XML in, use `None` to omit the outer tag.
         item_tag: Tag to use for each item in an iterable (e.g. list), this is overridden by the class name
-            for dataclasses and Pydantic models.
+            for dataclasses and Pydantic models. It's also used for mapping entries whose key isn't a valid XML
+            element name, see above.
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
         include_field_info: Whether to include attributes like Pydantic `Field` attributes and dataclasses `field()`
@@ -182,7 +196,12 @@ class _ToXml:
                 key = str(key)
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
-            element.append(self._to_xml(value=value, path=f'{path}.{key}' if path else key, tag=key))
+            child_path = f'{path}.{key}' if path else key
+            is_name = _XML_NAME.fullmatch(key) is not None
+            child = self._to_xml(value=value, path=child_path, tag=key if is_name else self.item_tag)
+            if not is_name:
+                child.set('key', key)
+            element.append(child)
 
     def _parse_data_structures(
         self,

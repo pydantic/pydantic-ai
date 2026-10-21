@@ -813,6 +813,22 @@ pre {
   overflow-wrap: anywhere;
 }
 
+/* A sent prompt's images, as the composer showed them, above its text. */
+.user-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-images.captioned {
+  margin-bottom: 8px;
+}
+
+.attachment.missing {
+  border-style: dashed;
+}
+
 .markdown {
   line-height: 1.65;
   overflow-wrap: anywhere;
@@ -1289,6 +1305,59 @@ pre {
   max-height: 240px;
   line-height: 1.5;
   font-size: 14.5px;
+}
+
+/* Images pasted or dropped for the next prompt, above the text they go with. */
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+
+.attachment {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.attachment:hover .attachment-remove,
+.attachment-remove:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .attachment-remove {
+    opacity: 1;
+  }
 }
 
 .composer textarea::placeholder {

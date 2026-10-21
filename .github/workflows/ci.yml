@@ -1582,7 +1582,9 @@ jobs:
     services:
       mongodb:
         # MongoDB's published image on Quay avoids Docker Hub and public ECR pull limits.
-        image: quay.io/mongodb/mongodb-community-server:8.3-ubuntu2204
+        # 9.0.4+, not 8.3: older 8.x builds refuse to start on the runner's Ubuntu `7.0.0-*-azure`
+        # kernel (https://jira.mongodb.org/browse/SERVER-131779).
+        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204
         ports:
           - 27017:27017
         options: >-

@@ -105,7 +105,7 @@ async def test_instruction_order_puts_the_hint_between_guidance_and_repository(t
     assert parts[0].startswith('You are a software engineering agent')
     assert 'ask_user_question' in parts[1]
     assert parts[2].startswith('When asked to customize CLAI itself')
-    assert parts[3].startswith('<context-file path="AGENTS.md">')
+    assert parts[3].startswith('<context id="capability:repo_context">\n<context-file path="AGENTS.md">')
     assert '# House rules' in parts[3]
     assert 'read_clai_customization_guide' in {tool.name for tool in params.function_tools}
 
@@ -126,7 +126,7 @@ async def test_hint_still_follows_the_coding_guidance_without_ask_user(tmp_path:
     parts = [part.content for part in params.instruction_parts or []]
     assert parts[0].startswith('You are a software engineering agent')
     assert parts[1].startswith('When asked to customize CLAI itself')
-    assert parts[2].startswith('<context-file path="AGENTS.md">')
+    assert parts[2].startswith('<context id="capability:repo_context">\n<context-file path="AGENTS.md">')
 
 
 async def test_custom_agent_can_opt_in() -> None:

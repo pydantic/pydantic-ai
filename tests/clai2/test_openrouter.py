@@ -1,15 +1,17 @@
 """Private-server discovery without network or real credentials."""
 
+from io import StringIO
 from pathlib import Path
 
 import httpx
 import pytest
 from pydantic import SecretStr
+from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2.models import openrouter
 from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
-from tests.clai2.menu_script import make_context
+from tests.clai2.menu_script import QUIET, make_context
 
 
 @pytest.mark.parametrize('token', ['test-secret'])
@@ -67,12 +69,12 @@ async def test_connect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome:
     monkeypatch.setattr(openrouter, 'choose', choose)
     if outcome == 'args':
         with pytest.raises(ValueError, match='Usage'):
-            await openrouter.connect(context, ['secret'])
+            await openrouter.connect(context, ['secret'], console=QUIET)
     elif outcome == 'empty':
         with pytest.raises(ValueError, match='required'):
-            await openrouter.connect(context, [])
+            await openrouter.connect(context, [], console=QUIET)
     else:
-        result = await openrouter.connect(context, [])
+        result = await openrouter.connect(context, [], console=QUIET)
         assert result == ('Saved model. Applied.' if outcome == 'ok' else 'Connection cancelled.')
         if outcome == 'ok':
             assert context.settings.model == 'openrouter:my/model'
@@ -85,7 +87,7 @@ async def test_saved_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     openrouter.save_connection(connection)
     monkeypatch.setattr(openrouter, 'connection_action', lambda: action)
 
-    async def prompt() -> openrouter.Connection:
+    async def prompt(*, console: Console) -> openrouter.Connection:
         assert action == 'configure'
         return connection
 
@@ -99,7 +101,7 @@ async def test_saved_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(openrouter, 'prompt_connection', prompt)
     monkeypatch.setattr(openrouter, 'discover', discovery)
     monkeypatch.setattr(openrouter, 'choose', choose)
-    assert await openrouter.connect(context, []) == (
+    assert await openrouter.connect(context, [], console=QUIET) == (
         'Connection cancelled.' if action is None else 'Saved model. Applied.'
     )
 
@@ -109,12 +111,14 @@ async def test_provider_menu_connection(tmp_path: Path, monkeypatch: pytest.Monk
     keys = iter([*'openrouter', 'enter', *'openrouter', 'enter'])
     monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.menu_key', lambda: next(keys))
     results = iter(['Connection cancelled.', 'Saved model. Applied.'])
+    shell = Console(file=StringIO())
 
-    async def connect(context: object, args: list[str]) -> str:
+    async def connect(context: object, args: list[str], *, console: Console) -> str:
+        assert console is shell, 'the sign-in prints through the shell console, into the transcript'
         return next(results)
 
     monkeypatch.setattr(openrouter, 'connect', connect)
-    assert await open_add_model_menu(context) == 'Saved model. Applied.'
+    assert await open_add_model_menu(context, console=shell) == 'Saved model. Applied.'
 
 
 async def test_corrupt_connection_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -127,11 +131,11 @@ async def test_corrupt_connection_recovery(tmp_path: Path, monkeypatch: pytest.M
     with pytest.raises(UserError, match='Stored connection'):
         openrouter.model('openrouter:test')
 
-    async def prompt() -> None:
+    async def prompt(*, console: Console) -> None:
         return None
 
     monkeypatch.setattr(openrouter, 'prompt_connection', prompt)
-    assert await openrouter.connect(context, []) == 'Connection cancelled.'
+    assert await openrouter.connect(context, [], console=QUIET) == 'Connection cancelled.'
 
 
 async def test_invalid_discovery() -> None:
@@ -148,9 +152,9 @@ async def test_broken_manifest_recovery(tmp_path: Path, monkeypatch: pytest.Monk
     def broken(*, account: str) -> str:
         raise UserError('Broken manifest')
 
-    async def prompt() -> None:
+    async def prompt(*, console: Console) -> None:
         return None
 
     monkeypatch.setattr(openrouter, 'load_codex_credentials', broken)
     monkeypatch.setattr(openrouter, 'prompt_connection', prompt)
-    assert await openrouter.connect(context, []) == 'Connection cancelled.'
+    assert await openrouter.connect(context, [], console=QUIET) == 'Connection cancelled.'

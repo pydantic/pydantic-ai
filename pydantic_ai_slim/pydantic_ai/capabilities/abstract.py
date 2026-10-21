@@ -477,6 +477,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`RunContext`][pydantic_ai.tools.RunContext] or a
         `TemplateStr` — not a dynamic string.
 
+        This is read when the agent is built and the result is reused for every run, unless
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns a replacement,
+        whose instructions are read for that run. To opt into
+        [`on_change='append'`][pydantic_ai.messages.InstructionPart.on_change] for instructions
+        that change mid-conversation, return a callable that returns an
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart] with a `name` and
+        `on_change='append'` (for text that changes during a run), or return such a part directly
+        from a replacement `for_run` builds (for text that changes between runs), from a capability
+        with an `id`. See [appending instruction changes](../agent.md#appending-instruction-changes).
+        Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
+
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these instructions are resolved only after the model calls the
         `load_capability` tool for this capability.

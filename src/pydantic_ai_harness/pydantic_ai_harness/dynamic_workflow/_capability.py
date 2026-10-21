@@ -15,7 +15,7 @@ from pydantic_ai_harness.dynamic_workflow._toolset import (
     WorkflowAgent,
     WorkflowResourceLimits,
     index_workflow_agents,
-    validate_workflow_agent,
+    validate_workflow_settings,
 )
 
 
@@ -114,6 +114,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         return None
 
     def __post_init__(self) -> None:
+        validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
         catalog = [self._normalize_workflow_agent(entry) for entry in self.agents]
         index_workflow_agents(catalog)
         self._catalog = catalog
@@ -137,10 +138,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
         all in-flight runs and joins the baseline catalog for runs that start afterwards.
         """
         entry = self._normalize_workflow_agent(agent)
-        existing_names: set[str] = set()
-        for catalog_entry in self._catalog:
-            existing_names.add(validate_workflow_agent(catalog_entry, existing_names))
-        validate_workflow_agent(entry, existing_names)
+        index_workflow_agents([*self._catalog, entry])
         self._catalog.append(entry)
 
     def get_toolset(self) -> DynamicWorkflowToolset[AgentDepsT]:

@@ -107,7 +107,7 @@ async def _sign_in(
     from pydantic_clai2.models import key_profiles
 
     if key_profiles.supports(name, profile=profile):
-        return await key_profiles.login(provider=name, profile=profile, dialogs=dialogs)
+        return await key_profiles.login(provider=name, profile=profile, console=codex.console, dialogs=dialogs)
     raise ValueError(_login_usage(plugins))
 
 

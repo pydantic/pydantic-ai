@@ -21,6 +21,7 @@
   "bedrock:xlarge": "bedrock:global.anthropic.claude-fable-5-1",
   "openai:realtime": "openai:gpt-realtime-2.1",
   "google:realtime": "google:gemini-3.8-live",
+  "elevenlabs:realtime": "elevenlabs:eleven_realtime_v1_mini",
   "openai:image": "openai:gpt-image-2.5-flare",
   "google:image": "google:gemini-3.1-flash-image",
   "xai:image": "xai:grok-imagine-image-2.0",

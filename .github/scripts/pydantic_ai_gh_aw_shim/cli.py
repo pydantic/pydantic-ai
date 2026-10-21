@@ -43,8 +43,9 @@ import pathlib
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Annotated, Any, TypeAlias, cast
 
@@ -52,16 +53,34 @@ import httpx2
 import logfire
 from anthropic import APITimeoutError, AsyncAnthropic
 from mcp.shared.exceptions import McpError
+from opentelemetry.trace import Span, Status, StatusCode, get_current_span
 from pydantic import Field, TypeAdapter, ValidationError
 from tenacity import RetryCallState, stop_after_delay, wait_random_exponential
 from tenacity.asyncio.retry import retry_if_result
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
-from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai import (
+    Agent,
+    AgentRunResult,
+    ModelRequestContext,
+    ModelRetry,
+    RunContext,
+    UsageLimitExceeded,
+    capture_run_messages,
+)
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    NativeTool,
+    PrepareTools,
+    ProcessEventStream,
+    ProcessHistory,
+    WrapModelRequestHandler,
+    WrapRunHandler,
+)
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -77,6 +96,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     ToolSearchCallPart,
     UserPromptPart,
+    repair_messages,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -161,6 +181,46 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
             raise error
         logger.warning('MCP tool %r failed — returned to model as a recoverable error: %s', call.tool_name, message)
         return f'error: {message}'
+
+
+def _mark_timed_out(span: Span) -> None:
+    span.set_attribute('error.type', 'timeout')
+    span.set_status(Status(StatusCode.ERROR, 'timeout'))
+
+
+def _wall_clock_cap_expired() -> bool:
+    return any(expired() for expired in _wall_clock_caps.get())
+
+
+@dataclass
+class _MarkTimedOutSpans(AbstractCapability[object]):
+    """Mark the agent-run and model-request spans that one of the shim's wall-clock caps cuts off.
+
+    OpenTelemetry does not record `asyncio.CancelledError` as an error, so a run or request that
+    `task`'s or `_run_with_timeout`'s cap cancels ends its span `UNSET`, like work that finished.
+    A cut-off request also has no finish reason, and no usage when the provider reports it only at
+    the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
+    failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
+    Each hook runs inside the span pydantic-ai opens for it.
+    """
+
+    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+        try:
+            return await handler()
+        except asyncio.CancelledError:
+            if _wall_clock_cap_expired():
+                _mark_timed_out(get_current_span())
+            raise
+
+    async def wrap_model_request(
+        self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        try:
+            return await handler(request_context)
+        except asyncio.CancelledError:
+            if _wall_clock_cap_expired():
+                _mark_timed_out(get_current_span())
+            raise
 
 
 # pydantic-ai's built-in request_limit default of 50 is too low for the
@@ -412,6 +472,30 @@ TIME_BUDGET_NOTICE = (
 # Monotonic time at which `_run_with_timeout` cancels the run; `None` outside a run.
 _run_deadline: float | None = None
 
+# Whether each wall-clock cap the current work runs under has expired, innermost last.
+_wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('_wall_clock_caps', default=())
+
+
+@asynccontextmanager
+async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
+    """`asyncio.timeout` that marks the span holding it when it expires.
+
+    It is registered so `_MarkTimedOutSpans` can tell the cancellations it causes from others, and a
+    `TimeoutError` raised by the work it caps leaves it unexpired. `task`'s cap marks the
+    `execute_tool Task` span, which otherwise looks like a successful call.
+    """
+    cap = asyncio.timeout(seconds)
+    token = _wall_clock_caps.set((*_wall_clock_caps.get(), cap.expired))
+    try:
+        async with cap:
+            yield
+    except TimeoutError:
+        if cap.expired():
+            _mark_timed_out(get_current_span())
+        raise
+    finally:
+        _wall_clock_caps.reset(token)
+
 
 def _run_seconds_left() -> float | None:
     """Wall-clock seconds before the run is cancelled, or `None` when no run budget applies."""
@@ -424,6 +508,24 @@ def time_budget_notice() -> str | None:
     if seconds_left is None or seconds_left > RUN_TIME_RESERVE_SECS:
         return None
     return TIME_BUDGET_NOTICE
+
+
+# gh-aw's `safeoutputs` MCP server, under the shim's Claude Code tool-name prefix.
+SAFE_OUTPUT_TOOL_PREFIX = 'mcp__safeoutputs__'
+
+
+def hold_time_reserve_for_safe_output(
+    _ctx: RunContext[object], tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
+    """Offer only the safe-output tools once the run is inside the parent's time reserve.
+
+    The notice alone does not stop a model from investigating into the reserve. The request in
+    flight when the reserve starts still completes and its tool calls still run; the notice
+    stays, so the model knows why its other tools are gone.
+    """
+    if time_budget_notice() is None:
+        return tool_defs
+    return [tool_def for tool_def in tool_defs if tool_def.name.startswith(SAFE_OUTPUT_TOOL_PREFIX)]
 
 
 class RunTimeLimitExceeded(Exception):
@@ -475,6 +577,14 @@ SUBAGENT_INSTRUCTIONS = (
     'evidence-grounded answer to your caller — do not try to act on it.'
 )
 
+# A sub-agent that hits its timeout has often gathered most of what it needs. `task` then makes
+# one request without tools on its saved history to recover its answer.
+SUBAGENT_RESUME_PROMPT = (
+    'Your time is up and your tools are no longer available. Answer your caller now, in the '
+    'format your task asks for, from what you have already found. Name everything you were '
+    'asked to cover that you did not finish.'
+)
+
 # History compaction (pydantic-ai `ProcessHistory` capability). Two stages
 # inside one callback: a cheap dedup+truncate trim, then an LLM summary as
 # fallback. `Agent(instructions=...)` is re-applied on every request, so
@@ -518,6 +628,9 @@ def _part_text(part: MessagePart) -> str:
         return f'{part.tool_name}({part.args_as_dict()!r})'
     if isinstance(part, ToolAvailabilityDeltaPart):
         return f'tool availability changed: tools_added={part.tools_added!r}'
+    if isinstance(part, InstructionBaselinePart):
+        # Records what the request's instructions were made of; the transcript leaves instructions out.
+        return ''
     return str(part.content)
 
 
@@ -870,7 +983,10 @@ def configure_observability() -> None:
             token=write_token or None,
         )
         logfire.instrument_pydantic_ai(include_content=True, include_binary_content=True)
-        logfire.instrument_httpx(capture_all=True)
+        # Also instruments `httpx2`, the model client's library, by patching its
+        # `AsyncHTTPTransport`: every attempt `rate_limit_retry_transport` makes gets its own
+        # span. Request bodies would repeat each `chat` span's `gen_ai.input.messages`.
+        logfire.instrument_httpx(capture_headers=True, capture_response_body=True)
         logfire.instrument_mcp()
         logger.info('Logfire/OTLP instrumentation enabled (pydantic_ai + httpx + mcp)')
     except Exception as exc:
@@ -1145,6 +1261,14 @@ def _subagent_request_limit(ctx: RunContext[object]) -> int:
     return min(SUBAGENT_REQUEST_LIMIT, headroom)
 
 
+def _subagent_time_limit() -> float:
+    """Seconds a sub-agent may run from now without eating into the parent's time reserve."""
+    seconds_left = _run_seconds_left()
+    if seconds_left is None:
+        return SUBAGENT_TIMEOUT_SECS
+    return min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
+
+
 async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     """Claude's `Task` tool: spawn a read-only sub-agent on `ctx.model`."""
     global _subagent_requests_in_flight
@@ -1152,12 +1276,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     if sub_request_limit <= 0:
         logger.info('Task refused, request budget nearly spent: %s', description[:120])
         return 'error: the request budget is nearly spent; finish the task from what you already have'
-    seconds_left = _run_seconds_left()
-    timeout = (
-        SUBAGENT_TIMEOUT_SECS
-        if seconds_left is None
-        else min(SUBAGENT_TIMEOUT_SECS, seconds_left - RUN_TIME_RESERVE_SECS)
-    )
+    timeout = _subagent_time_limit()
     if timeout <= 0:
         logger.info('Task refused, time budget nearly spent: %s', description[:120])
         return 'error: the time budget is nearly spent; finish the task from what you already have'
@@ -1170,12 +1289,14 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     # always a `Model` here.
     model = ctx.model
     assert isinstance(model, Model)
+    instructions = [INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt]
     sub = Agent(
         cast('Model[Any]', model),
-        instructions=[INSTRUCTIONS, SUBAGENT_INSTRUCTIONS, prompt],
+        instructions=instructions,
         toolsets=[sub_toolset],
         capabilities=[
             local_workspace(),
+            _MarkTimedOutSpans(),
             *_anthropic_native_capabilities(),
             ProcessEventStream(_stream_events),
         ],
@@ -1183,18 +1304,56 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
     # Fresh `RunUsage` so `sub_request_limit` bounds the sub-agent, not
     # (parent + sub). Merge the deltas back regardless of success/failure.
     sub_usage = RunUsage()
+    sub_messages: list[ModelMessage] = []
     _subagent_requests_in_flight += sub_request_limit
     try:
-        result = await asyncio.wait_for(
-            sub.run(RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage),
-            timeout=timeout,
-        )
+        with capture_run_messages() as sub_messages:
+            async with _wall_clock_cap(timeout):
+                result = await sub.run(
+                    RUN_TRIGGER, usage_limits=UsageLimits(request_limit=sub_request_limit), usage=sub_usage
+                )
     except TimeoutError:
         # A bare `TimeoutError` stringifies to '' — without an explicit message
         # the model (and the log) would see `sub-agent failed:` with no payload.
         ctx.usage.incr(sub_usage)
         logger.error('sub-agent timed out after %.0f min: %s', timeout / 60, description[:120])
-        return f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
+        timeout_error = f'error: sub-agent timed out after {math.ceil(timeout / 60)}min'
+        # The resume is the sub-agent's last request, so it spends from the sub-agent's own request grant,
+        # which stays in flight until `finally`. A response the cut left partial is dropped, and
+        # `repair_messages` closes out tool calls the cut left unanswered.
+        history = [m for m in sub_messages if not (isinstance(m, ModelResponse) and m.state == 'interrupted')]
+        resume_timeout = _subagent_time_limit()
+        if (
+            resume_timeout <= 0
+            or sub_usage.requests >= sub_request_limit
+            or not any(isinstance(m, ModelResponse) for m in history)
+        ):
+            return timeout_error
+        resume_usage = RunUsage()
+        try:
+            async with _wall_clock_cap(resume_timeout):
+                # Streamed like the sub-agent, so a long report is not cut by the client's read timeout.
+                resumed = await Agent(
+                    cast('Model[Any]', model),
+                    name='delegate-resume',
+                    instructions=instructions,
+                    capabilities=[_MarkTimedOutSpans(), ProcessEventStream(_stream_events)],
+                ).run(
+                    SUBAGENT_RESUME_PROMPT,
+                    message_history=repair_messages(history),
+                    usage_limits=UsageLimits(request_limit=1),
+                    usage=resume_usage,
+                )
+        except Exception:
+            logger.exception('timed-out sub-agent could not be resumed: %s', description[:120])
+            return timeout_error
+        finally:
+            ctx.usage.incr(resume_usage)
+        logger.info('Task resumed after its timeout: %s', description[:120])
+        return (
+            f'note: the sub-agent timed out after {math.ceil(timeout / 60)}min and wrote this report afterwards '
+            f'from what it had already found, without further tool calls.\n\n{resumed.output}'
+        )
     except Exception as exc:
         # The parent agent reacts to the returned string, but a sub-agent can hit
         # the same nested `ExceptionGroup`/`McpError` as the main run — log the
@@ -1226,10 +1385,8 @@ async def _run_with_timeout(
         async with AsyncExitStack() as stack:
             if isinstance(model, AnthropicModel):
                 await stack.enter_async_context(model.client)
-            return await asyncio.wait_for(
-                run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
-                timeout=budget,
-            )
+            async with _wall_clock_cap(budget):
+                return await run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage)
     except TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
@@ -1280,6 +1437,8 @@ async def run(
             *_anthropic_native_capabilities(),
             ProcessHistory(_compact_history),
             ProcessEventStream(_stream_events),
+            _MarkTimedOutSpans(),
+            PrepareTools(hold_time_reserve_for_safe_output),
         ],
     )
     agent.output_validator(require_safe_output)

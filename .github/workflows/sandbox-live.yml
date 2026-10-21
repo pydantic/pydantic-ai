@@ -27,6 +27,8 @@ on:
         required: false
       SPRITE_TOKEN:
         required: false
+      DAYTONA_API_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -43,7 +45,7 @@ jobs:
       # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
-          PRESENT: '["modal", "e2b", "sprites"]'
+          PRESENT: '["modal", "e2b", "sprites", "daytona"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
           providers="$(python3 -c '
@@ -103,3 +105,4 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
           SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}

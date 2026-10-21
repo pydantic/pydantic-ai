@@ -80,6 +80,60 @@ def test_response_before_any_prompt_starts_a_turn() -> None:
     assert usage.unpriced == ('m',)
 
 
+def test_unmeasured_response_is_reported_as_a_lower_bound() -> None:
+    response = ModelResponse(
+        parts=[TextPart('answer')],
+        model_name='provider-model',
+        usage=RequestUsage(unmeasured_requests=1),
+    )
+    usage = session_usage([response])
+    assert usage.unpriced == ()
+    assert usage.total.unmeasured_requests == 1
+    assert cost_line(usage) == (
+        'Retained history cost unknown: 0 tokens (0 in, 0 out) over 1 request.'
+        ' Token and cost totals are lower bounds because 1 response omitted usage information.'
+    )
+
+
+def test_known_cost_with_unmeasured_response_is_a_lower_bound() -> None:
+    response = ModelResponse(
+        parts=[TextPart('answer')],
+        model_name='provider-model',
+        usage=RequestUsage(input_tokens=100, cost=Decimal('0.01'), unmeasured_requests=1),
+    )
+    usage = session_usage([response])
+    assert usage.unpriced == ()
+    assert usage.total.input_tokens == 100
+    assert usage.total.cost == Decimal('0.01')
+    assert cost_line(usage) == (
+        'Retained history cost $0.0100: 100 tokens (100 in, 0 out) over 1 request.'
+        ' Token and cost totals are lower bounds because 1 response omitted usage information.'
+    )
+
+
+def test_usage_command_explains_mixed_measured_and_unmeasured_usage() -> None:
+    messages = [
+        ModelResponse(
+            parts=[TextPart('priced')],
+            model_name='priced-model',
+            usage=RequestUsage(input_tokens=50, output_tokens=10, cost=Decimal('0.005')),
+        ),
+        ModelResponse(
+            parts=[TextPart('unmeasured')],
+            model_name='unmeasured-model',
+            usage=RequestUsage(input_tokens=100, unmeasured_requests=1),
+        ),
+    ]
+    output = io.StringIO()
+    line = usage_command(messages, console=Console(file=output, width=120))
+    assert 'Total' in output.getvalue()
+    assert '150' in output.getvalue()
+    assert '$0.0050' in output.getvalue()
+    assert 'unmeasured-model' not in line
+    assert 'No price data' not in line
+    assert line.endswith('Token and cost totals are lower bounds because 1 response omitted usage information.')
+
+
 def test_usage_table_shows_cache_columns_and_sub_cent_costs() -> None:
     output = io.StringIO()
     line = usage_command(priced_history(), console=Console(file=output, width=120))

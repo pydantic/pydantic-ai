@@ -1,0 +1,549 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "606"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790727189-nOk6oTOWaXIMCncB1DP7","object":"chat.completion.chunk","created":1790727189,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"A","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727189-nOk6oTOWaXIMCncB1DP7","object":"chat.completion.chunk","created":1790727189,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1790727189-nOk6oTOWaXIMCncB1DP7","object":"chat.completion.chunk","created":1790727189,"model":"deepseek/deepseek-chat","provider":"DeepInfra","service_tier":"default","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":92,"completion_tokens":2,"total_tokens":94,"cost":0.00003122,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.00003122,"upstream_inference_prompt_cost":0.00002944,"upstream_inference_completions_cost":0.00000178},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:13:09.974107+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "865"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790727190-sTVTznXm9IUAg0kyxYcG","object":"chat.completion.chunk","created":1790727190,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"B","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727190-sTVTznXm9IUAg0kyxYcG","object":"chat.completion.chunk","created":1790727190,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1790727190-sTVTznXm9IUAg0kyxYcG","object":"chat.completion.chunk","created":1790727190,"model":"deepseek/deepseek-chat","provider":"StreamLake","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":140,"completion_tokens":2,"total_tokens":142,"cost":0.0000380934,"is_byok":false,"prompt_tokens_details":{"cached_tokens":128,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0000380934,"upstream_inference_prompt_cost":0.000036036,"upstream_inference_completions_cost":0.0000020574},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:13:11.867858+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "986"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790727191-Y1k0KlleylO5W1ZSmRgE","object":"chat.completion.chunk","created":1790727191,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"B","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727191-Y1k0KlleylO5W1ZSmRgE","object":"chat.completion.chunk","created":1790727191,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1790727191-Y1k0KlleylO5W1ZSmRgE","object":"chat.completion.chunk","created":1790727191,"model":"deepseek/deepseek-chat","provider":"StreamLake","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":158,"completion_tokens":2,"total_tokens":160,"cost":0.0000427266,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0000427266,"upstream_inference_prompt_cost":0.0000406692,"upstream_inference_completions_cost":0.0000020574},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:13:13.069275+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1221"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        - role: assistant
+          content: B
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        : OPENROUTER PROCESSING
+
+        data: {"id":"gen-1790727193-IqfZlWk5redjyQH8UsLN","object":"chat.completion.chunk","created":1790727193,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"A","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727193-IqfZlWk5redjyQH8UsLN","object":"chat.completion.chunk","created":1790727193,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1790727193-IqfZlWk5redjyQH8UsLN","object":"chat.completion.chunk","created":1790727193,"model":"deepseek/deepseek-chat","provider":"DeepInfra","service_tier":"default","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":188,"completion_tokens":2,"total_tokens":190,"cost":0.00006194,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.00006194,"upstream_inference_prompt_cost":0.00006016,"upstream_inference_completions_cost":0.00000178},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:13:14.319328+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1530"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        - role: assistant
+          content: B
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context></system>
+        - role: assistant
+          content: A
+        - role: user
+          content: A pallet of bottled water arrived at the dock. Where to?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790727194-QcaeZU5u4mqwnkFU4D8e","object":"chat.completion.chunk","created":1790727194,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"UN","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727194-QcaeZU5u4mqwnkFU4D8e","object":"chat.completion.chunk","created":1790727194,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"ASSIGN","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727194-QcaeZU5u4mqwnkFU4D8e","object":"chat.completion.chunk","created":1790727194,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"ED","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727194-QcaeZU5u4mqwnkFU4D8e","object":"chat.completion.chunk","created":1790727194,"model":"deepseek/deepseek-chat","provider":"DeepInfra","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1790727194-QcaeZU5u4mqwnkFU4D8e","object":"chat.completion.chunk","created":1790727194,"model":"deepseek/deepseek-chat","provider":"DeepInfra","service_tier":"default","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":239,"completion_tokens":5,"total_tokens":244,"cost":0.00008093,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.00008093,"upstream_inference_prompt_cost":0.00007648,"upstream_inference_completions_cost":0.00000445},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:13:15.312538+00:00
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1804"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: system
+          content: >-
+            You help route parcels. The destination warehouse is specified separately.
+            Reply only with its code. If no warehouse is assigned, reply UNASSIGNED.
+        - role: system
+          content: |-
+            <context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context>
+            A later <context> element with the same id replaces this one and stays in effect until replaced again.
+        - role: user
+          content: >-
+            I have a box of books from the library donation drive. Where should it be
+            routed?
+        - role: assistant
+          content: A
+        - role: user
+          content: "Next up: a carton of ceramic mugs, marked fragile. Which warehouse?"
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse B.
+            </context></system>
+        - role: assistant
+          content: B
+        - role: user
+          content: This one is a bicycle frame, oversized. Where does it go?
+        - role: assistant
+          content: B
+        - role: user
+          content: An envelope with signed contracts. Routing?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse A.
+            </context></system>
+        - role: assistant
+          content: A
+        - role: user
+          content: A pallet of bottled water arrived at the dock. Where to?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            This context has been withdrawn, and the withdrawal stays in effect until replaced again.
+            </context></system>
+        - role: assistant
+          content: UNASSIGNED
+        - role: user
+          content: Finally, a small parcel of replacement laptop batteries. Which warehouse?
+        - role: user
+          content: |-
+            <system><context id="capability:memory:state">
+            Send parcels to warehouse C.
+            </context></system>
+        model: deepseek/deepseek-chat
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790727195-49IStgMAn2wA6ezarJG5","object":"chat.completion.chunk","created":1790727195,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"C","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1790727195-49IStgMAn2wA6ezarJG5","object":"chat.completion.chunk","created":1790727195,"model":"deepseek/deepseek-chat","provider":"StreamLake","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+        data: {"id":"gen-1790727195-49IStgMAn2wA6ezarJG5","object":"chat.completion.chunk","created":1790727195,"model":"deepseek/deepseek-chat","provider":"StreamLake","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":296,"completion_tokens":2,"total_tokens":298,"cost":0.0000782478,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0000782478,"upstream_inference_prompt_cost":0.0000761904,"upstream_inference_completions_cost":0.0000020574},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-09-30T00:13:16.320920+00:00

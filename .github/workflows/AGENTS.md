@@ -228,10 +228,10 @@ starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
-with the raw `ZAI_API_KEY` value in the `Authorization` header. Both
-`TOKENS_LIMIT` windows must be valid: unit `3` / number `5` is the 5-hour
-window, and unit `6` / number `1` is the weekly window. `percentage` is the
-percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
+with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
+`TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
+unit `3` / number `5` is the 5-hour window, and unit `6` / number `1` is the weekly window.
+`percentage` is the percentage used, so remaining quota is `100 - percentage`; `nextResetTime` is
 epoch milliseconds. An explicit `null` is valid only when `percentage` is `0`;
 a missing reset field or a null reset with consumed quota is invalid. A missing
 or malformed required window makes health unknown and keeps agent workflows

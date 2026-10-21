@@ -294,7 +294,9 @@ async def test_login_with_dialogs_saves_api_keys_in_keys_and_sends_the_rest_to_t
     assert json.loads(load_codex_credentials(account='openai@work') or '') == {'token': {'name': 'OPENAI_WORK'}}
     picked = await login_command(['openai@side'], codex=auth, dialogs=ScriptedDialogs([Pick(value='OPENAI_WORK')]))
     assert picked.startswith('openai@side connected')
-    cancelled = await key_profiles.login(provider='openai', profile='gone', dialogs=ScriptedDialogs([Back()]))
+    cancelled = await key_profiles.login(
+        provider='openai', profile='gone', console=auth.console, dialogs=ScriptedDialogs([Back()])
+    )
     assert cancelled == 'Sign-in cancelled.'
     with pytest.raises(ValueError, match=r'Connect openrouter@x in the terminal: /login openrouter@x\.'):
         await login_command(['openrouter@x'], codex=auth, dialogs=ScriptedDialogs([]))

@@ -97,7 +97,7 @@ With durable execution such as Temporal, read the credential from the run's deps
 
 The default endpoint is Logfire's US region. Set `url=LOGFIRE_EU_MCP_URL` for EU data, or pass the MCP URL of a self-hosted Logfire. The API key's scopes decide which projects and actions are allowed.
 
-The capability adds short guidance to the agent's instructions: the current UTC hour (to the hour rather than the second, so the instructions stay the same across requests and don't miss the prompt cache), a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, that Logfire links should be created only when asked for, and that tool names carry the `logfire_` prefix the server's own text leaves out. `include_instructions=False` turns this off, along with the server's own instructions.
+The capability adds short guidance to the agent's instructions: the current UTC hour (when the hour changes during a conversation, the new hour is appended to the message history rather than rewriting the instructions, so the prompt cache keeps the conversation so far), a reminder that timestamps in examples are not the current time, that queries cover a short time window unless widened, that Logfire links should be created only when asked for, and that tool names carry the `logfire_` prefix the server's own text leaves out. `include_instructions=False` turns this off, along with the server's own instructions.
 
 ## Tool selection and approval
 

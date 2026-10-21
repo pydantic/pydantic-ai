@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import re
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
@@ -88,7 +87,7 @@ class JsonSchemaTransformer(ABC):
         self.prefer_inlined_defs = prefer_inlined_defs
         self.simplify_nullable_unions = simplify_nullable_unions
 
-        self.defs: dict[str, JsonSchema] = deepcopy(self.schema.get('$defs', {}))
+        self.defs: dict[str, _JsonSchemaNode] = deepcopy(self.schema.get('$defs', {}))
         self.refs_stack: list[str] = []
         self.recursive_refs = set[str]()
         self._walked_defs: dict[str, JsonSchema] = {}
@@ -118,7 +117,9 @@ class JsonSchemaTransformer(ABC):
             # we modify it to avoid collisions.
             defs = {key: deepcopy(self._walked_def(key)) for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
-            root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
+            root_key = (
+                None if root_ref is None else root_ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+            )
             if root_key is None:
                 root_key = self.schema.get('title', 'root')
                 while root_key in defs:
@@ -126,7 +127,7 @@ class JsonSchemaTransformer(ABC):
                     root_key = f'{root_key}_root'
 
             defs[root_key] = handled
-            return {'$defs': defs, '$ref': f'#/$defs/{root_key}'}
+            return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
 
         return handled
 
@@ -135,7 +136,12 @@ class JsonSchemaTransformer(ABC):
             return schema
 
         if self.prefer_inlined_defs and (ref := schema.get('$ref')):
-            key = re.sub(r'^#/\$defs/', '', ref)
+            # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
+            key = (
+                ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+                if ref.startswith('#/$defs/')
+                else ref
+            )
             if key in self.refs_stack:
                 if key not in self.defs:
                     # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
@@ -198,7 +204,14 @@ class JsonSchemaTransformer(ABC):
             raise UserError(f'Could not find $ref definition for {key}')
 
         self.refs_stack.append(key)
-        walked = self._handle({**deepcopy(def_schema), **siblings})
+        if isinstance(def_schema, bool):
+            # A false definition must reject even when a sibling supplies its own `not`.
+            schema = deepcopy(siblings)
+            if not def_schema:
+                schema['not'] = {}
+        else:
+            schema = {**deepcopy(def_schema), **siblings}
+        walked = self._handle(schema)
         self.refs_stack.pop()
 
         assert not isinstance(walked, bool)
@@ -249,10 +262,9 @@ class JsonSchemaTransformer(ABC):
         if self.simplify_nullable_unions:
             handled = self._simplify_nullable_union(handled)
         if len(handled) == 1:
-            # In this case, no need to retain the union
-            if isinstance(handled[0], dict):
+            # Keep a rejecting member wrapped so a sibling `not` cannot overwrite its constraint.
+            if isinstance(handled[0], dict) and handled[0].get('not') != {}:
                 return handled[0] | schema
-            # Non-dict schema node (e.g. boolean): fall through to wrap in union key
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()

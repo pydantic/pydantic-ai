@@ -4,16 +4,18 @@ description: "Choose how to persist Pydantic AI conversations: store a `Conversa
 
 # Persistence
 
+A production agent serves each conversation across many requests, processes and restarts, so its state has to live somewhere other than the process.
+
 "Persistence", "memory", "sessions": several different problems go by those names, and they have different answers. Start here:
 
 | You want to… | Use | Where it lives |
 |---|---|---|
 | Save a conversation and pick it up later — a chat thread, a support ticket, an assistant that remembers yesterday | [Store its `Conversation`](#storing-a-conversation-yourself) in a column of your own database | Core |
-| Not write the save-and-load code yourself, and get continue-and-fork for free | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| A log of what each run did, and snapshots to continue or fork a run from | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
-| A run to survive the process dying mid-tool-call, and resume exactly where it stopped | [Durable execution](durable_execution/overview.md) | Core |
+| A run to survive the process dying mid-tool-call, replaying its completed steps and retrying the one in flight | [Durable execution](durable_execution/overview.md) | Core |
 
-For checkpoint-style persistence, [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) saves a checkpoint after every step of a run, so you can continue the run later or fork it from any step; to resume a run that crashed partway through a step, use [durable execution](durable_execution/overview.md).
+For checkpoint-style persistence, [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) saves a message-history snapshot at each settled tool-call boundary of a run, so you can continue the run later or fork it from a saved snapshot; to resume a run that crashed partway through a step, use [durable execution](durable_execution/overview.md).
 
 The first two rows are also the answer to "how do I give my agent memory?" for most of what people mean by it: an agent's memory of the conversation it is having *is* its message history. There is no separate memory system to add for that — storing the history and passing it back is the whole mechanism. Memory becomes [its own thing](#remembering-across-conversations) only once it has to outlive the thread.
 
@@ -82,9 +84,9 @@ Nor does a history reach past its own conversation. Replaying yesterday's thread
 
 ## Not writing that code yourself
 
-[`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) packages the pattern as a capability you add to an agent, so the load and save calls are not yours to write. It ships in-memory, file, SQLite and MongoDB backends, and its store is a protocol you can implement against your own database.
+[`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) packages the pattern as a capability you add to an agent, so the load and save calls are not yours to write. It ships in-memory, file, SQLite, PostgreSQL and MongoDB backends, and its store is a protocol you can implement against your own database. Its snapshots hold the messages only, not the usage and pending deferred tool requests a `Conversation` carries, so store the `Conversation` too when you need those.
 
-It records more than the messages: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a conversation from, and a tool-effect ledger that tells you, after a crash, whether a side effect actually happened.
+It records more than the messages: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a conversation from, and a tool-effect ledger that records whether each tool call started, returned or raised. After a crash, a call that never finished has an unknown outcome, and one that raised may still have had its effect, so check the external system before running it again.
 
 [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) builds on that without storing anything of its own: it ranks the history `StepPersistence` already wrote and gives the model a tool to pull earlier turns back into context on demand, including turns [compaction](capabilities/compaction.md) dropped. Pair the two on one store instance and recall needs no extra write path.
 
@@ -109,4 +111,4 @@ Weigh it against a store of your own: it is one provider's feature, OpenAI docum
 
 ## What isn't here
 
-Nothing here snapshots state in the middle of a step, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled boundaries between runs, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.
+Nothing here snapshots state in the middle of a step, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled tool-call boundaries within a run, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.

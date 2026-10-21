@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
@@ -9,10 +10,12 @@ import pytest
 from pydantic import ValidationError
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
+from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
     from openai.types.realtime.realtime_audio_config_output import VoiceID
@@ -33,8 +36,11 @@ with try_import() as imports_successful:
         ServerVAD,
         _default_azure_realtime_apis,  # pyright: ignore[reportPrivateUsage]
         _map_voice_live_event,  # pyright: ignore[reportPrivateUsage]
+        _VoiceLiveRealtimeConnection,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.realtime.codec import OutputTranscript
+
+    from .test_openai import FakeWebSocket
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 
@@ -826,3 +832,22 @@ def test_infer_provider_with_v1_endpoint_env(monkeypatch: pytest.MonkeyPatch) ->
     assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
         'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt-realtime'
     )
+
+
+async def test_voice_live_ignores_tool_item_pruning() -> None:
+    """Voice Live's beta protocol isn't known to delete items, so `openai_prune_tool_items` is one it ignores."""
+    frames = [
+        json.dumps(
+            {
+                'type': 'conversation.item.created',
+                'item': {'id': f'item_{kind}', 'type': kind, 'call_id': 'c1', 'name': 'lookup'},
+            }
+        )
+        for kind in ('function_call', 'function_call_output')
+    ]
+    ws = FakeWebSocket(frames)
+    connection = _VoiceLiveRealtimeConnection(cast(Any, ws), prune_tool_items=True)
+    await collect_codec_events(connection)
+    call = ToolCallPart(tool_name='lookup', args='{}', tool_call_id='c1')
+    assert await connection._prune_tool_calls([call]) == []  # pyright: ignore[reportPrivateUsage]
+    assert not [frame for frame in ws.sent if 'item.delete' in frame]
