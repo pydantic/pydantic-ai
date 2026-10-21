@@ -10,7 +10,8 @@ from typing import TypeVar
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
 
-from ._ripgrep import MAX_OUTPUT_BYTES, MAX_RECORD_BYTES, SEARCH_TIMEOUT, Record, Unreadable, realpath_of_file
+from ._ripgrep import Record, Unreadable
+from ._workspace_search import MAX_OUTPUT_BYTES, MAX_RECORD_BYTES, SEARCH_TIMEOUT, realpath_snippet
 
 _T = TypeVar('_T')
 _STATUS = '__harness_posix_status='
@@ -73,7 +74,7 @@ async def run_posix_search(
         enumeration = 'printf "%s\\0" ' + shlex.quote(target)
     # Carry the canonical path with each candidate, so a single search command can
     # authorize thousands of files without per-result sandbox round trips.
-    canonical = realpath_of_file('continue')
+    canonical = realpath_snippet('continue')
     if pattern is None:
         processing = "xargs -0 sh -c 'for file do " + canonical + 'printf "%s\\0%s\\0" "$file" "$real"; done\' sh'
     else:

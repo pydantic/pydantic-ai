@@ -19,23 +19,13 @@ from typing import TypeVar
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
 
+from ._workspace_search import MAX_OUTPUT_BYTES, MAX_RECORD_BYTES, SEARCH_TIMEOUT
+
 _SEPARATOR = '--\n'
 """What `rg` prints between non-adjacent context groups; carries no path and is dropped."""
 
-MAX_RECORD_BYTES = 1 << 20
-"""Longest record a workspace search keeps while waiting for its terminator.
-
-`rg`'s own `--max-columns` keeps its lines far shorter; the POSIX fallback has no such option.
-"""
-
 _PREPARE_BATCH = 500
 """Records handed to `prepare` at once."""
-
-MAX_OUTPUT_BYTES = 8 << 20
-"""Bytes of search output brought back from the workspace; a search that prints more is reported as truncated."""
-
-SEARCH_TIMEOUT = 120.0
-"""Deadline in seconds for one workspace search command, so a search over a huge tree cannot hang the tool call."""
 
 _STATUS_PREFIX = '__harness_rg_status='
 """Prefix of the last stderr line, which carries `rg`'s own exit status past the `head` pipe."""
@@ -48,15 +38,6 @@ _UNREADABLE = re.compile(r'rg: (?P<path>.+?): (?:IO error for operation on .+?: 
 """An error `rg` reports for one path it could not open, after which it carries on with the rest."""
 
 _T = TypeVar('_T')
-
-
-def realpath_of_file(on_failure: str) -> str:
-    """Shell that sets `real` to the canonical path of `$file`, running `on_failure` when it cannot be resolved.
-
-    `realpath` strips trailing newlines from its output, so a `.` is printed after it and both are
-    stripped again, keeping a file name that ends in a newline intact.
-    """
-    return f'real=$(realpath -- "$file" && printf .) || {on_failure}; real=${{real%.}}; real=${{real%?}}; '
 
 
 class RipgrepMissing(Exception):

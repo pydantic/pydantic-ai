@@ -63,15 +63,9 @@ from pydantic_ai_harness.filesystem._events import (
     SearchKind,
 )
 from pydantic_ai_harness.filesystem._matching import glob_match, glob_parts, has_nested_quantifier, matching_lines
-from pydantic_ai_harness.filesystem._ripgrep import (
-    SEARCH_TIMEOUT,
-    Record,
-    RipgrepMissing,
-    Unreadable,
-    realpath_of_file,
-    run_ripgrep,
-)
+from pydantic_ai_harness.filesystem._ripgrep import Record, RipgrepMissing, Unreadable, run_ripgrep
 from pydantic_ai_harness.filesystem._tool_kinds import FILE_SYSTEM_TOOL_KINDS
+from pydantic_ai_harness.filesystem._workspace_search import SEARCH_TIMEOUT, realpath_snippet
 
 _P = ParamSpec('_P')
 _R = TypeVar('_R')
@@ -1697,7 +1691,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 chunk = paths[offset : offset + 500]
                 result = await scope.workspace.run(
                     "sh -c 'for file do "
-                    + realpath_of_file('exit 2')
+                    + realpath_snippet('exit 2')
                     + 'printf "%s\\\\0" "$real"; done\' sh '
                     + shlex.join(chunk),
                     shell=True,
