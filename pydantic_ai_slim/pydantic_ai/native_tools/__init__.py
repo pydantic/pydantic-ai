@@ -461,8 +461,10 @@ class WebFetchTool(AbstractNativeTool):
     * Anthropic, see <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-fetch-tool#domain-filtering>
     """
 
-    enable_citations: bool = False
-    """If True, enables citations for fetched content.
+    enable_citations: bool | None = None
+    """Whether to enable citations for fetched content.
+
+    `None` follows the [`citations`][pydantic_ai.settings.ModelSettings.citations] model setting.
 
     Supported by:
 

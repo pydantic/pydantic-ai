@@ -559,9 +559,11 @@ def _web_citation_agent(
     elif case.provider == 'anthropic-web-fetch':
         # Web Fetch only returns citations when asked.
         model = AnthropicModel(
-            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key),
+            settings=ModelSettings(max_tokens=4096, citations=True),
         )
-        tool = WebFetchTool(max_uses=1, enable_citations=True)
+        tool = WebFetchTool(max_uses=1)
         # A plain-text page with no trailing whitespace or smart characters, which recording would rewrite and so move
         # the cited ranges that tie a citation to the fetched page.
         prompt = (
@@ -597,7 +599,7 @@ def _web_citation_agent(
         assert xai_provider is not None
         model = XaiModel('grok-4-fast-non-reasoning', provider=xai_provider)
         tool = XSearchTool(allowed_x_handles=['pydantic'], include_output=True)
-        settings = ModelSettings(include_citations=True)
+        settings = ModelSettings(citations=True)
         # A single search keeps the streamed parts in the same order as the complete response's.
         prompt = 'Run one X search for a post by @pydantic about Pydantic AI. Summarize it and cite the post URL.'
     else:  # pragma: no cover
@@ -832,7 +834,7 @@ async def test_document_citations(
         model = BedrockConverseModel(
             'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
         )
-    agent = Agent(model, model_settings=ModelSettings(include_citations=True))
+    agent = Agent(model, model_settings=ModelSettings(citations=True))
     prompt: str | list[str | BinaryContent]
     if case.pdf:
         prompt = ['What text appears in this PDF? Answer in one sentence and cite the document.', document_content]
@@ -871,7 +873,7 @@ async def test_anthropic_tool_return_document_citations(allow_model_requests: No
     model = AnthropicModel(
         'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
     )
-    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(citations=True))
 
     result = await agent.run(TOOL_DOCUMENT_PROMPT)
 
@@ -910,7 +912,7 @@ async def test_bedrock_tool_return_document_citations(
     model = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
     )
-    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+    agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(citations=True))
 
     result = await agent.run(TOOL_DOCUMENT_PROMPT)
 

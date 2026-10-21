@@ -3913,9 +3913,22 @@ async def test_document_binary_content_input(
     )
 
 
-@pytest.mark.parametrize('include_citations', [False, True])
-async def test_anthropic_include_citations_request_setting(allow_model_requests: None, include_citations: bool) -> None:
-    """The shared setting changes every Anthropic document block, but not Web Fetch, and nothing when disabled."""
+@pytest.mark.parametrize(
+    'citations,enable_citations,web_fetch_citations',
+    [
+        (False, None, None),
+        (True, None, {'enabled': True}),
+        (True, False, None),
+        (False, True, {'enabled': True}),
+    ],
+)
+async def test_anthropic_citations_request_setting(
+    allow_model_requests: None,
+    citations: bool,
+    enable_citations: bool | None,
+    web_fetch_citations: dict[str, bool] | None,
+) -> None:
+    """The shared setting changes every Anthropic document block and Web Fetch, unless Web Fetch sets its own value."""
     response = completion_message(
         [BetaTextBlock(text='The policy allows thirty days.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=6),
@@ -3925,8 +3938,8 @@ async def test_anthropic_include_citations_request_setting(allow_model_requests:
 
     await Agent(
         model,
-        capabilities=[NativeTool(WebFetchTool())],
-        model_settings=ModelSettings(include_citations=include_citations),
+        capabilities=[NativeTool(WebFetchTool(enable_citations=enable_citations))],
+        model_settings=ModelSettings(citations=citations),
     ).run(
         [
             'What is the return window?',
@@ -3943,20 +3956,18 @@ async def test_anthropic_include_citations_request_setting(allow_model_requests:
         },
         'type': 'document',
     }
-    if include_citations:
+    if citations:
         expected['citations'] = {'enabled': True}
     assert document == expected
 
     web_fetch_tool = next(
         tool for tool in get_mock_chat_completion_kwargs(mock_client)[0]['tools'] if tool['name'] == 'web_fetch'
     )
-    assert web_fetch_tool.get('citations') is None
+    assert web_fetch_tool.get('citations') == web_fetch_citations
 
 
-@pytest.mark.parametrize('include_citations', [False, True])
-async def test_anthropic_include_citations_tool_return_documents(
-    allow_model_requests: None, include_citations: bool
-) -> None:
+@pytest.mark.parametrize('citations', [False, True])
+async def test_anthropic_citations_tool_return_documents(allow_model_requests: None, citations: bool) -> None:
     """Anthropic requires citations on all of a request's documents or none, so tool-returned documents get them too."""
     response = completion_message(
         [BetaTextBlock(text='The policy allows thirty days.', type='text')],
@@ -3984,14 +3995,12 @@ async def test_anthropic_include_citations_tool_return_documents(
 
     with patch('pydantic_ai.models.anthropic.download_item', new_callable=AsyncMock) as mock_download:
         mock_download.return_value = {'data': b'%PDF-1.4 policy', 'content_type': 'application/pdf'}
-        await Agent(model, model_settings=ModelSettings(include_citations=include_citations)).run(
-            message_history=history
-        )
+        await Agent(model, model_settings=ModelSettings(citations=citations)).run(message_history=history)
 
     tool_result = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-1]['content'][0]
     documents = [block for block in tool_result['content'] if block['type'] == 'document']
     assert [document.get('citations') for document in documents] == (
-        [{'enabled': True}] * 3 if include_citations else [None] * 3
+        [{'enabled': True}] * 3 if citations else [None] * 3
     )
 
 

@@ -224,7 +224,7 @@ class XaiModelSettings(ModelSettings, total=False):
     """Whether to include inline citations in the response.
 
     Corresponds to the `inline_citations` option in the xAI `include` parameter.
-    Defaults to the value of `include_citations`, and takes precedence over it when set.
+    Defaults to the value of `citations`, and takes precedence over it when set.
     """
 
     xai_include_mcp_output: bool
@@ -860,7 +860,7 @@ class XaiModel(Model[AsyncClient]):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
         if model_settings.get('xai_include_web_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
-        if model_settings.get('xai_include_inline_citations', model_settings.get('include_citations', False)):
+        if model_settings.get('xai_include_inline_citations', model_settings.get('citations', False)):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         if model_settings.get('xai_include_x_search_output') or any(
             isinstance(tool, XSearchTool) and tool.include_output for tool in model_request_parameters.native_tools
