@@ -534,7 +534,7 @@ class DecisionModel(Model[InterfaceClient]):
 
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
+        """The model profile: text output off, inline system prompts on, and file input as the class takes it.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
@@ -543,9 +543,21 @@ class DecisionModel(Model[InterfaceClient]):
         It also judges a system prompt rather than asking it, so a system prompt partway through the conversation
         stays a `system` entry: without inline system prompts, the shared request preparation would fold it into
         the user text, where it would be judged as the request.
+
+        Images are read only when the class sets
+        [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
+        audio and video never are, so a file of those kinds that a tool returns is replaced by a note.
         """
         return merge_profile(
-            super().profile, ModelProfile(supports_text_output=False, supports_inline_system_prompts=True)
+            super().profile,
+            ModelProfile(
+                supports_text_output=False,
+                supports_inline_system_prompts=True,
+                supports_image_input=self.supports_image_input,
+                supports_document_input=False,
+                supports_audio_file_input=False,
+                supports_video_input=False,
+            ),
         )
 
     @abstractmethod
