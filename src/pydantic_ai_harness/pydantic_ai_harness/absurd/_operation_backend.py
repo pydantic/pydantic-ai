@@ -98,12 +98,19 @@ async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awai
     """
     interval = _heartbeat_interval(task_ctx)
 
+    async def heartbeat() -> None:
+        # Cancelling a query mid-flight leaves the task's shared connection busy.
+        with anyio.CancelScope(shield=True):
+            await task_ctx.heartbeat()
+
     async def extend_claim() -> None:
         while True:
             await anyio.sleep(interval)
-            # Cancelling a query mid-flight leaves the task's shared connection busy.
-            with anyio.CancelScope(shield=True):
-                await task_ctx.heartbeat()
+            await heartbeat()
+
+    # `begin_step` leaves the claim as it was, so a step starting late in the claim window would lose
+    # it before the first heartbeat. Extending it first also stops a lost task before the body runs.
+    await heartbeat()
 
     error: Exception | None = None
     result: object = None
