@@ -207,6 +207,7 @@ CodeMode(
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
+- With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox_url`: only execution moves; tools, mounts, `os_access`, and prints stay host-side. Use `wss://` unless the network is trusted.
 
 ## Durable Execution

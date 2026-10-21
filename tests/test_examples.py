@@ -118,6 +118,15 @@ class ExamplesConfig(BaseExamplesConfig):
         return config
 
 
+RUNNABLE_HARNESS_PAGES = frozenset({'memory.md'})
+"""`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
+
+
+def _is_harness_page(path: Path) -> bool:
+    root_dir = Path(__file__).parent.parent
+    return (root_dir / path).resolve().is_relative_to(root_dir / 'docs' / 'harness')
+
+
 def find_filter_examples() -> Iterable[ParameterSet]:
     # Ensure this is run from the package root regardless of where/how the tests are run
     root_dir = Path(__file__).parent.parent
@@ -126,7 +135,7 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
             continue
-        if ex.path.resolve().is_relative_to(root_dir / 'docs' / 'harness'):
+        if _is_harness_page(ex.path) and ex.path.name not in RUNNABLE_HARNESS_PAGES:
             # Written for the harness repository, which never ran them; not yet made runnable here.
             continue
         if ex.path.name == 'README.md' and (
@@ -619,6 +628,11 @@ def test_docs_examples(
             else:  # pragma: no cover
                 raise KeyError(f'Example {req} not found, check the `requires` header of this example.')
 
+    known_first_party = ['pydantic_ai', 'pydantic_evals', 'pydantic_graph']
+    if _is_harness_page(example.path):
+        # Harness pages group harness imports with Pydantic AI's, like their package READMEs.
+        known_first_party.append('pydantic_ai_harness')
+
     ruff_ignore: list[str] = ['D', 'Q001']
     # `from bank_database import DatabaseConn` wrongly sorted in imports
     # waiting for https://github.com/pydantic/pytest-examples/issues/43
@@ -638,7 +652,7 @@ def test_docs_examples(
         isort=True,
         upgrade=True,
         quotes='single',
-        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_first_party=known_first_party,
         known_local_folder=known_local_folder,
     )
     eval_example.print_callback = print_callback

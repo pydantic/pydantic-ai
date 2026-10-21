@@ -137,6 +137,7 @@ from .messages import (
     RetryFeedbackPart,
     RetryInfo,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+    RunInstructionSource,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -360,6 +361,7 @@ __all__ = (
     'RetryFeedbackPart',
     'RetryInfo',
     'RetryPromptPart',
+    'RunInstructionSource',
     'SystemPromptPart',
     'TextContent',
     'TextPart',
