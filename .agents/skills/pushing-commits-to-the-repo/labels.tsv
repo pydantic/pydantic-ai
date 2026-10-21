@@ -91,8 +91,8 @@ native-or-local	a.k.a. `provider adaptive` or `native fallback`
 native-tools
 needs MRE
 needs-confirmation
-needs-discussion
 needs-maintainer-action	The next meaningful action must come from a maintainer
+needs-maintainer-discussion	An unresolved design or scope decision needs maintainer input.
 new models	Support for new model(s)
 new-capability	Requests and PRs adding a first-party capability or a new provider-backed implementation.
 ollama	Ollama provider integration, configuration, and model support.

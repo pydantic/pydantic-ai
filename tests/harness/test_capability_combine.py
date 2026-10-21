@@ -72,7 +72,9 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
+from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.skills import Skills
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.system_reminders import Reminder
 
 
@@ -288,10 +290,12 @@ COMBINE_POLICY: dict[str, Policy] = {
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     '_DefaultCaching': Anonymous('Coder-local caching default; it yields to any `cache` already set'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
+    'DockerSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'DaytonaSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'SmolSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'BoxLiteSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
@@ -309,7 +313,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ToolGuardrail': Anonymous('several guards is the design'),
     'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ApprovalReviewer': Anonymous('one per risk question; each answers the approval requests the ones before it left'),
-    'ManagedPrompt': Anonymous('one per prompt name'),
+    'ManagedPrompt': Anonymous(
+        'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
+    ),
     'LogfireMCP': Narrows(
         'one Logfire connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
@@ -341,10 +347,9 @@ COMBINE_POLICY: dict[str, Policy] = {
         'its toolset registers `read_file` and friends under fixed names',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_A.parent))),
     ),
-    'AskUser': Collides(
-        'its toolset registers `ask_user_question` under a fixed name, and two answerers is a conflict, '
-        'not one configuration stated twice',
-        lambda cls: (cls(answerer=_decline), cls(answerer=_decline)),
+    'AskUser': Narrows(
+        'one `ask_user_question` tool per id, and two answerers is a conflict, not one configuration stated twice',
+        lambda cls: (cls(answerer=_decline), cls(answerer=None)),
     ),
     'Shell': Collides(
         'its toolset registers `run_command` and friends under fixed names',
@@ -354,18 +359,21 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one store directory per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(str(_TMP_A)), cls(str(_TMP_B))),
     ),
-    'PydanticAIDocs': Collides(
-        'its toolset registers `read_pyai_docs` under a fixed name',
-        lambda cls: (cls(), cls()),
+    'PydanticAIDocs': Narrows(
+        'one `read_pyai_docs` tool per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(), cls(cache=False)),
     ),
     'Notion': Narrows(
         'one Notion connection per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
-    'PyaiDocs': Collides('deprecated alias of `PydanticAIDocs`, and collides the same way'),
-    'Macroscope': Collides(
-        'its toolset registers `run_macroscope_review` under a fixed name',
-        lambda cls: (cls(), cls()),
+    'PyaiDocs': Narrows(
+        'deprecated alias of `PydanticAIDocs`, and combines the same way',
+        lambda cls: (cls(), cls(cache=False)),
+    ),
+    'Macroscope': Narrows(
+        'one `run_macroscope_review` tool per id; two that differ need their own ids and PrefixTools',
+        lambda cls: (cls(timeout=10.0), cls(timeout=20.0)),
     ),
     'LocalStack': Narrows(
         'one LocalStack environment per id, and its service lists are an access boundary',
@@ -397,8 +405,17 @@ COMBINE_POLICY: dict[str, Policy] = {
     ),
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
-    'PlaywrightBrowser': Collides('its toolset registers `click` and friends under fixed names'),
-    'ConversationSearch': Collides('its toolset registers `search_conversation_history` under a fixed name'),
+    'PlaywrightBrowser': Narrows(
+        'one browser per id, and its egress settings are an access boundary',
+        lambda cls: (cls(), cls(allowed_domains=['example.com'])),
+    ),
+    'ConversationSearch': Narrows(
+        'one `search_conversation_history` tool per id, and its source and scope bound what it can read',
+        lambda cls: (
+            cls(SnapshotHistorySource(InMemoryStepStore()), scope='conversation'),
+            cls(SnapshotHistorySource(InMemoryStepStore()), scope='all'),
+        ),
+    ),
     'ExaAgent': Narrows(
         'one Exa agent configuration per id; two that differ need their own ids and PrefixTools',
         lambda cls: (cls(effort=None), cls(system_prompt='Be thorough.')),

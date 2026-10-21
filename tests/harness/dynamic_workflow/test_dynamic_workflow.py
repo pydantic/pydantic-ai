@@ -29,7 +29,6 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -103,7 +102,7 @@ def _workflow_returns(messages: list[ModelMessage]) -> list[ToolReturnPart]:
         for m in messages
         if isinstance(m, ModelRequest)
         for p in m.parts
-        if isinstance(p, ToolReturnPart) and p.tool_name == 'run_workflow'
+        if isinstance(p, ToolReturnPart) and p.tool_name == 'run_workflow' and p.outcome != 'retried'
     ]
 
 
@@ -609,7 +608,7 @@ async def test_budget_terminal_result_arrives_as_tool_return_end_to_end() -> Non
         for m in result.all_messages()
         if isinstance(m, ModelRequest)
         for p in m.parts
-        if isinstance(p, RetryPromptPart) and p.tool_name == 'run_workflow'
+        if isinstance(p, ToolReturnPart) and p.outcome == 'retried' and p.tool_name == 'run_workflow'
     ]
     assert retry_parts == []
 
@@ -975,7 +974,7 @@ async def test_retry_exhaustion_for_invalid_code_end_to_end() -> None:
         for m in messages
         if isinstance(m, ModelRequest)
         for p in m.parts
-        if isinstance(p, RetryPromptPart) and p.tool_name == 'run_workflow'
+        if isinstance(p, ToolReturnPart) and p.outcome == 'retried' and p.tool_name == 'run_workflow'
     ]
     assert model_calls == 3
     assert len(retry_parts) == 2

@@ -217,8 +217,9 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ),
     # Claude on Bedrock doesn't support s3Uri for images
     ('bedrock_claude', 'image', 'uploaded_file', None): ExpectError(ModelHTTPError, r"doesn't support the s3Uri field"),
-    # Claude on Bedrock doesn't support s3Uri for documents in user content (tool_return_content fallback)
-    ('bedrock_claude', 'document', 'uploaded_file', 'tool_return_content'): ExpectError(
+    # Claude on Bedrock doesn't support s3Uri for documents, in tool results or in user content (tool_return_content
+    # fallback). Converse accepted them in tool results until at least March 2026.
+    ('bedrock_claude', 'document', 'uploaded_file', None): ExpectError(
         ModelHTTPError, r'document\.source\.type: Field required'
     ),
     # Nova doesn't support documents/videos with S3 sources inside tool results
