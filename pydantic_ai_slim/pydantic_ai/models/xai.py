@@ -42,13 +42,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -60,9 +58,11 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -158,13 +158,14 @@ timeout.
 """
 
 
-XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-4.7', 'grok-build-0.1']
 """Possible xAI model names.
 
 The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
 floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
-1.17.1, and `grok-4.6` in 1.18.0. Drop each once the floor is bumped past the release that adds it
-to `ChatModel`. https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
+1.17.1, and `grok-4.6` in 1.18.0. `grok-4.7` is absent from the latest released `ChatModel` (1.20.0).
+Drop each bridge once the floor is bumped past the release that adds it to `ChatModel`.
+https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
 """
 
 # `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
@@ -184,11 +185,10 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return 'none' if 'none' in supported_efforts else None
     if thinking is True:
         # `True` requests reasoning at the model's default level rather than a specific effort.
-        # Models that accept `'none'` (Grok 4.3) treat `reasoning_effort` as optional and apply their
-        # own default, so we omit it. Always-on models like grok-3-mini don't expose a default-omission
-        # path, so they fall back to `'medium'` (consistent with OpenAI), normalized to the nearest
-        # supported value by the `'medium'` handling below.
-        if 'none' in supported_efforts:
+        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
+        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
+        # (consistent with OpenAI), normalized to the nearest supported value below.
+        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
             return None
         thinking = 'medium'
 
@@ -449,9 +449,9 @@ class XaiModel(Model[AsyncClient]):
     ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
-        tool_results: list[ToolReturnPart | RetryPromptPart] = []
+        tool_results: list[ToolReturnPart] = []
 
-        for part in parts:
+        for part in _sendable_request_parts(parts):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
@@ -459,15 +459,10 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
                 tool_results.append(part)
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    xai_messages.append(user(part.model_response()))
-                else:
-                    tool_results.append(part)
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
@@ -480,12 +475,9 @@ class XaiModel(Model[AsyncClient]):
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
             file_content: list[UserContent] = []
             for part in tool_results:
-                if isinstance(part, ToolReturnPart):
-                    text, files = part.model_response_str_and_user_content()
-                    xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
-                    file_content.extend(files)
-                else:
-                    xai_messages.append(tool_result(part.model_response(), tool_call_id=part.tool_call_id))
+                text, files = part.model_response_str_and_user_content()
+                xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
+                file_content.extend(files)
             if file_content and (
                 user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
             ):  # pragma: no branch

@@ -12,9 +12,11 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -35,7 +37,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -659,8 +661,8 @@ def test_prepare_messages_orders_tool_results_by_call():
         ModelRequest(
             parts=[
                 ToolReturnPart('c', 'C', tool_call_id='cc'),
-                RetryPromptPart('output invalid'),
-                RetryPromptPart('bad args', tool_name='b', tool_call_id='cb'),
+                RetryFeedbackPart('output invalid', retry=RetryInfo(cause='model_retry')),
+                ToolReturnPart('b', 'bad args', tool_call_id='cb', outcome='retried'),
                 ToolReturnPart('z', 'Z', tool_call_id='not-a-call'),
                 ToolReturnPart('a', 'A', tool_call_id='ca'),
                 UserPromptPart(content='file from c'),
@@ -672,8 +674,12 @@ def test_prepare_messages_orders_tool_results_by_call():
 
     assert _request_parts(prepared)[1] == [
         ('ToolReturnPart', 'A'),
-        ('RetryPromptPart', 'output invalid'),
-        ('RetryPromptPart', 'bad args'),
+        (
+            'UserPromptPart',
+            "Your previous response failed the application's validation (this is automated feedback, not a message "
+            'from the user):\n<retry_feedback>\noutput invalid\n</retry_feedback>',
+        ),
+        ('ToolReturnPart', 'bad args'),
         ('ToolReturnPart', 'Z'),
         ('ToolReturnPart', 'C'),
         ('UserPromptPart', 'file from c'),
@@ -691,13 +697,13 @@ def test_prepare_messages_keeps_history_identity_when_tool_results_are_in_call_o
     assert TestModel().prepare_messages(messages) is messages
 
 
-def _tool_call_ids(messages: list[ModelMessage]) -> list[tuple[str, str]]:
-    """Each call, return and retry prompt in history order, as `(type, tool_call_id)`."""
+def _tool_call_ids(messages: list[ModelMessage]) -> list[tuple[str, str, str | None]]:
+    """Each call and return in history order, as `(type, tool_call_id, outcome)`; a retry is a return too."""
     return [
-        (type(part).__name__, part.tool_call_id)
+        (type(part).__name__, part.tool_call_id, part.outcome if isinstance(part, ToolReturnPart) else None)
         for message in messages
         for part in message.parts
-        if isinstance(part, ToolCallPart | ToolReturnPart | RetryPromptPart)
+        if isinstance(part, ToolCallPart | ToolReturnPart)
     ]
 
 
@@ -723,38 +729,40 @@ def test_prepare_messages_fits_tool_call_ids_to_profile_length():
         ModelRequest(
             parts=[
                 ToolReturnPart('a', 'A', tool_call_id='aB3dE5gH9'),
-                RetryPromptPart('bad args', tool_name='b', tool_call_id='aB3dE5gH'),
-                ToolReturnPart('c', 'C', tool_call_id='ab_cd_efg'),
+                # A legacy retry is translated into the retried return it always meant before IDs are fitted.
+                legacy_retry_prompt_part('bad args', tool_name='b', tool_call_id='aB3dE5gH'),
+                ToolReturnPart('c', 'C', tool_call_id='ab_cd_efg', outcome='retried'),
                 ToolReturnPart('d', 'D', tool_call_id='aB3dE5gH9X'),
                 ToolReturnPart('e', 'E', tool_call_id='aB3dE5gHé'),
                 ToolReturnPart('f', 'F', tool_call_id='call_abc123def456ghi789jkl012'),
             ]
         ),
     ]
-    stored = deepcopy(messages)
+    # Dumped rather than deep-copied: copying the deprecated part would construct it again, and warn.
+    stored = ModelMessagesTypeAdapter.dump_json(messages)
     model = TestModel(profile=ModelProfile(tool_call_id_length=9))
 
     prepared = model.prepare_messages(messages)
 
     assert _tool_call_ids(prepared) == snapshot(
         [
-            ('ToolCallPart', 'aB3dE5gH9'),
-            ('ToolCallPart', 'BsnFb66F9'),
-            ('ToolCallPart', '5ZoXBIVHV'),
-            ('ToolCallPart', 'BgySIGZn7'),
-            ('ToolCallPart', 'pFwy2hHZJ'),
-            ('ToolCallPart', '2pESUE4jw'),
-            ('ToolReturnPart', 'aB3dE5gH9'),
-            ('RetryPromptPart', 'BsnFb66F9'),
-            ('ToolReturnPart', '5ZoXBIVHV'),
-            ('ToolReturnPart', 'BgySIGZn7'),
-            ('ToolReturnPart', 'pFwy2hHZJ'),
-            ('ToolReturnPart', '2pESUE4jw'),
+            ('ToolCallPart', 'aB3dE5gH9', None),
+            ('ToolCallPart', 'BsnFb66F9', None),
+            ('ToolCallPart', '5ZoXBIVHV', None),
+            ('ToolCallPart', 'BgySIGZn7', None),
+            ('ToolCallPart', 'pFwy2hHZJ', None),
+            ('ToolCallPart', '2pESUE4jw', None),
+            ('ToolReturnPart', 'aB3dE5gH9', 'success'),
+            ('ToolReturnPart', 'BsnFb66F9', 'retried'),
+            ('ToolReturnPart', '5ZoXBIVHV', 'retried'),
+            ('ToolReturnPart', 'BgySIGZn7', 'success'),
+            ('ToolReturnPart', 'pFwy2hHZJ', 'success'),
+            ('ToolReturnPart', '2pESUE4jw', 'success'),
         ]
     )
     # The same history prepares to the same IDs every time, and only the outgoing copy changes.
     assert _tool_call_ids(model.prepare_messages(messages)) == _tool_call_ids(prepared)
-    assert messages == stored
+    assert ModelMessagesTypeAdapter.dump_json(messages) == stored
 
 
 def test_prepare_messages_keeps_history_identity_when_tool_call_ids_fit():
