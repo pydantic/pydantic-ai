@@ -21,7 +21,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -324,7 +324,7 @@ class TestCodeModeInputGuardrail:
                 return ModelResponse(parts=[TextPart('first')])
             last = messages[-1]
             assert isinstance(last, ModelRequest)
-            if any(isinstance(part, RetryPromptPart) and part.tool_name is None for part in last.parts):
+            if any(isinstance(part, RetryFeedbackPart) for part in last.parts):
                 return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await ping(n=1)'})])
             return ModelResponse(parts=[TextPart('done')])
 
