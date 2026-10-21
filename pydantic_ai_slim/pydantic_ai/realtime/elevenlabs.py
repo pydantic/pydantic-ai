@@ -186,7 +186,7 @@ class _ElevenLabsLifecycle(OpenAILifecycle):
     the user carry on after a pause, and report `speech_started` again for the same item, so a turn is only over
     once `input_audio_buffer.committed` says so.
 
-    And ElevenLabs answers the `response.create`s of ours it hasn't started yet with one reply (see
+    And ElevenLabs answers the requests for the results of parallel tool calls with one reply (see
     `response_created`).
     """
 
@@ -210,15 +210,17 @@ class _ElevenLabsLifecycle(OpenAILifecycle):
         ElevenLabs makes parallel tool calls as back-to-back responses of one call each, and holds back a
         `response.create` sent while any of them is still without its result until they all have one, answering all
         the requests it held with one reply (checked live). So the request that went out with the first result gets
-        neither a response nor an error of its own. (Two requests sent together get one reply too.) A response of
-        ours that starts therefore answers the requests still outstanding whose inputs are in the conversation.
+        neither a response nor an error of its own. A response of ours that starts therefore answers the requests for
+        tool results still outstanding whose results are in the conversation.
         """
         events = super().response_created(response, outstanding=outstanding)
         started = events[0] if events else None
         if not isinstance(started, ResponseStarted) or not started.answers:
             # A response of the provider's own, which answers none of ours.
             return events
-        coalesced = [event_id for event_id, (answers, _) in self._requests.items() if not self._unacknowledged(answers)]
+        coalesced = [
+            event_id for event_id, (answers, _) in self._requests.items() if self._answered_with_round(answers)
+        ]
         answers = [input_id for event_id in coalesced for input_id in self._requests.pop(event_id)[0]]
         if not (answered := self._settle(answers)):
             return events
@@ -227,13 +229,15 @@ class _ElevenLabsLifecycle(OpenAILifecycle):
     def answers_held_request(self, answers: Sequence[InputId]) -> tuple[InputId, ...] | None:
         """Which inputs of a request held back behind a response under way the response of ours that just started answers.
 
-        A request for tool results is answered as every outstanding request is (see `response_created`), once the
-        results are in the conversation: the inputs are settled then, and the request is not to be sent, as ElevenLabs
-        would answer it with another reply. Otherwise this is `None`, and the request still goes out.
+        A request for tool results is answered as an outstanding one is (see `response_created`), once the results are
+        in the conversation: the inputs are settled then, and the request is not to be sent, as it would ask for a
+        second reply. Otherwise this is `None`, and the request still goes out.
         """
-        if not self._tool_results.issuperset(answers) or self._unacknowledged(answers):
-            return None
-        return self._settle(answers)
+        return self._settle(answers) if self._answered_with_round(answers) else None
+
+    def _answered_with_round(self, answers: Sequence[InputId]) -> bool:
+        """Whether a request is for tool results that are all in the conversation, which ElevenLabs answers together."""
+        return self._tool_results.issuperset(answers) and not self._unacknowledged(answers)
 
     def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         # Its commit, when it comes, is still VAD's own, not the acknowledgement of one of ours. (ElevenLabs also
