@@ -1007,8 +1007,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         The catalog is stashed by `get_tools` earlier in the same step. It's named `'catalog'`,
         which this toolset's id qualifies into `toolset:code_mode:catalog`, and uses
         `on_change='append'`, so a discovery appends the updated catalog to the message history
-        instead of rewriting the instructions. When `dynamic_catalog` is off (or there are no
-        sandboxed tools) the stash is empty and we defer entirely to the wrapped toolset.
+        instead of rewriting the instructions. It's returned even while empty, which renders as
+        nothing, so the run's first instructions already hold it and the first function to appear
+        is appended too. When `dynamic_catalog` is off we defer entirely to the wrapped toolset.
         """
         # Through `super()`, so the wrapped toolsets' parts are relayed under their own ids, not this toolset's.
         upstream = await super().get_instructions(ctx)
@@ -1021,8 +1022,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return [*upstream, catalog_part]
 
     def _catalog_instruction(self) -> InstructionPart | None:
-        """The catalog `get_tools` stashed this step, as the instruction block that carries it."""
-        if not self._last_catalog:
+        """The catalog `get_tools` stashed this step, as the instruction block that carries it, possibly empty."""
+        if not self.dynamic_catalog:
             return None
         return InstructionPart(
             content=self._last_catalog, dynamic=True, name=_CATALOG_INSTRUCTION_NAME, on_change='append'

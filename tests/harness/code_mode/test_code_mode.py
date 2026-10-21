@@ -46,7 +46,7 @@ from pydantic_ai import (
     ToolDefinition,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import Capability, Instrumentation, ToolSearch, Toolset
+from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -3706,8 +3706,8 @@ class TestDynamicCatalog:
         # Nothing stashed → defer to upstream (None for FunctionToolset).
         assert await toolset.get_instructions(ctx) is None
 
-    async def test_empty_catalog_emits_no_instruction(self) -> None:
-        """No sandboxed tools → empty catalog → defer to upstream instructions."""
+    async def test_empty_catalog_is_an_empty_append_block(self) -> None:
+        """No sandboxed tools yet: the catalog block is still returned, empty, so its first content can be appended."""
         toolset = CodeModeToolset(wrapped=_build_function_toolset(), tool_selector='all', dynamic_catalog=True)
         ctx = build_run_context(None)
         tools = await toolset.get_tools(ctx)
@@ -3715,7 +3715,9 @@ class TestDynamicCatalog:
         description = tools['run_code'].tool_def.description
         assert description is not None
         assert 'sandboxed environment' in description
-        assert await toolset.get_instructions(ctx) is None
+        assert await toolset.get_instructions(ctx) == InstructionPart(
+            content='', dynamic=True, name='catalog', on_change='append'
+        )
 
     async def test_search_addendum_stays_in_description(self) -> None:
         """The (cache-stable) search addendum stays in `run_code.description` even in dynamic mode."""
@@ -4458,6 +4460,48 @@ class TestDynamicCatalog:
             if isinstance(p, ToolReturnPart) and p.tool_name == 'run_code'
         ]
         assert run_code_returns == ['Sunny in Paris.']
+
+    @pytest.mark.parametrize('reveal', ['search_tools', 'load_capability'])
+    async def test_first_sandboxed_tool_is_appended_to_an_empty_catalog(self, reveal: str) -> None:
+        """A run that starts with nothing in `run_code` still appends the catalog when its first function appears.
+
+        The empty catalog block is part of the run's first instructions, where it renders as nothing, so
+        the first discovery appends it like any later one instead of adding it to the instructions.
+        """
+        requests: list[str | None] = []
+        reveal_call = (
+            ToolCallPart('search_tools', {'queries': ['forecast']})
+            if reveal == 'search_tools'
+            else ToolCallPart('load_capability', {'id': 'weather'})
+        )
+        script = [reveal_call, ToolCallPart('run_code', {'code': "await forecast(city='Paris')"}), TextPart('done')]
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(info.instructions)
+            return ModelResponse(parts=[script[len(requests) - 1]])
+
+        forecast_tool = Tool(_forecast, name='forecast', defer_loading=reveal == 'search_tools')
+        weather: AbstractCapability[object] = (
+            ToolSearch[object](strategy='keywords')
+            if reveal == 'search_tools'
+            else Toolset[object](
+                FunctionToolset([forecast_tool]), id='weather', description='Weather tools', defer_loading=True
+            )
+        )
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            instructions='Be brief.',
+            tools=[forecast_tool] if reveal == 'search_tools' else [],
+            capabilities=[weather, CodeMode[object](tools=['forecast'], dynamic_catalog=True)],
+        )
+        result = await agent.run('Weather in Paris?')
+
+        assert result.output == 'done'
+        assert len(set(requests)) == 1
+        assert 'code_mode' not in (requests[0] or '')
+        deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
+        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
+        assert deltas[0].content is not None and 'async def forecast' in deltas[0].content
 
     async def test_loaded_capability_tools_are_appended_to_the_catalog_not_declared(self) -> None:
         """Loading a deferred capability makes its tools callable in `run_code` without changing the tools sent."""
