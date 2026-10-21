@@ -5028,15 +5028,15 @@ recent
         assert roles == ['user', 'assistant', 'user']
         assert body['messages'][1]['content'][0]['type'] == 'thinking'
 
-    async def test_a_legacy_summary_in_the_kept_tail_is_replaced(self):
+    @pytest.mark.parametrize('with_user_turn', [True, False])
+    async def test_a_legacy_summary_in_the_kept_tail_is_replaced(self, with_user_turn: bool):
         """An earlier release's system-prompt summary the cutoff keeps is superseded, not left in system voice."""
         prompts: list[str] = []
         comp = SummarizingCompaction(
             model=_recording_summarizer(prompts, output='NEW'), max_messages=3, keep_messages=3
         )
-        legacy = ModelRequest(
-            parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}OLD'), UserPromptPart(content='keep me')]
-        )
+        user_turn = [UserPromptPart(content='keep me')] if with_user_turn else []
+        legacy = ModelRequest(parts=[SystemPromptPart(content=f'{_SUMMARY_PREFIX}OLD'), *user_turn])
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), legacy, _assistant('c'), _user('d')]
         result = await comp.compact(messages, _make_ctx(messages))
 
@@ -5047,7 +5047,7 @@ recent
             if isinstance(message, ModelRequest)
             for part in message.parts
         )
-        assert 'keep me' in _user_texts(result)
+        assert ('keep me' in _user_texts(result)) == with_user_turn
         assert _summary_text(result) == 'NEW'
 
     async def test_a_summary_saved_by_an_earlier_release_anchors_the_next_one(self):
