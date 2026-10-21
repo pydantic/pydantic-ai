@@ -61,7 +61,7 @@ class LogfireMCP(AbstractCapability[AgentDepsT]):
     client: MCPToolsetClient | None = field(default=None, repr=False)
     """Your own MCP client or transport, for full control of the connection.
 
-    It cannot be combined with `auth` or a `url` other than the default.
+    It cannot be combined with a non-empty `auth` or a `url` other than the default.
     """
     url: str = LOGFIRE_US_MCP_URL
     """Hosted US, hosted EU, or self-hosted MCP endpoint. The API key is sent to it as a bearer token."""

@@ -124,7 +124,7 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` or a `url` other than the default raises an error. `read_only` and `include_instructions` still apply.
+Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with a non-empty `auth` or a `url` other than the default raises an error. `read_only` and `include_instructions` still apply.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](../capabilities/prefix-tools.md).
 
