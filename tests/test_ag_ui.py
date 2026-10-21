@@ -9074,12 +9074,12 @@ async def test_deferred_tool_results_none_when_sdk_lacks_interrupts(monkeypatch:
 
 
 @pytestmark_interrupts
-async def test_resume_well_formed_but_nonexistent_interrupt_id_is_noop() -> None:
-    """A well-formed `int-` id that binds to no pending approval is accepted, not an error.
+async def test_resume_well_formed_but_nonexistent_interrupt_id_maps_to_itself() -> None:
+    """A well-formed `int-` id that binds to no pending approval is accepted by the mapping.
 
     Unlike a missing prefix (which raises `UserError`), a correctly-prefixed id that matches no
-    pending call maps to its own stripped `tool_call_id` — never to a different pending call — so
-    the agent simply finds no call to resolve and the entry is a harmless no-op.
+    pending call maps to its own stripped `tool_call_id` — never to a different pending call. The
+    run then rejects that result; `test_resume_unmatched_prefixed_id_fails_the_whole_run` pins it.
     """
     agent = Agent(model=TestModel())
     run_input = RunAgentInput(
@@ -9279,8 +9279,8 @@ async def test_resume_one_invalid_payload_fails_the_whole_run() -> None:
 async def test_resume_unmatched_prefixed_id_fails_the_whole_run() -> None:
     """A well-prefixed id that binds to no pending call still fails the run.
 
-    The `resume[]` mapping itself accepts the entry — the no-op mapping test above pins
-    that — but at run level the entry contributes an approval for a tool call the history
+    The `resume[]` mapping itself accepts the entry —
+    `test_resume_well_formed_but_nonexistent_interrupt_id_maps_to_itself` pins that — but at run level the entry contributes an approval for a tool call the history
     never proposed, so the run ends in a `RUN_ERROR` and the valid sibling approval is
     not applied either.
     """
