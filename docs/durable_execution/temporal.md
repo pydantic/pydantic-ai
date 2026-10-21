@@ -258,6 +258,58 @@ Temporal stores workflow-side workspace call arguments (commands, `env=`, file c
 Keep secrets in the workspace capability's `env=` or use them inside a tool rather than passing
 secrets as workflow-side arguments; use a [payload codec](#large-payloads) to protect history.
 
+### Harness Workspace Capabilities {#harness-workspace-capabilities}
+
+[Harness](../harness/index.md) workspace capabilities such as `Coder`, `Shell` and `FileSystem` work in a
+Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capabilities) shows what works
+on each engine. Three things are specific to Temporal.
+
+**Live events.** Tools that write files ask for approval and report the write from the workflow, so
+`FileChangeRequestEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
+listeners as they happen. Other tools run in activities and their events are not delivered: `FileReadEvent`,
+`DirectoryListedEvent` and `FilesSearchedEvent` from the file tools, and `CommandStartedEvent`,
+`CommandOutputEvent` and `CommandFinishedEvent` from `shell`
+([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)). The tools still work and return their
+results. When Temporal replays a workflow, approval listeners run again, so make their external effects
+idempotent.
+
+**Delegation.** `Coder`'s delegate, `self`, runs in the workflow, so the child's model requests and tools
+become activities of the same agent. Sub-agents read from `agent_folders` are not supported: reading the
+folders at run start adds a toolset at run time, which Temporal refuses, so pass
+`SubAgents(include_self=True, agent_folders=None)` when you compose `SubAgents` yourself.
+
+#### Command timeouts {#harness-command-timeouts}
+
+An activity has 60 seconds by default. `run_command` and `shell` get 300 seconds, which covers the `shell`
+tool's 270-second foreground wait. A `run_command` given a longer timeout, through
+`Shell(default_timeout=...)` or the model's `timeout_seconds`, needs a longer activity. Set it with
+`SetToolMetadata` in the agent's capabilities:
+
+```python
+from datetime import timedelta
+
+from pydantic_ai_harness.coder import Coder
+from temporalio.workflow import ActivityConfig
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='coder',
+    capabilities=[
+        LocalWorkspace('.'),
+        Coder(),
+        TemporalDurability(),
+        SetToolMetadata(tools=['run_command'], temporal=ActivityConfig(start_to_close_timeout=timedelta(minutes=30))),
+    ],
+)
+```
+
+For longer work, use `start_command` or `shell(mode='background')`, which return while the command keeps
+running.
+
 ### Capabilities at Runtime
 
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
@@ -353,14 +405,20 @@ from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from pydantic_ai import Agent
-    from pydantic_ai.durable_exec.temporal import AgentEventStream, TemporalDurability
+    from pydantic_ai.durable_exec.temporal import (
+        AgentEventStream,
+        PydanticAIWorkflow,
+        TemporalDurability,
+    )
 
 durability = TemporalDurability(event_stream_topic='agent-events')
 agent = Agent('{{ openai:medium }}', name='assistant', capabilities=[durability])
 
 
 @workflow.defn
-class AssistantWorkflow:
+class AssistantWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]  # registers the agent's activities with the worker
+
     @workflow.init
     def __init__(self, prompt: str) -> None:
         self.events = AgentEventStream()
@@ -373,7 +431,8 @@ class AssistantWorkflow:
 ```
 
 A consumer that holds only a workflow handle then observes the run as it happens, with
-[`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events]:
+[`stream_agent_events()`][pydantic_ai.durable_exec.temporal.TemporalDurability.stream_agent_events].
+This and the following snippets continue the workflow module above (they use its `agent`, `durability` and workflow classes) and take a `client` connected with [`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin], as in the [first example](#durable-agent):
 
 ```python {title="temporal_workflow_streams_consumer.py" test="skip" lint="skip"}
 from uuid import uuid4
@@ -405,7 +464,9 @@ The adapter's two jobs split across the boundary: the HTTP handler turns the req
 
 ```python {title="temporal_workflow_streams_ui_workflow.py" test="skip" lint="skip"}
 @workflow.defn
-class ChatWorkflow:
+class ChatWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
     @workflow.init
     def __init__(self, body: bytes) -> None:
         self.events = AgentEventStream()
@@ -583,7 +644,7 @@ from temporalio import workflow
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ResolveModelId
-from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.models import Model, ModelResolutionContext, infer_model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
@@ -620,7 +681,9 @@ agent = Agent(
 
 
 @workflow.defn
-class MultiModelWorkflow:
+class MultiModelWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
     @workflow.run
     async def run(self, prompt: str, use_reasoning: bool, use_fast: bool) -> str:
         if use_reasoning:
@@ -723,6 +786,26 @@ You can customize Temporal's retry policy using [activity configuration](#activi
 An exception a tool raises reaches workflow code as Temporal's `ActivityError`, with the original exception's class name in `cause.type`.
 
 A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] a model request raises, such as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], reaches workflow code as itself, with its fields, rather than as an `ActivityError`. A field value that isn't JSON-serializable, like an unusual response body, crosses as its string form. This applies to Pydantic AI's own error classes: a subclass you define still arrives as an `ActivityError`. That's what lets `on_model_request_error` hooks and other workflow-side code that handles model errors work the same with and without Temporal. Temporal still retries the failed activity according to its retry policy before the error reaches the workflow, and the original `ActivityError` is the rebuilt error's `__cause__`.
+
+A retry policy and workflow code see a model error differently. Workflow code and capabilities get the [error category](../models/overview.md#handling-model-api-errors) class, so `except ModelTimeoutError` or `except ModelRateLimitError` works in a workflow. A retry policy's `non_retryable_error_types` only sees the error's `ApplicationError` type, which is `ModelHTTPError` for an error that has an HTTP status and `ModelAPIError` for any other category, the class it's raised as apart from its category. So a policy that names a category, like `'ModelRateLimitError'`, matches nothing. A policy that names `'ModelHTTPError'` or `'ModelAPIError'` matches what it did before the categories existed, except for errors that now get the HTTP status the provider uses for the same error, and so are now also raised as a `ModelHTTPError`: Bedrock `ConverseStream` exception events (e.g. a throttling event as a 429), error objects inside an OpenAI-compatible or OpenAI Responses stream, Hugging Face Text Generation Inference's in-stream `OverloadedError`, and xAI's `INVALID_ARGUMENT` (as a 400). These now report `ModelHTTPError` instead of `ModelAPIError`.
+
+To stop Temporal from retrying an error category that a retry can't fix, like [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] or [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError], list its class in `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A model error that's an instance of a listed class fails the model activity on its first attempt, whatever the retry policy says, and still reaches workflow code as its own class. Because classes match with `isinstance`, listing [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] also covers [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]. The `ApplicationError` type the retry policy sees doesn't change.
+
+```python {title="temporal_non_retryable_model_errors.py"}
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.exceptions import ModelContextWindowExceededError, ModelQuotaExceededError
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='assistant',
+    capabilities=[
+        TemporalDurability(
+            non_retryable_model_errors=[ModelContextWindowExceededError, ModelQuotaExceededError],
+        ),
+    ],
+)
+```
 
 ## Observability with Logfire
 

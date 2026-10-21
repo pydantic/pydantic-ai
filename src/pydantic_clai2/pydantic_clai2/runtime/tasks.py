@@ -2,10 +2,12 @@
 
 import copy
 import time
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+import anyio
 from rich.console import Console
 from rich.text import Text
 
@@ -106,35 +108,18 @@ def resume_prompt(record: DelegationTask) -> str:
     )
 
 
-class Tasks:
-    """One shell's task display, and the `TaskCatalog` plugins reach as `host.tasks`.
+class TaskRouter:
+    """The process's one delegated-task owner, and the routing of its events to each live session's `Tasks`.
 
-    Execution and histories belong to the harness owner.
+    Every task's progress is kept here, so a session that switches back to a conversation sees its tasks'
+    progress. Plugin events, wake-ups and lifecycle rows go only to the session holding the task's conversation.
     """
 
-    def __init__(
-        self,
-        *,
-        console: Console,
-        conversation_id: Callable[[], str],
-        directory: Path | None,
-        step_store: StepStore | None = None,
-        fire: Callable[[TaskEvent], Awaitable[None]] | None = None,
-        listening: Callable[[], bool] = lambda: True,
-        send_input: Callable[[str], None] | None = None,
-    ) -> None:
-        """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
-
-        `send_input` enters `resume`'s prompt.
-        """
-        self.presentation = TaskPresentation()
-        self.console = console
-        self.conversation_id = conversation_id
-        self.fire = fire
-        self.listening = listening
-        self.send_input = send_input
-        self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
-        self.wake: Callable[[], None] | None = None
+    def __init__(self, *, directory: Path | None, step_store: StepStore | None = None) -> None:
+        """Save tasks in `directory`, and capture their steps in `step_store`; neither is kept without one."""
+        self.views: list[Tasks] = []
+        self.started: dict[str, Tasks] = {}
+        """The session each task last started or resumed in, whose plugins it runs with after that session moves on."""
         self.progress: dict[str, Status] = {}
         self.partial: dict[str, str] = {}
         self.partial_truncated: set[str] = set()
@@ -150,12 +135,39 @@ class Tasks:
                 'General-purpose work uses self (alias general-purpose) and inherits your tools and guardrails.'
             ),
         )
+        self._users = 0
+        self._lock = anyio.Lock()
+        self._stack = AsyncExitStack()
 
-    def records(self) -> tuple[DelegationTask, ...]:
-        """Only children of the active conversation, including its descendants."""
-        return tuple(r for r in self.owner.records.values() if r.conversation_id == self.conversation_id())
+    def view(self, conversation_id: str) -> 'Tasks | None':
+        """The live session's `Tasks` holding `conversation_id`, if one does."""
+        return next((view for view in self.views if view.conversation_id() == conversation_id), None)
+
+    @asynccontextmanager
+    async def opened(self, *, view: 'Tasks') -> AsyncGenerator[DelegationTasks]:
+        """Open the owner for the first session and close it after the last, cancelling the tasks still running.
+
+        A session's `view` that leaves before the others cancels its own tasks, which run with its plugins.
+        """
+        async with self._lock:
+            if not self._users:
+                await self._stack.enter_async_context(self.owner.opened())
+            self._users += 1
+        try:
+            yield self.owner
+        finally:
+            with anyio.CancelScope(shield=True):
+                async with self._lock:
+                    self._users -= 1
+                    last = not self._users
+                    if last:
+                        await self._stack.aclose()
+                if not last:
+                    for record in [record for record in self.owner.records.values() if view.runs(record)]:
+                        await self.owner.cancel(record.id, user=False)
 
     async def observe(self, update: DelegationTaskEvent) -> None:
+        """Record the task's progress, then tell the session holding its conversation."""
         record, event = update.task, update.event
         progress = self.progress.setdefault(
             record.id,
@@ -179,21 +191,105 @@ class Tasks:
             self.partial_truncated.add(record.id)
         if event is not None:
             progress.observe(event)
+        view = self.view(record.conversation_id)
+        # A child runs with its parent's plugins; a resumed task, with those of the session that resumed it.
+        if record.parent_id is not None and (parent := self.started.get(record.parent_id)) is not None:
+            self.started.setdefault(record.id, parent)
+        elif view is not None and isinstance(event, DelegationStartEvent):
+            self.started[record.id] = view
+        elif view is not None:
+            self.started.setdefault(record.id, view)
+        if record.status == 'finished':
+            # Resuming it starts it again, and records its session anew.
+            self.started.pop(record.id, None)
+        if view is not None:
+            await view.deliver(update)
+
+
+class Tasks:
+    """One session's view of the process's tasks, and the `TaskCatalog` plugins reach as `host.tasks`.
+
+    Execution and histories belong to the harness owner, which `router` shares between sessions.
+    """
+
+    def __init__(
+        self,
+        *,
+        console: Console,
+        conversation_id: Callable[[], str],
+        router: TaskRouter | None = None,
+        directory: Path | None = None,
+        step_store: StepStore | None = None,
+        fire: Callable[[TaskEvent], Awaitable[None]] | None = None,
+        listening: Callable[[], bool] = lambda: True,
+        send_input: Callable[[str], None] | None = None,
+    ) -> None:
+        """`fire` tells plugins about the current conversation's tasks, while `listening` says one handles them.
+
+        Without a `router`, it gets one of its own over `directory` and `step_store`. `send_input` enters
+        `resume`'s prompt.
+        """
+        self.presentation = TaskPresentation()
+        self.console = console
+        self.conversation_id = conversation_id
+        self.router = router or TaskRouter(directory=directory, step_store=step_store)
+        self.router.views.append(self)
+        self.fire = fire
+        self.listening = listening
+        self.send_input = send_input
+        self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
+        self.wake: Callable[[], None] | None = None
+
+    @property
+    def owner(self) -> DelegationTasks:
+        return self.router.owner
+
+    @property
+    def progress(self) -> dict[str, Status]:
+        return self.router.progress
+
+    @property
+    def partial(self) -> dict[str, str]:
+        return self.router.partial
+
+    @property
+    def partial_truncated(self) -> set[str]:
+        return self.router.partial_truncated
+
+    def records(self) -> tuple[DelegationTask, ...]:
+        """Only children of the active conversation, including its descendants."""
+        return tuple(r for r in self.owner.records.values() if r.conversation_id == self.conversation_id())
+
+    def runs(self, record: DelegationTask) -> bool:
+        """Whether `record` runs for this session: one it started, or one of its conversation no session started."""
+        starter = self.router.started.get(record.id)
+        if starter is None:
+            return record.status == 'running' and record.conversation_id == self.conversation_id()
+        return record.status == 'running' and starter is self
+
+    def running(self) -> bool:
+        """Whether a task of this session still runs."""
+        return any(self.runs(record) for record in self.owner.records.values())
+
+    async def observe(self, update: DelegationTaskEvent) -> None:
+        """What the owner tells the router, which reaches this view when it holds the task's conversation."""
+        await self.router.observe(update)
+
+    async def deliver(self, update: DelegationTaskEvent) -> None:
+        """Tell plugins, wake the prompt, and show lifecycle rows for a task of the active conversation."""
+        record, event = update.task, update.event
         # It runs for every event of the child's stream, so build nothing that no plugin reads.
-        if self.fire is not None and record.conversation_id == self.conversation_id() and self.listening():
+        if self.fire is not None and self.listening():
             await self.fire(TaskEvent(task=self.info(record), event=event))
         if (
             record.status == 'finished'
             and record.background
             and record.parent_id is None
             and not record.delivered
-            and record.conversation_id == self.conversation_id()
             and self.wake is not None
         ):
             self.wake()
         if not isinstance(event, (DelegationStartEvent, DelegationEndEvent)):
-            return
-        if record.conversation_id != self.conversation_id():
             return
         if self.sink is not None:
             await self.sink(event)
@@ -298,7 +394,9 @@ class Tasks:
                 usage.requests += 1
             else:
                 # As a run counts them: the calls that returned, not those retried or still waiting.
-                usage.tool_calls += sum(isinstance(part, ToolReturnPart) for part in message.parts)
+                usage.tool_calls += sum(
+                    isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in message.parts
+                )
         return TaskInfo(
             id=record.id,
             parent_id=record.parent_id,

@@ -883,6 +883,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Safe to call directly from async tools, sync tools running in another
         thread, and capability hooks.
 
+        Content made of parts and enqueued with `priority='asap'` during a tool call (from the tool or
+        a capability hook wrapping the call) goes into the
+        [`ModelRequest`][pydantic_ai.messages.ModelRequest] that carries that call's
+        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it, when that request is the
+        next one sent. Anything else is added to the history as its own messages, and so is content
+        enqueued after it.
+
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
@@ -896,7 +903,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end). In a realtime session, an active
+                    or a redirect if the agent would otherwise end). From a `before_model_request`
+                    hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
@@ -919,7 +927,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`enqueue` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
             )
-        pending = PendingMessage.from_content(*content, priority=priority)
+        pending = PendingMessage.from_content(
+            *content,
+            priority=priority,
+            _tool_call=None if self.tool_call_id is None else (self.tool_call_id, self.run_step),
+        )
         if pending is None:
             return None
         self.pending_messages.append(pending)

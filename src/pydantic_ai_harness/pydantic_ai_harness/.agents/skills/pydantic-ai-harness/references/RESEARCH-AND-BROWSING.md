@@ -30,7 +30,8 @@ class also needs its own `id=`, since each carries a default one), or use `WebSe
 
 To use the provider's native search where the model has one and Exa or You.com elsewhere, set
 `ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
-native search; `get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
+native search, or whose native search can't apply the `include_domains`/`exclude_domains` filters, like Gemini's;
+`get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
 `WebSearch`'s native options.
 
 ## Researcher

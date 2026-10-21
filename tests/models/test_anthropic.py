@@ -29,8 +29,10 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -39,7 +41,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -100,6 +103,7 @@ from ..conftest import (
     RequestCapture,
     TestEnv,
     iter_message_parts,
+    legacy_retry_prompt_part,
     message,
     raise_if_exception,
     try_import,
@@ -500,6 +504,7 @@ async def test_async_request_thinking_tokens(allow_model_requests: None):
             requests=1,
             input_tokens=3,
             output_tokens=100,
+            output_reasoning_tokens=40,
             details={'input_tokens': 3, 'output_tokens': 100, 'thinking_tokens': 40},
             cost=Decimal('0.0004024'),
         )
@@ -1112,55 +1117,6 @@ def test_anthropic_tool_search_defaults_to_bm25_on_non_legacy_bedrock_clients():
         AsyncAnthropicBedrockMantle, 'https://bedrock-mantle.us-east-1.api.aws', ToolSearchTool()
     )
     assert param == {'type': 'tool_search_tool_bm25_20251119', 'name': 'tool_search_tool_bm25'}
-
-
-@pytest.mark.parametrize(
-    'cache_value,expected_ttl',
-    [
-        pytest.param(True, '5m', id='default-5m'),
-        pytest.param('1h', '1h', id='custom-1h'),
-    ],
-)
-@pytest.mark.parametrize(
-    'client_cls,base_url',
-    [
-        pytest.param(AsyncAnthropicBedrock, 'https://bedrock.amazonaws.com', id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, 'https://us-central1-aiplatform.googleapis.com', id='vertex'),
-    ],
-)
-async def test_anthropic_cache_fallback_on_unsupported_clients(
-    allow_model_requests: None,
-    cache_value: bool | Literal['1h'],
-    expected_ttl: str,
-    client_cls: type[Any],
-    base_url: str,
-):
-    """Test that anthropic_cache falls back to per-block caching on Bedrock and Vertex.
-
-    On these platforms the top-level cache_control parameter is not supported,
-    so per-block cache_control is applied to the last user message instead.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-
-    c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
-
-    mock_client = MagicMock()
-    mock_client.timeout = DEFAULT_TIMEOUT
-    mock_client.__class__ = client_cls
-    mock_client.base_url = base_url
-    mock_client.beta.messages.create = AsyncMock(return_value=c)
-
-    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
-    agent = Agent(model, model_settings=AnthropicModelSettings(anthropic_cache=cache_value))
-
-    result = await agent.run('Hello')
-    assert result.output == 'Response'
-
-    call_kwargs = mock_client.beta.messages.create.call_args.kwargs
-    assert call_kwargs['cache_control'] is OMIT
-    last_user_msg = call_kwargs['messages'][-1]
-    content = last_user_msg['content']
-    assert content[-1]['cache_control'] == {'type': 'ephemeral', 'ttl': expected_ttl}
 
 
 @pytest.mark.parametrize(
@@ -2594,9 +2550,9 @@ async def test_earlier_cache_breakpoints_raised_in_count_tokens(allow_model_requ
 @pytest.mark.parametrize(
     ('client_cls', 'expected_ttls'),
     [
-        # Bedrock and Vertex don't take the top-level `cache_control`, so it goes on the last block instead.
+        # The legacy Bedrock client doesn't take the top-level `cache_control`, so it goes on the last block instead.
         pytest.param(AsyncAnthropicBedrock, ['1h', '1h'], id='bedrock'),
-        pytest.param(AsyncAnthropicVertex, ['1h', '1h'], id='vertex'),
+        pytest.param(AsyncAnthropicVertex, ['1h', '1h (automatic)'], id='vertex'),
         pytest.param(AsyncAnthropicFoundry, ['1h', '1h (automatic)'], id='foundry'),
     ],
 )
@@ -2891,11 +2847,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -3651,9 +3609,12 @@ def test_model_error_reported_in_stream(
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     with pytest.raises(expected) as exc_info:
         Agent(m).run_sync('hello')
-    assert type(exc_info.value) is expected
+    assert isinstance(exc_info.value, expected)
     if isinstance(exc_info.value, ModelHTTPError):
         assert exc_info.value.status_code == 529
+        assert isinstance(exc_info.value, ModelOverloadedError)
+    else:
+        assert type(exc_info.value) is ModelAPIError
 
 
 @pytest.mark.parametrize(
@@ -3752,7 +3713,8 @@ async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> 
             async with agent.run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'connection reset'
     assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
@@ -4257,6 +4219,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                         'output_tokens': 277,
                         'thinking_tokens': 32,
                     },
+                    output_reasoning_tokens=32,
                     cost=Decimal('0.004284'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4316,6 +4279,7 @@ I should provide practical advice for crossing a river safely.\
                         'output_tokens': 440,
                         'thinking_tokens': 98,
                     },
+                    output_reasoning_tokens=98,
                     cost=Decimal('0.007521'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4363,7 +4327,7 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
                 'content': [
                     {
                         'text': """\
-<assistant_thinking provider="anthropic">
+<assistant_thinking>
 I was interrupted mid-thought
 </assistant_thinking>\
 """,
@@ -4525,6 +4489,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 91,
                         'thinking_tokens': 42,
                     },
+                    output_reasoning_tokens=42,
                     cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -4967,6 +4932,7 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                         'output_tokens': 274,
                         'thinking_tokens': 160,
                     },
+                    output_reasoning_tokens=160,
                     cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
@@ -6414,6 +6380,7 @@ def test_streaming_usage_thinking_tokens():
             input_tokens=1,
             output_tokens=5,
             details={'input_tokens': 1, 'output_tokens': 5, 'thinking_tokens': 3},
+            output_reasoning_tokens=3,
         )
     )
 
@@ -9872,6 +9839,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 113,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015801'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -9941,6 +9909,7 @@ async def test_anthropic_code_execution_tool(
                         'output_tokens': 103,
                         'thinking_tokens': 18,
                     },
+                    output_reasoning_tokens=18,
                     cost=Decimal('0.015615'),
                 ),
                 model_name='claude-sonnet-4-6',
@@ -13834,7 +13803,7 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(content='Retry the final output.'),
+                    RetryFeedbackPart(content='Retry the final output.', retry=RetryInfo(cause='model_retry')),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     UserPromptPart(content='Continue.'),
                 ]
@@ -13846,7 +13815,9 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
     assert [[type(part) for part in message.parts] for message in messages] == [
         [ToolReturnPart],
         [ToolSearchCallPart],
-        [ToolSearchReturnPart, RetryPromptPart],
+        # The feedback projects to the `<system>`-tagged `UserPromptPart` this profile gives a
+        # mid-conversation system prompt; what this test pins is where it lands, not its voice.
+        [ToolSearchReturnPart, UserPromptPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart, UserPromptPart],
     ]
@@ -13863,7 +13834,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='x', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(tool_name='list_maps', content='retry', tool_call_id='list_maps'),
+                    ToolReturnPart(tool_name='list_maps', content='retry', tool_call_id='list_maps', outcome='retried'),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     ToolReturnPart(tool_name='status', content='ready', tool_call_id='status'),
                     UserPromptPart(content='continue'),
@@ -13874,7 +13845,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
     )
 
     assert [[type(part) for part in message.parts] for message in messages] == [
-        [ToolReturnPart, RetryPromptPart, ToolReturnPart],
+        [ToolReturnPart, ToolReturnPart, ToolReturnPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart],
         [ToolSearchCallPart],
@@ -13974,8 +13945,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -14055,8 +14029,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -14129,17 +14106,18 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
-    assert request_capture.body()['system'] == snapshot(
-        [
-            {
-                'type': 'text',
-                'text': """\
+    assert request_capture.body()['system'] == [
+        {
+            'type': 'text',
+            'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-            }
-        ]
-    )
+        }
+    ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
     assert len(request_bodies) >= 2
@@ -14603,6 +14581,9 @@ async def test_anthropic_cache_write_ttl_pricing(
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     assert response.usage == expected_usage
+    # The one-hour writes are a typed subset of all cache writes, and the run total carries them too.
+    assert 0 < response.usage.cache_write_1h_tokens < response.usage.cache_write_tokens
+    assert result.usage.cache_write_1h_tokens == response.usage.cache_write_1h_tokens
 
 
 @pytest.mark.vcr()
@@ -15136,7 +15117,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='search_knowledge',
                     tool_call_id='toolu_123',
                     content='Invalid JSON: expected `,` or `}` at line 1 column 99',
@@ -15169,7 +15150,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',
                         tool_name='search_knowledge',
                         tool_call_id='toolu_123',
@@ -15230,11 +15211,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     {
                         'tool_use_id': 'toolu_123',
                         'type': 'tool_result',
-                        'content': """\
-Invalid JSON: expected `,` or `}` at line 1 column 99
-
-Fix the errors and try again.\
-""",
+                        'content': [{'text': 'Invalid JSON: expected `,` or `}` at line 1 column 99', 'type': 'text'}],
                         'is_error': True,
                     },
                     {'text': 'Please fix the tool call and try again.', 'type': 'text'},
@@ -16371,9 +16348,9 @@ I'm here to help! How can I assist you today?\
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
