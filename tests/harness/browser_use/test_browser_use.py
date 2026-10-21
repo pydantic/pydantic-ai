@@ -1421,7 +1421,7 @@ class TestSensitiveDataSafety:
         )
 
     async def test_url_encoded_secret_values_are_redacted(self, kill_calls: list[BrowserSession]) -> None:
-        """A blocked `search` reports the URL it built, with the query encoded by `quote_plus`."""
+        """A blocked `search` reports the URL it built, with a `quote_plus` or `quote` encoding of the value."""
         history = _FakeHistory(
             step_errors=[
                 'Failed to search duckduckgo for "p@ss word": Navigation to non-allowed URL: '
@@ -1442,6 +1442,18 @@ class TestSensitiveDataSafety:
             'https://duckduckgo.com/?q=<secret>x_password</secret>; '
             'Navigation to non-allowed URL: https://evil.example/<secret>x_password</secret>).'
         )
+
+    async def test_secret_with_a_lone_surrogate_is_redacted(self, kill_calls: list[BrowserSession]) -> None:
+        """`os.environ` decodes invalid UTF-8 as lone surrogates, which have no URL encoding."""
+        history = _FakeHistory(step_errors=['typed hunter\udcff2'])
+        capability = BrowserUse[None](
+            sensitive_data={'https://safe.example': {'x_password': 'hunter\udcff2'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert result == 'The browser agent stopped without producing a result (typed <secret>x_password</secret>).'
 
     async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
         """JSON escapes a `"` in the value, so the escaped form is redacted too."""

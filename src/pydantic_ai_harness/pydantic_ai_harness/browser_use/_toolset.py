@@ -286,8 +286,9 @@ def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None)
             placeholders.setdefault(placeholder, placeholder)
             placeholders.setdefault(value, placeholder)
             placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
-            placeholders.setdefault(quote_plus(value), placeholder)
-            placeholders.setdefault(quote(value), placeholder)
+            # `surrogatepass` keeps a lone surrogate (as `os.environ` decodes invalid UTF-8) from raising.
+            placeholders.setdefault(quote_plus(value, errors='surrogatepass'), placeholder)
+            placeholders.setdefault(quote(value, errors='surrogatepass'), placeholder)
     return placeholders
 
 
