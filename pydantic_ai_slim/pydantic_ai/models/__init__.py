@@ -537,6 +537,24 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
 
+    retry: int = 0
+    """The number of output retries the run has used before this request step.
+
+    This is what output validators see as [`RunContext.retry`][pydantic_ai.tools.RunContext.retry]. It goes up
+    each time the run asks the model to try again for its output: an output tool's arguments failed validation,
+    an output function or validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], the response had
+    no usable output, or a capability's model request hook raised `ModelRetry`. Steps in between, such as
+    function tool calls, don't reset it, and function tool retries don't count towards it.
+    """
+
+    max_retries: int = 0
+    """The run's output retry budget, as output validators see it in [`RunContext.max_retries`][pydantic_ai.tools.RunContext.max_retries].
+
+    An output tool with its own budget, set with [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput],
+    is limited by that budget instead, while [`retry`][pydantic_ai.models.ModelSelectionContext.retry] still
+    counts the retries of every output.
+    """
+
     usage_limits: UsageLimits | None = None
     """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run, as
     [`RunContext.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] holds them.
