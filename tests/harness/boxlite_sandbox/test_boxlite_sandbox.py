@@ -406,6 +406,34 @@ async def test_a_box_stopped_while_starting_is_unavailable(fake_boxlite: FakeBox
         await attaching
 
 
+async def test_a_box_stopped_again_before_the_retried_command_is_unavailable(
+    fake_boxlite: FakeBoxLite, working_dir: str
+) -> None:
+    backend = BoxLiteSandboxBackend(working_dir=working_dir)
+    box = await backend.get_sandbox()
+    fake_boxlite.stop(box.name)
+
+    def hold_next_exec() -> asyncio.Event:
+        # Each exec waits on the gate that is set when it arrives.
+        fake_boxlite.exec_started.clear()
+        fake_boxlite.exec_gate = gate = asyncio.Event()
+        return gate
+
+    first = hold_next_exec()
+    running = asyncio.create_task(backend.run(['true']))
+    await fake_boxlite.exec_started.wait()  # The command, on the handle the stop invalidated.
+    setup = hold_next_exec()
+    first.set()
+    await fake_boxlite.exec_started.wait()  # The `mkdir` on a new handle.
+    retried = hold_next_exec()
+    setup.set()
+    await fake_boxlite.exec_started.wait()  # The command again, on the new handle.
+    fake_boxlite.stop(box.name)
+    retried.set()
+    with pytest.raises(WorkspaceUnavailableError, match='was stopped while starting'):
+        await running
+
+
 async def test_failed_creation_can_retry(fake_boxlite: FakeBoxLite, working_dir: str) -> None:
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     fake_boxlite.create_error = boxlite.InvalidArgumentError('invalid argument: cpus')

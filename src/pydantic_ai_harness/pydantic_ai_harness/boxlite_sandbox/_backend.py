@@ -496,9 +496,11 @@ class BoxLiteSandboxBackend(WorkspaceBackend, SupportsCommands):
             # `stop()` invalidates every handle to a box for good, but a new one boots it again. The
             # command never started, so it starts on the new handle.
             self._box = None
-            return await self._exec(
-                await self.get_sandbox(), argv, env=env, working_dir=self._working_dir, timeout=timeout
-            )
+            box = await self.get_sandbox()
+            try:
+                return await self._exec(box, argv, env=env, working_dir=self._working_dir, timeout=timeout)
+            except _StaleHandle as error:
+                raise WorkspaceUnavailableError(f'The BoxLite box {box.name!r} was stopped while starting.') from error
 
     async def _exec(
         self,

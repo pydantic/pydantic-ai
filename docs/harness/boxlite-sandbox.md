@@ -238,7 +238,7 @@ BoxLite runs VMs with Apple's Hypervisor framework on macOS and with KVM on Linu
 
 ## Telemetry
 
-`BoxLiteSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the box on the agent run span as `pydantic_ai.workspace.provider` (`boxlite`) and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span. Creating a box also logs `Creating BoxLite box <id>` at INFO on the `pydantic_ai_harness.boxlite_sandbox._backend` logger before the creation starts, so the id is on record even if the run ends before it is stored.
+`BoxLiteSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the box on the agent run span as `pydantic_ai.workspace.provider` (`boxlite`) and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span. Creating a box also logs `Creating BoxLite box <id>` at INFO on the `pydantic_ai_harness.boxlite_sandbox` logger before the creation starts, so the id is on record even if the run ends before it is stored.
 
 ## API reference
 
