@@ -34,6 +34,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
+import re
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
