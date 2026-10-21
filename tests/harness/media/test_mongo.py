@@ -115,9 +115,8 @@ class TestMongoMediaStoreRoundTrip:
 
         Chunk 0 is deleted and re-inserted so that storage order no longer matches
         `n`. Reassembly can then only produce the original bytes by sorting on `n`:
-        the in-memory fake returns insertion order for an unsorted `find`, and the
-        `size_bytes` guard cannot catch a scramble because the total length is
-        unchanged. Real MongoDB gives no order guarantee for an unsorted query.
+        the in-memory fake returns insertion order for an unsorted `find`. Real
+        MongoDB gives no order guarantee for an unsorted query.
         """
         client = _mock_client()
         store = MongoMediaStore(client=client, database='t', chunk_size_bytes=4)
