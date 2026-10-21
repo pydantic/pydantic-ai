@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import posixpath
 import re
@@ -19,7 +20,15 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, on_event
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -56,7 +65,9 @@ from pydantic_ai_harness.filesystem._toolset import (
 )
 from pydantic_ai_harness.shell._toolset import ShellToolset
 
+from ...workspace_fakes import RunOnlyWorkspaceBackend
 from .._tool_calls import call_tool, call_tools
+from .conftest import tools_path
 
 
 class ReadOnlyMount(LocalWorkspaceBackend):
@@ -179,8 +190,9 @@ class FilesystemOnlyWorkspace:
         return await self._local.exists(path)
 
 
-def _reported_hash(result: str) -> str:
+def _reported_hash(result: str | list[str | BinaryContent]) -> str:
     """Extract the content hash a tool reports, from a `[hash:xxxx]` suffix."""
+    assert isinstance(result, str)
     return result.partition('hash:')[2].split()[0].rstrip(']')
 
 
@@ -283,6 +295,18 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
     )
 
 
+def _unhashed_toolset() -> FileSystemToolset[None]:
+    return FileSystemToolset(
+        allowed_patterns=[],
+        denied_patterns=[],
+        max_read_lines=2000,
+        max_list_results=1000,
+        max_search_results=1000,
+        max_find_results=1000,
+        content_hashes=False,
+    )
+
+
 @pytest.fixture
 def outside(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A directory outside every root, holding `secret.txt`."""
@@ -315,6 +339,20 @@ class TestPathSecurity:
         with pytest.raises(ModelRetry, match='leads outside root_dir'):
             await toolset.write_file('escape/new.txt', 'x', workspace=ws)
         assert not (outside / 'new.txt').exists()
+
+    async def test_symlink_to_outside_fails_closed_when_readlink_is_missing(
+        self,
+        toolset: FileSystemToolset[None],
+        fs_root: Path,
+        outside: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        (fs_root / 'escape').symlink_to(outside)
+        path = tools_path(tmp_path_factory.mktemp('bin'), exclude=frozenset({'readlink'}))
+        workspace = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(fs_root, env={'PATH': path}))
+
+        with pytest.raises(ToolFailed, match='readlink'):
+            await toolset.read_file('escape/secret.txt', workspace=workspace)
 
     async def test_symlink_to_a_protected_file_is_protected(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
@@ -370,6 +408,19 @@ class TestPathSecurity:
         assert (
             workspace.realpath_calls == 0
         )  # command-backed search needs no per-result realpath under an unrestricted root
+
+    async def test_root_at_the_filesystem_root_without_patterns_walks_without_resolving_files(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / 'a.txt').write_text('x\n')
+        (tmp_path / 'b.txt').write_text('x\n')
+        toolset = FileSystem[None](root_dir='/', read_only_patterns=[]).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        workspace = CountingWorkspace(tmp_path)
+        # A read-only workspace runs no commands, so the search walks the files itself.
+        result = await toolset.search_files('^x$', workspace=ReadOnlyWorkspace(Workspace(workspace)))
+        assert result == 'a.txt:1:x\nb.txt:1:x'
+        assert workspace.realpath_calls == 1  # the walk's start directory, and no file it reads
 
     async def test_symlinked_working_directory_is_the_default_root(self, tmp_path: Path) -> None:
         (tmp_path / 'real').mkdir()
@@ -708,8 +759,75 @@ class TestReadFile:
 
     async def test_read_binary_file(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.read_file('binary.bin', workspace=ws)
-        assert 'Binary file' in result
-        assert '4 bytes' in result
+        content_hash = hashlib.sha256(b'\x00\x01\x02\x03').hexdigest()[:12]
+        assert result == (
+            f'[binary.bin | application/octet-stream | 4 bytes | hash:{content_hash}]\n'
+            'Binary file; the first bytes in hex:\n'
+            '00000000  00 01 02 03\n'
+        )
+
+    async def test_read_binary_file_previews_only_the_first_bytes(self, tmp_path: Path) -> None:
+        (tmp_path / 'data.zip').write_bytes(bytes(range(100)))
+        toolset = _unhashed_toolset()
+        result = await toolset.read_file('data.zip', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            '[data.zip | application/zip | 100 bytes]\n'
+            'Binary file; the first bytes in hex:\n'
+            '00000000  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\n'
+            '00000010  10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f\n'
+            '00000020  20 21 22 23 24 25 26 27 28 29 2a 2b 2c 2d 2e 2f\n'
+            '00000030  30 31 32 33 34 35 36 37 38 39 3a 3b 3c 3d 3e 3f\n'
+            '... (36 more bytes)\n'
+        )
+
+    async def test_read_binary_file_preview_fits_max_read_chars(self, tmp_path: Path) -> None:
+        (tmp_path / 'data.zip').write_bytes(bytes(range(100)))
+        toolset = FileSystemToolset[None](
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=2000,
+            max_read_chars=400,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            content_hashes=False,
+        )
+        result = await toolset.read_file('data.zip', workspace=LocalWorkspaceBackend(tmp_path))
+        # 400 characters, less the header, the intro and the reserved notice, leave room for two rows.
+        assert result == (
+            '[data.zip | application/zip | 100 bytes]\n'
+            'Binary file; the first bytes in hex:\n'
+            '00000000  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\n'
+            '00000010  10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f\n'
+            '... (68 more bytes)\n'
+        )
+
+    @pytest.mark.parametrize(
+        ('data', 'media_type'),
+        [
+            (b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR', 'image/png'),
+            (b'\xff\xd8\xff\xe0\x00\x10JFIF', 'image/jpeg'),
+            (b'GIF89a\x01\x00\x01\x00', 'image/gif'),
+            (b'RIFF\x24\x00\x00\x00WEBPVP8 ', 'image/webp'),
+            # A PDF often has no null byte near the start, so it is recognized by its signature, not as binary.
+            (b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n', 'application/pdf'),
+        ],
+    )
+    async def test_read_image_or_pdf_returns_the_file(self, tmp_path: Path, data: bytes, media_type: str) -> None:
+        # The bytes decide the media type, not the extension.
+        (tmp_path / 'upload.bin').write_bytes(data)
+        toolset = _unhashed_toolset()
+        result = await toolset.read_file('upload.bin', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [
+            f'[upload.bin | {media_type} | {len(data)} bytes]\n',
+            BinaryContent(data=data, media_type=media_type),
+        ]
+
+    async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
+        (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))
+        toolset = _unhashed_toolset()
+        result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == '[big.png | image/png | 5000008 bytes]\nToo large to view: the limit is 5000000 bytes.\n'
 
     async def test_read_traversal_blocked(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         with pytest.raises(ModelRetry):
@@ -717,14 +835,46 @@ class TestReadFile:
 
 
 class TestWriteFile:
-    async def test_default_patterns_protect_nested_env_and_git(self, fs_root: Path, ws: LocalWorkspaceBackend) -> None:
-        (fs_root / 'subdir' / '.git').mkdir()
+    @pytest.mark.parametrize(
+        'path',
+        [
+            '.env',
+            '.env.local',
+            '.git/config',
+            'server.pem',
+            'deploy.key',
+            'secrets.yaml',
+            'apps/api/.env',
+            'apps/.env.local',
+            'sub/.git/config',
+            'certs/server.pem',
+            'config/deploy.key',
+            'config/secrets.yaml',
+        ],
+    )
+    async def test_default_patterns_protect_files_at_any_depth(
+        self, fs_root: Path, ws: LocalWorkspaceBackend, path: str
+    ) -> None:
+        target = fs_root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('original\n')
         toolset = FileSystem[None]().get_toolset()
         assert isinstance(toolset, FileSystemToolset)
-        for path in ('subdir/.env', 'subdir/.env.local', 'subdir/.git/config'):
-            with pytest.raises(ModelRetry, match='protected'):
-                await toolset.write_file(path, 'secret', workspace=ws)
-            assert not (fs_root / path).exists()
+
+        assert 'original' in await toolset.read_file(path, workspace=ws)
+        with pytest.raises(ModelRetry, match='protected'):
+            await toolset.write_file(path, 'overwritten\n', workspace=ws)
+        assert target.read_text() == 'original\n'
+
+    @pytest.mark.parametrize('path', ['apps/env.example', 'apps/api/prod.env', 'docs/git/config.md'])
+    async def test_default_patterns_leave_lookalikes_writable(
+        self, fs_root: Path, ws: LocalWorkspaceBackend, path: str
+    ) -> None:
+        (fs_root / path).parent.mkdir(parents=True, exist_ok=True)
+        toolset = FileSystem[None]().get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+
+        assert 'Wrote' in await toolset.write_file(path, 'content\n', workspace=ws)
 
     async def test_write_new_file(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
@@ -1261,10 +1411,16 @@ class TestSearchFiles:
         toolset = FileSystem[None](root_dir=fs_root).get_toolset()
         assert isinstance(toolset, FileSystemToolset)
         backend = FailingWorkspace(fs_root, {'read_bytes': WorkspaceError('unreadable')}, where='unreadable.txt')
-        result = await toolset.search_files('needle', workspace=FilesystemOnlyWorkspace(backend))
-        assert 'good.txt:1:needle' in result
-        assert 'large.txt' in result and 'unreadable.txt' in result
-        assert 'skipped' in result
+        # A read-only workspace runs no commands, so the search walks, with the file sizes its listings report.
+        workspace = ReadOnlyWorkspace(Workspace(backend))
+        assert (await toolset.search_files('needle', workspace=workspace)).splitlines() == [
+            'good.txt:1:needle',
+            '[2 files skipped (too large or unreadable): large.txt, unreadable.txt]',
+            '[3 hidden entries omitted; name a hidden path explicitly to include it]',
+        ]
+        assert await toolset.search_files('needle', path='large.txt', workspace=workspace) == (
+            '[1 files skipped (too large or unreadable): large.txt]'
+        )
 
     async def test_search_basic(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('Hello', workspace=ws)
@@ -1444,6 +1600,8 @@ class TestSearchFiles:
         (fs_root / 'escape_link.txt').symlink_to(outside / 'secret.txt')
         (fs_root / 'escape_dir').symlink_to(outside)
         assert await toolset.search_files('escaped', workspace=ws) == 'No matches found.'
+        # A read-only workspace runs no commands, so the search walks the files itself.
+        assert 'escape' not in await toolset.search_files('escaped', workspace=ReadOnlyWorkspace(Workspace(ws)))
 
 
 class TestFindFiles:
@@ -2474,6 +2632,25 @@ class TestWorkspaceBackends:
         workspace = FailingWorkspace(fs_root, {'realpath': PermissionError(errno.EACCES, 'denied')}, where='/subdir')
         assert 'hello.txt' in await toolset.find_files('**/*.txt', workspace=workspace)
 
+    async def test_workspace_failure_resolving_a_subdirectory_is_reported(
+        self, toolset: FileSystemToolset[None], fs_root: Path
+    ) -> None:
+        # Unlike an unresolvable subdirectory, a workspace failure is not skipped as one directory's problem.
+        workspace = FailingWorkspace(fs_root, {'realpath': WorkspaceError('backend refused')}, where='/subdir')
+        with pytest.raises(ToolFailed, match='backend refused'):
+            await toolset.find_files('**/*.txt', workspace=workspace)
+
+    @pytest.mark.parametrize('operation', ['realpath', 'read_bytes'])
+    async def test_file_removed_while_it_is_read_is_not_found(
+        self, toolset: FileSystemToolset[None], operation: str, fs_root: Path
+    ) -> None:
+        # The file goes after the tool named it: before a backend that resolves paths strictly
+        # resolves it, or between the `stat` and the read.
+        missing = FileNotFoundError(errno.ENOENT, 'No such file or directory')
+        workspace = FailingWorkspace(fs_root, {operation: missing}, where='hello.txt')
+        assert await toolset.read_file('hello.txt', workspace=workspace) == 'Path not found: hello.txt'
+        assert await toolset.file_info('hello.txt', workspace=workspace) == 'Path not found: hello.txt'
+
     async def test_unlistable_search_root_is_recoverable(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
         workspace = FailingWorkspace(
             fs_root, {'list_dir': PermissionError(errno.EACCES, 'Permission denied')}, where='/subdir'
@@ -2659,3 +2836,26 @@ class TestUsedAsAToolset:
         )
         with pytest.raises(UserError, match=r'Pass `capabilities=\[FileSystem\(\)\]` rather than its toolset'):
             await agent.run('go')
+
+
+class TestReadFileInARun:
+    async def test_an_image_reaches_the_model_in_the_tool_result(self, tmp_path: Path) -> None:
+        png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
+        (tmp_path / 'chart.png').write_bytes(png)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'chart.png'})])
+            return ModelResponse(parts=[TextPart('seen')])
+
+        agent = Agent(FunctionModel(model), capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()])
+        result = await agent.run('look at the chart')
+        request = result.all_messages()[2]
+        assert isinstance(request, ModelRequest)
+        tool_return = request.parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        content_hash = hashlib.sha256(png).hexdigest()[:12]
+        assert tool_return.content == [
+            f'[chart.png | image/png | {len(png)} bytes | hash:{content_hash}]\n',
+            BinaryContent(data=png, media_type='image/png'),
+        ]

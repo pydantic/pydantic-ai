@@ -49,7 +49,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. Binary files are detected and not dumped. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -118,6 +118,44 @@ These paths can be passed directly to read/write tools. Files outside the
 working directory but inside `root_dir` use `..` components. Containment,
 access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
+
+### Tool kinds
+
+Each tool declares a [tool kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts) in the `file_system`
+namespace, named after the tool: `read_file` has the kind
+`file_system.read_file`, exported as `READ_FILE_KIND`, and likewise
+`WRITE_FILE_KIND`, `EDIT_FILE_KIND`, `LIST_DIRECTORY_KIND`, `SEARCH_FILES_KIND`,
+`FIND_FILES_KIND`, `CREATE_DIRECTORY_KIND`, `FILE_INFO_KIND`, `LIST_FILES_KIND`,
+and `GREP_KIND`. The kind is part of the tool's definition rather than its name,
+so another capability or a history processor can recognize these tools by kind
+instead of comparing tool names. Each kind declares the shape of its tool's
+arguments (`ReadFileArgs`, `WriteFileArgs`, and so on), and a call whose
+arguments fit it is promoted to a typed part (`ReadFileCallPart`,
+`WriteFileCallPart`, and so on) in a run's messages and in a loaded history,
+with the validated arguments as `typed_args`:
+
+```python
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai_harness.filesystem import ReadFileCallPart
+
+
+def paths_read(messages: list[ModelMessage]) -> list[str]:
+    return [
+        args['path']
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ReadFileCallPart) and (args := part.typed_args) is not None
+    ]
+```
+
+`read_file` also has a typed return part, `ReadFileReturnPart`, for a return
+whose outcome is `'success'`, which includes a `Path not found: <path>` result.
+Its `content` is the text with its header, or `[header, BinaryContent]` for an
+image or PDF. The kind declares no content shape, since `ToolKind` takes a class
+and not a union, so `typed_content` is untyped. The other tools return text
+written for the model rather than a format to parse, so their returns stay plain
+`ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
+carry their outcomes as structured data.
 
 ## Events
 
@@ -245,15 +283,28 @@ applies the same rule to absolute symlink targets.
   `root_dir` are still rejected, but a symlink leading outside is not detected,
   and a link to `.env` does not match the patterns. That is exact for storage
   without symlinks, such as an object store.
-- **A guardrail, not isolation.** The checks run before each operation, so a
-  symlink swapped in between the check and the use is not caught, and `Shell`
-  commands ignore `root_dir` entirely. Use a sandbox workspace when the agent or
-  the tree is untrusted.
+- **A guardrail, not isolation.** Containment and allow, deny, and read-only
+  patterns are functional guardrails. `LocalWorkspace` does not establish a
+  security isolation boundary, even with command execution disabled. Bypasses
+  within the workspace process's existing OS authority are correctness bugs.
+  The checks run before each operation, so a symlink swapped between the check
+  and the use is not caught, and `Shell` commands ignore `root_dir` entirely.
+  For isolation, use a sandbox workspace and configure its boundary to protect
+  the required resources. Files inside that boundary are not automatically
+  confidential from the agent.
 - **Bounded walks.** `search_files` and `find_files` stop after 10,000
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.
-- **Binary detection.** `read_file` returns a placeholder instead of dumping
-  binary bytes into the model context.
+- **Binary detection.** `read_file` does not decode binary bytes into the model
+  context. It returns an image (PNG, JPEG, GIF, WebP) or PDF as `BinaryContent`,
+  recognized by its leading bytes rather than its extension, which Pydantic AI
+  sends [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
+  depending on the model. If the model can't take that kind of file (an image on
+  a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
+  the next request, which ends the run
+  ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
+  A file over 5 MB, the strictest mainstream per-image limit, is described
+  instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than silently overwriting newer content.
@@ -295,9 +346,12 @@ need `**`.
 
 A directory pattern also applies to descendants: `denied_patterns=['private']` denies `private/notes.txt` as well as `private`. Read-only directory patterns similarly protect writes below them.
 
-`read_only_patterns` defaults to `**/.git/*`, `**/.env`/`**/.env.*` (at any depth), `*.pem`, `*.key`,
-and `**/secrets*`, and `**/.pydantic-ai-harness/**`, where harness capabilities keep
-their own files (spilled tool output, background job status). Pass an empty list to make every path writable.
+`read_only_patterns` defaults to `**/.git/*`, `**/.env`, `**/.env.*`, `*.pem`, `*.key`,
+`**/secrets*`, and `**/.pydantic-ai-harness/**`, which match at any depth. For example,
+`apps/api/.env` and `sub/.git/config` are protected along with root-level files. Protected paths stay
+readable; add a path to `denied_patterns` to make it unreadable. Harness capabilities keep their own files,
+such as spilled tool output and background job status, under `.pydantic-ai-harness/`. Pass an empty list to
+make every path writable.
 `protected_patterns` is its deprecated name and still works, with a warning.
 
 ### Direct access vs. walkers
@@ -379,7 +433,7 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect. [Durable execution](https://pydantic.dev/docs/ai/harness/durable-execution/) shows an example for each engine and which file events Temporal delivers live.
+`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
 
 ## Further reading
 

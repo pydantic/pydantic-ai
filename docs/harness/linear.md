@@ -20,7 +20,7 @@ Set `LINEAR_ACCESS_TOKEN` to a Linear API key or OAuth access token, or pass `au
 from pydantic_ai import Agent
 from pydantic_ai_harness.linear import Linear
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Linear()])
+agent = Agent('{{ openai:medium }}', capabilities=[Linear()])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -56,7 +56,7 @@ def linear_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.linear_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Linear(auth=linear_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Linear(auth=linear_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only=True` still applies to every run.
@@ -80,7 +80,7 @@ from pydantic_ai_harness.linear import Linear
 
 capability = Linear()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
@@ -90,7 +90,7 @@ Handle the approval requests with the [deferred tools workflow](../deferred-tool
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. With a `client`, `read_only=True` keeps only the tools the server marks as read-only. `include_instructions=False` stops the server's own instructions from reaching the agent.
+Use `auth` in almost every case. Pass `client` only when you need control of the connection itself: your own FastMCP client or transport, for example one with a different authentication scheme, a proxy, or MCP handlers. The client then owns the URL and authentication, so passing `client` together with `auth` raises an error. With a `client`, `read_only=True` keeps only the tools the server marks as read-only. If none are marked, the agent gets no Linear tools and emits an `MCPReadOnlyNoToolsWarning`. `include_instructions=False` stops the server's own instructions from reaching the agent.
 
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections whose tool names overlap, give them distinct `id`s and add [PrefixTools](../capabilities/prefix-tools.md).
 

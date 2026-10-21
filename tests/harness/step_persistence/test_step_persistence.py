@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -819,6 +819,34 @@ class TestStepPersistenceCapability:
         assert {e.run_id for e in events} == {rid}
         assert {e.agent_name for e in events} == {'librarian'}
 
+    async def test_agent_name_falls_back_to_agent_name_without_changing_run_id(self) -> None:
+        """An unset `agent_name` records the running `Agent.name`; the store key stays `ctx.run_id`."""
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(TestModel(), name='librarian', capabilities=[StepPersistence(store=store)])
+
+        result = await agent.run('hello', run_id='ctx-run')
+
+        assert result.run_id == 'ctx-run'
+        record = await store.get_run(run_id='ctx-run')
+        assert record is not None
+        assert record.agent_name == 'librarian'
+        assert {e.agent_name for e in await store.list_events(run_id='ctx-run')} == {'librarian'}
+        snap = await store.latest_snapshot(run_id='ctx-run')
+        assert snap is not None
+        assert snap.agent_name == 'librarian'
+
+    async def test_explicit_agent_name_wins_over_agent_name(self) -> None:
+        store = InMemoryStepStore()
+        agent: Agent[object, str] = Agent(
+            TestModel(), name='librarian', capabilities=[StepPersistence(store=store, agent_name='reader')]
+        )
+
+        await agent.run('hello')
+
+        record = await store.get_run(run_id=await first_run_id(store))
+        assert record is not None
+        assert record.agent_name == 'reader'
+
     async def test_helper_based_continuation_replays_prior_messages(self) -> None:
         """`continue_run(store, run_id=...) -> Agent.run(message_history=...)`."""
         store = InMemoryStepStore()
@@ -1536,8 +1564,8 @@ class TestListRunsChronologicalOrdering:
         """`InMemoryStepStore.list_runs` sorts by `started_at`, not insertion order."""
 
         store = InMemoryStepStore()
-        await store.register_run(RunRecord(run_id='z-newer', started_at=datetime(2026, 5, 24, 12, tzinfo=timezone.utc)))
-        await store.register_run(RunRecord(run_id='a-older', started_at=datetime(2026, 5, 24, 10, tzinfo=timezone.utc)))
+        await store.register_run(RunRecord(run_id='z-newer', started_at=datetime(2026, 5, 24, 12, tzinfo=UTC)))
+        await store.register_run(RunRecord(run_id='a-older', started_at=datetime(2026, 5, 24, 10, tzinfo=UTC)))
         runs = await store.list_runs()
         assert [r.run_id for r in runs] == ['a-older', 'z-newer']
 
@@ -1546,8 +1574,8 @@ class TestListRunsChronologicalOrdering:
 
         store = FileStepStore(tmp_path)
         # `a-new` is lexicographically first but chronologically last.
-        await store.register_run(RunRecord(run_id='z-old', started_at=datetime(2026, 5, 24, 10, tzinfo=timezone.utc)))
-        await store.register_run(RunRecord(run_id='a-new', started_at=datetime(2026, 5, 24, 12, tzinfo=timezone.utc)))
+        await store.register_run(RunRecord(run_id='z-old', started_at=datetime(2026, 5, 24, 10, tzinfo=UTC)))
+        await store.register_run(RunRecord(run_id='a-new', started_at=datetime(2026, 5, 24, 12, tzinfo=UTC)))
         runs = await store.list_runs()
         assert [r.run_id for r in runs] == ['z-old', 'a-new']
 

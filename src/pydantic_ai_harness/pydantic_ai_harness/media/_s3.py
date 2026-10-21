@@ -18,7 +18,7 @@ import hashlib
 import hmac
 import re
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -43,7 +43,7 @@ _META_KEY_RE = re.compile(r'^[a-zA-Z0-9-]+$')
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _hex_sha256(data: bytes) -> str:

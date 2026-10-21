@@ -1,102 +1,8 @@
+version: 1
 interactions:
 - request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '459'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
     method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is 3 + 3?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-      tool_choice:
-        type: auto
-      tools:
-      - description: The final response which ends this conversation
-        input_schema:
-          properties:
-            response:
-              type: integer
-          required:
-          - response
-          type: object
-        name: final_result
     uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1487'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-3e8cd3a191f85164e649abb15ed136da-a02004613e97edce-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      container: null
-      content:
-      - signature: EqMDCpsBCBIYAipAY/HZ32QPRhpUrtbaqIy6f4hQGdWE3CQJ8F0CMJo4GE0OOLj0fWPrGGuwcf/VvkmcO+XklY6EuZ77gZQ+yXQdvDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBv4jc1QYSDIBLMaOjbU85x2gYcBoMno6RvQtsOzsrGnrCIjDU1xrLeGbsfAnRGJp/PnqctQ+Ro5FNgxfZvFOPlhOGk7xt2fKIRhfQUGetXCrZw40qtAFrf+zWEP0BNE5x0Ew7YQXUEY+n6ZmkFzRUjCC90wdU6ADNSw8nsKC2PGZXucoAaL5rr0XEvlF5u9cpej8yTmcDWEZM1KqUr45qJ7H3xyKeGqM9zT5/Cf3lttzb61cpnTWi0Xn0iMUQjebp/JDrq9UJv/ogYztFgALJ1UALYIxoSXLzmv89LK5PtDc770vrgle6FshlObykGuK1czHnlf47GIWyhl7SFL7+4FuR/r5qJU1PQE0YAQ==
-        thinking: |-
-          The user is asking me to calculate 3 + 3, which equals 6.
-
-          I need to use the final_result function to provide this answer. The function expects an integer response.
-        type: thinking
-      - caller:
-          type: direct
-        id: toolu_0177tPGXP4R73VZot3gWRm3n
-        input:
-          response: 6
-        name: final_result
-        type: tool_use
-      diagnostics: null
-      id: msg_011CfR2e4Q15YfukjzbqaYxg
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 597
-        output_tokens: 102
-        output_tokens_details:
-          thinking_tokens: 46
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
     headers:
       accept:
       - application/json
@@ -105,94 +11,298 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '402'
+      - "424"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is 3 + 3?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      output_config:
-        format:
-          schema:
-            additionalProperties: false
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is 3 + 3?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 3000
+        tool_choice:
+          type: auto
+        tools:
+        - name: final_result
+          description: The final response which ends this conversation
+          input_schema:
             properties:
               response:
                 type: integer
             required:
             - response
             type: object
-          type: json_schema
-      stream: false
-      thinking:
-        budget_tokens: 3000
-        type: enabled
-    uri: https://api.anthropic.com/v1/messages?beta=true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '2074'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f41397dc15da252ddce4430dbb0155db-e037c1ee81b229c6-01
+      - 00-f669469f2b147024b85cf33d66c7bb8b-47280bce1096761d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container: null
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3u8e41FfwbazrsCYZx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":597,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking me to calculate "}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"3 + 3,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" which equals"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 6."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" This is a simple"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" arithmetic question"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":".\n\nI need"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" to provide"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the answer"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" using the final"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"_result function,"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" which expects"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" an integer response."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EsADCpsBCBIYAipAMwc0Zz3BxxiA/Y3skLdz4Qg8Um9PtsGQd8ty5E6eNZsMprALFdCn76v0fhpeGR7ICFCDmrV2LKeZBsSRexMMqTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB+c/v1QYSDP1ZhcOkHmIgsLq35hoMosGyQKCLgm9caI7JIjB+jmDrGOqPVPYztztV91FJyvHMdB2P836jgOu/2LQ9zysAnkAjeRbU2H+xww6CBJEq0QFCZTrfHiPzswYV0H6qIbgjw8+Jgjz1QgttPmjeiX0c5wCNykFn+GU+QAMNFncOZ3+uWhU97YGGKpP1F85lEg1o1GrgP42+YxTDKD+nsnJ9mw1tr06y/I/jRWmzApTMWItwCJBwMtb//eI9zVSjfCzMRxu9Ax7jKnetFfmSRWGc0+hrO0FfFVm/8lP13RPTYY/O+5b7DB+z/25KCjoAkvqAw5/MaRmIoOInG7tR4VB0PQ2XHUpR6kcPVt2ErvPRmD5ZP66JxfUhQNuaX0Fw00ZAAhgB"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_013vkiHpHLLkwP4d6sH2xeBK","name":"final_result","input":{},"caller":{"type":"direct"}}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"respo"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nse\": 6}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":597,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":107,"output_tokens_details":{"thinking_tokens":51}}     }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-09-29T16:31:53.385895+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "369"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
       content:
-      - signature: EsAFCpsBCBIYAipAOfgyWVTuZ3AUw8HM+UaZr5G/xLjlnNCReIxEVL+E5nuVWda6jmW8zG/VdzAkfbTSz3++8UQuuYdx4Nre5BMvxzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBw4jc1QYSDAN32J3t6H8vsML4qhoMYKMnY32IE3AIhvo1IjAzl3pzQn0nWKIKQV9BxOWJ/TuGu3TezRC4nr0PA0/toZacPgOSmL4td98BNvGTC6Iq0QNRaRD39dUt93qjuQJ36gUzg3/qPZs3rMUSS57dOs0gtafttY+4QLh5v6+6bWVwSKyWwhhiWSCGIFT/fV3WzXmy8Q/zVqIiTWcz+ytXUgmGYWq55x4zf+Qmm3v+GlaykhGh+1/TuMEa1NqGKBvpUv7b8Anks/vClwtIQpUqVyxvoDRMMLOFpFiY05MKEZAcbPr3mBlggQMUBIPhRCdiXk6zNGsHojg3Tr0DpThuIG1BemqLMU3VuE0IxZhk42Rzc2bOoD0pui3fAaVhV5l7L6dt0KqlEoHOxDywGes0k858UKpM5WXvUkNoguFXrGvWnl0dUTj6Sk36pEFkym3RnoCW66f06+TrTlwnlzENEDqZqQkrPwkWypU8MBDAzCFPPnWBI2NixLh9AdbJwtSgXn9gVDDoGlRbs0hYaQ4kIGWjt8bswhGbnoCM1HSnpFWYGxbDy4GG8pJ9JC3RheTkpb+W0dyQ+L81OgHCX0P0q/M/ulFLxMi09qbgSEgQ12FeHYZ6QBvUTWbV/2c+5NQN5TYUTTZHd3rSuQ5bxHZpEKKU7YbGA7bOD+Rzw0Hra1dztV2aPIFDVM3pvGs8GNb6HadEWJdoUFnfG5/gUPYaTnYophkYAQ==
-        thinking: |-
-          The user is asking me to calculate 3 + 3, which equals 6.
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is 3 + 3?
+            type: text
+        model: claude-sonnet-4-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                response:
+                  type: integer
+              additionalProperties: false
+              required:
+              - response
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 3000
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-57d758e512a9f39b6673d1fd909df3d4-e4a88ffc25e0f2dd-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3uHqTK4DaAf7KLCvdQ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":187,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
 
-          I need to respond with valid JSON that matches the schema provided. The schema requires:
-          - An object with a property called "response"
-          - The "response" property must be an integer
-          - No additional properties are allowed
-          - The "response" property is required
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}   }
 
-          So I need to return: {"response": 6}
+        event: ping
+        data: {"type": "ping"}
 
-          I must not include any markdown, backticks, or anything else - just the JSON on a single line.
-        type: thinking
-      - text: '{"response": 6}'
-        type: text
-      diagnostics: null
-      id: msg_011CfR2eBsDPGAwS3P3qPDAr
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 187
-        output_tokens: 129
-        output_tokens_details:
-          thinking_tokens: 117
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking for"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" "}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"3 + 3,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" which equals"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 6.\n\nI"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" need to respond"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with valid JSON that matches"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" schema provided"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":". The schema requires"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":\n- An"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" object with a \"response\" property"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n- The \""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"response\" property must be an integer"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n- No"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" additional properties are"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" allowed\n- The \""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"response\" property is"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" required\n\nSo"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I need to return"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":\n{\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"response\": 6}"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Es0ECpsBCBIYAipAFCisVwH46Ase5EHz6HUVxPfLf3Oc2t0lF1rmPfmAC1EIBjACV43QbaK8RJlHTsmxQAxAmtSrxOhWbQl/uA4MOjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBi9Dv1QYSDMIx7D//PKalPwdxmBoMXaFHxtSJM9He+49DIjDEwQJDFFo3k3nsuo8tOQEbmU2SRnbVKSfzZhcjJ8CG9htgp/2zo3nLCD8i4TRsSGYq3gKwRU5Nm54ug3Irz+9z/fVY/VcfJUtAiNabLdau76m9k1YcnnO1X6NrqIv2xONUG/34ckJpj2ShSdiqche8lVksaW5V7qOJFxVf/VFSNI3f48tvcRy3S5vvDLqqjN23ZMAkZ1GN3BqDQmfFHeZFEC2YFTx5vsyZBGi8CohssoD1VM97OWcPIEa4ntL8hg8AKoQFiw/tdcLXE9tr8pFCdHEcvqigOGXRAZHlxc9LePVzhazixOIx9vEqACy9ZuqTf7MSfQYvpYI95/Lj8UmJPnfDaSTl2vvxI0GFQXF7tZd7gXjlNB/A/aboApqn8EvKNHH2maXax/VtIRekeSa3fujWmAYAPOphkqtN4izVft/TcLoXn3EB9MJtMQ1MmveUrkd5sKNBB4dAS/dNVNAr1cGMidRf09kmBXYKhSrPlbjSyCuCUWXnZXwgJcTQoMLZzdavy/Z/bMcbEra0owFrfRgB"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"{\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"response\":"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"6}"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":187,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":102,"output_tokens_details":{"thinking_tokens":91}}}
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:32:11.570706+00:00

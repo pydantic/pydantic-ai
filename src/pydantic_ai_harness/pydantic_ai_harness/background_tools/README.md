@@ -61,9 +61,9 @@ BackgroundTools(tools=lambda ctx, td: td.name.startswith('research_'))
 Use `metadata={'background': 'optional'}` to let the model decide for each call. The model sees a
 `run_in_background` argument, but your function does not receive it.
 
-A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools and
-realtime sessions run normally. Do not use `run_in_background` as one of your function's own
-parameters.
+A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools,
+realtime sessions, and calls that code mode's `run_code` makes from its sandbox run normally, even
+with `run_in_background`. Do not use `run_in_background` as one of your function's own parameters.
 
 ```python
 from pydantic_ai import Agent
@@ -103,10 +103,26 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Text and files returned by the tool are sent to the model. Application-only metadata is not sent.
-If a tool fails unexpectedly, the model sees the error type but not the error message, which may
-contain private information. Running out of retries or raising `CancelledError` ends the run. A tool
-can call `ctx.cancel()` to stop the run and the other background tools.
+Each follow-up is a `ModelRequest` containing a `UserPromptPart` whose first content item is
+`TextContent` with `metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`,
+including handled failure notifications. This identifies the entire completion part, including any
+files and extra content. The metadata is not sent to the model and survives native message
+serialization and merging consecutive requests. The Vercel AI and AG-UI message conversions omit
+this metadata. A history loaded back from them keeps the text and its framing, but the follow-up
+is then an ordinary user prompt.
+
+The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
+tags, the same tags Pydantic AI puts around tool files it sends on the user channel. This tells the
+model the text is the tool's output rather than something the user said, and which pending call it
+completes. A closing `</tool_result>` tag inside the output is escaped, so the output cannot end the
+frame early. A failed call is framed the same way with `outcome="failed"`, wrapping the message from
+`ModelRetry` or `ToolFailed`.
+
+Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
+other tool exception ends the run with the original exception, as it does for a sequential tool.
+Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`
+to stop the run and the other background tools.
 
 A normal run waits for its background tools to finish. A pending call counts toward
 `tool_calls_limit`. If the run pauses or stops early, unfinished tools are cancelled and their

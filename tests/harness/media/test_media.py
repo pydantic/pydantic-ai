@@ -7,7 +7,8 @@ import json
 import json as _json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypeGuard
 
@@ -30,6 +31,8 @@ from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaContext,
     MediaStore,
+    PostgresConnection,
+    PostgresMediaStore,
     S3MediaStore,
     SqliteMediaStore,
     externalize_media,
@@ -903,7 +906,7 @@ class TestSigV4Signer:
             access_key_id='AKIAIOSFODNN7EXAMPLE',
             secret_access_key='wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
             content_type='image/png',
-            now=datetime(2013, 5, 24, tzinfo=timezone.utc),
+            now=datetime(2013, 5, 24, tzinfo=UTC),
         )
         assert headers['host'] == 'examplebucket.s3.amazonaws.com'
         assert headers['x-amz-date'] == '20130524T000000Z'
@@ -926,7 +929,7 @@ class TestSigV4Signer:
             access_key_id='K',
             secret_access_key='S',
             content_type=None,
-            now=datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            now=datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC),
         )
         a = sign_request(**common)  # type: ignore[arg-type]
         b = sign_request(**common)  # type: ignore[arg-type]
@@ -941,7 +944,7 @@ class TestSigV4Signer:
             access_key_id='K',
             secret_access_key='S',
             content_type=None,
-            now=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            now=datetime(2024, 1, 1, tzinfo=UTC),
         )
         sig_a = sign_request(body=b'aaa', **kwargs)['authorization']  # type: ignore[arg-type]
         sig_b = sign_request(body=b'bbb', **kwargs)['authorization']  # type: ignore[arg-type]
@@ -1401,9 +1404,17 @@ def _assert_media_store_protocol(store: MediaStore) -> None:
     assert isinstance(store, MediaStore)
 
 
+class _UnusedPostgresPool:
+    """Satisfies `PostgresPool` structurally; a protocol check never acquires."""
+
+    def acquire(self) -> AbstractAsyncContextManager[PostgresConnection]:
+        raise AssertionError('the pool must not be used')  # pragma: no cover
+
+
 def test_concrete_stores_satisfy_protocol(tmp_path: Path) -> None:
     _assert_media_store_protocol(DiskMediaStore(tmp_path))
     _assert_media_store_protocol(SqliteMediaStore(database=tmp_path / 'm.db'))
+    _assert_media_store_protocol(PostgresMediaStore(_UnusedPostgresPool()))
     _assert_media_store_protocol(
         S3MediaStore(
             bucket='b',

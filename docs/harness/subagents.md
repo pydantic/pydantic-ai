@@ -17,17 +17,17 @@ A single agent that does everything accumulates a large tool set and a long cont
 
 ## The solution
 
-`SubAgents` takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent. The available sub-agents are listed in the system prompt as a static instruction, so the listing stays in the cached prefix.
+`SubAgents` takes a sequence of `SubAgent` entries and exposes a single `delegate_task(agent_name, task)` tool. Each delegation runs the chosen sub-agent in its own run -- with its own message history, so it never sees the parent conversation -- and returns its output to the parent. The available sub-agents are listed in the system prompt, so the listing stays in the cached prefix; if it changes between runs of the same conversation, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the prefix.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent, SubAgents
 
-researcher = Agent('anthropic:claude-opus-5-5', name='researcher', description='Researches a topic and reports findings')
-writer = Agent('anthropic:claude-opus-5-5', name='writer', description='Turns notes into polished prose')
+researcher = Agent('{{ anthropic:large }}', name='researcher', description='Researches a topic and reports findings')
+writer = Agent('{{ anthropic:large }}', name='writer', description='Turns notes into polished prose')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agents=[SubAgent(researcher), SubAgent(writer)])],
 )
 
@@ -53,9 +53,11 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
 - Delegated agents run in the parent's workspace, including wrappers such as `ReadOnlyWorkspace`.
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
-- **Tools can be inherited.** With `inherit_tools=True`, the parent agent's own tools (registered directly or via `toolsets`) are added to each sub-agent run, on top of the sub-agent's own. Tools contributed by the parent's capabilities are not inherited: they are bound to capability instances registered in the parent run, and would arrive without the hooks and instructions they depend on. Use `shared_capabilities` to give sub-agents a capability. This also excludes the delegate tool itself, so a sub-agent can't recurse into further delegation. Off by default.
+- **The parent's tools are not passed on.** A sub-agent runs with its own tools. To delegate to an agent that has all of the parent's tools and capabilities, use `include_self=True` (see "Delegating to the agent itself" below).
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
 - **Sub-agent events can be streamed.** Pass an `event_stream_handler` and it's forwarded to each sub-agent run, so the sub-agent's model-streaming and tool events surface to the caller (the handler receives the sub-agent's own `RunContext`).
+
+`inherit_tools=True` is deprecated and emits a `HarnessDeprecationWarning`. It adds the parent agent's own tools (registered via `tools=` or `toolsets=`) to each sub-agent run, minus the delegate tool, but not the tools contributed by the parent's capabilities. Bind the tools an explicit sub-agent needs directly to its `Agent`, use `include_self=True` to delegate to a fresh run of the agent with everything bound to it, or use a `tool_resolver` to give disk-loaded agents tools.
 
 ## Delegating to the agent itself
 
@@ -66,15 +68,16 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgents
 
 agent = Agent(
-    'anthropic:claude-opus-4-7',
-    capabilities=[SubAgents(include_self=True, agent_folders=None)],
+    '{{ anthropic:large }}',
+    capabilities=[SubAgents(include_self=True)],
 )
 ```
 
 - **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` are not part of the agent, so the delegate does not get them. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
-- **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()`.
-- `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
+- **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()` (a delegate run that ends with [`DeferredToolRequests`](../deferred-tools.md) returns a steering message instead, as described under failure handling).
+- The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
+- **On Temporal, delegate to `self` only.** Sub-agents read from `agent_folders` add a toolset at run time, which Temporal refuses, so pass `SubAgents(include_self=True, agent_folders=None)`; see [delegation on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
 
 ## Per-delegate run controls
 
@@ -85,11 +88,11 @@ from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import SubAgent, SubAgents
 
-reproducer = Agent('anthropic:claude-opus-5-5', instructions='Reproduce the reported bug from a minimal script.')
-librarian = Agent('anthropic:claude-opus-5-5', instructions='Find relevant docs, issues, and prior art.')
+reproducer = Agent('{{ anthropic:large }}', instructions='Reproduce the reported bug from a minimal script.')
+librarian = Agent('{{ anthropic:large }}', instructions='Find relevant docs, issues, and prior art.')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         SubAgents(
             agents=[
@@ -104,7 +107,7 @@ orchestrator = Agent(
 | Field | Effect |
 |---|---|
 | `models` | Which keys of the `SubAgents` model menu this delegate may run on, and which one it runs on by default: the first key listed. See "Per-delegation model selection" below. |
-| `usage_limits` | A request/token budget for one delegation. The child runs with its own usage accounting, so the budget counts only that child's requests and tokens (not the parent's or siblings'), even when `forward_usage=True`. The tradeoff: that child's tokens no longer aggregate into the parent's `usage`. Reaching the budget is a soft outcome (see below), not a run-stopping `UsageLimitExceeded`. |
+| `usage_limits` | A request/token budget for one delegation. The child runs with its own usage accounting, so the budget counts only that child's requests and tokens (not the parent's or siblings'). With `forward_usage=True`, the child's usage is added to the parent's usage after the delegation. Reaching the budget is a soft outcome (see below), not a run-stopping `UsageLimitExceeded`. |
 | `timeout_seconds` | A wall-clock budget for one delegation. When the child exceeds it, its run is cancelled and the parent gets a soft steering message instead of hanging on the child. The cancelled child's `event_stream_handler` (if any) stops receiving events without a terminal event. |
 | `max_calls` | The maximum number of delegations to this sub-agent per parent run. Once reached, further delegations return a soft budget-exhausted message without running the child. Counts are scoped to one `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree budgets independently. |
 | `on_failure` | A steering message returned to the parent for any soft degradation of this delegate, in place of the built-in default. Setting it also makes child failures soft (see below). |
@@ -120,19 +123,19 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness import SubAgent, SubAgents
 from pydantic_ai_harness.subagents import ModelOption
 
-reviewer = Agent('anthropic:claude-opus-5-5', name='reviewer', description='Reviews a diff')
-linter = Agent('anthropic:claude-opus-5-5', name='linter', description='Runs the linter and reports failures')
+reviewer = Agent('{{ anthropic:large }}', name='reviewer', description='Reviews a diff')
+linter = Agent('{{ anthropic:large }}', name='linter', description='Runs the linter and reports failures')
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         SubAgents(
             agents=[SubAgent(reviewer), SubAgent(linter, models=['fast'])],
             models={
-                'fast': 'anthropic:claude-haiku-4-5',
-                'standard': 'anthropic:claude-sonnet-5',
+                'fast': '{{ anthropic:small }}',
+                'standard': '{{ anthropic:medium }}',
                 'deep': ModelOption(
-                    'anthropic:claude-opus-5-5',
+                    '{{ anthropic:large }}',
                     description='hard reasoning, multi-file changes',
                     settings=ModelSettings(thinking='xhigh'),
                 ),
@@ -153,6 +156,8 @@ orchestrator = Agent(
 
 A *soft outcome* returns a steering message to the parent as a normal tool result, so its model reads the message and decides what to do next (rather than immediately re-delegating, which a `ModelRetry` invites). A timeout, a reached `usage_limits` budget, and an exhausted `max_calls` budget are always soft. When `on_failure` is set, the message it carries replaces the built-in default for these outcomes.
 
+A sub-agent run that ends with `DeferredToolRequests` (its `output_type` includes it and a tool needed approval or was deferred) is a soft outcome too. The parent cannot approve the child's tool calls or resume its run, and delegating the same task again would most likely stop the same way, so instead of returning the marker as output the delegation returns a steering message naming the sub-agent and why it stopped, or the `on_failure` message when that is set. A sub-agent that resolves its own deferred calls, for example with [`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md), never ends this way and returns its output as usual.
+
 A sub-agent run that fails with a *soft model error* (`ModelRetry`, `UnexpectedModelBehavior`, e.g. it exhausted its own retries) is, by default, converted into a `ModelRetry` for the parent -- so the parent's model sees `Sub-agent '<name>' failed: ...` and can react by re-delegating. The delegate tool defaults to `tool_retries=2`, so the parent aborts only after that many consecutive delegate failures; the counter resets after any successful delegation. Raise `tool_retries` to tolerate a flakier sub-agent, or set `None` to inherit the parent agent's default tool retries. Set `on_failure` for a delegate to make its failures soft instead: the child error returns the `on_failure` message as a normal tool result.
 
 Hard errors propagate to stop the whole run. A `UsageLimitExceeded` from a child that has *no* per-delegate `usage_limits` (so it shares the parent's accounting) means the whole tree is out of budget and propagates; a child reaching its *own* `usage_limits` is soft, as above.
@@ -170,7 +175,7 @@ An *unexpected crash* -- any other exception the child raises, such as a provide
 
 Both are notifications. One delegation is one `delegate_task` call, so a start and its end share the `tool_call_id` core stamps on every event; that is how a subscriber pairs them when the model delegates in parallel.
 
-`outcome` follows the failure handling above: `ok` (the child's output went back to the parent), `timeout`, `budget` (the child's own `usage_limits`), `failed` (a soft model error, returned as `on_failure` or raised as a `ModelRetry`), or `contained` (a crash `contain_errors` caught). `output` is what the delegate tool hands back to the parent in each case: the child's output, the steering message, or the retry text. It is emitted from inside the tool, before any `ToolGuardrail` result guard screens that text for the model; a host that needs the screened version reads the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`) and `None` when it accrues into the parent's usage, where its share is not separable.
+`outcome` follows the failure handling above: `ok` (the child's output went back to the parent), `timeout`, `budget` (the child's own `usage_limits`), `failed` (a soft model error, returned as `on_failure` or raised as a `ModelRetry`, or a child run that ended with `DeferredToolRequests`, returned as a steering message), or `contained` (a crash `contain_errors` caught). `output` is what the delegate tool hands back to the parent in each case: the child's output, the steering message, or the retry text. It is emitted from inside the tool, before any `ToolGuardrail` result guard screens that text for the model; a host that needs the screened version reads the `ToolReturnPart` in core's `FunctionToolResultEvent`. `usage` is the child's own `RunUsage` when it has separate accounting (`usage_limits` set, or `forward_usage=False`) and `None` when it accrues into the parent's usage, where its share is not separable.
 
 A delegation refused before the child runs (an unknown sub-agent, a model key off the menu, an exhausted `max_calls` budget) emits nothing; the tool result says why. An exception that propagates out of the delegate tool (a shared usage limit, an uncontained crash, a cancellation) ends without an end event. A `SubAgentToolset` registered directly in `Agent(toolsets=[...])` has no owning capability and emits nothing. As with any capability event, a listener that raises aborts the parent run.
 
@@ -188,9 +193,9 @@ class ReportDelegations(AbstractCapability):
         print(f'{event.agent_name}: {event.outcome} in {event.duration_seconds:.1f}s')
 
 
-researcher = Agent('anthropic:claude-opus-5-5', name='researcher')
+researcher = Agent('{{ anthropic:large }}', name='researcher')
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[SubAgents(agents=[SubAgent(researcher)]), ReportDelegations()],
 )
 ```
@@ -207,31 +212,33 @@ The sub-agents are listed in the system prompt via `get_instructions`, using eac
 
 ## Loading sub-agents from disk
 
-A repo's markdown agent definitions become delegates without writing any `Agent` code. By default every `*.md` file under the conventional folders is loaded as a sub-agent, alongside the explicitly-passed `agents`.
+A repo's agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every Claude-style `*.md` file and Codex-style `*.toml` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`. Files are read in sorted filename order.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgents
 
 orchestrator = Agent(
-    'anthropic:claude-opus-5-5',
-    capabilities=[SubAgents(inherit_tools=True)],  # auto-loads .agents/agents/ from the run's workspace
+    '{{ anthropic:large }}',
+    capabilities=[SubAgents(agent_folders='agents')],  # loads .agents/agents/ from the run's workspace
 )
 ```
 
 Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from somewhere else, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
 
-`agent_folders` controls which folders are read. It defaults to `'agents'`, the conventional layout:
+`agent_folders` controls which folders are read:
 
-- A folder-name `str` (the default `'agents'`): load from `.agents/<name>/` under the workspace's working directory, falling back to `.claude/<name>/` when `.agents/` is absent. A run without a workspace skips it.
+- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working directory, in that order, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from the others. A run without a workspace skips them.
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
-- `None` disables disk loading, exposing only the explicitly-passed `agents`.
+- `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
+
+Earlier releases loaded the conventional folders by default. Pass `agent_folders='agents'` to keep doing so.
 
 Until this release, the folders were read from this machine, including the home folder `~/.agents/agents/`. A run without a workspace now fails at its start when given a path sequence. Convention discovery warns once when it skips a folder in the current or home directory that the workspace does not reach, naming the folder and the `workspace=` that reads it.
 
 ### Definition format
 
-A definition is a markdown file with optional frontmatter:
+A definition is a Claude-style markdown file with optional frontmatter, or a Codex-style TOML file. Markdown:
 
 ```markdown
 ---
@@ -250,6 +257,23 @@ You research topics. Report your findings, each with a source.
 
 Frontmatter is read by a small, dependency-free parser limited to those keys (`pyyaml` is not a harness dependency). Full YAML frontmatter is not supported.
 
+A Codex-style standalone TOML file:
+
+```toml
+name = "reviewer"
+description = "Reviews code for bugs"
+developer_instructions = "Inspect the code and report findings. Do not edit files."
+tools = ["Read", "Grep"]
+```
+
+- `name`, `description`, and `developer_instructions` are required nonempty strings.
+- `tools` (or `allowed-tools`) is optional: a list of strings or a comma-separated string, not both keys.
+- `model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning; use `agent_overrides` for models and effort.
+- Any other key, including sandbox or permission settings, skips that file with a warning rather than silently granting broader tools. The older `[agents.<name>] config_file` layout is not supported.
+- TOML files are parsed with the standard-library `tomllib` module.
+
+Nothing in a definition file is executed. A malformed or invalid file is skipped with a warning without blocking the others.
+
 ### Models and effort
 
 Disk agents inherit the parent run's model by default. Per agent, the caller can override the model and set a thinking/effort level via `agent_overrides`, keyed by the agent's name:
@@ -260,15 +284,17 @@ from pydantic_ai_harness.subagents import AgentOverride
 
 SubAgents(
     agent_folders='agents',
-    agent_overrides={'researcher': AgentOverride(model='anthropic:claude-opus-5-5', effort='high')},
+    agent_overrides={'researcher': AgentOverride(model='{{ anthropic:large }}', effort='high')},
 )
 ```
 
-Every agent the capability builds runs at a minimum thinking-effort floor. `MINIMUM_EFFORT_FLOOR` and the `clamp_effort(level, floor=...)` helper are exported so an orchestrator can apply the same floor to its own agents (that orchestrator-side application is the caller's responsibility). `clamp_effort` maps `None`/`False` to the floor, leaves `True` (provider-default effort) unchanged, and raises a concrete level below the floor up to it. Effort is applied through pyai's `ModelSettings.thinking`.
+When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
+
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
 
 ### Tools
 
-A disk agent gets no tools by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the parent's tools to it through the `inherit_tools` mechanism, in which case its `tools` frontmatter is ignored. To map the frontmatter tool names to specific toolsets instead, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
+Without a `tool_resolver`, a disk agent gets no tools and its `tools` frontmatter is ignored. To map the frontmatter tool names to toolsets, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
 
 ```python {names="defined"}
 from collections.abc import Sequence
@@ -287,7 +313,7 @@ SubAgents(agent_folders='agents', tool_resolver=resolve)
 
 ### Precedence
 
-When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first, then earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
+When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first; for convention discovery, the workspace's `.agents/` folder before its `.claude/` folder; and for an explicit path sequence, earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
 
 ## Configuration
 
@@ -297,11 +323,11 @@ from pydantic_ai_harness import SubAgents
 SubAgents(
     agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
     models={},             # Mapping[str, Model | str | ModelOption] -- per-delegation model menu (off when empty)
-    agent_folders='agents',# folder-name str (convention) | Sequence[str | Path] workspace paths | None (disable)
+    agent_folders=None,    # folder-name str ('agents' is conventional) | Sequence[str | Path] workspace paths | None
     agent_overrides={},    # Mapping[str, AgentOverride] -- per-disk-agent model/effort override
     tool_resolver=None,    # Callable[[str], Sequence[AgentToolset[object]] | None] -- disk-agent tool mapping
     forward_usage=True,    # share the parent's usage with sub-agent runs
-    inherit_tools=False,   # expose the parent's own tools to sub-agents (capability tools excluded)
+    inherit_tools=False,   # deprecated: use include_self=True, or tool_resolver for disk agents
     shared_capabilities=(),# capabilities applied to every sub-agent run
     event_stream_handler=None,  # forwarded to each sub-agent run to stream its events
     tool_name='delegate_task',
@@ -317,7 +343,7 @@ SubAgents(
 from pydantic_ai import Agent
 from pydantic_ai_harness import SubAgent
 
-agent = Agent('anthropic:claude-opus-5-5')
+agent = Agent('{{ anthropic:large }}')
 
 SubAgent(
     agent,                 # AbstractAgent[AgentDepsT, Any] -- the child agent to run
@@ -357,3 +383,86 @@ SubAgent(
 ::: pydantic_ai_harness.subagents.DelegationStartEvent
 
 ::: pydantic_ai_harness.subagents.DelegationEndEvent
+
+## Managed delegation sessions
+
+`SubAgents` keeps its existing foreground-only behavior unless a caller explicitly
+opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
+delegate tool's schema, gives every child a stable conversation ID, and owns every
+worker until shutdown. Use `DelegationReports` on the parent run to deliver settled
+background reports through core's `SystemPromptPart` queue. The reports are
+explicitly automated, untrusted data, not user instructions or permission grants.
+No extra agent loop is implemented. Reports default to `priority='when_idle'`
+so active parents finish their current work first. A host that starts an idle
+continuation should use `DelegationReports(..., priority='asap')` and
+`agent.run(None, ...)`: pending reports then enter the first model request, with
+no synthetic user prompt. The host owns wake-up scheduling between runs.
+
+```python {test="skip"}
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[SubAgents(include_self=True)])
+tasks = DelegationTasks(directory=Path('.task-history'))
+
+async def converse():
+    async with tasks.opened():
+        with tasks.bind():
+            result = await agent.run(
+                'Delegate an independent investigation in the background.',
+                conversation_id='review',
+                capabilities=[DelegationReports(tasks, conversation_id='review')],
+            )
+            print(result.output)
+            # Keep this owner open across subsequent parent turns.
+```
+
+`opened()` drains workers on exit. Keep workspace and plugin resources alive outside
+that scope. Detached execution is refused for run-owned non-local workspaces;
+foreground delegation still works. `max_depth=4` counts the main run and allows
+three child layers. An explicitly configured non-default `SubAgents.max_depth`
+still takes precedence. Ordinary `SubAgents` retains its original depth default.
+
+`background(task_id)` releases a foreground waiter without restarting the child.
+`await cancel(task_id)` stops and drains that child and its descendants. A user stop
+blocks model-requested resume until the application explicitly calls
+`await allow_resume(task_id)`. `one_shot` names never resume. A resume uses the same
+child ID and its independent history, a new run ID, and the current direct parent.
+A child waits for its own descendants and consumes their reports before its final
+output settles. Reports are routed to the direct parent; an idle parent receives
+pending reports on its next explicitly started run. Enqueue delivery is acknowledged
+only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
+
+`steer(task_id, text)` sends a running child a user message on its own run's queue
+with `priority='asap'`: the child reads it at its next model request, and one about to
+finish goes on with it instead. It returns `False` when the child is not running, so an
+application can offer to resume it. A message sent before the child's run starts waits
+for it; one sent as the child's final response settles may arrive too late for it to read.
+
+An observer receives `DelegationTaskEvent`, with the task identity and an optional
+correlated child stream event. Managed start/end events carry `task_id` and
+`parent_id`. Managed cancellation and uncontained exceptions produce terminal
+outcomes; unmanaged events and exception propagation keep their original contract.
+Metadata and final/interrupted histories are atomically saved under `directory`.
+Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
+child's latest frontier. Loading an interrupted record never executes its tools.
+Inspect possible partial effects before an explicit resume. A resume closes out tool
+calls the interruption left unanswered with an `interrupted` tool return, so the child
+sees they did not complete.
+
+Managed children with `forward_usage=True` share live usage accounting and inherit
+parent ceilings. A per-child budget is converted to an absolute ceiling at launch;
+concurrent sibling spend may reach that ceiling earlier, but cannot bypass the
+parent's budget. The ordinary unmanaged per-child accounting contract is unchanged.
+
+`agents`, `aliases`, and `instructions` extend the roster and guidance only inside
+the bound scope; they do not add delegation to an agent without `SubAgents`.
+`SubAgent(read_only=True)` wraps the child's workspace in `ReadOnlyWorkspace`.
+Also give that agent only trusted read-only capabilities: arbitrary Python tools
+can bypass the workspace API. CLAI's Explore and Plan specialists use filesystem
+readers and expose no shell, code execution, or parent plugin tools.
+
+Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
+and child run IDs provide correlation. This owner adds no logging exporter.

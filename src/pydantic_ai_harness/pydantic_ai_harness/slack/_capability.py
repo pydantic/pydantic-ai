@@ -9,7 +9,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, is_read_only, one_connection
+from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -65,7 +65,7 @@ class Slack(AbstractCapability[AgentDepsT]):
         else:
             toolset = self._connect(self.auth)
         if self.read_only:
-            return toolset.filtered(lambda _ctx, tool: is_read_only(tool))
+            return read_only_toolset(toolset)
         return toolset
 
     def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:

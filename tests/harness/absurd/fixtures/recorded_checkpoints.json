@@ -1,0 +1,283 @@
+{
+  "plain": {
+    "analyst__mcp_server__calc.get_tools": {
+      "add": {
+        "kind": "function",
+        "name": "add",
+        "strict": null,
+        "timeout": null,
+        "metadata": {
+          "meta": {
+            "fastmcp": {
+              "tags": []
+            }
+          },
+          "task": false,
+          "annotations": null
+        },
+        "tool_kind": null,
+        "sequential": false,
+        "toolset_id": null,
+        "description": null,
+        "with_native": null,
+        "capability_id": null,
+        "defer_loading": false,
+        "return_schema": {
+          "type": "object",
+          "required": [
+            "result"
+          ],
+          "properties": {
+            "result": {
+              "type": "integer"
+            }
+          },
+          "x-fastmcp-wrap-result": true
+        },
+        "unless_native": null,
+        "outer_typed_dict_key": null,
+        "include_return_schema": null,
+        "parameters_json_schema": {
+          "type": "object",
+          "required": [
+            "a",
+            "b"
+          ],
+          "properties": {
+            "a": {
+              "type": "integer"
+            },
+            "b": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "analyst__model.request": {
+      "kind": "response",
+      "model_name": "fn",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "report_finding",
+          "args": {
+            "title": "p99 up",
+            "severity": "high"
+          },
+          "tool_call_id": "c1"
+        },
+        {
+          "part_kind": "tool-call",
+          "tool_name": "query_metrics",
+          "args": {
+            "query": "errors"
+          },
+          "tool_call_id": "c2"
+        }
+      ]
+    },
+    "analyst__function_toolset__findings.call_tool:report_finding": "recorded p99 up (high)",
+    "analyst__function_toolset__metrics.call_tool:query_metrics": {
+      "rows": 7
+    },
+    "analyst__model.request#2": {
+      "kind": "response",
+      "model_name": "fn",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "add",
+          "args": {
+            "a": 2,
+            "b": 3
+          },
+          "tool_call_id": "c3"
+        },
+        {
+          "part_kind": "tool-call",
+          "tool_name": "search_knowledge",
+          "args": {
+            "term": "deploys"
+          },
+          "tool_call_id": "c4"
+        }
+      ]
+    },
+    "analyst__mcp_server__calc.call_tool": 5,
+    "analyst__function_toolset__knowledge.call_tool:search_knowledge": {
+      "hits": [
+        "deploys-1",
+        "deploys-2"
+      ]
+    },
+    "analyst__model.request#3": {
+      "kind": "response",
+      "model_name": "fn",
+      "parts": [
+        {
+          "part_kind": "text",
+          "content": "wrapping up"
+        },
+        {
+          "part_kind": "tool-call",
+          "tool_name": "final_result",
+          "args": {
+            "report": "saw ['add', 'query_metrics', 'report_finding', 'search_knowledge']",
+            "outcome": "completed"
+          },
+          "tool_call_id": "c5"
+        }
+      ]
+    }
+  },
+  "with_retry": {
+    "analyst__mcp_server__calc.get_tools": {
+      "add": {
+        "kind": "function",
+        "name": "add",
+        "strict": null,
+        "timeout": null,
+        "metadata": {
+          "meta": {
+            "fastmcp": {
+              "tags": []
+            }
+          },
+          "task": false,
+          "annotations": null
+        },
+        "tool_kind": null,
+        "sequential": false,
+        "toolset_id": null,
+        "description": null,
+        "with_native": null,
+        "capability_id": null,
+        "defer_loading": false,
+        "return_schema": {
+          "type": "object",
+          "required": [
+            "result"
+          ],
+          "properties": {
+            "result": {
+              "type": "integer"
+            }
+          },
+          "x-fastmcp-wrap-result": true
+        },
+        "unless_native": null,
+        "outer_typed_dict_key": null,
+        "include_return_schema": null,
+        "parameters_json_schema": {
+          "type": "object",
+          "required": [
+            "a",
+            "b"
+          ],
+          "properties": {
+            "a": {
+              "type": "integer"
+            },
+            "b": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "analyst__model.request": {
+      "kind": "response",
+      "model_name": "fn",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "report_finding",
+          "args": {
+            "title": "p99 up",
+            "severity": "bogus-high"
+          },
+          "tool_call_id": "c0"
+        }
+      ]
+    },
+    "analyst__model.request#2": {
+      "kind": "response",
+      "model_name": "fn",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "report_finding",
+          "args": {
+            "title": "p99 up",
+            "severity": "high"
+          },
+          "tool_call_id": "c1"
+        },
+        {
+          "part_kind": "tool-call",
+          "tool_name": "query_metrics",
+          "args": {
+            "query": "errors"
+          },
+          "tool_call_id": "c2"
+        }
+      ]
+    },
+    "analyst__function_toolset__findings.call_tool:report_finding#2": "recorded p99 up (high)",
+    "analyst__function_toolset__metrics.call_tool:query_metrics": {
+      "rows": 7
+    },
+    "analyst__model.request#3": {
+      "kind": "response",
+      "model_name": "fn",
+      "parts": [
+        {
+          "part_kind": "tool-call",
+          "tool_name": "add",
+          "args": {
+            "a": 2,
+            "b": 3
+          },
+          "tool_call_id": "c3"
+        },
+        {
+          "part_kind": "tool-call",
+          "tool_name": "search_knowledge",
+          "args": {
+            "term": "deploys"
+          },
+          "tool_call_id": "c4"
+        }
+      ]
+    },
+    "analyst__mcp_server__calc.call_tool": 5,
+    "analyst__function_toolset__knowledge.call_tool:search_knowledge": {
+      "hits": [
+        "deploys-1",
+        "deploys-2"
+      ]
+    },
+    "analyst__model.request#4": {
+      "kind": "response",
+      "model_name": "fn",
+      "parts": [
+        {
+          "part_kind": "text",
+          "content": "wrapping up"
+        },
+        {
+          "part_kind": "tool-call",
+          "tool_name": "final_result",
+          "args": {
+            "report": "saw ['add', 'query_metrics', 'report_finding', 'search_knowledge']",
+            "outcome": "completed"
+          },
+          "tool_call_id": "c5"
+        }
+      ]
+    }
+  }
+}

@@ -14,7 +14,25 @@ from pydantic_clai2.commands import (
     plugins_command,
     set_completions,
 )
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+
+
+def test_relative_paths_complete_in_the_workspace(tmp_path: Path) -> None:
+    """`@` paths complete in the session's directory, which need not be the process's."""
+    (tmp_path / 'notes.md').touch()
+    (tmp_path / 'docs').mkdir()
+    (tmp_path / 'docs' / 'guide.md').touch()
+    commands = Commands(workspace=lambda: tmp_path)
+
+    def completed(text: str) -> list[str]:
+        return [completion.text for completion in commands.get_completions(Document(text), CompleteEvent())]
+
+    assert (completed('@'), completed('@no'), completed('@docs/')) == (
+        ['docs/', 'notes.md'],
+        ['notes.md'],
+        ['guide.md'],
+    )
 
 
 def test_command_boundaries(tmp_path: Path) -> None:
@@ -62,6 +80,48 @@ def test_command_boundaries(tmp_path: Path) -> None:
             plugins_command(store, args)
     with pytest.raises(ValueError):
         store.reset('missing')
+
+
+def test_plugins_command_toggles_never_saved_builtins(tmp_path: Path) -> None:
+    """`clai2 plugins enable aoe`, as the reference says to run, saves the built-in declaration turned on."""
+    store = SettingsStore(tmp_path / 'config.db')
+    plugins_command(store, ['enable', 'aoe'])
+    plugins_command(store, ['disable', 'notifications'])
+    assert store.plugins() == [
+        PluginSettings(id='aoe', factory='pydantic_clai2.builtin_plugins.aoe', enabled=True),
+        PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications', enabled=False),
+    ]
+    with pytest.raises(ValueError, match='Unknown plugin: missing'):
+        plugins_command(store, ['enable', 'missing'])
+
+
+def test_command_availability_is_live() -> None:
+    commands = Commands()
+    available = False
+    command = Command(
+        name='conditional',
+        description='Conditional',
+        handler=lambda _: 'ok',
+        complete=lambda _: ('value',),
+        available=lambda: available,
+        during_turn=True,
+    )
+    commands.register(command)
+    for available in (False, True, False):
+        assert list(commands) == [command]  # Ownership is retained even while a command is unavailable.
+        assert bool(commands.help([])) is available
+        assert commands.runs_during_turn('/conditional') is available
+        for text in ('/cond', '/conditional '):
+            assert bool(list(commands.get_completions(Document(text), CompleteEvent()))) is available
+        if available:
+            assert commands.execute('/conditional') == 'ok'
+        else:
+            with pytest.raises(ValueError, match='Unknown command'):
+                commands.execute('/conditional')
+    with pytest.raises(ValueError, match='duplicate'):
+        commands.register(command)
+    commands.unregister(['conditional'])
+    assert list(commands) == []
 
 
 @pytest.mark.parametrize(
@@ -114,6 +174,14 @@ def test_substring_command_and_argument_completion(*, fragment: str) -> None:
             expected.append('other')
         assert [item.text for item in completions] == expected
         assert all(item.start_position == -len(fragment) for item in completions)
+
+
+def test_command_names_rank_exact_then_prefix_then_substring() -> None:
+    commands = Commands()
+    for name in ('chats', 'hats', 'chat', 'hat'):
+        commands.register(Command(name=name, description=name, handler=lambda _: ''))
+    completions = list(commands.get_completions(Document('/hat'), CompleteEvent()))
+    assert [item.text for item in completions] == ['hat', 'hats', 'chats', 'chat']
 
 
 @pytest.mark.parametrize('fragment', ['', 'exam', 'ample', '.py', 'example.py', 'AMPLE', 'missing'])

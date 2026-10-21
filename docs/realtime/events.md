@@ -26,17 +26,23 @@ never discarded.
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A finalized part; retained speech audio appears here, not at part start. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | A local function tool began executing. |
 | [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool completed or returned a retry prompt. |
-| [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | An inline capability handler resolved deferred requests. |
-| [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | Inline deferred results are ready for normal tool processing. |
+| [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A tool call was deferred (e.g. needs approval); emitted before any inline capability handler runs. |
+| [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | An inline capability handler resolved the deferred requests; the results go through normal tool processing. |
 | [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
 | [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] | The provider detected that the user started speaking, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when the profile declares [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]. |
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
 | [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
 | [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. These are emitted on a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where the provider owns audio playback. |
-| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The model finished replying and no tool remains active. |
+| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The exchange is over: the model gave every reply it owed, and no tool remains active. |
 | [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
 | [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
+
+A part's `index` identifies it for the whole session. A provider can finish an output item after a later
+item has started, so text of the item's transcript can arrive after its part ended: the session then
+streams that part again under the same `index`, and the new
+[`PartStartEvent`][pydantic_ai.messages.PartStartEvent] replaces the part as it ended. Keep parts by
+`index` rather than adding one for every [`PartEndEvent`][pydantic_ai.messages.PartEndEvent].
 
 ## Shared and realtime-only events
 
@@ -56,6 +62,19 @@ same stream; see [Capabilities and hooks](capabilities.md#the-event-stream).
 Use [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] as the exchange
 boundary. A model can speak, call a tool, and speak again, so receiving speech — or a tool result —
 does not imply that the turn is done.
+
+The event marks the end of what [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply]
+waits for. When a response ends, the session emits it if the model owes nothing more: no reply to anything
+sent, no answer to a tool's result, and no response still under way.
+
+Only the response that answers an input settles its reply: a response already under way when the input reached
+the provider never saw it, so it doesn't. Text sent while the model is answering therefore usually gets a reply of
+its own, and the event comes once that reply ends too. How a provider answers such text varies: GPT-Live speaks to
+it in the reply it is giving (see [OpenAI](openai.md#text-is-context-not-a-user-turn)), and some Gemini Live models
+cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
+
+A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
+(server-side voice activity detection). The user's transcript can still finish after it.
 
 ## Reading raw audio events
 

@@ -1,10 +1,12 @@
 """One command registry for execution, help, and Termflow completion."""
 
 import json
+import re
 import shlex
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import JsonValue, TypeAdapter
 from termflow.tui.completion import (
@@ -14,12 +16,28 @@ from termflow.tui.completion import (
     Document,
 )
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import known_model_names
+from pydantic_clai2.config import (
+    SETTING_FIELDS,
+    STRING_SETTINGS,
+    TOOL_CALL_DISPLAYS,
+    UPDATE_CHANNELS,
+    PluginSettings,
+)
+from pydantic_clai2.config.builtins import STOCK_PLUGINS
+from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
+from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
+from pydantic_clai2.ui import telemetry
+from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
+from pydantic_clai2.ui.rendering.theme import names as theme_names
 
-from .config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
-from .settings_store import SettingsStore
-from .spinners import BUILTIN_SPINNERS
-from .theme import names as theme_names
+if TYPE_CHECKING:
+    # Only for the annotation: `pydantic_clai2.plugins` imports this module.
+    from pydantic_clai2.plugins.menus import SettingsMenu
+
+_COMMAND_NAME = re.compile(r'\w[\w-]*')
+"""Letters, digits, underscores, and hyphens, not starting with a hyphen: what a skill such as `code-review` is called."""
 
 
 def is_command_input(text: str) -> bool:
@@ -35,6 +53,16 @@ def is_command_input(text: str) -> bool:
     return not any(marker in name for marker in ('/', '.', '\\'))
 
 
+def is_silent(result: str) -> bool:
+    """Whether a command result is not worth printing: blank, or a one-line no-op such as `API key unchanged.`.
+
+    A menu that closed without changes has nothing to report, and neither blank lines
+    nor 'settings unchanged' chatter should land in the transcript.
+    """
+    text = result.strip()
+    return not text or (text.endswith(' unchanged.') and len(text.splitlines()) == 1)
+
+
 def expand_bare_command(text: str) -> str:
     """Map bare `clear` to `/clear`, as Code Puppy does, so every input path dispatches it as a command."""
     return '/clear' if text.strip().lower() == 'clear' else text
@@ -48,6 +76,8 @@ class Command:
     description: str
     handler: Callable[[list[str]], str | Awaitable[str]]
     complete: Callable[[list[str]], Iterable[str]] = lambda _: ()
+    available: Callable[[], bool] = lambda: True
+    """Whether dispatch, help, and completion expose this command in the current session."""
     raw: bool = False
     """Pass the argument text unparsed, as one element, so free-form prompts keep quotes and apostrophes."""
     during_turn: bool = False
@@ -55,38 +85,98 @@ class Command:
 
     Only for menus whose changes the running turn cannot observe, such as settings that
     take effect on the next turn. The run's output is held while the menu owns the screen.
-    With arguments the command still queues, keeping its order among queued follow-ups.
+    With arguments the command still queues, keeping its order among queued follow-ups,
+    unless the only argument is one of `during_turn_subcommands` or `args_during_turn` is set.
+    """
+    args_during_turn: bool = False
+    """Also run the command with any arguments as soon as it is entered mid-turn, instead of queueing it.
+
+    For commands whose every form applies as soon as it is safe, such as `/plugins`. The command
+    then runs ahead of queued follow-ups instead of in order among them.
+    """
+    during_turn_subcommands: tuple[str, ...] = ()
+    """Subcommands, like `add` in `/model add`, whose bare form also opens its menu mid-turn."""
+    live: bool = False
+    """Keep the editor live while the handler runs, as it is during a turn.
+
+    The working spinner shows, Esc or Ctrl-C cancels, and Enter queues a follow-up. Only for
+    handlers that may take a while and only print through the console: one that reads keys or
+    opens a menu needs the suspended editor every other command gets.
+    """
+    overridable: bool = False
+    """Give way to another command with the same name, whichever registers first, instead of clashing.
+
+    For commands named after something the user names, such as a skill, which may collide with a
+    built-in like `/model`. The hidden command is reported, not dropped silently.
+    """
+    menu: 'Callable[[], SettingsMenu] | None' = None
+    """A settings menu over what the bare command changes, for surfaces that cannot show the terminal's own.
+
+    The terminal still runs `handler`, whose menu may offer more, such as `/spinner`'s speed keys; the
+    web UI shows this one in the page instead, so its edits must save and apply as the command's do.
+    Built each time it is shown.
     """
 
 
 class Commands(Completer):
     """Instance-owned registry, based on Code Puppy's registry/completer pattern."""
 
-    def __init__(self) -> None:
-        """Create an empty registry and filesystem completer."""
+    def __init__(self, *, workspace: Callable[[], Path] = Path.cwd) -> None:
+        """Create an empty registry and filesystem completer; relative `@` paths complete in `workspace()`."""
         self._commands: dict[str, Command] = {}
+        self._workspace = workspace
 
     def register(self, command: Command) -> None:
         """Register one command, rejecting ambiguous duplicate names."""
         self.register_many((command,))
 
-    def register_many(self, commands: Iterable[Command]) -> None:
-        """Validate a provider's declarations atomically, including collisions."""
+    def register_many(self, commands: Iterable[Command]) -> list[Command]:
+        """Validate a provider's declarations atomically, including collisions.
+
+        Returns the `overridable` commands hidden by another of the same name: new ones that found
+        their name taken, and registered ones that a new command took it from.
+        """
         pending: dict[str, Command] = {}
+        hidden: list[Command] = []
         for command in commands:
-            if command.name in self._commands or command.name in pending or not command.name.isidentifier():
+            if not _COMMAND_NAME.fullmatch(command.name):
                 raise ValueError(f'Invalid or duplicate command: {command.name}')
+            existing = pending.get(command.name) or self._commands.get(command.name)
+            if existing is not None and command.overridable:
+                hidden.append(command)
+                continue
+            if existing is not None and not existing.overridable:
+                raise ValueError(f'Invalid or duplicate command: {command.name}')
+            if existing is not None:
+                hidden.append(existing)
             pending[command.name] = command
         self._commands.update(pending)
+        return hidden
 
-    def unregister(self, names: Iterable[str]) -> None:
-        """Remove commands a plugin registered; unknown names are ignored."""
-        for name in names:
-            self._commands.pop(name, None)
+    def unregister(self, commands: Iterable[str | Command]) -> None:
+        """Remove commands a plugin registered; unknown names are ignored.
+
+        A name removes the command registered under it. A `Command` is removed only while it is the
+        one registered, so a command that took the name of a hidden `overridable` one stays.
+        """
+        for command in commands:
+            if isinstance(command, str):
+                self._commands.pop(command, None)
+            elif self._commands.get(command.name) is command:
+                del self._commands[command.name]
+
+    def __contains__(self, name: object) -> bool:
+        """Whether a command called `name` (without its slash) is registered."""
+        return name in self._commands
 
     def __iter__(self) -> Iterator[Command]:
         """Iterate a snapshot, so callers may register or unregister while looping."""
         return iter(list(self._commands.values()))
+
+    def get(self, name: str) -> Command | None:
+        """The command called `name` (without its slash), or `None` when there is none or it is not available now."""
+        command = self._commands.get(name)
+        return command if command is not None and command.available() else None
 
     def execute(self, text: str) -> str | Awaitable[str]:
         """Parse shell-style arguments and dispatch without invoking a shell."""
@@ -95,24 +185,49 @@ class Commands(Completer):
             return self.help([])
         name, rest = parts[0], parts[1] if len(parts) > 1 else ''
         command = self._commands.get(name)
-        if command is None:
+        if command is None or not command.available():
             raise ValueError(f'Unknown command /{name}. Use /help.')
         if command.raw:
             return command.handler([rest] if rest else [])
         return command.handler(shlex.split(rest))
 
     def runs_during_turn(self, text: str) -> bool:
-        """Whether `text` is a bare command that opted into opening its menu mid-turn."""
-        words = text.split()
-        if len(words) != 1 or not is_command_input(text):
+        """Whether `text` runs mid-turn: a `during_turn` bare command or subcommand, or any `args_during_turn` use."""
+        if not is_command_input(text):
             return False
+        words = text.split()
         command = self._commands.get(words[0][1:])
-        return command is not None and command.during_turn
+        if command is None or not command.available():
+            return False
+        if len(words) == 1:
+            return command.during_turn
+        return command.args_during_turn or (len(words) == 2 and words[1] in command.during_turn_subcommands)
+
+    def runs_live(self, text: str) -> bool:
+        """Whether `text` names an available command that keeps the editor live while it runs."""
+        parts = text.removeprefix('/').split(maxsplit=1)
+        command = self._commands.get(parts[0]) if parts else None
+        return command is not None and command.live and command.available()
 
     async def execute_async(self, text: str) -> str:
-        """Await asynchronous plugin commands without blocking the event loop."""
-        result = self.execute(text)
-        return result if isinstance(result, str) else await result
+        """Await asynchronous plugin commands without blocking the event loop.
+
+        The UI telemetry span names a registered command and counts its arguments; the arguments, and any
+        unregistered name, which is just typed text, stay out.
+
+        The shell shows a failure instead of raising it, so one that is not a usage error (`ValueError`,
+        `UserError`) is also recorded here as a handled error, under the command's span.
+        """
+        name, *arguments = text.removeprefix('/').split() or ['help']
+        command = name if name in self else 'unknown'
+        with telemetry.span('command /{command}', command=command, arguments=len(arguments)):
+            try:
+                result = self.execute(text)
+                return result if isinstance(result, str) else await result
+            except Exception as error:
+                if not isinstance(error, ValueError | UserError):
+                    telemetry.handled_error('command /{command} failed', error, command=command)
+                raise
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
         """Complete slash commands, contextual arguments, and @file paths."""
@@ -124,7 +239,7 @@ class Commands(Completer):
                 directory = path if word.endswith('/') else path.parent
                 prefix = '' if word.endswith('/') else path.name
                 try:
-                    for child in sorted(directory.iterdir()):
+                    for child in sorted((self._workspace() / directory).iterdir()):
                         if prefix in child.name:
                             yield Completion(child.name + ('/' if child.is_dir() else ''), start_position=-len(prefix))
                 except OSError:
@@ -133,8 +248,13 @@ class Commands(Completer):
         words = text[1:].split()
         if len(words) <= 1 and not text.endswith(' '):
             prefix = text[1:]
-            for command in list(self._commands.values()):
-                if prefix in command.name:
+            # Best match first: the exact name, then names starting with the fragment, then the rest.
+            matches = sorted(
+                (command for command in list(self._commands.values()) if prefix in command.name),
+                key=lambda command: (command.name != prefix, not command.name.startswith(prefix)),
+            )
+            for command in matches:
+                if command.available():
                     yield Completion(
                         command.name,
                         start_position=-len(prefix),
@@ -145,7 +265,7 @@ class Commands(Completer):
         if not words:
             return
         command = self._commands.get(words[0])
-        if command is None:
+        if command is None or not command.available():
             return
         args = words[1:]
         if text.endswith(' '):
@@ -157,7 +277,9 @@ class Commands(Completer):
 
     def help(self, _: list[str]) -> str:
         """Generate help from the same registry used for completion."""
-        return '\n'.join(f'/{command.name}: {command.description}' for command in self._commands.values())
+        return '\n'.join(
+            f'/{command.name}: {command.description}' for command in self._commands.values() if command.available()
+        )
 
 
 def config_command(store: SettingsStore, args: list[str]) -> str:
@@ -180,8 +302,11 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
     return 'Saved. Applies when you restart CLAI.'
 
 
-def set_completions(args: list[str]) -> Iterable[str]:
-    """Complete setting names and values without network calls or credentials."""
+def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> Iterable[str]:
+    """Complete setting names and values without network calls or credentials.
+
+    `plugin_models` are `PREFIX:NAME` models that loaded plugins offer, completed beside the built-in ones.
+    """
     if len(args) <= 1:
         return (*SETTING_FIELDS, 'api_key')
     if len(args) == 2 and args[0] == 'display.theme':
@@ -189,13 +314,17 @@ def set_completions(args: list[str]) -> Iterable[str]:
     if len(args) == 2 and args[0] == 'display.spinner':
         return tuple(BUILTIN_SPINNERS)
     if len(args) == 2 and args[0] == 'model':
-        from .model_catalog import CODEX_MODELS
+        from pydantic_clai2.models.model_catalog import CODEX_MODELS
 
-        names = known_model_names()
+        names = (*plugin_models, *known_model_names())
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
         return ('true', 'false')
+    if len(args) == 2 and args[0] == 'display.tool_calls':
+        return TOOL_CALL_DISPLAYS
+    if len(args) == 2 and args[0] == 'updates.channel':
+        return UPDATE_CHANNELS
     return ()
 
 
@@ -210,24 +339,43 @@ def config_completions(args: list[str]) -> Iterable[str]:
     return ()
 
 
+PLUGINS_USAGE = (
+    'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
+    '\nGit repositories can be installed only inside a CLAI session: /plugins add GIT_URL'
+)
+
+
+def added_plugin(args: list[str]) -> PluginSettings:
+    """The declaration `plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
+    if len(args) not in (3, 4) or args[0] != 'add':
+        raise ValueError(PLUGINS_USAGE)
+    settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
+    return PluginSettings(id=args[1], factory=args[2], settings=settings)
+
+
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
     """Manage explicit plugin declarations without importing plugins."""
+    if len(args) > 1:
+        args = [args[0], canonical_plugin_id(args[1]), *args[2:]]
     declarations = store.plugins()
     if not args or args == ['list']:
         return (
             '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in declarations)
             or 'No plugins.'
         )
-    if len(args) in (3, 4) and args[0] == 'add':
-        settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
-        store.save_plugin(PluginSettings(id=args[1], factory=args[2], settings=settings))
+    if args[0] == 'add':
+        added = added_plugin(args)
+        # Without importing, only a capability class's tags are known; a plugin's own come when it saves.
+        store.save_plugin(added, requires=CAPABILITY_REQUIREMENTS.get(added.factory))
     elif len(args) == 2 and args[0] in ('enable', 'disable'):
-        plugin = next((p for p in declarations if p.id == args[1]), None)
+        # A saved declaration overrides the built-in, as in the shell; the CLI owns its agent, so the stock ones.
+        builtin = {p.id: p for p in STOCK_PLUGINS}
+        plugin = next((p for p in declarations if p.id == args[1]), builtin.get(args[1]))
         if plugin is None:
             raise ValueError(f'Unknown plugin: {args[1]}')
         store.save_plugin(plugin.model_copy(update={'enabled': args[0] == 'enable'}))
     elif len(args) == 2 and args[0] == 'remove':
         store.delete_plugin(args[1])
     else:
-        raise ValueError('Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID')
+        raise ValueError(PLUGINS_USAGE)
     return 'Saved. Plugin code is trusted and loads on next startup.'

@@ -291,10 +291,10 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         has already resolved it to an instance. A factory that returns `None` raises `UserError`
         rather than substituting a default instance, and anything else raises too.
 
-        Only the `fallback_subagent_model` path reaches here: `__post_init__` calls `_default_local()`, which
-        returns early when `fallback_subagent_model` is unset, so a capability configured without one never
-        runs this check. Validating in `__post_init__` instead would reject configurations that
-        construct fine today for users who never opted into a fallback subagent.
+        Only the `fallback_subagent_model` path reaches here: a subclass builds its subagent tool only
+        when `fallback_subagent_model` is set, so a capability configured without one never runs this
+        check. Validating unconditionally instead would reject configurations that construct fine
+        today for users who never opted into a fallback subagent.
         """
         if isinstance(self.native, tool_cls):
             return replace(self.native, **overrides) if overrides else self.native

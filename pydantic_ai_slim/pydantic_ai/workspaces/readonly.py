@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-
-from typing_extensions import Never
+from typing import Never
 
 from .protocol import WorkspaceCommand, WorkspaceReadOnlyError
 from .workspace import WrapperWorkspace

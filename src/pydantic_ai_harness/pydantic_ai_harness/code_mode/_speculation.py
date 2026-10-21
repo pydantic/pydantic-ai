@@ -60,6 +60,7 @@ from pydantic_ai_harness.code_mode._streaming import (
     MAX_SCAN_WORK_CHARS,
     closed_statements,
     decode_partial_args,
+    parse_code,
 )
 from pydantic_ai_harness.code_mode._toolset import (
     NestedCallOutcome,
@@ -113,7 +114,7 @@ class SpeculativeCall:
         """Where this launch currently stands, for settled and eviction events."""
         if not self.task.done() or self.task.cancelled():
             return 'pending'
-        if self.task.exception() is not None:  # pragma: no cover - the runner settles, never raises
+        if self.task.exception() is not None:
             return 'failed'
         return 'failed' if self.task.result().error is not None else 'ready'
 
@@ -380,7 +381,7 @@ def _text_literal_calls(code: str, eligible: frozenset[str]) -> tuple[list[_Extr
                 break
             walked += end - match.start()
             try:
-                expression = ast.parse(code[match.start() : end], mode='eval')
+                expression = parse_code(code[match.start() : end], mode='eval')
             except (SyntaxError, ValueError, RecursionError, MemoryError):
                 # Same set `closed_statements` guards: a NUL character is a `ValueError`, not
                 # a `SyntaxError`, and adversarial nesting can exhaust the parser.
@@ -625,7 +626,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         if not final:
             return len(closed_statements(code))
         try:
-            return len(ast.parse(code).body)
+            return len(parse_code(code).body)
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return len(closed_statements(code))
 
@@ -722,7 +723,7 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
             # sandbox parser applies its own resource limits at dispatch.
             return
         try:
-            body = ast.parse(self._ordered_prefix(code)).body
+            body = parse_code(self._ordered_prefix(code)).body
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return
         extracted_calls = _literal_calls(body, step.eligible)
@@ -749,21 +750,34 @@ class SpeculationCoordinator(Generic[AgentDepsT]):
         return sandbox_name in self._current_step.eligible
 
     def claim(self, parent_tool_call_id: str, sandbox_name: str, kwargs: dict[str, object]) -> SpeculativeCall | None:
-        """Pop the oldest in-flight launch matching this dispatch, if any.
+        """Pop the oldest usable launch matching this dispatch, if any.
 
         Prefers the watch recorded under this part's id, then falls back to any other watch
         holding an exact `(function, arguments)` match: some providers re-key a tool call between
         the streamed part and its executed form, which would otherwise turn every launch into a
         miss, and the purity promise makes an identical launch from another part interchangeable.
+
+        A launch `tool_calls_limit` refused is not usable: other launches may still have been
+        pending when it was checked. It stays unclaimed, so eviction reports it, and without a
+        usable launch the dispatch runs cold against the count as it is now.
         """
         key = _canonical_key(sandbox_name, kwargs)
         primary = self._parts.get(parent_tool_call_id)
         watches = [primary] if primary is not None else []
         watches.extend(watch for part_id, watch in self._parts.items() if part_id != parent_tool_call_id)
         for watch in watches:
-            queue = watch.calls.get(key)
-            if queue:
-                return queue.popleft()
+            queue = watch.calls.get(key, deque[SpeculativeCall]())
+            for call in queue:
+                # Consume exceptional launches before adoption raises, so a retry can run cold.
+                if (
+                    call.task.done()
+                    and not call.task.cancelled()
+                    and call.task.exception() is None
+                    and call.task.result().usage_limit_exceeded is not None
+                ):
+                    continue
+                queue.remove(call)
+                return call
         return None
 
     async def adopt(

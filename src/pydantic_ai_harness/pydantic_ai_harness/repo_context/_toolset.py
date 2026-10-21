@@ -28,7 +28,7 @@ class RepoContextToolset(FunctionToolset[AgentDepsT]):
 
         Returns the locations of instruction dirs (`.claude`, `.agents`,
         `.codex`, `.grok`) and, within each, the `skills/`, `agents/`, and
-        `settings.json` (hooks) it contains. This locates assets so you can read
-        and translate them; it does not parse their contents.
+        `settings.json` (hooks) it contains. This locates assets for inspection;
+        it does not parse their contents.
         """
         return await scan_assets(ctx.workspace, Path(await ctx.workspace.working_dir()), self._asset_roots)

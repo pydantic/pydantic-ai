@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,225 +11,116 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '588'
+      - "551"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Take the country that borders both France and Austria and whose capital is not its largest city. Give me information
-            about its largest city.
-          type: text
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: Information about a city.
-        input_schema:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        name: final_result
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Take the country that borders both France and Austria and whose capital is not
+              its largest city. Give me information about its largest city.
+            type: text
+        model: claude-sonnet-4-6
+        stream: true
+        tool_choice:
+          type: any
+        tools:
+        - name: final_result
+          description: Information about a city.
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '618'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-bf7de2918a8c9b7fa12e5ec4699071fa-6e6267f71ccb00a0-01
+      - 00-10f526f09cd0345de711f3f522d8a804-7bf12f583dfc63bb-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container: null
-      content:
-      - caller:
-          type: direct
-        id: toolu_01UACTAAKHwjP615H425yKkU
-        input: {}
-        name: final_result
-        type: tool_use
-      diagnostics: null
-      id: msg_011CfR2TJzHBPz6uxuu62XHd
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 700
-        output_tokens: 21
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '1338'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Take the country that borders both France and Austria and whose capital is not its largest city. Give me information
-            about its largest city.
-          type: text
-        role: user
-      - content:
-        - id: toolu_01UACTAAKHwjP615H425yKkU
-          input: {}
-          name: final_result
-          type: tool_use
-        role: assistant
-      - content:
-        - content: |-
-            3 validation errors:
-            ```json
-            [
-              {
-                "type": "missing",
-                "loc": [
-                  "city"
-                ],
-                "msg": "Field required",
-                "input": {}
-              },
-              {
-                "type": "missing",
-                "loc": [
-                  "country"
-                ],
-                "msg": "Field required",
-                "input": {}
-              },
-              {
-                "type": "missing",
-                "loc": [
-                  "population"
-                ],
-                "msg": "Field required",
-                "input": {}
-              }
-            ]
-            ```
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011CfY3gM2pydFuTAPt2w57A","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":700,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
 
-            Fix the errors and try again.
-          is_error: true
-          tool_use_id: toolu_01UACTAAKHwjP615H425yKkU
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: Information about a city.
-        input_schema:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-            population:
-              type: integer
-          required:
-          - city
-          - country
-          - population
-          type: object
-        name: final_result
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '682'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-ce5b11960e72742ec57f3f87ee2d40b5-d358cc50267cc8a7-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      container: null
-      content:
-      - caller:
-          type: direct
-        id: toolu_01TssCn4UuTWNppv4Rv4xYbh
-        input:
-          city: Zurich
-          country: Switzerland
-          population: 434008
-        name: final_result
-        type: tool_use
-      diagnostics: null
-      id: msg_011CfR2TPvSmo1xX38ScpBNT
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 906
-        output_tokens: 75
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01J1AgRP1YKfipaXA4Jqhrw7","name":"final_result","input":{},"caller":{"type":"direct"}}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Zuri"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ch\""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coun"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"try\": \""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"Switzer"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"land\""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"popu"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"lation\""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": 40000"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"0}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":700,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":75}             }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-09-29T16:29:00.304579+00:00

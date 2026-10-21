@@ -20,7 +20,7 @@ Set `NOTION_ACCESS_TOKEN` to a Notion OAuth access token, or pass `auth=` a toke
 from pydantic_ai import Agent
 from pydantic_ai_harness.notion import Notion
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Notion()])
+agent = Agent('{{ openai:medium }}', capabilities=[Notion()])
 result = agent.run_sync('Summarize the resources I can access')
 print(result.output)
 ```
@@ -56,7 +56,7 @@ def notion_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.notion_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Notion(auth=notion_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Notion(auth=notion_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account. `read_only` applies to every user.
@@ -71,7 +71,7 @@ Connect with a Notion OAuth access token. Notion integration tokens are a differ
 
 ## Tool selection and approval
 
-`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, this can leave none. The credential is still what controls access.
+`read_only=True` keeps only the tools the server marks as read-only. If the server does not mark its read tools, the agent gets none and emits an `MCPReadOnlyNoToolsWarning`. The credential is still what controls access.
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call:
 
@@ -82,7 +82,7 @@ from pydantic_ai_harness.notion import Notion
 
 capability = Notion()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
