@@ -2998,11 +2998,37 @@ async def test_an_empty_reply_text_still_revises_the_reply_under_way() -> None:
                 AudioDelta(data=b'\x00\x01'),
             ],
             [
-                OutputTranscript(text='', is_final=True, item_id='resp_1'),
                 AnswersRevised(response_id='pydantic_ai_response_1', released=(0,)),
+                OutputTranscript(text='', is_final=True, item_id='resp_1'),
             ],
         ]
     )
+
+
+async def test_a_reply_text_after_another_message_of_the_turn_revises_its_own_response() -> None:
+    """A turn's next message ends the one still being voiced before its own text starts a response: the text's names
+    are that new response's, and leave the one that ended alone (which still answers the text, as its own text said).
+    """
+    connection, ws = _connection()
+    await connection.send('Hi')
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _AUDIO,
+            _reply('Let me check.', event_id=1, response_id='resp_a', answers=['pydantic_ai_input_0']),
+            _AUDIO,
+            _reply('All done.', event_id=1, response_id='resp_b', answers=[]),
+        ],
+    )
+    assert not [event for frame in frames for event in frame if isinstance(event, AnswersRevised)]
+    assert frames[-1][:3] == [
+        ResponseDone(provider_response_id='resp_a', provider_details={'conversation_id': 'conv_1'}),
+        ResponseEnded(
+            response_id='pydantic_ai_response_1', status='completed', provider_details={'conversation_id': 'conv_1'}
+        ),
+        ResponseStarted(response_id='pydantic_ai_response_2', answers=(), basis='inferred', provider_id=False),
+    ]
 
 
 class _PacedWebSocket(FakeWebSocket):
@@ -3076,10 +3102,11 @@ async def test_wait_for_reply_waits_past_a_greeting_the_text_cut_off() -> None:
     ],
     ids=['names-none', 'names-the-text'],
 )
-async def test_a_cut_off_reply_whose_text_trails_its_end_is_revised_after_it(
+async def test_a_cut_off_reply_whose_text_trails_its_end_is_revised_before_it_ends(
     answers: list[str], revision: list[AnswersRevised]
 ) -> None:
-    """The user's words overtake the cut-off reply's text, which then trails the end of its response."""
+    """The user's words overtake the cut-off reply's text, which then trails the end of its response: the revision
+    its names make comes ahead of that end, while the reply is still under way."""
     connection, ws = _connection()
     await connection.send('What is two plus two?')
     frames = await _frames(
@@ -3093,12 +3120,12 @@ async def test_a_cut_off_reply_whose_text_trails_its_end_is_revised_after_it(
         ],
     )
     assert frames[-1] == [
+        *revision,
         ResponseDone(interrupted=True, provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
         ResponseEnded(
             response_id='pydantic_ai_response_1', status='cancelled', provider_details={'conversation_id': 'conv_1'}
         ),
         StaleEvent(event=OutputTranscript(text='...', is_final=True, item_id='resp_1')),
-        *revision,
     ]
 
 

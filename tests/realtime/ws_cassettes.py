@@ -396,7 +396,7 @@ class ReplayWebSocket:
         # A copy: a session-ending send reorders it (see `_SESSION_END_TYPES`), and the cassette is the recording.
         self._interactions = list(cassette.interactions)
         # Recorded before ElevenLabs Agents typed turns went out under an id naming their input (see
-        # `_text_inputs`): the server made ids up for them, which the replies' `in_response_to_ids` name.
+        # `_CascadeLifecycle.text_sent`): the server made ids up for them, which the replies' `in_response_to_ids` name.
         self._unnamed_user_messages = any(
             isinstance(interaction, CassetteMessage)
             and interaction.direction == 'sent'

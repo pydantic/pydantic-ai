@@ -68,7 +68,6 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     DocumentUrl,
-    FinishReason,
     ImageUrl,
     ModelMessage,
     NativeToolCallPart,
@@ -95,7 +94,6 @@ from ._lifecycle import (
     OutputItemCut,
     RealtimeFrame,
     ResponseEnded,
-    ResponseStatus,
     StaleEvent,
 )
 from ._utils import inject_trace_context, require_pcm_audio, resolve_advertised_tools
@@ -1564,6 +1562,16 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 await opening.__aexit__(None, None, None)
 
 
+def _ends_before_reply(events: Sequence[RealtimeCodecEvent]) -> bool:
+    """Whether the codec events end a response before a reply's text (a reply that was still being voiced, say)."""
+    for event in events:
+        if isinstance(event, OutputTranscript):
+            return False
+        if isinstance(event, ResponseDone) or (isinstance(event, SessionUsage) and event.response_scoped):
+            return True
+    return False
+
+
 class _CascadeLifecycle(InferredLifecycle):
     """The inferred lifecycle of a cascaded pipeline, which replies to speech only once it has transcribed it.
 
@@ -1583,39 +1591,34 @@ class _CascadeLifecycle(InferredLifecycle):
         self._text: set[InputId] = set()
         """The text inputs sent, which a reply names by the `id` they went out with."""
         self._named: tuple[InputId, ...] | None = None
-        """The text inputs the reply whose text just came names, for its revision."""
-        self._last_ended: tuple[str, tuple[InputId, ...]] | None = None
-        """The response that ended last, and the inputs it answers: a reply cut off gets its text after it ended."""
+        """The text inputs the reply whose text is being mapped names, for its revision."""
 
-    def text_sent(self, input_id: InputId) -> None:
-        """A text input went out, with an `id` that the reply answering it names."""
+    def text_sent(self, input_id: InputId) -> str:
+        """A text input is going out: the `id` to send it under, which the reply answering it names."""
         self._text.add(input_id)
+        return f'{_TEXT_ID_PREFIX}{input_id}'
 
-    def reply_named(self, named: Sequence[InputId]) -> None:
-        """The text of the reply under way (or of the one that just ended) came, naming the text inputs it answers.
+    def reply_named(self, ids: Sequence[str]) -> None:
+        """The text of a reply came, naming (by their `id`s) the text inputs it answers; ids of others are ignored."""
+        named = (int(text_id.removeprefix(_TEXT_ID_PREFIX)) for text_id in ids if text_id.startswith(_TEXT_ID_PREFIX))
+        self._named = tuple(input_id for input_id in named if input_id in self._text)
 
-        Applied with that text, or by `revise_rest()` if the text made no output (it was empty) or trailed the end
-        of its response.
+    def revise_open(self) -> list[LifecycleEvent]:
+        """Revise the response under way by the inputs its text named, ahead of the frame with that text.
+
+        The connection calls this when that response is the text's, so the revision comes before anything in the
+        frame can end it (a reply cut off, say, whose text trails its end, or empty text, which is no output). With
+        no response under way, the text starts one, and the revision comes with it (see `_output`).
         """
-        self._named = tuple(named)
-
-    def revise_rest(self) -> list[LifecycleEvent]:
-        """Revise by the inputs a reply's text named, if that text didn't: the response under way, or the one that ended.
-
-        Called once the frame with the text is through: a response still under way is the text's (an empty one makes
-        no output), and one that isn't was ended by it, or before it (its text trailing the end).
-        """
-        named, self._named = self._named, None
-        if named is not None and self._open is not None:
-            return self._revise_open(named)
-        if named is None or self._last_ended is None:
+        named = self._named
+        if named is None or self._open is None:
             return []
-        response_id, answers = self._last_ended
-        _, released = self._revision(named, answers)
-        if not released:
-            return []
-        self._unanswered[:0] = released
-        return [AnswersRevised(response_id=response_id, released=released)]
+        self._named = None
+        return self._revise_open(named)
+
+    def reply_mapped(self) -> None:
+        """The frame with a reply's text is through: names it didn't apply had no response to apply to."""
+        self._named = None
 
     def _revision(
         self, named: tuple[InputId, ...], answers: tuple[InputId, ...]
@@ -1651,17 +1654,9 @@ class _CascadeLifecycle(InferredLifecycle):
             self._named = None
             before.extend(self._revise_open(named))
 
-    def _end(
-        self,
-        events: list[LifecycleEvent],
-        *,
-        status: ResponseStatus,
-        finish_reason: FinishReason | None = None,
-        provider_details: dict[str, Any] | None = None,
-    ) -> None:
-        assert self._open is not None
-        self._last_ended = (self._open, self._open_answers)
-        super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
+
+_TEXT_ID_PREFIX = 'pydantic_ai_input_'
+"""What the `id` a text input goes out under starts with, ahead of the input's id."""
 
 
 class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
@@ -1717,8 +1712,6 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         # correct what the order said: `in_response_to_ids` names the text inputs a reply answers.
         # The user's words are transcribed (and sent) before the agent's LLM answers them, never after.
         self._lifecycle = _CascadeLifecycle()
-        # The text inputs sent, by the `id` they went out with, which a reply's `in_response_to_ids` names.
-        self._text_inputs: dict[str, InputId] = {}
         # A barge-in on the response under way, which only its (truncated) terminal is yet to follow.
         self._deferred_cut: RealtimeResponseInterruptedEvent | None = None
         # Whether the lifecycle saw that barge-in before the cut-off response's terminal came.
@@ -1775,9 +1768,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             await self._send_event({'user_audio_chunk': base64.b64encode(content.data).decode('ascii')})
         elif isinstance(content, str):
             # Under an id of ours, which the agent's reply names in its `in_response_to_ids`.
-            text_id = f'pydantic_ai_input_{input_id}'
-            self._text_inputs[text_id] = input_id
-            self._lifecycle.text_sent(input_id)
+            text_id = self._lifecycle.text_sent(input_id)
             await self._send_event({'type': 'user_message', 'text': content, 'id': text_id})
         elif isinstance(content, TextContext):
             # Injected into the LLM's view of the conversation without a user turn, so the agent
@@ -1885,9 +1876,11 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
         """The frame for the codec events one server message makes, with their lifecycle events."""
-        frame = self._name_conversation(self._lifecycle_frame(events)) if events else []
-        # A reply whose text made no output, or trailed the end of its response (cut off, say), is revised now.
-        frame += self._lifecycle.revise_rest()
+        # A reply's text revises the response under way ahead of the frame, so before anything in it can end that
+        # response; unless the frame ends a response before the text, which then starts one of its own.
+        revision = [] if _ends_before_reply(events) else self._lifecycle.revise_open()
+        frame = [*revision, *self._name_conversation(self._lifecycle_frame(events))] if events else revision
+        self._lifecycle.reply_mapped()
         cuts, self._cuts = self._cuts, []
         # Last, so that a response the frame ends is recorded by the time its cut applies (one still under way gets
         # it when it is).
@@ -2147,9 +2140,7 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             payload = _AgentResponseEvent.model_validate(data).agent_response_event
             if (answered := payload.in_response_to_ids) is not None:
                 # Which of the text inputs the reply answers, revising what the lifecycle worked out from the order.
-                self._lifecycle.reply_named(
-                    [self._text_inputs[text_id] for text_id in answered if text_id in self._text_inputs]
-                )
+                self._lifecycle.reply_named(answered)
             self._response_open = True
             self._open_event_id = payload.event_id
             text, details = payload.agent_response, None

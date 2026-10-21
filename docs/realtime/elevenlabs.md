@@ -320,8 +320,10 @@ itself closes has none), and the live connection has it as
   generated also carries the heard text in `provider_details['corrected_agent_response']`.
 - A text turn goes out under an `id` naming it, and each reply says which text turns it answers (its
   `in_response_to_ids`), so [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waits for
-  the reply that answers the text.
-  Text sent while the agent speaks cuts it off, and the agent's next reply answers all the text sent meanwhile.
+  the reply that answers the text: the one under way, if it names the text, and otherwise the next one. A reply
+  that names a text also answers any text sent before it, as the agent folds text sent while it speaks into one
+  reply, which can name only the latest. (Text sent while the agent speaks usually cuts it off, and the next reply
+  answers it.)
 - [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
   its next turn on, without stopping or replying.
 - A response's parallel tool calls each run as soon as they arrive.
