@@ -72,7 +72,7 @@ from ..providers import Provider, infer_provider
 from ..providers.elevenlabs import ElevenLabsProvider
 from ..tools import ToolDefinition
 from ._elevenlabs_audio_tags import AudioTagStripper, strip_audio_tags
-from ._lifecycle import LifecycleEvent, ResponseEnded
+from ._lifecycle import LifecycleEvent, ResponseEnded, ToolCallsAbandoned
 from ._openai_lifecycle import OpenAILifecycle
 from ._openai_protocol import (
     AUTO_TRANSCRIPTION_MODEL,
@@ -303,6 +303,8 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
             decoded.codec = self._strip_transcript_tags(decoded.codec)
             decoded.after = self._with_audio_tags(decoded.after)
         if abandoned:
+            # Their results get no reply, so the session waits for none: the exchange can end with the new response.
+            decoded.before.append(ToolCallsAbandoned(tool_call_ids=tuple(abandoned)))
             decoded.codec.append(
                 RealtimeSessionErrorEvent(
                     message=(

@@ -6,18 +6,30 @@ description: "Connect a Pydantic AI agent to ElevenLabs: Eleven Realtime speech-
 
 Pydantic AI connects to [ElevenLabs](https://elevenlabs.io) in two ways:
 
-- [ElevenLabs Agents](#elevenlabs-agents) runs the conversation on an agent hosted and configured on the
-  ElevenLabs platform (its voice, LLM, knowledge base, and tools), which Pydantic AI takes over per conversation.
+- [ElevenLabs Agents](#elevenlabs-agents) runs the conversation on an agent hosted and configured on
+  [ElevenAgents](https://elevenlabs.io/docs/eleven-agents/overview), ElevenLabs' agent platform (its voice, LLM,
+  knowledge base, and tools), which Pydantic AI takes over per conversation.
 - [Eleven Realtime](#eleven-realtime) runs ElevenLabs' speech-to-speech models directly, with the instructions,
   tools, and history coming from your Pydantic AI agent, as with every other
   [realtime provider](overview.md#provider-support).
+
+The difference is where the agent is defined. Use Eleven Realtime unless you need the ElevenAgents platform: your
+Pydantic AI agent defines the conversation, as it does with any other realtime provider, and a reconnect replays
+the history.
+
+Use ElevenLabs Agents when the agent lives on the ElevenAgents platform, for its knowledge bases, workflows, and
+guardrails, or to run a cascaded pipeline with an LLM of your choice. Pydantic AI then overrides the agent's
+instructions and settings per conversation, and by default checks its client tools against your agent's tools
+(or [syncs them](#tool-synchronization) to match; see [Configuration ownership](#configuration-ownership)). An
+ElevenAgents agent can also run on an Eleven Realtime model, in [Realtime voice mode](#configuration-ownership):
+that's configured on the agent, and you connect to it through ElevenLabs Agents.
 
 ## ElevenLabs Agents
 
 Use an `elevenlabs-agents:<agent_id>` model string, or
 [`ElevenLabsAgentsRealtimeModel`][pydantic_ai.realtime.elevenlabs_agents.ElevenLabsAgentsRealtimeModel] for
 model-level configuration, to connect an agent to the
-[ElevenLabs Agents platform](https://elevenlabs.io/docs/agents-platform/overview), where the conversation runs on a
+[ElevenAgents](https://elevenlabs.io/docs/eleven-agents/overview) platform, where the conversation runs on a
 hosted agent. Start with the [realtime quickstart](overview.md#quickstart).
 
 ElevenLabs Agents runs a cascaded pipeline (realtime ASR, a configurable LLM, ElevenLabs TTS, and
@@ -341,9 +353,7 @@ Use an `elevenlabs:<model>` model string, or
 configuration, to talk to ElevenLabs' [Eleven Realtime](https://elevenlabs.io/docs/eleven-agents/customization/realtime-models)
 speech-to-speech models. Unlike [ElevenLabs Agents](#elevenlabs-agents), there is no hosted agent to configure:
 the session speaks [ElevenLabs' OpenAI Realtime-compatible API](https://elevenlabs.io/docs/eleven-agents/guides/openai-realtime-compatibility),
-and Pydantic AI configures it from your agent. Pick ElevenLabs Agents when the agent lives on the ElevenLabs
-platform, and Eleven Realtime when your Pydantic AI agent owns it. Start with the
-[realtime quickstart](overview.md#quickstart).
+and Pydantic AI configures it from your agent. Start with the [realtime quickstart](overview.md#quickstart).
 
 ### Setup
 
@@ -493,7 +503,9 @@ the connection sends an empty audio append (which adds no audio) after 45 second
 - When a response starts while a tool call is still running (because the user spoke, say), ElevenLabs abandons
   the call: its result never reaches the model, and a response asked for after it never comes. The session then
   gets a recoverable [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] of type
-  `'tool_calls_abandoned'` naming the calls, the result is still recorded in history, and no reply is waited for.
+  `'tool_calls_abandoned'` naming the calls. The tool keeps running and its result is still recorded in history, but
+  no reply to it is waited for: [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] come when the response that cut in ends.
 - `eleven_realtime_v1_max` sometimes answers a question that needs a tool with two responses: a spoken preamble
   ("Let me check the weather…") that completes on its own, then the tool call in a response nobody asked for.
   Nothing links the two, so [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
