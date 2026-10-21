@@ -1648,7 +1648,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
                             # Replay checks citations against the documents' text, which is only sent as text when
                             # citations are enabled.
-                            if settings.get('include_citations', False)
+                            if settings.get('citations', False)
                             and profile.get('bedrock_supports_citations', False)
                             and item.provider_name == self.system
                             and isinstance(raw_citations, list)

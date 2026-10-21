@@ -1982,7 +1982,7 @@ async def _bedrock_replayed_answer(
     model = BedrockConverseModel(
         'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
         provider=bedrock_provider,
-        settings=ModelSettings(include_citations=True),
+        settings=ModelSettings(citations=True),
     )
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {

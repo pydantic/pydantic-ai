@@ -899,10 +899,10 @@ async def test_native_citation_replay_after_persisted_history(
             agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
             first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
         elif provider == 'anthropic-tool-document':
-            agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(include_citations=True))
+            agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(citations=True))
             first_prompt = TOOL_DOCUMENT_PROMPT
         else:
-            agent = Agent(model, model_settings=ModelSettings(include_citations=True))
+            agent = Agent(model, model_settings=ModelSettings(citations=True))
             first_prompt = [
                 'According to the document, what is the return window? Answer in one sentence and cite the document.',
                 BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
@@ -912,7 +912,7 @@ async def test_native_citation_replay_after_persisted_history(
             BedrockConverseModel(
                 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
             ),
-            model_settings=ModelSettings(include_citations=True),
+            model_settings=ModelSettings(citations=True),
         )
         first_prompt = [
             'According to the document, what is the return window? Answer in one sentence and cite the document.',

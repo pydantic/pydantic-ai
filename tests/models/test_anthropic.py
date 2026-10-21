@@ -406,7 +406,7 @@ async def test_anthropic_replays_own_citations(allow_model_requests: None):
         ],
     )
 
-    await model.request(history, ModelSettings(include_citations=True), ModelRequestParameters())
+    await model.request(history, ModelSettings(citations=True), ModelRequestParameters())
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == snapshot(
         {
@@ -487,7 +487,7 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
         ModelRequest(parts=[UserPromptPart('Continue.')]),
     ]
 
-    await model.request(history, ModelSettings(include_citations=True), ModelRequestParameters())
+    await model.request(history, ModelSettings(citations=True), ModelRequestParameters())
 
     [answer] = [
         message
@@ -506,7 +506,7 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
     ]
 
 
-async def test_anthropic_document_citations_need_include_citations_for_replay(allow_model_requests: None):
+async def test_anthropic_document_citations_need_citations_setting_for_replay(allow_model_requests: None):
     mock_client = MockAnthropic.create_mock(
         completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
     )
