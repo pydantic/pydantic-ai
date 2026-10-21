@@ -5,6 +5,7 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -24,6 +25,7 @@ from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
     NativeTool,
+    PrefixTools,
     PrepareTools,
     ResolveModelId,
     SelectModel,
@@ -45,7 +47,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -458,7 +460,11 @@ class TestXSearchCapability:
         agent = Agent(outer_model, capabilities=[XSearch(fallback_subagent_model=inner_model)])
         result = await agent.run('search X')
         assert result.output == 'gave up'
-        retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+        retry_parts = [
+            part
+            for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+            if part.outcome == 'retried'
+        ]
         assert len(retry_parts) == 1
         assert retry_parts[0].tool_name == 'x_search'
 
@@ -721,21 +727,126 @@ class TestMCPCapability:
         assert cap.get_toolset() is None
 
     def test_mcp_id_from_url(self):
-        """MCP auto-derives id from URL including hostname to avoid collisions."""
+        """MCP derives its id from the URL's hostname alone, since a path can carry a credential."""
         cap = MCP(url='https://mcp.example.com/api', native=True)
         native = cap.get_native_tools()[0]
         assert isinstance(native, MCPServerTool)
-        assert native.id == 'mcp.example.com-api'
+        assert native.id == 'mcp.example.com'
 
-        # SSE URLs include hostname to avoid collisions between different servers
+        # Different hosts derive different ids
         cap_sse = MCP(url='https://server1.example.com/sse', native=True)
         native_sse = cap_sse.get_native_tools()[0]
         assert isinstance(native_sse, MCPServerTool)
-        assert native_sse.id == 'server1.example.com-sse'
+        assert native_sse.id == 'server1.example.com'
+
+    def test_mcp_capabilities_on_one_host_need_explicit_ids(self):
+        """Two servers on one host derive the same id, so the agent asks for an explicit one on each."""
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            Agent(
+                capabilities=[
+                    MCP(url='https://mcp.example.com/a', native=True, local=False),
+                    MCP(url='https://mcp.example.com/b', native=True, local=False),
+                ]
+            )
+        # An id the user chose is a name they repeated, so it gets the general advice.
+        with pytest.raises(UserError, match=r"Capability id 'docs' is used by multiple capabilities\. .*distinct `id`"):
+            Agent(
+                capabilities=[
+                    MCP(url='https://mcp.example.com/a', id='docs', native=True, local=False),
+                    MCP(url='https://mcp.example.com/b', id='docs', native=True, local=False),
+                ]
+            )
+        Agent(
+            capabilities=[
+                MCP(url='https://mcp.example.com/a', id='a', native=True, local=False),
+                MCP(url='https://mcp.example.com/b', id='b', native=True, local=False),
+            ]
+        )
+
+    async def test_run_level_mcp_on_the_same_host_must_be_the_same_server(self):
+        """A run-level `MCP` overrides the agent's under the same derived id only for the same server."""
+        seen: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(
+                [tool.url for tool in info.model_request_parameters.native_tools if isinstance(tool, MCPServerTool)]
+            )
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset({MCPServerTool})))
+        agent = Agent(model, capabilities=[MCP(url='https://mcp.example.com/a', native=True, local=False)])
+
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            await agent.run('hi', capabilities=[MCP(url='https://mcp.example.com/b', native=True, local=False)])
+        # A wrapper that adopts the capability's id is the same capability, so it collides the same way.
+        wrapped = Agent(
+            model, capabilities=[MCP(url='https://mcp.example.com/a', native=True, local=False).prefix_tools('a')]
+        )
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            await wrapped.run('hi', capabilities=[MCP(url='https://mcp.example.com/b', native=True, local=False)])
+
+        # The same server stated again for a run replaces the agent's configuration of it.
+        await agent.run(
+            'hi', capabilities=[MCP(url='https://mcp.example.com/a', headers={'X-Run': '1'}, native=True, local=False)]
+        )
+        # A credential rotated in the userinfo, a fragment or a trailing slash still names the same server.
+        tokened = Agent(
+            model, capabilities=[MCP(url='https://old@mcp.example.com/a?tenant=x', native=True, local=False)]
+        )
+        await tokened.run(
+            'hi', capabilities=[MCP(url='https://new@mcp.example.com/a/?tenant=x#top', native=True, local=False)]
+        )
+        # So does an explicit default port.
+        await tokened.run(
+            'hi', capabilities=[MCP(url='https://mcp.example.com:443/a?tenant=x', native=True, local=False)]
+        )
+        # A malformed port can't be normalized, so it's compared as written and reported as a collision.
+        with pytest.raises(
+            UserError,
+            match=re.escape("Capability id 'mcp.example.com' is used by multiple capabilities that derived it"),
+        ):
+            await tokened.run(
+                'hi', capabilities=[MCP(url='https://mcp.example.com:notaport/a?tenant=x', native=True, local=False)]
+            )
+        # The query can select a tenant, so a query change might be a different server: ask for an explicit id.
+        with pytest.raises(
+            UserError,
+            match=re.escape('or the same one where they configure one server, for example with a rotated credential'),
+        ):
+            await tokened.run(
+                'hi', capabilities=[MCP(url='https://old@mcp.example.com/a?tenant=y', native=True, local=False)]
+            )
+        # A wrapper given an `id` chose it, even one equal to the wrapped capability's derived id, so the
+        # run-level wrapper overrides the agent's capability rather than colliding with it.
+        await agent.run(
+            'hi',
+            capabilities=[
+                PrefixTools(
+                    wrapped=MCP(url='https://mcp.example.com/b', native=True, local=False),
+                    prefix='b',
+                    id='mcp.example.com',
+                )
+            ],
+        )
+        assert seen == [
+            ['https://mcp.example.com/a'],
+            ['https://new@mcp.example.com/a/?tenant=x#top'],
+            ['https://mcp.example.com:443/a?tenant=x'],
+            ['https://mcp.example.com/b'],
+        ]
 
     def test_mcp_local_toolset_id_derived(self):
         """MCP stamps a derived id on the local `MCPToolset` so it can be used with durable
-        execution. Precedence: explicit `id` → native `MCPServerTool` id → host+slug from the URL,
+        execution. Precedence: explicit `id` → native `MCPServerTool` id → the URL's hostname,
         else `None` when there's nothing to derive from."""
         # `FastMCP` needs server deps; the `mcp` extra only pulls `fastmcp-slim[client]`.
         pytest.importorskip('fastmcp.server')
@@ -745,8 +856,8 @@ class TestMCPCapability:
 
         # (capability, expected local toolset id)
         cases: list[tuple[MCP[object], str | None]] = [
-            # id derived from the URL (host + path slug)
-            (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com-api'),
+            # id derived from the URL's hostname
+            (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com'),
             # explicit id wins
             (MCP[object](url='https://mcp.example.com/api', id='docs'), 'docs'),
             # native MCPServerTool id is reused for the local fallback
@@ -760,7 +871,7 @@ class TestMCPCapability:
             ),
             # `local='https://…'` override with no `url=`: id derived from the override URL,
             # exercising `_derive_id` deriving from the override URL even when `self.url` is `None`
-            (MCP[object](local='https://other.example.com/sse'), 'other.example.com-sse'),
+            (MCP[object](local='https://other.example.com/sse'), 'other.example.com'),
             # non-URL local input (in-process `FastMCP` server) wrapped into an `MCPToolset`,
             # inheriting the explicit id
             (MCP[object](id='local-mcp', local=FastMCP('test-server')), 'local-mcp'),
@@ -1050,11 +1161,13 @@ class TestPrepareToolsCapability:
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content="Unknown tool name: 'secret_tool'. No tools available.",
                             tool_name='secret_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='unknown_tool', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -1063,7 +1176,7 @@ class TestPrepareToolsCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='done')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=3),
+                    usage=RequestUsage(input_tokens=61, output_tokens=3),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
@@ -1923,6 +2036,93 @@ class TestGetModelHook:
             assert selected[0] == (None, history)
         assert result.output == 'done'
 
+    async def test_selector_escalates_on_output_validator_retry(self):
+        """A selector escalates once an output validator has rejected an output, and stays escalated after a function tool step.
+
+        The output retry count is run state that a function tool step in between doesn't reset, so the
+        selector doesn't need to find the retry prompt in the messages. It's the count and budget the
+        output validator sees.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        def small_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response('draft')
+
+        def large_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            last = messages[-1]
+            assert isinstance(last, ModelRequest)
+            if any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return make_text_response('final')
+            return ModelResponse(parts=[ToolCallPart('lookup', {})])
+
+        small = FunctionModel(small_respond, model_name='small')
+        large = FunctionModel(large_respond, model_name='large')
+        selected: list[tuple[int, int, int, str]] = []
+        validated: list[tuple[str, int, int]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            model = large if ctx.retry >= 1 else small
+            selected.append((ctx.run_step, ctx.retry, ctx.max_retries, model.model_name))
+            return model
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)], retries={'output': 2})
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'facts'
+
+        @agent.output_validator
+        def reject_draft(ctx: RunContext[None], output: str) -> str:
+            validated.append((output, ctx.retry, ctx.max_retries))
+            if output == 'draft':
+                raise ModelRetry('Not good enough.')
+            return output
+
+        result = await agent.run('hello')
+        assert result.output == 'final'
+        assert selected == [(1, 0, 2, 'small'), (2, 1, 2, 'large'), (3, 1, 2, 'large')]
+        assert validated == [('draft', 0, 2), ('final', 1, 2)]
+
+    async def test_selection_context_counts_output_tool_validation_failures(self):
+        """Output tool arguments failing validation count as output retries, against the run's output budget.
+
+        `ToolOutput(max_retries=...)` gives the output tool its own budget, which `max_retries` doesn't reflect.
+
+        Not a VCR test: the claim is about what a selector callback receives, which no provider sees.
+        """
+
+        class Answer(BaseModel):
+            value: int
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            retried = any(
+                isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+                for message in messages
+                for part in message.parts
+            )
+            value = 42 if retried else 'not a number'
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'value': value})])
+
+        model = FunctionModel(respond)
+        selected: list[tuple[int, int, int]] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            selected.append((ctx.run_step, ctx.retry, ctx.max_retries))
+            return model
+
+        agent = Agent(
+            None,
+            deps_type=NoneType,
+            output_type=ToolOutput(Answer, max_retries=5),
+            capabilities=[SelectModel(select)],
+            retries={'output': 1},
+        )
+
+        result = await agent.run('hello')
+        assert result.output == Answer(value=42)
+        assert selected == [(1, 0, 1), (2, 1, 1)]
+
     async def test_explicit_run_model_skips_selector(self):
         from unittest.mock import Mock
 
@@ -2390,6 +2590,20 @@ class TestGetModelHook:
         assert await agent.system_prompt_parts(deps='tenant', prompt='hello') == snapshot(
             [SystemPromptPart(content='system prompt', timestamp=IsDatetime())]
         )
+
+    async def test_system_prompt_parts_selector_sees_output_retry_budget(self):
+        """`system_prompt_parts()` gives the selector the output budget a run would have, including an override's."""
+        max_retries: list[int] = []
+
+        def select(ctx: ModelSelectionContext[None]) -> Model:
+            max_retries.append(ctx.max_retries)
+            return _text_model('selected')
+
+        agent = Agent(None, deps_type=NoneType, capabilities=[SelectModel(select)], retries={'output': 2})
+        await agent.system_prompt_parts()
+        with agent.override(retries={'output': 5}):
+            await agent.system_prompt_parts()
+        assert max_retries == [2, 5]
 
     async def test_callable_model_selection_streaming(self):
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:

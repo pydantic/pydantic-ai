@@ -30,13 +30,11 @@ from ..messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -48,9 +46,11 @@ from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
@@ -400,7 +400,7 @@ class CohereModel(Model[AsyncClientV2]):
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
@@ -422,19 +422,10 @@ class CohereModel(Model[AsyncClientV2]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())
-                else:
-                    yield ToolChatMessageV2(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()
