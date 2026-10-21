@@ -43,6 +43,12 @@ def require_ended(batch: Batch) -> None:
         raise UserError(f'Batch {batch.id!r} has not ended yet; check its status with `batch_status()` first.')
 
 
+def refuse_http_client_auth(http_client: object, provider: str) -> None:
+    """Refuse an HTTP client with an `auth` of its own, which can send any credential, so its batch group can't tell it apart."""
+    if getattr(http_client, 'auth', None) is not None:
+        raise UserError(f'Batching requires the credential on the {provider} client, not an `auth` on its HTTP client.')
+
+
 def credential_hash(headers: Mapping[str, object], query: object) -> str:
     """A hash of the headers and query a client sends with every request, which include its credentials."""
     return hashlib.sha256(

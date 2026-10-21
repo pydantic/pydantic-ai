@@ -271,6 +271,14 @@ async def test_batch_rejects_a_workload_identity() -> None:
         await model.batch_encode(_request())
 
 
+async def test_batch_rejects_an_http_client_auth() -> None:
+    """An HTTP client's `auth` can send any credential, which the client's headers don't show, so its group can't either."""
+    client = AsyncOpenAI(api_key='placeholder', http_client=httpx2.AsyncClient(auth=('tenant-a', 'secret')))
+    model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=client))
+    with pytest.raises(UserError, match='not an `auth` on its HTTP client'):
+        await model.batch_encode(_request())
+
+
 @dataclass
 class _FakeBatchAPI:
     """Serves the Files and Batches endpoints a batch round trip uses."""

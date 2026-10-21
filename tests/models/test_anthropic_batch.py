@@ -21,6 +21,7 @@ from pydantic_ai.tools import ToolDefinition
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import httpx2
     from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -174,6 +175,14 @@ async def test_anthropic_batch_requires_static_credentials() -> None:
     BatchPool().wrap(model)
     with pytest.raises(UserError, match='require static Anthropic API credentials'):
         await model.batch_encode(BatchRequest(custom_id='item', messages=[]))
+
+
+async def test_anthropic_batch_rejects_an_http_client_auth() -> None:
+    """An HTTP client's `auth` can send any credential, which the client's headers don't show, so its group can't either."""
+    client = AsyncAnthropic(api_key='placeholder', http_client=httpx2.AsyncClient(auth=('tenant-a', 'secret')))
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+    with pytest.raises(UserError, match='not an `auth` on its HTTP client'):
+        await model.batch_encode(_request())
 
 
 async def test_direct_batch_methods_reject_a_bedrock_client(

@@ -42,7 +42,15 @@ from .._utils import is_str_dict, now_utc
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests
-from ._batch_codec import BatchJobError, batch_priced, prepare_decode, require_ended, shared_group, unrun_error
+from ._batch_codec import (
+    BatchJobError,
+    batch_priced,
+    prepare_decode,
+    refuse_http_client_auth,
+    require_ended,
+    shared_group,
+    unrun_error,
+)
 from .batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 
 if TYPE_CHECKING:
@@ -280,4 +288,5 @@ def _validate_batch_group(model: GoogleModel, group: str) -> None:
 def _batch_client(model: GoogleModel) -> Client:
     if model.batch_max_requests is None:
         raise UserError('Gemini batch requests are only supported by the Gemini API, not Google Cloud (Vertex AI).')
+    refuse_http_client_auth(model.client._api_client._async_httpx_client, 'Gemini')  # pyright: ignore[reportPrivateUsage]
     return model.client

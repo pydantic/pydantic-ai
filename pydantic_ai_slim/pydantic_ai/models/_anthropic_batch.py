@@ -28,7 +28,15 @@ from .._utils import is_str_dict
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests, get_user_agent
-from ._batch_codec import batch_priced, credential_hash, prepare_decode, require_ended, shared_group, unrun_error
+from ._batch_codec import (
+    batch_priced,
+    credential_hash,
+    prepare_decode,
+    refuse_http_client_auth,
+    require_ended,
+    shared_group,
+    unrun_error,
+)
 from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 
 if TYPE_CHECKING:
@@ -202,4 +210,5 @@ def _batch_client(model: AnthropicModel) -> AsyncAnthropic:
         raise UserError('This Anthropic endpoint does not support Message Batches.')
     if not (client.api_key or client.auth_token):
         raise UserError('Anthropic Message Batches require static Anthropic API credentials on the client.')
+    refuse_http_client_auth(client._client, 'Anthropic')  # pyright: ignore[reportPrivateUsage]
     return client

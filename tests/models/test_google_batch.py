@@ -166,6 +166,16 @@ async def test_gemini_batch_group_is_the_credential_the_client_sends(allow_model
         await model().batch_create([await tenant.batch_encode(_request())])
 
 
+async def test_gemini_batch_rejects_an_http_client_auth() -> None:
+    """An HTTP client's `auth` can send any credential, which the client's headers don't show, so its group can't either."""
+    http_client = httpx2.AsyncClient(auth=('tenant-a', 'secret'))
+    model = GoogleModel(
+        'gemini-2.5-flash-lite', provider=GoogleProvider(api_key='placeholder', http_client=http_client)
+    )
+    with pytest.raises(UserError, match='not an `auth` on its HTTP client'):
+        await model.batch_encode(_request())
+
+
 async def test_gemini_batch_handles_check_their_group_and_status(allow_model_requests: None) -> None:
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
     other_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test-key'))

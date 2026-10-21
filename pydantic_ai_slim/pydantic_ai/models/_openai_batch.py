@@ -23,7 +23,15 @@ from .._utils import is_str_dict
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import ModelResponse
 from . import check_allow_model_requests, get_user_agent
-from ._batch_codec import batch_priced, credential_hash, prepare_decode, require_ended, shared_group, unrun_error
+from ._batch_codec import (
+    batch_priced,
+    credential_hash,
+    prepare_decode,
+    refuse_http_client_auth,
+    require_ended,
+    shared_group,
+    unrun_error,
+)
 from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, BatchStatus, EncodedBatchRequest
 
 if TYPE_CHECKING:
@@ -261,4 +269,5 @@ def _batch_client(model: OpenAIResponsesModel) -> AsyncOpenAI:
         raise UserError(
             'The OpenAI Batch API requires a static API key on the client, not an API key callback or workload identity.'
         )
+    refuse_http_client_auth(client._client, 'OpenAI')  # pyright: ignore[reportPrivateUsage]
     return client
