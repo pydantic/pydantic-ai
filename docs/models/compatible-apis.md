@@ -378,6 +378,28 @@ agent = Agent(model)
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. `OpenAIProvider` also assumes OpenAI's models: it selects a profile from the model name as if it were an OpenAI model, whatever the `base_url`. For other models, features such as `thinking` or structured output may be ignored or rejected until you configure the [model profile](#model-profile).
 
+
+
+As a concrete example, [Demon Route](https://api.demonroute.com) is an OpenAI-compatible gateway for open-weight models that works with no code changes beyond a custom `base_url`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIChatModel(
+    'NousResearch/Hermes-3-Llama-3.1-8B',
+    provider=OpenAIProvider(
+        base_url='https://api.demonroute.com/v1',
+        api_key='your-demonroute-key',
+    ),
+)
+agent = Agent(model)
+```
+
+You can also set `OPENAI_BASE_URL=https://api.demonroute.com/v1` and `OPENAI_API_KEY=<key>` to skip the explicit provider.
+
+
 ## Model profile
 
 A model profile tells the model class how to shape requests for a particular model and API: which JSON schema restrictions its tool definitions have, whether tools can be marked as strict, how reasoning is configured, and so on. The providers above select one automatically based on the model name, so you only need this section if a model behind a custom endpoint doesn't work correctly out of the box.
