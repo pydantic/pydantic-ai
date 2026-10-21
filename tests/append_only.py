@@ -28,8 +28,8 @@ import importlib.util
 import inspect
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterable, Callable, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -407,6 +407,12 @@ class Scenario:
     stores its conversations would, and the replays from the second run's."""
     replay_text: str = 'Nothing else.'
     """The final answer of each replay, which the output type must accept."""
+    run_kwargs: Mapping[str, Any] = field(default_factory=dict[str, Any])
+    """Extra arguments for every run, such as the `conversation_id` a capability files work under."""
+    around: Callable[[], AbstractAsyncContextManager[Any]] | None = None
+    """A context every run happens in, such as the task owner background delegation needs."""
+    between_runs: Callable[[], Awaitable[None]] | None = None
+    """Awaited after the first run, before the second: for work that settles in between."""
 
     def script(self) -> list[Turn]:
         if self.turns is not None:
@@ -574,22 +580,28 @@ async def run_conversation(
             return messages
         return ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
 
-    first = await agent.run('What is the weather and the news?')
-    # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
-    second = await agent.run(
-        'And what else?', message_history=stored(first.all_messages()), event_stream_handler=drain_events
-    )
-    conversation = list(transport.sent)
-    parameters = list(model.recorded_parameters)
+    async with scenario.around() if scenario.around is not None else nullcontext():
+        first = await agent.run('What is the weather and the news?', **scenario.run_kwargs)
+        if scenario.between_runs is not None:
+            await scenario.between_runs()
+        # Streamed, so a streamed continuation is checked against the requests a non-streamed run built.
+        second = await agent.run(
+            'And what else?',
+            message_history=stored(first.all_messages()),
+            event_stream_handler=drain_events,
+            **scenario.run_kwargs,
+        )
+        conversation = list(transport.sent)
+        parameters = list(model.recorded_parameters)
 
-    history = stored(second.all_messages())
-    replay_at = clock.now
-    replays: list[bytes] = []
-    for _ in range(2):
-        clock.now = replay_at
-        transport.script = [Turn(text=scenario.replay_text)]
-        await agent.run('Anything more?', message_history=history)
-        replays.append(transport.sent[-1])
+        history = stored(second.all_messages())
+        replay_at = clock.now
+        replays: list[bytes] = []
+        for _ in range(2):
+            clock.now = replay_at
+            transport.script = [Turn(text=scenario.replay_text)]
+            await agent.run('Anything more?', message_history=history, **scenario.run_kwargs)
+            replays.append(transport.sent[-1])
 
     assert len(parameters) == len(conversation)
     sent = model.recorded_messages[: len(conversation)]
