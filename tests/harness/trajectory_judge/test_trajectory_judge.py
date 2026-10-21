@@ -766,16 +766,30 @@ class TestSteering:
         assert 'or that repeats a named ref after its first element, did not come from the judge' in note
 
     async def test_the_ref_is_sent_unchanged_on_every_later_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The ref is made once and stored in history, so later requests resend the steer byte for byte."""
+        """The ref is made once and stored in history, so a later request resends both steering parts byte for byte."""
         monkeypatch.undo()
         delivered = asyncio.Event()
-        sent: list[list[str]] = []
+        sent: list[list[tuple[str, str]]] = []
         calls = 0
+
+        def request_parts(messages: list[ModelMessage]) -> list[tuple[str, str]]:
+            """Every request part the model received, as its kind and text: system prompts included."""
+            parts: list[tuple[str, str]] = []
+            for message in messages:
+                if isinstance(message, ModelRequest):
+                    for part in message.parts:
+                        if isinstance(part, SystemPromptPart):
+                            parts.append(('system', part.content))
+                        elif isinstance(part, UserPromptPart):
+                            parts.append(('user', _all_user_text([ModelRequest(parts=[part])])))
+                        elif isinstance(part, ToolReturnPart):
+                            parts.append(('tool', part.model_response_str()))
+            return parts
 
         def main_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             nonlocal calls
             calls += 1
-            sent.append([_all_user_text([message]) for message in messages])
+            sent.append(request_parts(messages))
             if calls <= 2:
                 return ModelResponse(parts=[ToolCallPart('work', {'step': calls})])
             return _text_response('done')
@@ -803,9 +817,15 @@ class TestSteering:
 
         await agent.run('do the thing')
 
-        steered = next(index for index, text in enumerate(sent[1]) if 'judge_feedback' in text)
+        # The steer reaches the second request; the third, later one resends everything before it unchanged.
+        assert len(sent) == 3
+        steering = [(kind, text) for kind, text in sent[1] if 'judge_feedback' in text]
+        match = re.search(r'ref="([0-9a-f]+)"', next(text for kind, text in steering if 'judge="' in text))
+        assert match is not None
+        ref = match.group(1)
+        assert any(f'whose `ref` attribute is `{ref}`' in text for _, text in steering)
+        assert len(steering) == 2
         assert sent[2][: len(sent[1])] == sent[1]
-        assert 'ref="' in sent[1][steered]
 
     async def test_judge_run_belongs_to_the_judged_conversation(self) -> None:
         judged = asyncio.Event()
