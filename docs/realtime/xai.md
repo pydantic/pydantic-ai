@@ -120,7 +120,8 @@ Without one, or once the policy's reconnects are used up, the session raises a
   turn and drops that reply without ending it. So
   [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
   [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] can come more than once
-  per turn, and the session ends the dropped reply as cancelled, as it would a reply the user
-  [barged in on](turns.md#barge-in). It said nothing, so it adds nothing to the history.
+  per turn. The session ends the dropped reply as cancelled, as it would a reply the user
+  [barged in on](turns.md#barge-in) before it spoke: history records it as an empty, interrupted
+  `ModelResponse`, followed by the reply to the whole turn.
 - The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
   avoid assuming every OpenAI behavior is available.
