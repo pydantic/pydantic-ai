@@ -943,7 +943,7 @@ class TestMarkdownConverter:
                 _convert_html(html)
 
     @pytest.mark.parametrize('tag', ['script', 'style'])
-    def test_raw_text_markup_does_not_spend_budget(self, tag: str):
+    def test_raw_text_markup_does_not_spend_event_budget(self, tag: str):
         """Tag-like text inside `<script>` or `<style>` does not spend the event budget."""
         html = f'<{tag} data-kind="text">' + '<div></div>' * 21 + f'</{tag}><p>ok</p>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
@@ -970,7 +970,7 @@ class TestMarkdownConverter:
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
-    def test_markup_string_in_comment_does_not_spend_budget(self):
+    def test_markup_string_in_comment_does_not_spend_event_budget(self):
         """Tag-like text inside a comment does not spend the event budget."""
         html = '<!--' + '<div></div>' * 21 + '--><p>ok</p>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
@@ -1019,13 +1019,13 @@ class TestMarkdownConverter:
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
 
-    def test_cdata_markup_does_not_spend_budget(self):
+    def test_cdata_markup_does_not_spend_event_budget(self):
         """Tag-like text inside a CDATA section does not spend the event budget."""
         html = '<![CDATA[' + '<div></div>' * 21 + ']]><p>ok</p>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
             assert 'ok' in _convert_html(html)[1]
 
-    def test_text_less_than_signs_do_not_spend_markup_budget(self):
+    def test_text_less_than_signs_do_not_spend_event_budget(self):
         """A `<` in plain text does not spend the event budget."""
         html = '<pre>' + 'if (a < b) x++;\n' * 21 + '</pre>'
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_MARKUP_EVENTS', 20):
