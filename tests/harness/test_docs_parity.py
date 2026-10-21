@@ -171,6 +171,7 @@ _CAPABILITY_PAGE_META = {
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
+    'keep-cache-warm.md': ('keep_cache_warm', 'Keep Cache Warm'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
     'subagents.md': ('subagents', 'Subagents'),

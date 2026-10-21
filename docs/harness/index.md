@@ -212,6 +212,7 @@ How the agent spends its context window: the difference between an agent that de
 | [Compaction](compaction.md) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](tool-output-limits.md) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](warn-on-cache-busts.md) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
+| [Keep Cache Warm](keep-cache-warm.md) | Harness | Keep a conversation's prompt cache from expiring during long tool calls, and optionally between turns, so the next request reads it instead of rewriting it |
 
 ### Knowledge & memory
 

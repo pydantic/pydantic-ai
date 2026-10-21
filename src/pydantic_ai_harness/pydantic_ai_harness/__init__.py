@@ -46,6 +46,7 @@ if TYPE_CHECKING:
         OutputGuardrailFunc,
         ToolGuardrail,
     )
+    from .keep_cache_warm import KeepCacheWarm
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
@@ -114,6 +115,7 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'LLM_API_KEY_ENV_PATTERNS',
+    'KeepCacheWarm',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
     'Macroscope',
@@ -188,6 +190,7 @@ _CAPABILITY_EXPORTS = {
     'FallbackCompaction': 'compaction',
     'FileSystem': 'filesystem',
     'Grain': 'grain',
+    'KeepCacheWarm': 'keep_cache_warm',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
     'ManagedPrompt': 'logfire',

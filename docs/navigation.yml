@@ -515,6 +515,9 @@ navigation:
             slug: "harness/tool-output-limits"
             aliases:
               - "harness/overflowing-tool-output"
+          - page: "Keep Cache Warm"
+            path: "harness/keep-cache-warm.md"
+            slug: "harness/keep-cache-warm"
           - page: "Warn On Cache Busts"
             path: "harness/warn-on-cache-busts.md"
             slug: "harness/warn-on-cache-busts"
