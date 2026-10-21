@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, Self, assert_never, cast, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start
@@ -914,19 +914,46 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     return pairs
 
 
+CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-result.v1'
+"""Model-invisible `ToolReturnPart.metadata` key marking a result compaction has cleared."""
+
+
 def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
     """*part* with its content replaced by *placeholder*, or `None` if its type can't hold one.
 
     A typed `ToolReturnPart` subclass keeps its type when its kind declares no content shape, like
-    `FileSystem`'s `ReadFileReturnPart`. One whose kind declares a shape the placeholder doesn't fit,
-    like `ToolSearchReturnPart`, is left alone: core re-parses (and trusts) that structured content on
-    every request -- see `parse_discovered_tools` -- so blanking it would break the next request and
-    discard state the run still needs.
+    `FileSystem`'s `ReadFileReturnPart`. One whose kind declares a shape, like `ToolSearchReturnPart`,
+    is left alone even when the placeholder happens to fit that shape: core re-parses (and trusts) that
+    structured content on every request -- see `parse_discovered_tools` -- so replacing it would discard
+    state the run still needs.
+
+    The cleared part is marked in its `metadata` when that is `None` or a `dict`, so
+    `is_cleared_return` recognizes it without trusting its model-visible content.
     """
-    cleared = replace(part, content=placeholder)
-    if type(part) is ToolReturnPart or cleared.typed_content is not None:
-        return cleared
-    return None
+    # Core exposes a kind's content shape (`ToolKind.content`) but no public way to get a part
+    # class's kind, so read the `_kind` its typed-part registration sets.
+    kind = type(part)._kind  # pyright: ignore[reportPrivateUsage]
+    if kind is not None and kind.content is not None:
+        return None
+    metadata: object = part.metadata
+    if metadata is None:
+        metadata = {CLEARED_TOOL_RESULT_METADATA: True}
+    elif isinstance(metadata, dict):
+        metadata = {**cast('dict[str, Any]', metadata), CLEARED_TOOL_RESULT_METADATA: True}
+    return replace(part, content=placeholder, metadata=metadata)
+
+
+def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
+    """Whether compaction cleared *part*, judged by the mark `_cleared_return` leaves in its metadata.
+
+    A plain `ToolReturnPart` whose content is *placeholder* also counts: histories cleared before the
+    mark existed only ever cleared plain parts. A typed result's content is the tool's output, which
+    may equal the placeholder by coincidence, so it only counts when marked.
+    """
+    metadata: object = part.metadata
+    if isinstance(metadata, dict) and cast('dict[str, Any]', metadata).get(CLEARED_TOOL_RESULT_METADATA) is True:
+        return True
+    return type(part) is ToolReturnPart and str(part.content) == placeholder
 
 
 def rebuild_with_cleared(
