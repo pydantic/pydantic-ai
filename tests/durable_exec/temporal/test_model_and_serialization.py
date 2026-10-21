@@ -3611,6 +3611,28 @@ def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: p
             raise ModelAPIError('gpt-test', 'boom')
 
 
+def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_retryable():
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, still fails the activity without a
+    retry when it's listed, under its own class name as Temporal would have reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ApplicationModelError,)):
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details) == (
+        'ApplicationModelError',
+        True,
+        (),
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ):
