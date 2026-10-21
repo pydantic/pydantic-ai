@@ -1607,6 +1607,9 @@ Note that returning an empty string will result in no instruction message added.
 
 Instructions can also come from [capabilities](capabilities/overview.md) via [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [toolsets](toolsets.md#building-a-custom-toolset) via [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions], or from [template strings](agent-spec.md#template-strings) rendered against the agent's dependencies.
 
+!!! tip "Instructions that change during a conversation"
+    By default, an instruction whose text changes rewrites the instruction prefix, so the provider can't reuse the cached conversation behind it. For operator-controlled state that changes as the conversation goes on, such as a todo list, memory, or the app section a user is in, opt into `on_change='append'` so each change is appended to the history instead. See [Appending instruction changes](#appending-instruction-changes), and [keep untrusted text out of instructions](#untrusted-instruction-text).
+
 ### Instruction parts {#instruction-parts}
 
 Each source contributes its own instruction part. Parts are sent to the model as one string, separated by a blank line, and are also available individually as [`InstructionPart`][pydantic_ai.messages.InstructionPart]s on [`ModelRequestParameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts].
@@ -1683,7 +1686,9 @@ Two consequences worth knowing before you key configuration on an id:
 
 ### Appending instruction changes {#appending-instruction-changes}
 
-Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
+Use `on_change='append'` on a named instruction function or an [`InstructionPart`][pydantic_ai.messages.InstructionPart] when changing state should reach the model without rewriting earlier instructions. This is useful for todo lists, memory, and other state a tool updates during a run, or that changes between runs of a conversation. The default, `on_change='rewrite'`, keeps replacing the instruction prefix on each request.
+
+We recommend append mode for instructions built from operator-controlled state that changes partway through a conversation. Never build instructions from untrusted text: see [Keep untrusted text out of instructions](#untrusted-instruction-text). The instruction prefix, and the conversation cached behind it, stays the same; the cost is that each change adds the block's complete new text to the history, which stays there (it may be sent to the model as a diff, as described below). An instruction that never changes within a conversation doesn't benefit from it, since it never produces a replacement. Opting in does change how the instruction is rendered from the first request: it's sent inside a `<context id="...">` element, as described below.
 
 ```python {title="instruction_changes.py"}
 from dataclasses import dataclass
@@ -1729,10 +1734,24 @@ The function still runs before each model request, including the request after a
 
 Parts need a unique [instruction identity](#instruction-parts). Use `name=` for agent decorators and an owning `id` for capability/toolset instructions. An unaddressable or ambiguous block warns and falls back to rewriting. This policy does not change `dynamic` or evaluation frequency.
 
+How you opt in depends on where the instructions come from:
+
+| Instructions from | How to opt in |
+|---|---|
+| [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] | `@agent.instructions(name='state', on_change='append')` |
+| [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] | `@capability.instructions(name='state', on_change='append')`, on a capability with an `id` |
+| [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions] | `@toolset.instructions(name='state', on_change='append')`, on a toolset with an `id` |
+| Any other instruction function: passed to `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)`, or returned from a capability's `get_instructions()` | Return `InstructionPart(..., name='state', on_change='append')` from the function, as shown below |
+| A named [`InstructionPart`][pydantic_ai.messages.InstructionPart] passed to a run method's `instructions` argument | `instructions=InstructionPart('...', name='page', on_change='append')`, keyed `'run:<name>'`, as shown below. Unnamed runtime instructions always rewrite |
+| Literal text in `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)` | Pass `InstructionPart('...', name='config', on_change='append')`. The text is fixed for the agent, so this only matters when it differs between runs of one conversation, for example an agent built per request |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] on a [custom capability](capabilities/custom.md#providing-instructions) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's read when the agent is built, and again for each run in which [`for_run`](capabilities/custom.md#per-run-state-isolation) returns a replacement, so a replacement can change its text between runs |
+| [`get_instructions()`][pydantic_ai.toolsets.AbstractToolset.get_instructions] on a [custom toolset](toolsets.md#building-a-custom-toolset) with an `id` | Return an `InstructionPart` with `on_change='append'`. It's called before each request, so its text can change during a run |
+
 Every way of registering an instruction function can opt in. The decorators take `on_change` alongside `name`: [`@agent.instructions`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] and [`@toolset.instructions`][pydantic_ai.toolsets.FunctionToolset.instructions]. Any instruction function, including one passed to `Agent(instructions=...)`, `Capability(instructions=...)` or `FunctionToolset(instructions=...)`, or returned from a capability's [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], can instead return `InstructionPart(..., name='state', on_change='append')`. A part a function returns counts as dynamic, and returning `None` withdraws the block like returning an empty string:
 
 ```python {title="instruction_changes_returned_part.py"}
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -1742,21 +1761,21 @@ from pydantic_ai.models.test import TestModel
 
 @dataclass
 class Page:
-    path: str
+    name: Literal['home', 'settings', 'billing']  # (1)!
 
 
 @dataclass
 class CurrentPage(AbstractCapability[Page]):
     def get_instructions(self):
         def current_page(ctx: RunContext[Page]) -> InstructionPart:
-            return InstructionPart(f'The user is on {ctx.deps.path}.', name='page', on_change='append')
+            return InstructionPart(f'The user is on the {ctx.deps.name} page.', name='page', on_change='append')
 
         return current_page
 
 
 agent = Agent(TestModel(), deps_type=Page, capabilities=[CurrentPage(id='page')])
-first = agent.run_sync('Hi!', deps=Page('/home'))
-second = agent.run_sync('What now?', deps=Page('/settings'), message_history=first.all_messages())
+first = agent.run_sync('Hi!', deps=Page('home'))
+second = agent.run_sync('What now?', deps=Page('settings'), message_history=first.all_messages())
 changes = [
     part.content
     for message in second.new_messages()
@@ -1765,8 +1784,10 @@ changes = [
     if isinstance(part, InstructionDeltaPart)
 ]
 print(changes)
-#> ['The user is on /settings.']
+#> ['The user is on the settings page.']
 ```
+
+1. One of a fixed set of page names your application's routing resolved, never the raw URL: [keep untrusted text out of instructions](#untrusted-instruction-text).
 
 A function registered with a `name` can return an unnamed part to set only `on_change`; it can't rename itself.
 
@@ -1802,7 +1823,12 @@ print(changes)
 
 1. The page comes from the application's own routing, as one of a fixed set of names, never the raw URL or anything else the user controls: instructions carry operator authority.
 
-The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, or the history was compacted, the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
+A few sources can't opt in yet:
+
+- A [template string](agent-spec.md#template-strings), which can only render text: use a function that returns an `InstructionPart` instead.
+- [MCP server](mcp/client.md) instructions, which are read once when the connection opens and rarely change.
+
+The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, the history was compacted, or a request was sent without instructions (for example because a hook unset them), the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
 
 Persist the complete [message history](message-history.md), including these baseline parts, to retain the original prefix when another agent instance continues the conversation. Every previously sent replacement stays in history even after it is superseded. Compaction, or removing the baseline from history, starts a fresh baseline from current instructions. Do not prune old replacements independently if you want to preserve the prefix.
 
@@ -1820,6 +1846,10 @@ Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) comput
     [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin.
 
     Append delivery does not make instruction callbacks durable. In [durable execution](durable_execution/overview.md), callbacks must be deterministic or obtain changing external values through a [durable capability operation](capabilities/custom.md#durable-capability-operations) or the engine's durable units. Registering a bound async capability method decorated with `@durable_operation` through `capability.instructions(name='state', on_change='append')(capability.read_state)` records its result before history changes are computed. Replay then uses recorded values rather than fresh external reads.
+
+#### Keep untrusted text out of instructions {#untrusted-instruction-text}
+
+Instructions carry operator authority, and appended changes are sent as system messages on models that support them, so the model treats their text as your instruction. Build instructions only from state you control: fixed strings, counts, values from a fixed set, or routing your application resolved. Never put tool arguments, tool output, user input, or retrieved content in them, even in append mode, where escaping closing tags only stops the text from breaking out of its element, not from being obeyed. Send untrusted values to the model in user messages or tool results instead.
 
 ## Reflection and self-correction
 

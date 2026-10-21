@@ -180,6 +180,11 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
   `allowed_patterns`. A read-only workspace gets only read tools.
 - Veto writes with `@agent.on_event(FileChangeRequestEvent)` + `event.cancel(reason)` (from
   `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
+- Recognize the file tools by kind, never by name: each declares `tool_kind` `file_system.<tool>`
+  (`READ_FILE_KIND`, `WRITE_FILE_KIND`, ... from `pydantic_ai_harness.filesystem`), and its calls
+  become typed parts (`isinstance(part, ReadFileCallPart)`; `part.typed_args` is `None` until the
+  arguments validate). Only `read_file` has a typed return part (`ReadFileReturnPart`, successful
+  returns only).
 
 ## Shell
 
