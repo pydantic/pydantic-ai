@@ -36,7 +36,8 @@ from pydantic_ai import (
     ModelServerError,
     PartDeltaEvent,
     PartEndEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextContent,
     TextPart,
     TextPartDelta,
@@ -76,7 +77,17 @@ from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsSameStr, IsStr, RequestCapture, TestEnv, message, try_import
+from ..conftest import (
+    IsDatetime,
+    IsNow,
+    IsSameStr,
+    IsStr,
+    RequestCapture,
+    TestEnv,
+    legacy_retry_prompt_part,
+    message,
+    try_import,
+)
 from .conftest import json_objects
 from .mock_openai import (
     MockOpenAI,
@@ -531,11 +542,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -5224,7 +5237,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
-    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryFeedbackPart`
     that tells the model which kinds of output are valid, while relying on the model adapter to omit
     the empty response from the API payload.
     """
@@ -5240,16 +5253,16 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     assert result.output == 'hello back'
 
     # The empty response is omitted from the payload (no `content=None` assistant message that would
-    # trigger a 400); a retry prompt is appended instead so the model can self-correct.
+    # trigger a 400); the retry feedback is appended instead so the model can self-correct. OpenAI
+    # honors a mid-conversation system message, so it keeps the system voice.
     second_call_messages = get_mock_chat_completion_kwargs(mock_client)[1]['messages']
     assert not any(message['role'] == 'assistant' for message in second_call_messages)
-    assert second_call_messages == [
-        {'content': 'hello', 'role': 'user'},
-        {
-            'role': 'user',
-            'content': 'Validation feedback:\nPlease return text.\n\nFix the errors and try again.',
-        },
-    ]
+    assert second_call_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'hello'},
+            {'role': 'system', 'content': 'Please return text.'},
+        ]
+    )
 
     assert result.all_messages() == snapshot(
         [
@@ -5277,9 +5290,9 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6360,6 +6373,10 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
         assert model.system == provider_name
         if isinstance(model, OpenAIChatModel):
             assert model.profile.get('openai_chat_supports_document_input') is False
+            # Only the documents the mapping inlines as text remain; any other is replaced by a note.
+            assert model.profile.get('supported_document_media_types') == snapshot(
+                frozenset({'text/csv', 'text/html', 'text/markdown', 'text/plain'})
+            )
             with pytest.raises(UserError, match="Azure's Chat Completions API does not support document input"):
                 await Agent(model).run([BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
 
@@ -6402,6 +6419,77 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
 
     with pytest.raises(ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"):
         agent.run_sync('bad prompt')
+
+
+_AZURE_PROMPT_BLOCKED_MESSAGE = (
+    "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. "
+    'Please modify your prompt and retry.'
+)
+
+
+@pytest.mark.parametrize(
+    ('body', 'provider_details'),
+    [
+        pytest.param(
+            {
+                'message': _AZURE_PROMPT_BLOCKED_MESSAGE,
+                'type': 'invalid_request_error',
+                'param': 'prompt',
+                'code': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+                'innererror': {'code': 'ContentFiltered'},
+            },
+            {
+                'finish_reason': 'content_filter',
+                'content_filters': [
+                    {
+                        'blocked': True,
+                        'source_type': 'prompt',
+                        'content_filter_results': {'hate': {'filtered': True, 'severity': 'high'}},
+                    }
+                ],
+            },
+            id='reported-body',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter', 'message': _AZURE_PROMPT_BLOCKED_MESSAGE, 'innererror': {}}},
+            {'finish_reason': 'content_filter'},
+            id='innererror-without-code',
+        ),
+        pytest.param(
+            {'error': {'code': 'content_filter'}},
+            {'finish_reason': 'content_filter'},
+            id='code-only',
+        ),
+    ],
+)
+def test_responses_azure_prompt_filter_error_without_filter_result(
+    allow_model_requests: None, body: dict[str, Any], provider_details: dict[str, Any]
+) -> None:
+    """Azure's Responses API can send an `innererror` without `content_filter_result` for a blocked prompt."""
+    mock_client = MockOpenAIResponses.create_mock(
+        APIStatusError(
+            'content filter',
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
+            body=body,
+        )
+    )
+
+    m = OpenAIResponsesModel('gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client)))
+
+    with pytest.raises(
+        ContentFilterError, match=r"Content filter triggered. Finish reason: 'content_filter'"
+    ) as exc_info:
+        Agent(m).run_sync('bad prompt')
+
+    assert exc_info.value.body is not None
+    assert json.loads(exc_info.value.body)[0]['provider_details'] == provider_details
 
 
 async def test_openai_response_filter_error(allow_model_requests: None):
@@ -7136,7 +7224,7 @@ async def test_openai_malformed_tool_args_degraded_on_the_wire(allow_model_reque
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         tool_name='search_knowledge',
                         tool_call_id='call_123',
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',

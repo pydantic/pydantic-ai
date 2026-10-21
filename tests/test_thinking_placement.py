@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
@@ -1276,3 +1277,18 @@ async def test_thinking_placement(case: Case):
         for message in body
         if _REASONING in json.dumps(message, default=str)
     } == case.carrying_roles
+
+
+def test_carried_thinking_ending_in_a_closing_tag_cannot_close_the_wrapper() -> None:
+    """Reasoning that ends mid-tag would otherwise meet the newline ahead of the real closing tag."""
+    text, carried = render_replayed_thinking(
+        'thinking about </assistant_thinking',
+        ModelProfile(mimics_assistant_message_formatting=True),
+    )
+
+    assert carried
+    assert text == snapshot("""\
+<assistant_thinking>
+thinking about &lt;/assistant_thinking
+</assistant_thinking>\
+""")
