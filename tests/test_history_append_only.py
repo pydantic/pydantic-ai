@@ -164,18 +164,6 @@ KNOWN: dict[str, tuple[Known, ...]] = {
     'agent:dynamic_system_prompt': (
         Known('prefix', 'https://github.com/pydantic/pydantic-ai/issues/10521', 'system', 'system-prompt'),
     ),
-    # A `no_output` retry adds only system-voice feedback, so on Anthropic, where a request-scoped prompt is
-    # cleared at the next user message, the previous step's prompt stays visible: once per run.
-    'retry:no-output-retry+request-scoped': (
-        Known(
-            'request-scope',
-            'https://github.com/pydantic/pydantic-ai/issues/10935',
-            'messages',
-            'system-prompt',
-            count=2,
-            providers=('anthropic',),
-        ),
-    ),
 }
 """Expected failures, each linked to the issue or PR that fixes it. Remove an entry when its fix lands."""
 
