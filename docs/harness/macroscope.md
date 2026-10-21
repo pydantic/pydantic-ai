@@ -18,8 +18,8 @@ the tools it already has -- this capability surfaces findings only.
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships
-as editor plugins (Claude Code, Codex, Cursor, OpenCode). There is no way to
-give a Pydantic AI agent the same review-and-fix loop from your own code.
+as editor plugins (Claude Code, Codex, Cursor, OpenCode). This capability gives
+a Pydantic AI agent the same review-and-fix loop.
 
 ## Usage
 
@@ -59,9 +59,8 @@ or to fix the configured `base` if the CLI reports an unknown ref. The
 exception is a review that fails to start with a `base` the model passed: that
 is reported to the model as a retry so it can drop or change the ref.
 
-The tool invokes `macroscope codereview --raw` for machine-readable streaming
-output, which needs a recent CLI build. The installer fetches the latest and the
-CLI self-updates on use, so a fresh install satisfies this.
+The tool runs `macroscope codereview --raw`. Builds without `--raw` are too old;
+the CLI updates itself on use.
 
 ## The tool
 
@@ -107,11 +106,10 @@ workspace's `PATH` instead.
 
 ## Scope and composition
 
-This capability surfaces findings only. It does not edit files, create
-worktrees, or commit -- validating and fixing findings is the agent's job,
-using its other capabilities. Pair it with `FileSystem` or `Shell` to let the
-agent read code and apply fixes, and consider running the agent in an isolated
-worktree if you want fixes kept off your working tree.
+Pair it with `FileSystem` or `Shell` so the agent can read code and apply
+fixes. To keep fixes off your working tree, give the agent a separate worktree
+as its workspace. A large review returns every finding in one tool result; add
+[Tool Output Limits](tool-output-limits.md) to cap its size.
 
 ## Durable execution
 

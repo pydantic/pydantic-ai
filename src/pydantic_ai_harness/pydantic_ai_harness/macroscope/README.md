@@ -8,8 +8,8 @@ agent and hand the findings back for validation and fixing.
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships as
-editor plugins (Claude Code, Codex, Cursor, OpenCode). There is no way to give a
-Pydantic AI agent the same review-and-fix loop from your own code.
+editor plugins (Claude Code, Codex, Cursor, OpenCode). This capability gives a
+Pydantic AI agent the same review-and-fix loop.
 
 ## The solution
 
@@ -40,10 +40,10 @@ print(result.output)
 
 The capability drives the `macroscope` binary installed in the agent's
 [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/): your machine
-with `LocalWorkspace`, or the sandbox when the run uses one. A run without a workspace fails at its start. The review runs in
-the workspace's working directory, which should be the repository. The
-capability cannot install or authenticate on your behalf, so do this once
-wherever the review runs:
+with `LocalWorkspace`, or the sandbox when the run uses one. A run without a
+workspace fails at its start. The review runs in the workspace's working
+directory, which should be the repository. The capability cannot install or
+authenticate on your behalf, so do this once wherever the review runs:
 
 1. Install the CLI:
 
@@ -61,9 +61,8 @@ wherever the review runs:
 
    This writes `~/.macroscope/config.yaml`.
 
-The tool invokes `macroscope codereview --raw` for machine-readable streaming
-output, which needs a recent CLI build. The installer fetches the latest and the
-CLI self-updates on use, so a fresh install satisfies this.
+The tool runs `macroscope codereview --raw`. Builds without `--raw` are too old;
+the CLI updates itself on use.
 
 The model cannot fix these setup problems, so the tool raises `UserError` and the
 run stops rather than spending tool retries on them. A missing binary reports the
@@ -101,11 +100,10 @@ starts, the model gets a retry.
 
 ## Scope and composition
 
-This capability surfaces findings only. It does not edit files, create worktrees, or
-commit -- validating and fixing findings is the agent's job, using its other
-capabilities. Pair it with `FileSystem` or `Shell` to let the agent read code and
-apply fixes, and consider running the agent in an isolated worktree if you want fixes
-kept off your working tree.
+Pair it with `FileSystem` or `Shell` so the agent can read code and apply fixes. To
+keep fixes off your working tree, give the agent a separate worktree as its
+workspace. A large review returns every finding in one tool result; add
+`ToolOutputLimits` to cap its size.
 
 ## Durable execution
 
