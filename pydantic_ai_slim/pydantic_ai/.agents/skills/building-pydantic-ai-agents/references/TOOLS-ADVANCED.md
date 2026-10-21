@@ -242,7 +242,7 @@ To make a tool step aside when a more general tool is on the agent, set `ToolDef
 
 - The tool is left out of the step when another tool in it has that kind: not sent to the model, not callable, and not returned by `tool_name_for_kind`. It's the local-tool counterpart of `unless_native`.
 - A deferred (`defer_loading`) tool counts as present, so the answer doesn't change when it is revealed.
-- A tool is only left out in favor of a tool that stays; when tools would each be left out in favor of the other, the one listed first stays. The kind must be defined, or the run raises `UserError`.
+- A tool is only left out in favor of a tool that stays; when tools would each be left out in favor of the other, the one listed first stays. The kind doesn't need to be defined: only ids are compared, so an unknown kind means there's nothing to step aside for.
 - `tool_name_for_kind` returns the prefixed name, `None` when no tool has the kind, and the first in `ctx.tools` order when several do. Instruction functions see the current step's tools; `get_tools` / `prepare_tools` see the previous step's.
 
 See [Superseding a tool by kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind).
