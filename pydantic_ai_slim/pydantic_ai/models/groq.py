@@ -34,7 +34,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -58,8 +57,11 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -663,7 +665,7 @@ class GroqModel(Model[AsyncGroq]):
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         file_content: list[UserContent] = []
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
@@ -678,15 +680,13 @@ class GroqModel(Model[AsyncGroq]):
                 )
             elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
                 raise _unprojected_instruction_delta_error()
-            elif isinstance(part, RetryPromptPart):  # pragma: no branch
-                if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
-                else:
-                    yield chat.ChatCompletionToolMessageParam(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
+                raise _unconverted_speech_part_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
+            else:
+                assert_never(part)
         if file_content:
             yield await self._map_user_prompt(UserPromptPart(content=file_content))
 
