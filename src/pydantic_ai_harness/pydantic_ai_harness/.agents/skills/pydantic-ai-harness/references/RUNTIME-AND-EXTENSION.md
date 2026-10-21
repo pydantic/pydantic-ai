@@ -397,8 +397,9 @@ Gotchas: pin `label='production'` to keep the provider prompt cache warm, becaus
 labels split it; a pinned label that doesn't exist falls back to the rollout. A label change mid-run
 applies from the next run. With `render_template=True`, anyone who can edit the prompt in Logfire can
 place any `deps` field in the system prompt, and a remote prompt that isn't a valid template falls back
-to `default` with a `RuntimeWarning`. Logfire's `Resolve variable` span records the prompt text even with
-`include_content=False`. The capability orders itself outermost, wrapping `Instrumentation`.
+to `default` with a `RuntimeWarning` and a Logfire warning log. Logfire's `Resolve variable` span
+records the prompt text even with `include_content=False`. The capability orders itself outermost,
+wrapping `Instrumentation`.
 `ManagedPrompt.resolved` exposes the current run's `ResolvedVariable`, and is `None` outside a run.
 
 ## CapabilityCreation
