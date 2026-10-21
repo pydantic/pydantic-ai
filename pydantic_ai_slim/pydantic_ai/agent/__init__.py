@@ -472,7 +472,6 @@ def _normalize_agent_retry_overrides(retries: int | AgentRetries | None) -> Agen
 
 T = TypeVar('T')
 S = TypeVar('S')
-_SpecOutputDataT = TypeVar('_SpecOutputDataT')
 _PreparedDepsT = TypeVar('_PreparedDepsT')
 _PreparedOutputT = TypeVar('_PreparedOutputT')
 NoneType = type(None)
@@ -967,7 +966,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[_SpecOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -983,7 +982,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[object, _SpecOutputDataT]: ...
+    ) -> Agent[object, RunOutputDataT]: ...
 
     @overload
     @classmethod
@@ -994,7 +993,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[_SpecOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1010,7 +1009,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[T, _SpecOutputDataT]: ...
+    ) -> Agent[T, RunOutputDataT]: ...
 
     @classmethod
     def from_spec(
@@ -1184,7 +1183,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         fmt: Literal['yaml', 'json'] | None = None,
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[_SpecOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1200,7 +1199,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[object, _SpecOutputDataT]: ...
+    ) -> Agent[object, RunOutputDataT]: ...
 
     @overload
     @classmethod
@@ -1212,7 +1211,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps_type: type[T],
         custom_capability_types: Sequence[type[AbstractCapability[Any]]] = (),
         model: models.Model | models.KnownModelName | str | None = None,
-        output_type: OutputSpec[_SpecOutputDataT],
+        output_type: OutputSpec[RunOutputDataT],
         instructions: AgentInstructions[Any] = None,
         system_prompt: str | Sequence[str] = (),
         name: str | None = None,
@@ -1228,7 +1227,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tool_timeout: float | None = None,
         max_concurrency: _concurrency.AnyConcurrencyLimit = None,
         capabilities: Sequence[AgentCapability[Any]] | None = None,
-    ) -> Agent[T, _SpecOutputDataT]: ...
+    ) -> Agent[T, RunOutputDataT]: ...
 
     @classmethod
     def from_file(
