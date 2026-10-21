@@ -15,7 +15,8 @@ Three properties must hold on each path:
 2. **Load after stream** (`test_load`): `load_messages()` of what a streaming client sends back projects
    identically to the server's `all_messages()` for the turn.
 3. **Wire request** (`test_wire_request`): every provider request the agent makes through the client equals
-   the one a server keeping its own history makes.
+   the one a server keeping its own history makes. The agent runs on the real Anthropic and OpenAI Chat
+   models, on mocked SDK clients, so each request is prepared and rendered for that provider as in production.
 
 Properties 1 and 2 compare histories after the adapter's `sanitize_messages()`, so parts the server owns and
 never trusts from a client (its system prompt, by default) count as kept. The projection drops only part fields
@@ -30,7 +31,8 @@ from __future__ import annotations
 import json
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -39,7 +41,7 @@ import pytest
 from pydantic_core import to_jsonable_python
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import (
     BinaryContent,
     CompactionPart,
@@ -51,13 +53,14 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
     _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import (
     AgentInfo,
     DeltaThinkingCalls,
@@ -66,7 +69,9 @@ from pydantic_ai.models.function import (
     DeltaToolCalls,
     FunctionModel,
 )
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import try_import
 from .conftest import JSDriver
@@ -175,6 +180,8 @@ def _results_since_question(messages: list[ModelMessage]) -> int:
 
 async def _stream_response(response: ModelResponse) -> AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]:
     """Stream a scripted response in deltas, splitting text and tool arguments across chunks."""
+    if not response.parts:
+        yield ''
     for index, part in enumerate(response.parts):
         if isinstance(part, TextPart):
             middle = len(part.content) // 2
@@ -191,10 +198,77 @@ async def _stream_response(response: ModelResponse) -> AsyncIterator[str | Delta
             yield {index: DeltaToolCall(json_args=args[middle:])}
 
 
+WireProvider = Literal['anthropic', 'openai']
+WIRE_PROVIDERS: tuple[WireProvider, ...] = ('anthropic', 'openai')
+GapKey = tuple[Property, Path, Protocol] | tuple[Property, Path, Protocol, WireProvider]
+
+
 @dataclass
 class ModelCall:
-    messages: list[ModelMessage]
-    info: AgentInfo
+    """One model request, as the provider SDK would have received it."""
+
+    body: str
+
+
+class _ProviderWire(WrapperModel):
+    """A real provider model on a mocked SDK client, answering with the scenario's script.
+
+    The agent prepares each request for the provider model, as it would in production, and the provider
+    model maps it onto its mocked client, which records the request body. The script's `FunctionModel`
+    then streams the answer, so the conversation goes on exactly as the scripted one does.
+    """
+
+    def __init__(self, provider: WireProvider, script_model: FunctionModel, calls: list[ModelCall]) -> None:
+        model: Model
+        if provider == 'anthropic':
+            anthropic_client = MockAnthropic.create_mock(
+                anthropic_completion(
+                    [BetaTextBlock(text='OK', type='text')], BetaUsage(input_tokens=1, output_tokens=1)
+                )
+            )
+            model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=anthropic_client))
+            self._sent: Callable[[], list[dict[str, Any]]] = lambda: anthropic_request_kwargs(anthropic_client)
+            self._body_keys = ('system', 'messages', 'tools')
+        else:
+            openai_client = MockOpenAI.create_mock(
+                openai_completion(ChatCompletionMessage(content='OK', role='assistant'))
+            )
+            model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+            self._sent = lambda: openai_request_kwargs(openai_client)
+            self._body_keys = ('messages', 'tools')
+        super().__init__(model)
+        self._script_model = script_model
+        self._calls = calls
+
+    async def _record(
+        self, messages: list[ModelMessage], settings: ModelSettings | None, params: ModelRequestParameters
+    ) -> None:
+        await self.wrapped.request(messages, settings, params)
+        kwargs = self._sent()[-1]
+        body = {key: kwargs.get(key) for key in self._body_keys}
+        self._calls.append(ModelCall(json.dumps(body, default=str, indent=1)))
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:  # pragma: no cover
+        raise AssertionError('UI adapters and the server baseline both stream')
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        await self._record(messages, model_settings, model_request_parameters)
+        async with self._script_model.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as response:
+            yield response
 
 
 @dataclass(frozen=True)
@@ -210,22 +284,27 @@ class Scenario:
     For parts `FunctionModel` can't produce: only provider models emit a `CompactionPart`.
     """
     prompts: tuple[str, ...] = ('Question 1', 'Question 2')
-    gaps: dict[tuple[Property, Path, Protocol], str] = field(default_factory=dict[tuple[Property, Path, Protocol], str])
-    """Known round-trip losses, as `(property, path, protocol)` -> a reason naming the issue or PR."""
+    gaps: dict[GapKey, str] = field(default_factory=dict[GapKey, str])
+    """Known round-trip losses, as `(property, path, protocol)` -> a reason naming the issue or PR.
 
-    def agent(self) -> tuple[Agent[None, str], list[ModelCall]]:
-        """A fresh agent answering with the script, and the list each model request it makes is recorded in."""
+    A wire gap that only one provider's rendering shows adds that provider to the key.
+    """
+
+    def agent(self, provider: WireProvider | None = None) -> tuple[Agent[None, str], list[ModelCall]]:
+        """A fresh agent answering with the script, and the list each of its provider requests is recorded in.
+
+        With a `provider`, the agent runs on that provider's real model, so requests are prepared and rendered
+        for it; without one, on the script's `FunctionModel`, and nothing is recorded.
+        """
         calls: list[ModelCall] = []
 
-        def function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            calls.append(ModelCall(list(messages), info))
-            return self.script(messages, info)
-
         async def stream_function(messages: list[ModelMessage], info: AgentInfo):
-            async for item in _stream_response(function(messages, info)):
+            async for item in _stream_response(self.script(messages, info)):
                 yield item
 
-        agent = Agent(FunctionModel(function, stream_function=stream_function), **self.agent_kwargs)
+        script_model = FunctionModel(self.script, stream_function=stream_function)
+        model: Model = script_model if provider is None else _ProviderWire(provider, script_model, calls)
+        agent = Agent(model, **self.agent_kwargs)
         self.setup(agent)
         return agent, calls
 
@@ -343,6 +422,57 @@ def _retry_tools(agent: Agent[None, str]) -> None:
         return 'ok'
 
 
+def _responses_since_question(messages: list[ModelMessage]) -> int:
+    """How many answers the model has given since the user last asked a question."""
+    count = 0
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse):
+            count += 1
+        elif any(
+            isinstance(part, UserPromptPart) and isinstance(part.content, str) and part.content.startswith('Question')
+            for part in message.parts
+        ):
+            break
+    return count
+
+
+def _draft_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('draft' if _responses_since_question(messages) == 0 else 'final answer')])
+
+
+def _reject_drafts(agent: Agent[None, str]) -> None:
+    @agent.output_validator
+    def no_drafts(output: str) -> str:
+        if output == 'draft':
+            raise ModelRetry('That was a draft; answer for real.')
+        return output
+
+
+def _silent_first_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Answer nothing at first, so the framework asks again in its own voice (`no_output` feedback)."""
+    if _responses_since_question(messages) == 0:
+        return ModelResponse(parts=[])
+    return ModelResponse(parts=[TextPart('Sorry, here is the answer.')])
+
+
+def _questions_asked(ctx: RunContext[None]) -> int:
+    return sum(
+        isinstance(part, UserPromptPart) and isinstance(part.content, str) and part.content.startswith('Question')
+        for message in ctx.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+_progress = Capability[None](id='progress')
+
+
+@_progress.instructions(name='state', on_change='append')
+def _progress_state(ctx: RunContext[None]) -> str:
+    """Operator state that changes every turn, appended to history rather than rewriting the prefix."""
+    return f'The user has asked {_questions_asked(ctx)} question(s) so far.'
+
+
 class _RequestScopedReminder(AbstractCapability[None]):
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
@@ -384,13 +514,30 @@ _AGUI_SYSTEM_ORDER = (
     "AG-UI `dump_messages()` writes a request's system prompts before its tool results, so an enqueued "
     'system prompt reloads ahead of the tool result it followed; no issue yet'
 )
+_APPEND_INSTRUCTIONS = (
+    'append-mode instruction records (`InstructionBaselinePart`, `InstructionDeltaPart`) are system voice, '
+    "which the adapter strips from client history in `manage_system_prompt='server'`, so every turn re-renders "
+    'the baseline from current state and rewrites the prefix; no issue yet'
+)
+_FEEDBACK_NOT_STREAMED = (
+    "retry feedback (`RetryFeedbackPart`) isn't streamed, so the client keeps the rejected and the accepted "
+    'answer as one response; no issue yet'
+)
+_NO_OUTPUT_DEMOTED = (
+    "`no_output` feedback is the framework's system voice, which a client can't claim, so it loads back as "
+    'user-voice feedback and renders differently; no issue yet'
+)
+_AGUI_EMPTY_RESPONSE = (
+    'AG-UI `dump_messages()` drops an empty response, so the feedback after it loads into the question '
+    'before it; no issue yet'
+)
 _SERVER_SYSTEM_PROMPT = (
     'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
     "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
 )
 
 
-def _gaps(reason: str, *keys: tuple[Property, Path, Protocol]) -> dict[tuple[Property, Path, Protocol], str]:
+def _gaps(reason: str, *keys: GapKey) -> dict[GapKey, str]:
     return dict.fromkeys(keys, reason)
 
 
@@ -447,10 +594,70 @@ SCENARIOS = [
         gaps=_gaps(_AGUI_ACTIVITY, ('load', 'stream', 'agui'), ('wire', 'stream', 'agui')),
     ),
     Scenario(
-        id='retry_feedback',
+        id='tool_retry',
         script=_retry_script,
         setup=_retry_tools,
         gaps=_gaps(_RETRY, ('load', 'stream', 'vercel')),
+    ),
+    Scenario(
+        id='output_validation_feedback',
+        script=_draft_script,
+        setup=_reject_drafts,
+        gaps=_gaps(
+            _FEEDBACK_NOT_STREAMED,
+            ('load', 'stream', 'vercel'),
+            ('load', 'stream', 'agui'),
+            ('wire', 'stream', 'vercel'),
+            ('wire', 'stream', 'agui'),
+        ),
+    ),
+    Scenario(
+        id='no_output_feedback',
+        script=_silent_first_script,
+        gaps={
+            **_gaps(_AGUI_EMPTY_RESPONSE, ('load', 'dump', 'agui')),
+            **_gaps(_NO_OUTPUT_DEMOTED, ('wire', 'dump', 'vercel'), ('wire', 'dump', 'agui')),
+            **_gaps(
+                _FEEDBACK_NOT_STREAMED,
+                ('load', 'stream', 'vercel'),
+                ('load', 'stream', 'agui'),
+                ('wire', 'stream', 'vercel'),
+                ('wire', 'stream', 'agui'),
+            ),
+        },
+    ),
+    Scenario(
+        id='appended_instructions',
+        script=_text_script,
+        agent_kwargs={'capabilities': [_progress]},
+        gaps=_gaps(_APPEND_INSTRUCTIONS, *_ALL_WIRE),
+    ),
+    Scenario(
+        id='compaction_boundary',
+        script=_reveal_script,
+        setup=_reveal_tools,
+        agent_kwargs={'capabilities': [_progress]},
+        gaps={
+            **_gaps(_AGUI_ACTIVITY, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+            **_gaps(_APPEND_INSTRUCTIONS, *_ALL_WIRE),
+        },
+        # A reveal before the compaction, and new reveals and instruction changes after it.
+        seed=[
+            ModelRequest(parts=[UserPromptPart('Question 0')]),
+            ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='unlock-0')]),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart('unlock', 'unlocked', tool_call_id='unlock-0'),
+                    ToolAvailabilityDeltaPart(tools_added=['secret'], tool_call_id='unlock-0'),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    CompactionPart(content='Summary so far: the secret tool is unlocked.', provider_name='anthropic'),
+                    TextPart('Continuing from the summary.'),
+                ]
+            ),
+        ],
     ),
     Scenario(
         id='request_scoped_system_prompt',
@@ -461,12 +668,13 @@ SCENARIOS = [
     Scenario(
         id='compaction',
         script=_text_script,
+        # OpenAI Chat never sends another provider's compaction, so only Anthropic's request shows the loss.
         gaps=_gaps(
             _AGUI_ACTIVITY,
             ('load', 'dump', 'agui'),
             ('load', 'stream', 'agui'),
-            ('wire', 'dump', 'agui'),
-            ('wire', 'stream', 'agui'),
+            ('wire', 'dump', 'agui', 'anthropic'),
+            ('wire', 'stream', 'agui', 'anthropic'),
         ),
         seed=[
             ModelRequest(parts=[UserPromptPart('Question 0')]),
@@ -615,9 +823,9 @@ CLIENTS: dict[Protocol, type[Client]] = {'vercel': VercelClient, 'agui': AGUICli
 # --- Running conversations ----------------------------------------------------------------------------------------
 
 
-async def run_server(scenario: Scenario) -> list[list[ModelCall]]:
-    """The model requests of each turn when the server keeps its own history, with no UI in between."""
-    agent, calls = scenario.agent()
+async def run_server(scenario: Scenario, provider: WireProvider) -> list[list[ModelCall]]:
+    """The provider requests of each turn when the server keeps its own history, with no UI in between."""
+    agent, calls = scenario.agent(provider)
     turns: list[list[ModelCall]] = []
     history = scenario.seed
     for prompt in scenario.prompts:
@@ -633,9 +841,11 @@ async def run_server(scenario: Scenario) -> list[list[ModelCall]]:
     return turns
 
 
-async def run_client(scenario: Scenario, client: Client, path: Path) -> list[Turn]:
+async def run_client(
+    scenario: Scenario, client: Client, path: Path, provider: WireProvider | None = None
+) -> list[Turn]:
     """The conversation through a client, plus one more prompt to see what the client sends back last."""
-    agent, calls = scenario.agent()
+    agent, calls = scenario.agent(provider)
     turns: list[Turn] = []
     history = scenario.seed
     for index, prompt in enumerate(scenario.prompts):
@@ -653,45 +863,23 @@ async def run_client(scenario: Scenario, client: Client, path: Path) -> list[Tur
 
 def _params(prop: Property) -> list[Any]:
     params: list[Any] = []
+    providers: tuple[WireProvider | None, ...] = WIRE_PROVIDERS if prop == 'wire' else (None,)
     for scenario in SCENARIOS:
         for path in PATHS:
             for protocol in PROTOCOLS:
-                gap = scenario.gaps.get((prop, path, protocol))
-                params.append(
-                    pytest.param(
-                        scenario,
-                        path,
-                        protocol,
-                        id=f'{scenario.id}-{path}-{protocol}',
-                        marks=[pytest.mark.xfail(reason=gap, strict=True)] if gap else [],
+                for provider in providers:
+                    gap = scenario.gaps.get((prop, path, protocol))
+                    if provider is not None:
+                        gap = scenario.gaps.get((prop, path, protocol, provider), gap)
+                    values = (scenario, path, protocol) if provider is None else (scenario, path, protocol, provider)
+                    params.append(
+                        pytest.param(
+                            *values,
+                            id='-'.join([scenario.id, path, protocol, *([provider] if provider else [])]),
+                            marks=[pytest.mark.xfail(reason=gap, strict=True)] if gap else [],
+                        )
                     )
-                )
     return params
-
-
-# --- Provider requests --------------------------------------------------------------------------------------------
-
-
-async def provider_requests(call: ModelCall) -> dict[str, str]:
-    """The request bodies Anthropic and OpenAI Chat models would send for a recorded model request."""
-    anthropic_client = MockAnthropic.create_mock(
-        anthropic_completion([BetaTextBlock(text='OK', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
-    )
-    openai_client = MockOpenAI.create_mock(openai_completion(ChatCompletionMessage(content='OK', role='assistant')))
-    models = [
-        AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=anthropic_client)),
-        OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)),
-    ]
-    for model in models:
-        await model.request(call.messages, None, call.info.model_request_parameters)
-    [anthropic_kwargs] = anthropic_request_kwargs(anthropic_client)
-    [openai_kwargs] = openai_request_kwargs(openai_client)
-    return {
-        'anthropic': json.dumps(
-            {key: anthropic_kwargs.get(key) for key in ('system', 'messages', 'tools')}, default=str, indent=1
-        ),
-        'openai': json.dumps({key: openai_kwargs.get(key) for key in ('messages', 'tools')}, default=str, indent=1),
-    }
 
 
 # --- Properties ---------------------------------------------------------------------------------------------------
@@ -708,17 +896,20 @@ async def test_load(scenario: Scenario, path: Path, protocol: Protocol, js_drive
         assert project(turn.sent) == project(turn.expected)
 
 
-@pytest.mark.parametrize(('scenario', 'path', 'protocol'), _params('wire'))
+@pytest.mark.parametrize(('scenario', 'path', 'protocol', 'provider'), _params('wire'))
 async def test_wire_request(
-    scenario: Scenario, path: Path, protocol: Protocol, js_driver: JSDriver, allow_model_requests: None
+    scenario: Scenario,
+    path: Path,
+    protocol: Protocol,
+    provider: WireProvider,
+    js_driver: JSDriver,
+    allow_model_requests: None,
 ) -> None:
     """Every provider request through the client equals the one a server keeping its own history makes."""
-    client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}-wire', scenario.adapter_kwargs)
-    server_turns = await run_server(scenario)
+    client = CLIENTS[protocol](js_driver, f'{scenario.id}-{path}-{provider}-wire', scenario.adapter_kwargs)
+    server_turns = await run_server(scenario, provider)
     # The last turn only records what the client would send next.
-    client_turns = (await run_client(scenario, client, path))[:-1]
+    client_turns = (await run_client(scenario, client, path, provider))[:-1]
     for server_calls, client_turn in zip(server_turns, client_turns, strict=True):
         assert server_calls
-        assert [await provider_requests(call) for call in client_turn.calls] == [
-            await provider_requests(call) for call in server_calls
-        ]
+        assert [call.body for call in client_turn.calls] == [call.body for call in server_calls]
