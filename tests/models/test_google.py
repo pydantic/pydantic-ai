@@ -69,6 +69,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelRetry,
     UnexpectedModelBehavior,
@@ -998,8 +999,10 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'usage': {
                     'input_tokens': 14,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -1060,6 +1063,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'workspace_ref': None,
             }
@@ -3480,15 +3484,12 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
 
 
 def test_map_usage():
-    assert (
-        _metadata_as_usage(
-            GenerateContentResponse(),
-            # Test the 'google' provider fallback
-            provider='',
-            provider_url='',
-        )
-        == RequestUsage()
-    )
+    assert _metadata_as_usage(
+        GenerateContentResponse(),
+        # Test the 'google' provider fallback
+        provider='',
+        provider_url='',
+    ) == RequestUsage(unmeasured_requests=1)
 
     response = GenerateContentResponse(
         usage_metadata=GenerateContentResponseUsageMetadata(
@@ -4172,6 +4173,7 @@ def test_google_process_response_empty_candidates(google_provider: GoogleProvide
     assert result == snapshot(
         ModelResponse(
             parts=[],
+            usage=RequestUsage(unmeasured_requests=1),
             model_name='gemini-2.5-pro',
             timestamp=IsDatetime(),
             provider_name='google',
@@ -4241,7 +4243,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _provider_url='',
     )
 
-    async for _ in streamed_response._get_event_iterator():  # pyright: ignore[reportPrivateUsage]
+    async for _ in streamed_response:
         pass
 
     return streamed_response.usage
@@ -4258,6 +4260,14 @@ class _UsageRetentionCase:
 
 
 _USAGE_RETENTION_CASES = [
+    _UsageRetentionCase(
+        id='usage_absent_on_every_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(candidates=0, text='hel', with_metadata=False),
+            _usage_chunk(candidates=0, text='lo', with_metadata=False),
+        ],
+        expected=snapshot(RequestUsage(unmeasured_requests=1)),
+    ),
     _UsageRetentionCase(
         id='cached_tokens_dropped_by_later_chunk',
         make_chunks=lambda: [
@@ -5405,7 +5415,8 @@ async def test_google_connect_error_is_wrapped(allow_model_requests: None, strea
             else:
                 await Agent(model).run('test')
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'connect'
     assert exc_info.value.message == 'connection refused'
     assert isinstance(exc_info.value.__cause__, HTTPX2ConnectError)
 
@@ -5432,7 +5443,8 @@ async def test_google_stream_read_error_mid_stream_is_wrapped(allow_model_reques
             async with Agent(model).run_stream('test') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'connection reset'
     assert isinstance(exc_info.value.__cause__, HTTPX2ReadError)
 

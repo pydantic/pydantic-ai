@@ -30,6 +30,8 @@ from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     SystemPromptPart,
@@ -191,7 +193,8 @@ def enqueued_messages_for_client(
     When the server owns the system prompt, enqueued `SystemPromptPart`s stay on the server: the
     frontend's copy would be stripped on the way back in anyway, so sending it would only disclose it.
     Request-scoped ones stay on the server either way, as in `dump_messages`: they're for the model's
-    current request only, and loaded back they'd become lasting system prompts.
+    current request only, and loaded back they'd become lasting system prompts. So do instruction changes
+    and baselines, which are server-side operator state.
     """
     kept: list[ModelMessage] = []
     for message in messages:
@@ -199,8 +202,11 @@ def enqueued_messages_for_client(
             parts = [
                 part
                 for part in message.parts
-                if not isinstance(part, SystemPromptPart)
-                or (manage_system_prompt == 'client' and part.scope != 'request')
+                if not isinstance(part, (InstructionDeltaPart, InstructionBaselinePart))
+                and (
+                    not isinstance(part, SystemPromptPart)
+                    or (manage_system_prompt == 'client' and part.scope != 'request')
+                )
             ]
             if not parts:
                 continue
@@ -631,6 +637,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -653,6 +660,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Optional token for cancelling this run from another task.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], keeping what it completed.
+                See [Bounding a whole run](../../timeouts.md#bounding-a-whole-run).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -667,11 +677,16 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if conversation_id is None:
             conversation_id = self.conversation_id
 
-        frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+        frontend_messages = self.messages
         if message_history:
             # A client-supplied compaction part would trim the trusted server-side history off the
             # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
             frontend_messages = _drop_compaction_parts(frontend_messages)
+        # `sanitize_messages` must be the last step that drops or merges client messages. Its final step
+        # strips unresolved tool calls from the end of the history, and a run without a new prompt
+        # executes the tool calls of whatever response ends up last. Dropping or merging a message after
+        # this call can move an earlier, unchecked response to the end. Do any such change before it.
+        frontend_messages = self.sanitize_messages(frontend_messages, deferred_tool_results=deferred_tool_results)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
@@ -713,6 +728,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 conversation_id=conversation_id,
                 run_id=run_id,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -744,6 +760,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         infer_name: bool = True,
@@ -768,6 +785,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Optional token for cancelling this run from another task.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], which is reported like
+                any other first-party cancellation, including to `on_cancel`. See [Bounding a whole run](../../timeouts.md#bounding-a-whole-run).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -789,6 +809,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 conversation_id=conversation_id,
                 run_id=run_id,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 model=model,
                 instructions=instructions,
                 deps=deps,
@@ -822,6 +843,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
         usage: RunUsage | None = None,
         metadata: AgentMetadata[DispatchDepsT] | None = None,
         infer_name: bool = True,
@@ -858,6 +880,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
             cancellation_token: Optional token for cancelling this run from another task.
+            timeout: Optional maximum duration of the whole run, in seconds. When it passes, the run is
+                cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut], which is reported like
+                any other first-party cancellation, including to `on_cancel`. See [Bounding a whole run](../../timeouts.md#bounding-a-whole-run).
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -922,6 +947,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 conversation_id=conversation_id,
                 run_id=run_id,
                 cancellation_token=cancellation_token,
+                timeout=timeout,
                 deps=deps,
                 output_type=output_type,
                 model=model,

@@ -1,0 +1,62 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in two or three words.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_2501m52nxwvzftkvyktbfxbdk6pg
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: user_message
+    text: Say hi.
+- kind: message
+  direction: received
+  at: 0.777
+  data:
+    audio_event:
+      audio_base_64: AwAFAAEAAAD+//3//v/+//7//f/9//3////+//3//P/9
+      event_id: 1
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 0.782
+  data:
+    agent_response_event:
+      agent_response: Hello there.
+      event_id: 1
+      response_id: 217c2d96-596b-4fe6-8afc-ac21f9cc90b1
+      in_response_to_ids:
+      - 5abca95b-7c56-40c1-8c22-0ba77330b854
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: received
+  at: 0.784
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 383
+      context_limit_tokens: 1048576
+    type: context_usage

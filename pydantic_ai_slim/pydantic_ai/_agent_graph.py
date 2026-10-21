@@ -26,6 +26,9 @@ from pydantic_ai._instrumentation import (
     capture_model_response_span_context,
     get_instructions as _get_history_instructions,
     get_instructions_source as _get_history_instructions_source,
+    mcp_telemetry_url_ids,
+    mcp_telemetry_url_tool_names,
+    mcp_telemetry_url_toolset_ids,
 )
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
@@ -34,6 +37,7 @@ from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
     ModelRequestContext,
+    _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -66,6 +70,7 @@ from ._deferred_capabilities import (
 )
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages
+from ._instructions import instruction_window, recorded_prefix, update_instruction_history
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -73,11 +78,13 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .conversation import Conversation
 from .exceptions import ToolRetryError
 from .messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
+    _merge_consecutive_messages,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -846,7 +853,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                                 # To enable dynamic system prompt refs in future runs, use a placeholder string
                                 updated_part_content = await runner.run(run_context)
                                 part = _messages.SystemPromptPart(
-                                    updated_part_content or '', dynamic_ref=part.dynamic_ref
+                                    updated_part_content or '', dynamic_ref=part.dynamic_ref, metadata=part.metadata
                                 )
 
                         reevaluated_message_parts.append(part)
@@ -1050,6 +1057,9 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        _telemetry_mcp_url_ids=mcp_telemetry_url_ids(run_context.capabilities.values(), ctx.deps.tool_manager.toolset),
+        _telemetry_mcp_url_tool_names=mcp_telemetry_url_tool_names(ctx.deps.tool_manager.tools),
+        _telemetry_mcp_url_toolset_ids=mcp_telemetry_url_toolset_ids(ctx.deps.tool_manager.toolset),
         deferred_capability_ids=deferred_capability_ids,
         revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
@@ -1088,13 +1098,15 @@ def _keep_default_output_mode(
     if (kept_mode := state.default_output_modes.get(model_id)) is not None:
         kept = params.with_default_output_mode(kept_mode)
         try:
-            model.prepare_request(model_settings, kept)
+            with suppress_unsupported_setting_warnings():
+                model.prepare_request(model_settings, kept)
         except exceptions.UserError:
             # The kept mode isn't valid for this request: e.g. Bedrock rejects output tools alongside thinking on
             # models other than Claude, and Gemini before 3 rejects them alongside a native tool added mid-run.
             return params
         return kept
-    _, prepared = model.prepare_request(model_settings, params)
+    with suppress_unsupported_setting_warnings():
+        _, prepared = model.prepare_request(model_settings, params)
     # `FallbackModel` leaves it to whichever model ends up answering.
     if (mode := prepared.output_mode) in ('tool', 'native', 'prompted'):
         state.default_output_modes[model_id] = mode
@@ -1189,7 +1201,8 @@ def _check_continuation_usage(
         attempt_usages = [attempt.usage for attempt in attempts or () if attempt.usage is not None]
         for attempt_usage in attempt_usages:
             provisional.incr(attempt_usage)  # usage-attribution: a provisional copy, for a check only
-        run_context.usage_limits.check_tokens(provisional)
+        # Provisional, so omitted usage is warned about once the merged response is recorded.
+        run_context.usage_limits._check_token_limits(provisional)  # pyright: ignore[reportPrivateUsage]
         if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
@@ -1905,6 +1918,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if instruction_parts:
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        if instruction_parts is None and instruction_window(ctx.state.message_history) is not None:
+            # An empty source set withdraws tracked blocks; hooks can still explicitly unset parts.
+            instruction_parts = []
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
         if not ctx.state.message_history[:-1] and not self.request.parts and not self.request.instructions:
@@ -1962,7 +1978,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
+        instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
@@ -1991,7 +2007,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
-    async def _apply_before_model_request(
+    async def _apply_before_model_request(  # noqa: C901
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
@@ -2014,6 +2030,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # request re-sends the history ending in it, so there's nowhere to put new content, and it waits.
         if self._resume_suspended is None:
             processed_context = _enqueue.deliver_asap_messages(run_context, processed_context)
+        # Content enqueued during a tool call replaces the request it went into with a copy. Keep this node on the
+        # copy, so what's recorded on its request below, like the instructions sent, lands in history.
+        self.request = _enqueue.run_queue(run_context).request_in_history(self.request)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
@@ -2055,7 +2074,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 )
 
             # Instruction parts are request configuration, but the message recording the
-            # current step must still reflect what was actually sent.
+            # current step must still reflect what was actually sent. Append-on-change blocks are
+            # resolved against the processed history: only a baseline that survived processing can
+            # anchor the prefix.
+            model_request_parameters = replace(
+                model_request_parameters,
+                instruction_parts=update_instruction_history(
+                    messages, model_request_parameters.instruction_parts, _history_recording_targets(ctx, messages)
+                ),
+            )
             _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
@@ -2116,7 +2143,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 outgoing_namespace_before: dict[str, Any] = (
                     dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
                 )
-                with set_current_run_context(run_context):
+                # The request this counts warns about ignored settings when it's sent.
+                with set_current_run_context(run_context), suppress_unsupported_setting_warnings():
                     counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
 
                 # Counting models may persist framework-only state on the request they counted. When
@@ -2193,6 +2221,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             if instructions_target is not None:
                 _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
+
+            if _has_instruction_state(messages):
+                # Projection can split a foreign native tool-search exchange into a trailing
+                # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
+                # frontier, so its tool calls must not get synthesized returns.
+                messages = _merge_consecutive_messages(model.prepare_messages(messages, model_request_parameters))
+                request_context.messages = messages
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
@@ -3056,6 +3091,49 @@ def _with_outgoing_reveal_state(
             loaded_capability_ids=parse_loaded_capabilities(messages),
         ),
     )
+
+
+def _resumed_instruction_parts(
+    history: list[_messages.ModelMessage], instructions: str | None
+) -> list[_messages.InstructionPart] | None:
+    """The instruction parts a suspended turn was sent, for its continuation to send again.
+
+    The history records the joined `instructions`, which is all a turn without append-mode blocks needs. A
+    turn in an `on_change='append'` window was sent its window's prefix, whose append-mode blocks the model
+    gets tagged, so the parts are rebuilt from the recorded text and the window's baseline, which leaves the
+    continuation byte-identical to the turn even if the instructions have changed since.
+    """
+    if not instructions:
+        return None
+    source = _get_history_instructions_source(history)
+    end = next(index for index, message in enumerate(history) if message is source)
+    if (baseline := instruction_window(history[: end + 1])) is not None and (
+        prefix := recorded_prefix(baseline, instructions)
+    ) is not None:
+        return prefix
+    return [_messages.InstructionPart(content=instructions)]
+
+
+def _history_recording_targets(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], messages: list[_messages.ModelMessage]
+) -> list[_messages.ModelRequest]:
+    """The requests to record this step's history state on, so it is both sent now and persisted.
+
+    That is normally the outgoing tail, which is also the persisted tail. A `before_model_request` hook can
+    end the request in a message that exists only in the request (`request_context.messages = [*messages,
+    reminder]`), though, or swap the persisted tail for a copy. State recorded only on that tail would never
+    reach history and would be recorded again on every step, so it goes on the persisted tail instead when
+    the request still carries it, and on both when it doesn't.
+    """
+    outgoing = messages[-1]
+    assert isinstance(outgoing, _messages.ModelRequest)
+    history = ctx.state.message_history
+    persisted = history[-1] if history else None
+    if not isinstance(persisted, _messages.ModelRequest) or persisted is outgoing:
+        return [outgoing]
+    if any(message is persisted for message in messages):
+        return [persisted]
+    return [outgoing, persisted]
 
 
 def build_validation_context(

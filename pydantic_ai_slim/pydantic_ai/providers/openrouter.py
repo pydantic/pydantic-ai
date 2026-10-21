@@ -8,7 +8,7 @@ from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
-from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -168,6 +168,10 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             if provider == 'anthropic':
                 model_name = model_name.replace('.', '-')
             profile = provider_to_profile[provider](model_name)
+        elif provider == 'z-ai' and model_name.lower().startswith('glm-5.3'):
+            # Inline GLM-5.3 schemas without importing Z.AI's native thinking settings.
+            # See https://github.com/pydantic/pydantic-ai/issues/10243.
+            profile = ModelProfile(json_schema_transformer=InlineDefsJsonSchemaTransformer)
 
         # Cache capability flags are set on the gateway layer based on the downstream provider.
         # The TTL / tool-cache / dynamic-instruction flags are kept separate even though they all
