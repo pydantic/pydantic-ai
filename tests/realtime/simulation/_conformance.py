@@ -61,6 +61,7 @@ from pydantic_ai.realtime._lifecycle import (
     ResponseEnded,
     ResponseRequestRefused,
     ResponseStarted,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -205,6 +206,8 @@ class LifecycleChecker:
             # (A cut can come after its response ended: generation outruns playback.)
             if event.item_id not in self._items:
                 issue('lifecycle.cut_of_unknown_item', f'cut of output item {event.item_id!r} no content named')
+        elif isinstance(event, ToolCallsAbandoned):
+            pass  # Nothing to check: a call can be abandoned before its response ends or after.
         elif isinstance(event, OutputItemDetails):
             if event.response_id not in self._open_responses:
                 issue('lifecycle.content_outside_response', f'output item details for {event.response_id!r} outside it')
