@@ -79,8 +79,13 @@ def dbos_instance(tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOS, A
 # ---------------------------------------------------------------------------
 
 
+_additions: list[tuple[int, int]] = []
+
+
+@DBOS.step()
 def add(a: int, b: int) -> int:
     """Add two numbers."""
+    _additions.append((a, b))
     return a + b
 
 
@@ -274,14 +279,28 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
 
 
 @pytest.mark.parametrize(
-    'prompt,limit', [('Calculate 3 + 4', 1), ('Gather two additions', 2)], ids=['sequential', 'gather']
+    'prompt,limit,expected_additions',
+    [('Calculate 3 + 4', 1, []), ('Gather two additions', 2, [(3, 4)])],
+    ids=['sequential', 'gather'],
 )
-def test_tool_calls_limit_refuses_during_recovery(dbos_instance: DBOS, prompt: str, limit: int) -> None:
+def test_tool_calls_limit_refuses_during_recovery(
+    dbos_instance: DBOS, prompt: str, limit: int, expected_additions: list[tuple[int, int]]
+) -> None:
     _limit_errors.clear()
     _captured_tool_defs.clear()
+    _additions.clear()
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_LimitAbortCrash):
         run_limited_code_mode_agent(prompt, limit)
+
+    recorded_additions: list[tuple[int, object, object]] = [
+        (step['function_id'], step['output'], step['error'])
+        for step in dbos_instance.list_workflow_steps(workflow_id)
+        if step['function_name'] == 'add'
+    ]
+    assert len(recorded_additions) == len(expected_additions)
+    if expected_additions:
+        assert recorded_additions[0][1:] == (7, None)
 
     handle = DBOS.resume_workflow(workflow_id)
     with pytest.raises(UsageLimitExceeded, match=rf'tool_calls_limit of {limit} \(tool_calls={limit + 1}\)'):
@@ -290,8 +309,12 @@ def test_tool_calls_limit_refuses_during_recovery(dbos_instance: DBOS, prompt: s
     assert len(_limit_errors) == 2
     assert _limit_errors[0] == _limit_errors[1]
     assert len(_captured_tool_defs) == 1
+    assert _additions == expected_additions
     steps = dbos_instance.list_workflow_steps(workflow_id)
     assert [step['function_name'] for step in steps].count('code_mode_dbos_agent__model.request') == 1
+    assert [
+        (step['function_id'], step['output'], step['error']) for step in steps if step['function_name'] == 'add'
+    ] == recorded_additions
 
 
 def test_gathered_calls_overlap_in_dbos_workflow(dbos_instance: DBOS) -> None:

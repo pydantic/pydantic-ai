@@ -7,10 +7,11 @@ import dataclasses
 import json
 import re
 import time
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 
 import pytest
+from pydantic_monty import AsyncSnapshot, MontyComplete
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
@@ -33,6 +34,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 from .._recording_durability import RecordingDurability
@@ -85,11 +87,13 @@ def run_code_return_content(messages: list[ModelMessage]) -> object:
 async def prepared_eager_toolset(
     tools: Sequence[Tool[None]],
     capability: CodeMode[None] | None = None,
+    *,
+    usage_limits: UsageLimits | None = None,
 ) -> AsyncGenerator[tuple[CodeMode[None], CodeModeToolset[None], RunContext[None], ToolsetTool[None]]]:
     capability = capability or CodeMode[None](eager=True)
     root = capability.get_wrapper_toolset(FunctionToolset[None](tools=tools))
     assert isinstance(root, CodeModeToolset)
-    ctx = build_run_context()
+    ctx = dataclasses.replace(build_run_context(), usage_limits=usage_limits)
     async with root:
         manager = await ToolManager(toolset=root).for_run_step(ctx)
         ctx.tool_manager = manager
@@ -297,6 +301,69 @@ class TestEagerCodeMode:
 
         with pytest.raises(UsageLimitExceeded, match=re.escape('tool_calls_limit of 3 (tool_calls=4)')):
             await agent.run('go', usage_limits=UsageLimits(tool_calls_limit=3))
+
+        assert calls == ['alpha', 'beta']
+
+    @pytest.mark.parametrize('restart', [False, True], ids=['prefix-mismatch', 'restart'])
+    async def test_tool_calls_limit_survives_replaced_eager_code(
+        self, monkeypatch: pytest.MonkeyPatch, restart: bool
+    ) -> None:
+        """A final dict update cannot replace a fragment's terminal refusal with a retry or success."""
+        refused_feed = asyncio.Event()
+        calls: list[str] = []
+        original_run = MontyExecutor.run
+
+        async def observe_refusal(
+            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
+        ) -> MontyComplete:
+            try:
+                return await original_run(self, feed_start)
+            finally:
+                refused_feed.set()
+
+        monkeypatch.setattr(MontyExecutor, 'run', observe_refusal)
+
+        def search(query: str) -> str:
+            calls.append(query)
+            return query
+
+        async with prepared_eager_toolset([Tool(search)], usage_limits=UsageLimits(tool_calls_limit=3)) as (
+            capability,
+            toolset,
+            ctx,
+            run_code,
+        ):
+            # A complete following line seals the compound statement for eager feeding.
+            code = (
+                'try:\n'
+                '    await search(query="alpha")\n'
+                '    await search(query="beta")\n'
+                '    await search(query="gamma")\n'
+                'except Exception:\n'
+                '    pass\n'
+                '"unused"\n'
+            )
+            await observe(
+                capability,
+                ctx,
+                [PartStartEvent(index=0, part=ToolCallPart('run_code', {'code': code}, tool_call_id='c1'))],
+            )
+            await asyncio.wait_for(refused_feed.wait(), timeout=5)
+            assert calls == ['alpha', 'beta']
+            await observe(
+                capability,
+                ctx,
+                [
+                    PartDeltaEvent(
+                        index=0,
+                        delta=ToolCallPartDelta(args_delta={'code': '42', 'restart': restart}, tool_call_id='c1'),
+                    )
+                ],
+            )
+            exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code')
+
+            with pytest.raises(UsageLimitExceeded, match=r'tool_calls_limit of 3 \(tool_calls=4\)'):
+                await toolset.call_tool('run_code', {'code': '42', 'restart': restart}, exec_ctx, run_code)
 
         assert calls == ['alpha', 'beta']
 
