@@ -312,7 +312,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_responses_supports_max_reasoning_effort: bool
     """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
 
-    Enabled for the GPT-5.6 and GPT-6 families. When enabled, unified `thinking='max'` is sent as
+    `OpenAIProvider` enables it for the GPT-5.6 and GPT-6 families. `openai_model_profile` leaves it off, because
+    `max` is unverified on the OpenAI-compatible endpoints that share that profile. When enabled, unified
+    `thinking='max'` is sent as
     `reasoning.effort='max'`; otherwise it falls back to `'xhigh'`. Explicit `openai_reasoning_effort='max'`
     settings are still passed through unchanged."""
 
@@ -510,7 +512,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
         openai_supports_minimal_reasoning_effort=not model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES)),
-        openai_responses_supports_max_reasoning_effort=model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES)),
         supported_native_tools=supported_native_tools,
     )
 

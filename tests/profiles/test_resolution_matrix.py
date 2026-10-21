@@ -1241,7 +1241,6 @@ def test_openrouter_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -1465,7 +1464,6 @@ def test_github_copilot_openai_gpt_5_4():
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_phase': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
@@ -1704,7 +1702,6 @@ def test_azure_openai_gpt_5():
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_phase': True,
             'openai_chat_supports_document_input': False,
         }
@@ -1875,7 +1872,6 @@ def test_groq_gpt_oss():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'openai_responses_supports_max_reasoning_effort': False,
             'supports_inline_system_prompts': True,
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
@@ -1929,7 +1925,6 @@ def test_ollama_gpt_oss():
             'supports_json_object_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'ignore_streamed_leading_whitespace': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -1969,7 +1964,6 @@ def test_vllm_gpt_oss_hf_namespace():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -2065,7 +2059,6 @@ def test_litellm_openai_gpt():
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_phase': True,
         }
     )
@@ -2099,7 +2092,6 @@ def test_litellm_mistral_small_latest():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -2261,7 +2253,6 @@ def test_github_openai_bare_name():
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_phase': True,
         }
     )
@@ -2359,7 +2350,6 @@ def test_vercel_openai_gpt():
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'openai_supports_phase': True,
         }
     )
@@ -2575,7 +2565,6 @@ def test_crusoe_harmony():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_inline_system_prompts': True,
-            'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
