@@ -318,13 +318,10 @@ class FieldBackfillCase:
 
 
 FIELD_BACKFILL_CASES = [
-    FieldBackfillCase(id='fallback', run=_fallback, sent_reasoning=['']),
     FieldBackfillCase(id='model_switch', run=_model_switch, sent_reasoning=['']),
     FieldBackfillCase(id='resume', run=_resume, sent_reasoning=['']),
     # The Anthropic native tool search goes out as a synthesized `search_tools` turn ahead of the call.
     FieldBackfillCase(id='cross_provider', run=_cross_provider, sent_reasoning=['', '']),
-    # Earlier turns get the field too, so a turn goes out the same way in every later request.
-    FieldBackfillCase(id='earlier_turn', run=_earlier_turn, sent_reasoning=['']),
     FieldBackfillCase(id='thinking_off', run=partial(_fallback, thinking=False), sent_reasoning=[None]),
     # `DeepSeekProvider` turns thinking on by default only for the V4 models and `deepseek-reasoner`.
     FieldBackfillCase(id='default_thinking_off', run=_fallback, sent_reasoning=[None], model_name='deepseek-chat'),
@@ -349,10 +346,10 @@ async def test_deepseek_field_mode_thinking_backfill_without_thinking_part(
     path reaches DeepSeek with thinking on and no `ThinkingPart` in the history, carrying a tool call from a
     step that didn't think, which DeepSeek 400s on without the field when it follows the last user message.
     The controls pin what stays unchanged: a request with thinking turned off, a model that doesn't think by
-    default, and a profile without the flag. DeepSeek accepting the empty field after
-    and before the last user message is recorded by `test_deepseek_field_mode_thinking_backfill`; these cases
-    only pin which paths send it, so a mock transport stands in for a recording per path, which would add no
-    evidence about acceptance.
+    default, and a profile without the flag. The `FallbackModel` path and a tool call before a newer user
+    message are recorded by `test_deepseek_field_mode_thinking_backfill`, with DeepSeek accepting the field;
+    these cases only pin which other paths send it, so a mock transport stands in for a recording per path,
+    which would add no evidence about acceptance.
     """
     request_bodies: list[dict[str, JsonValue]] = []
 
@@ -391,6 +388,7 @@ class LiveFieldBackfillCase:
 
 LIVE_FIELD_BACKFILL_CASES = [
     LiveFieldBackfillCase(id='current_turn', run=_fallback, output=snapshot('The weather in Paris is sunny.')),
+    # Earlier turns get the field too, so a turn goes out the same way in every later request.
     LiveFieldBackfillCase(id='earlier_turn', run=_earlier_turn, output=snapshot('Sunny.')),
 ]
 

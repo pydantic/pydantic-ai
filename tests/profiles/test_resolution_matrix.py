@@ -147,6 +147,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     # OpenAIModelProfile subclass defaults
     'openai_chat_thinking_field': None,
     'openai_chat_send_back_thinking_parts': 'auto',
+    'openai_chat_thinking_requires_field_on_tool_calls': False,
     'openai_supports_strict_tool_definition': True,
     'openai_unsupported_model_settings': (),
     'openai_system_prompt_role': None,
@@ -803,6 +804,7 @@ def test_deepseek_provider_deepseek_chat():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_requires_field_on_tool_calls': True,
             'openai_responses_supports_interleaved_function_calls': False,
             'openai_responses_supports_json_schema_output': True,
         }
@@ -823,6 +825,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_requires_field_on_tool_calls': True,
             'openai_responses_supports_interleaved_function_calls': False,
             'supports_forced_tool_choice': False,
             'thinking_enabled_by_default': True,
