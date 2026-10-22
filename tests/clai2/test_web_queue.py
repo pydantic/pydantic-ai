@@ -284,6 +284,6 @@ async def test_the_former_inbox_still_reads_input_in_order() -> None:
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(read)
-        await anyio.sleep(0)
+        await anyio.wait_all_tasks_blocked()  # `read` is now waiting on an empty inbox
         inbox.put('later')
     assert received == ['later']
