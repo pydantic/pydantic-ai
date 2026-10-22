@@ -42,7 +42,21 @@ def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: py
     module = tmp_path / 'fixture_pkg' / '__init__.py'
     module.parent.mkdir()
     module.write_text('def greet(name): ...\n', encoding='utf-8')
-    git = ['git', '-C', str(tmp_path), '-c', 'user.name=t', '-c', 'user.email=t@example.com']
+    git = [
+        'git',
+        '-C',
+        str(tmp_path),
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'tag.gpgSign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+    ]
     subprocess.run([*git, 'init', '-q'], check=True)
     subprocess.run([*git, 'add', '.'], check=True)
     subprocess.run([*git, 'commit', '-q', '-m', 'release'], check=True)
