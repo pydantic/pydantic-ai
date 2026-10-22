@@ -28,6 +28,7 @@ from pydantic_ai.capabilities import (
     Caching,
     Capability,
     CapabilityOrdering,
+    Citations,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -122,6 +123,10 @@ def _check_content_filter(merged: RaiseContentFilterError) -> None:
     assert merged.id == 'raise_content_filter_error'
 
 
+def _check_citations(merged: Citations) -> None:
+    assert merged.id == 'citations'
+
+
 def _check_x_search(merged: XSearch) -> None:
     assert merged.allowed_x_handles == ['a', 'b']
     assert isinstance(merged.native, XSearchTool)
@@ -204,6 +209,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one reinjection policy per agent',
         lambda: (ReinjectSystemPrompt(), ReinjectSystemPrompt(replace_existing=True)),
         _check_reinject,
+    ),
+    'Citations': Combines(
+        'carries no configuration at all, so two are interchangeable',
+        lambda: (Citations(), Citations()),
+        _check_citations,
     ),
     'RaiseContentFilterError': Combines(
         'carries no configuration at all, so two are interchangeable',

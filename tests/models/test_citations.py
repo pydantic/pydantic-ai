@@ -18,7 +18,7 @@ from pydantic_ai import (
     TextPart,
     WebCitationSource,
 )
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import Citations, NativeTool
 from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
 
@@ -552,7 +552,7 @@ async def test_document_citations(
     model = AnthropicModel(
         'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
     )
-    agent = Agent(model, model_settings=ModelSettings(citations=True))
+    agent = Agent(model, capabilities=[Citations()])
     prompt: str | list[str | BinaryContent]
     if case.pdf:
         prompt = ['What text appears in this PDF? Answer in one sentence and cite the document.', document_content]

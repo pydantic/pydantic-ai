@@ -9,13 +9,14 @@ document you sent with the prompt, or a file in a provider's file store. Provide
 - When you send documents with the prompt. Providers that support this only cite documents when asked.
 
 Pydantic AI puts the citations a provider returns on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations], in
-the same shape for every provider, without changing the model's text. Set `citations=True` to ask the
-providers that only cite when asked:
+the same shape for every provider, without changing the model's text. Add the
+[`Citations`][pydantic_ai.capabilities.Citations] capability to ask the providers that only cite when asked:
 
 ```python {title="document_citations.py"}
 from pydantic_ai import Agent, BinaryContent, TextPart
+from pydantic_ai.capabilities import Citations
 
-agent = Agent('{{ anthropic:medium }}', model_settings={'citations': True})
+agent = Agent('{{ anthropic:medium }}', capabilities=[Citations()])
 result = agent.run_sync(
     [
         'How long do customers have to return an item?',
@@ -29,7 +30,7 @@ for part in result.response.parts:
             #> ['Items may be returned within 30 days.']
 ```
 
-Providers that don't need to be asked ignore this setting, and a model may still answer without citations.
+A model may still answer without citations.
 
 ## Reading citations
 
