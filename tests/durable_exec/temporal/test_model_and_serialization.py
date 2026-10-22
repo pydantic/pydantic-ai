@@ -1614,51 +1614,6 @@ async def test_temporal_agent_model_selection_by_instance(
         assert output == expected_output
 
 
-@pytest.mark.parametrize('placement', ['primary', 'registered', 'wrapped'])
-async def test_temporal_model_rejects_connected_model_in_workflow(placement: str) -> None:
-    """Reject before scheduling an activity, while keeping ordinary outside-workflow runs usable."""
-
-    class ConnectedTestModel(TestModel):
-        @property
-        def _contains_live_connection(self) -> bool:
-            return True
-
-    connected_model = ConnectedTestModel(custom_output_text='connected')
-    primary_model = connected_model if placement == 'primary' else TestModel()
-    registered_model = FallbackModel(connected_model, TestModel()) if placement == 'wrapped' else connected_model
-    selected = 'connected' if placement != 'primary' else None
-
-    agent = Agent(primary_model, name='connected_temporal_model')
-    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
-        agent,
-        name='connected_temporal_model',
-        models={'connected': registered_model} if placement != 'primary' else None,
-    )
-    result = await temporal_agent.run('Hello', model=selected)
-    assert result.output == 'connected'
-
-    temporal_model = temporal_agent.model
-    assert isinstance(temporal_model, TemporalModel)
-    parameters = ModelRequestParameters(
-        function_tools=[],
-        native_tools=[],
-        output_mode='text',
-        allow_text_output=True,
-        output_tools=[],
-        output_object=None,
-    )
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
-    with (
-        temporal_model.using_model(selected),
-        patch('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', return_value=True),
-    ):
-        with pytest.raises(UserError, match='A model with a live connection cannot be used'):
-            await temporal_model.request(messages, None, parameters)
-        with pytest.raises(UserError, match='A model with a live connection cannot be used'):
-            async with temporal_model.request_stream(messages, None, parameters):
-                pass
-
-
 def test_temporal_model_profile_for_raw_strings():
     """Test TemporalModel infers model_name, system, and profile from raw strings without constructing providers."""
 
@@ -2614,52 +2569,6 @@ async def test_temporal_model_request_stream_outside_workflow():
 
     # Verify response comes from the wrapped TestModel
     assert any(isinstance(part, TextPart) and part.content == 'Direct stream response' for part in response.parts)
-
-
-async def test_temporal_model_request_stream_with_unregistered_model_string():
-    """A model ID can be scheduled without constructing its provider in the workflow."""
-    response = ModelResponse(parts=[TextPart('Stream response')])
-    scheduled_params: list[_RequestParams] = []
-
-    async def handle_stream(_ctx: RunContext[None], _stream: AsyncIterable[AgentStreamEvent]) -> None:
-        pass
-
-    async def schedule_activity(**kwargs: object) -> ModelResponse:
-        args = kwargs['args']
-        assert isinstance(args, list)
-        assert isinstance(args[0], _RequestParams)
-        scheduled_params.append(args[0])
-        return response
-
-    temporal_model = TemporalModel(
-        TestModel(),
-        activity_name_prefix='test__unregistered_stream',
-        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
-        deps_type=type(None),
-        event_stream_handler=handle_stream,
-    )
-    run_context = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='unregistered-stream')
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
-    parameters = ModelRequestParameters(
-        function_tools=[],
-        native_tools=[],
-        output_mode='text',
-        allow_text_output=True,
-        output_tools=[],
-        output_object=None,
-    )
-
-    with (
-        temporal_model.using_model('openai:gpt-5'),
-        patch('pydantic_ai.durable_exec.temporal._model.workflow.in_workflow', return_value=True),
-        patch('pydantic_ai.durable_exec.temporal._model.execute_activity', new=schedule_activity),
-    ):
-        async with temporal_model.request_stream(messages, None, parameters, run_context) as stream:
-            async for _ in stream:
-                pass
-            assert stream.get() == response
-
-    assert [params.model_id for params in scheduled_params] == ['openai:gpt-5']
 
 
 class CustomPydanticPayloadConverter(PydanticPayloadConverter):

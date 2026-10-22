@@ -5,7 +5,7 @@ interactions:
   at: 0.0
   data:
     type: response.create
-    model: gpt-6-astra
+    model: gpt-6.1-sol
     input:
     - role: user
       content: Reply with the word amber.
@@ -15,13 +15,13 @@ interactions:
     - reasoning.encrypted_content
 - kind: message
   direction: received
-  at: 0.164
+  at: 0.162
   data:
     type: response.created
     response:
-      id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+      id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
       object: response
-      created_at: 1792452923
+      created_at: 1792709059
       status: in_progress
       access_programs: null
       background: false
@@ -32,7 +32,7 @@ interactions:
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
-      model: gpt-6-astra
+      model: gpt-6.1-sol
       moderation: null
       output: []
       parallel_tool_calls: true
@@ -77,13 +77,13 @@ interactions:
     sequence_number: 0
 - kind: message
   direction: received
-  at: 0.246
+  at: 0.195
   data:
     type: response.in_progress
     response:
-      id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+      id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
       object: response
-      created_at: 1792452923
+      created_at: 1792709059
       status: in_progress
       access_programs: null
       background: false
@@ -94,7 +94,7 @@ interactions:
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
-      model: gpt-6-astra
+      model: gpt-6.1-sol
       moderation: null
       output: []
       parallel_tool_calls: true
@@ -139,11 +139,11 @@ interactions:
     sequence_number: 1
 - kind: message
   direction: received
-  at: 1.55
+  at: 1.307
   data:
     type: response.output_item.added
     item:
-      id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
+      id: msg_00fbb1a41885ddc2006ada91c4dd6887d2b5ddd5e9e861143e
       type: message
       status: in_progress
       content: []
@@ -153,11 +153,11 @@ interactions:
     sequence_number: 2
 - kind: message
   direction: received
-  at: 1.552
+  at: 1.308
   data:
     type: response.content_part.added
     content_index: 0
-    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
+    item_id: msg_00fbb1a41885ddc2006ada91c4dd6887d2b5ddd5e9e861143e
     output_index: 0
     part:
       type: output_text
@@ -167,34 +167,34 @@ interactions:
     sequence_number: 3
 - kind: message
   direction: received
-  at: 1.56
+  at: 1.311
   data:
     type: response.output_text.delta
     content_index: 0
     delta: amber
-    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
+    item_id: msg_00fbb1a41885ddc2006ada91c4dd6887d2b5ddd5e9e861143e
     logprobs: []
-    obfuscation: UTzSuGJ9hhY
+    obfuscation: GtHPWpezaWs
     output_index: 0
     sequence_number: 4
 - kind: message
   direction: received
-  at: 1.629
+  at: 1.355
   data:
     type: response.output_text.done
     content_index: 0
-    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
+    item_id: msg_00fbb1a41885ddc2006ada91c4dd6887d2b5ddd5e9e861143e
     logprobs: []
     output_index: 0
     sequence_number: 5
     text: amber
 - kind: message
   direction: received
-  at: 1.63
+  at: 1.355
   data:
     type: response.content_part.done
     content_index: 0
-    item_id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
+    item_id: msg_00fbb1a41885ddc2006ada91c4dd6887d2b5ddd5e9e861143e
     output_index: 0
     part:
       type: output_text
@@ -204,11 +204,11 @@ interactions:
     sequence_number: 6
 - kind: message
   direction: received
-  at: 1.631
+  at: 1.356
   data:
     type: response.output_item.done
     item:
-      id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
+      id: msg_00fbb1a41885ddc2006ada91c4dd6887d2b5ddd5e9e861143e
       type: message
       status: completed
       content:
@@ -222,27 +222,27 @@ interactions:
     sequence_number: 7
 - kind: message
   direction: received
-  at: 1.734
+  at: 1.453
   data:
     type: response.completed
     response:
-      id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+      id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
       object: response
-      created_at: 1792452923
+      created_at: 1792709059
       status: completed
       access_programs: null
       background: false
-      completed_at: 1792452925
+      completed_at: 1792709060
       error: null
       frequency_penalty: 0.0
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
-      model: gpt-6-astra
+      model: gpt-6.1-sol
       moderation: null
       output:
-      - id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
+      - id: msg_00fbb1a41885ddc2006ada91c4dd6887d2b5ddd5e9e861143e
         type: message
         status: completed
         content:
@@ -302,39 +302,29 @@ interactions:
     sequence_number: 8
 - kind: message
   direction: sent
-  at: 1.818
+  at: 1.461
   data:
     type: response.create
-    model: gpt-6-astra
+    model: gpt-6.1-sol
     input:
     - role: user
-      content: Reply with the word amber.
-    - role: assistant
-      id: msg_0e98bd5a4afe1f20006ad6a93d038487d298524ed3f2b704b3
-      content:
-      - text: amber
-        type: output_text
-        annotations: []
-      type: message
-      status: completed
-      phase: final_answer
-    - role: user
       content: Reply with the word cobalt.
+    previous_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
     reasoning:
       context: all_turns
     include:
     - reasoning.encrypted_content
     prompt_cache_options:
-      comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+      comparison_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
 - kind: message
   direction: received
-  at: 1.96
+  at: 1.605
   data:
     type: response.created
     response:
-      id: resp_0e98bd5a4afe1f20006ad6a93d62e887d28430ff260116f4de
+      id: resp_00fbb1a41885ddc2006ada91c51d8087d299f6925ce2a0d42b
       object: response
-      created_at: 1792452925
+      created_at: 1792709061
       status: in_progress
       access_programs: null
       background: false
@@ -345,15 +335,15 @@ interactions:
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
-      model: gpt-6-astra
+      model: gpt-6.1-sol
       moderation: null
       output: []
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: null
+      previous_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
       prompt_cache_key: null
       prompt_cache_options:
-        comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+        comparison_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
         mode: implicit
         ttl: 30m
       prompt_cache_retention: 24h
@@ -394,13 +384,13 @@ interactions:
     sequence_number: 0
 - kind: message
   direction: received
-  at: 1.974
+  at: 1.618
   data:
     type: response.in_progress
     response:
-      id: resp_0e98bd5a4afe1f20006ad6a93d62e887d28430ff260116f4de
+      id: resp_00fbb1a41885ddc2006ada91c51d8087d299f6925ce2a0d42b
       object: response
-      created_at: 1792452925
+      created_at: 1792709061
       status: in_progress
       access_programs: null
       background: false
@@ -411,17 +401,17 @@ interactions:
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
-      model: gpt-6-astra
+      model: gpt-6.1-sol
       moderation: null
       output: []
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: null
+      previous_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
       prompt_cache_diagnostics:
         type: unavailable
       prompt_cache_key: null
       prompt_cache_options:
-        comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+        comparison_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
         mode: implicit
         ttl: 30m
       prompt_cache_retention: 24h
@@ -462,11 +452,11 @@ interactions:
     sequence_number: 1
 - kind: message
   direction: received
-  at: 2.958
+  at: 2.319
   data:
     type: response.output_item.added
     item:
-      id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+      id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
       type: message
       status: in_progress
       content: []
@@ -476,11 +466,11 @@ interactions:
     sequence_number: 2
 - kind: message
   direction: received
-  at: 2.96
+  at: 2.319
   data:
     type: response.content_part.added
     content_index: 0
-    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+    item_id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
     output_index: 0
     part:
       type: output_text
@@ -490,46 +480,46 @@ interactions:
     sequence_number: 3
 - kind: message
   direction: received
-  at: 2.961
+  at: 2.327
   data:
     type: response.output_text.delta
     content_index: 0
     delta: c
-    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+    item_id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
     logprobs: []
-    obfuscation: EjfVkc1kOzBMV16
+    obfuscation: KBha0t0gSbyY1GZ
     output_index: 0
     sequence_number: 4
 - kind: message
   direction: received
-  at: 2.966
+  at: 2.331
   data:
     type: response.output_text.delta
     content_index: 0
     delta: obalt
-    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+    item_id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
     logprobs: []
-    obfuscation: jHT6GeZSSo3
+    obfuscation: r7i8P0hOGlY
     output_index: 0
     sequence_number: 5
 - kind: message
   direction: received
-  at: 3.021
+  at: 2.372
   data:
     type: response.output_text.done
     content_index: 0
-    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+    item_id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
     logprobs: []
     output_index: 0
     sequence_number: 6
     text: cobalt
 - kind: message
   direction: received
-  at: 3.024
+  at: 2.373
   data:
     type: response.content_part.done
     content_index: 0
-    item_id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+    item_id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
     output_index: 0
     part:
       type: output_text
@@ -539,11 +529,11 @@ interactions:
     sequence_number: 7
 - kind: message
   direction: received
-  at: 3.024
+  at: 2.373
   data:
     type: response.output_item.done
     item:
-      id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+      id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
       type: message
       status: completed
       content:
@@ -557,27 +547,27 @@ interactions:
     sequence_number: 8
 - kind: message
   direction: received
-  at: 3.118
+  at: 2.454
   data:
     type: response.completed
     response:
-      id: resp_0e98bd5a4afe1f20006ad6a93d62e887d28430ff260116f4de
+      id: resp_00fbb1a41885ddc2006ada91c51d8087d299f6925ce2a0d42b
       object: response
-      created_at: 1792452925
+      created_at: 1792709061
       status: completed
       access_programs: null
       background: false
-      completed_at: 1792452926
+      completed_at: 1792709061
       error: null
       frequency_penalty: 0.0
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
-      model: gpt-6-astra
+      model: gpt-6.1-sol
       moderation: null
       output:
-      - id: msg_0e98bd5a4afe1f20006ad6a93e6c3c87d2a65199394dfa0e9a
+      - id: msg_00fbb1a41885ddc2006ada91c5e04c87d2910a4e0bd09ccb28
         type: message
         status: completed
         content:
@@ -589,12 +579,12 @@ interactions:
         role: assistant
       parallel_tool_calls: true
       presence_penalty: 0.0
-      previous_response_id: null
+      previous_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
       prompt_cache_diagnostics:
         type: cache_hit
       prompt_cache_key: null
       prompt_cache_options:
-        comparison_response_id: resp_0e98bd5a4afe1f20006ad6a93b938c87d29871003408723f87
+        comparison_response_id: resp_00fbb1a41885ddc2006ada91c3a8e487d290994b060e1e0ef6
         mode: implicit
         ttl: 30m
       prompt_cache_retention: 24h

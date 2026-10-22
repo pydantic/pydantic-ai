@@ -43,7 +43,6 @@ from pydantic_ai._instrumentation import (
     has_stale_message_json,
     include_content_ctx,
     model_request_parameters_attributes,
-    model_request_span_ctx,
     open_request_policy,
     span_include_content,
 )
@@ -969,19 +968,24 @@ def test_a_content_policy_from_another_span_is_not_trusted() -> None:
 
 
 def test_current_model_request_span_requires_the_owned_span() -> None:
+    """A model records request attributes on the open `chat` span only while it's the current span.
+
+    Not on a span opened inside the request, which is the current span instead, nor on a finished request's span.
+    """
     settings, _ = redacted_setup(include_content=False)
     tracer = settings.tracer
-    previous = model_request_span_ctx.get()
+    previous = include_content_ctx.get()
     try:
+        include_content_ctx.set(None)
         assert current_model_request_span() is None
         with tracer.start_as_current_span('chat') as chat_span:
-            model_request_span_ctx.set(chat_span)
+            include_content_ctx.set(ContentPolicy(chat_span, include_content=False, tracer=tracer))
             assert current_model_request_span() is chat_span
             with tracer.start_as_current_span('nested span'):
                 assert current_model_request_span() is None
         assert current_model_request_span() is None
     finally:
-        model_request_span_ctx.set(previous)
+        include_content_ctx.set(previous)
 
 
 def test_a_span_inside_a_request_needs_the_request_still_open() -> None:
