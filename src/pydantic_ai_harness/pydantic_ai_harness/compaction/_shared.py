@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Protocol, Self, assert_never, runtime_checkabl
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionBaselinePart,
@@ -25,7 +26,8 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -48,6 +50,7 @@ from pydantic_ai_harness.compaction._receipts import (
     open_receipt_scope,
     reset_receipt_scope,
 )
+from pydantic_ai_harness.filesystem import READ_FILE_KIND
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -125,10 +128,22 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     elif isinstance(part, InstructionBaselinePart):
         return []
     elif isinstance(part, ToolReturnPart):
-        # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`, so
-        # they arrive here too.
+        # Sent in full, a retried call's feedback included: a retry that answers a call travels as
+        # that call's return. The tool-search and capability-load returns subclass `ToolReturnPart`,
+        # so they arrive here too.
         return [tool_return_text(part)]
-    elif isinstance(part, RetryPromptPart):
+    elif isinstance(part, RetryFeedbackPart):
+        # Retry feedback that answers no tool call. It is stored model-neutral and translated at
+        # request time into a system prompt or a `<validation_errors>`-fenced user prompt, so it
+        # occupies the window like the parts above. `model_response()` rather than
+        # `str(part.content)`: the content is a list of `ErrorDetails` for a validation failure,
+        # and this renders it the way the model sees it.
+        return [part.model_response()]
+    # TODO(v3): remove RetryPromptPart
+    elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # The part the two above replaced. A stored history loads as one of them, but code that
+        # builds one by hand and passes it as `message_history` still puts an instance here, and
+        # this reads the history before the model translates it.
         return [str(part.content)]
     # Control bookkeeping rather than message text: it records which tools became available, and
     # the schemas themselves travel in the request's tool definitions. Those schemas are not free
@@ -267,9 +282,10 @@ def estimate_context_tokens(
     `input_tokens` measured everything the provider was actually sent for that request --
     instructions, tool definitions, and every prior message -- and its `output_tokens` measured
     the response's own parts, so their sum is ground truth for the history up to and including
-    that response. A response a provider SDK continued across several requests (Google long
-    decode) sums their usage, re-counting earlier output as input, so it anchors on the first
-    request's input tokens instead. Only the messages after the anchor are estimated with the character
+    that response. A response whose usage sums several model requests re-counts the context of each,
+    so it anchors on the input tokens of the one that measures the context instead: the first
+    request of a Google long decode, the last sampling pass of an Anthropic response that reported
+    its passes. Only the messages after the anchor are estimated with the character
     heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
     covers; when the instructions changed since the anchor, the estimate swaps the old set for
     the new one rather than adding the new set on top. Tool schemas named by availability
@@ -325,9 +341,11 @@ def estimate_message_tokens(
     earlier one is exactly what the earlier response and the requests after it added, so those
     messages share that difference in proportion to their estimates. Where the history did not grow
     between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last. A response a
-    provider continued across several requests enters the difference with its first request's input
-    tokens, since its summed `input_tokens` re-count the earlier requests' output.
+    estimates stand; so do messages before the first such response and after the last. A response
+    whose usage sums several model requests enters the difference with its input tokens as
+    `context_input_tokens` reads them, since its summed `input_tokens` re-count each request's context.
+    An Anthropic last pass also read that response's own earlier passes, so the difference credits
+    them to the messages before it, which the response then counts again: the tail measures high.
 
     Instructions are left out: they are sent with every request, not carried by any one message.
     """
@@ -359,7 +377,7 @@ def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] 
 def _reported_input_tokens(message: ModelMessage) -> int:
     """The provider-reported input tokens of a response, or 0 for a request or a response without usage.
 
-    For a response a provider continued across several requests, the first request's input tokens.
+    For a response whose usage sums several model requests, as `context_input_tokens` reads it.
     """
     return context_input_tokens(message) if isinstance(message, ModelResponse) else 0
 
@@ -757,8 +775,10 @@ def _include_tool_dependencies(messages: list[ModelMessage], cutoff: int) -> int
                     calls[part.tool_call_id] = index
         else:
             for part in message.parts:
+                # TODO(v3): remove RetryPromptPart; a caller-passed history can still hold one
                 if isinstance(part, ToolReturnPart) or (
-                    isinstance(part, RetryPromptPart) and part.tool_name is not None
+                    isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    and part.tool_name is not None
                 ):
                     earliest = min(earliest, calls.get(part.tool_call_id, index))
         dependencies.append(earliest)
@@ -894,7 +914,12 @@ class _ToolPair:
 
 
 def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
-    """Return matched tool-call / tool-return pairs in return-appearance order."""
+    """Return matched tool-call / tool-return pairs in return-appearance order.
+
+    A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
+    is left out, so it is never cleared before the model sees the correction, doesn't count toward
+    `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read.
+    """
     calls: dict[str, ToolCallPart] = {}
     for msg in messages:
         if isinstance(msg, ModelResponse):
@@ -907,11 +932,61 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if isinstance(part, ToolReturnPart) and part.tool_call_id in calls:
+                if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls:
                     call = calls[part.tool_call_id]
                     pairs.append(_ToolPair(part.tool_call_id, call.tool_name, call, order))
                     order += 1
     return pairs
+
+
+CLEARED_TOOL_RESULT_METADATA = 'pydantic-ai-harness.compaction.cleared-tool-result.v1'
+"""Model-invisible `ToolReturnPart.metadata` key marking a result compaction has cleared."""
+
+
+def _cleared_return(part: ToolReturnPart, placeholder: str) -> ToolReturnPart | None:
+    """*part* with its content replaced by *placeholder*, or `None` if it can't be cleared.
+
+    A plain `ToolReturnPart` can always be cleared. Of the typed subclasses, only `FileSystem`'s
+    `read_file` returns are: their kind declares no content shape, so a `ReadFileReturnPart` keeps its
+    type with the placeholder as content. Other typed returns, like `ToolSearchReturnPart`, carry
+    structured content that core re-parses (and trusts) on every request -- see `parse_discovered_tools`
+    -- so they are left alone, even when the placeholder happens to fit their shape.
+
+    The cleared part is marked in its `metadata` when that is `None` or a `dict`, so
+    `is_cleared_return` recognizes it without trusting its model-visible content. A typed part with
+    other metadata can't be marked, so it isn't cleared.
+    """
+    is_plain = type(part) is ToolReturnPart
+    if not is_plain and part.tool_kind != READ_FILE_KIND.id:
+        return None
+    metadata = part.metadata
+    if metadata is None:
+        metadata = {CLEARED_TOOL_RESULT_METADATA: True}
+    elif is_str_dict(metadata):
+        metadata = {**metadata, CLEARED_TOOL_RESULT_METADATA: True}
+    elif not is_plain:
+        # `is_cleared_return` only falls back to the content for plain parts, so a cleared typed part
+        # without the mark would go unrecognized, and `ClearToolResults` would count from the start of
+        # history again on every request.
+        return None
+    return replace(part, content=placeholder, metadata=metadata)
+
+
+def is_cleared_return(part: ToolReturnPart, placeholder: str) -> bool:
+    """Whether a compaction using *placeholder* cleared *part*.
+
+    The content must be *placeholder*, so another strategy's clears, which use their own placeholder,
+    don't count. A typed result must also carry the mark `_cleared_return` leaves in its metadata, as
+    its content is the tool's output and may equal the placeholder by coincidence. A plain
+    `ToolReturnPart` counts without the mark: histories cleared before the mark existed only ever
+    cleared plain parts.
+    """
+    if str(part.content) != placeholder:
+        return False
+    metadata = part.metadata
+    return type(part) is ToolReturnPart or (
+        is_str_dict(metadata) and metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
+    )
 
 
 def rebuild_with_cleared(
@@ -931,17 +1006,15 @@ def rebuild_with_cleared(
             request_parts: list[ModelRequestPart] = []
             changed = False
             for part in msg.parts:
-                # Exact type, not `isinstance`: typed `ToolReturnPart` subclasses such as
-                # `ToolSearchReturnPart` carry structured `TypedDict` content that core re-parses
-                # (and trusts to be valid) on every request -- see `parse_discovered_tools`. Blanking
-                # it to a string both breaks that invariant (crash next request) and discards
-                # discovery state, so only untyped tool results are cleared.
-                if (
-                    type(part) is ToolReturnPart
+                cleared = (
+                    _cleared_return(part, placeholder)
+                    if isinstance(part, ToolReturnPart)
                     and part.tool_call_id in clear_return_ids
                     and str(part.content) != placeholder
-                ):
-                    request_parts.append(replace(part, content=placeholder))
+                    else None
+                )
+                if cleared is not None:
+                    request_parts.append(cleared)
                     changed = True
                 else:
                     request_parts.append(part)

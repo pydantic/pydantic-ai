@@ -31,6 +31,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_output_limits import (
+    READ_TOOL_RESULT_KIND,
     Band,
     LocalFileStore,
     Passthrough,
@@ -92,6 +93,9 @@ def _make_ctx(
         model: Any = dataclasses.field(default_factory=_FakeModel)
         deps: None = None
         conversation_id: str | None = None
+
+        def tool_name_for_kind(self, kind: object) -> str | None:
+            return None
 
     ctx = _FakeCtx(usage=RunUsage(), run_id=run_id, retry=retry, usage_limits=usage_limits)
     if model is not None:
@@ -435,10 +439,21 @@ class TestConstruction:
 
 
 class TestPassthrough:
-    async def test_read_tool_exempt(self):
+    async def test_read_tool_exempt_by_kind(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
+        out = await cap.after_tool_execute(
+            _make_ctx(),
+            call=_call('renamed_reader'),
+            tool_def=ToolDefinition(name='renamed_reader', tool_kind=READ_TOOL_RESULT_KIND),
+            args={},
+            result='x' * 100,
+        )
+        assert out == 'x' * 100
+
+    async def test_read_tool_name_alone_is_not_exempt(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Truncate(max_chars=2))])
         out = await _run(cap, 'x' * 100, tool_name=READ_TOOL_NAME)
-        assert out == 'x' * 100
+        assert out != 'x' * 100
 
     async def test_tool_filter_skips_unmatched(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(
@@ -1095,7 +1110,7 @@ class TestInternals:
 
     def test_build_spill_preview_tokens_unit(self):
         unit = _Unit(binary=False, text='x' * 100, data=b'x' * 100, value='x' * 100, suffix='')
-        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True)
+        assert 'tokens' in _build_spill_preview('h/1.0', unit, 20, over_tokens=True, read_hint='')
 
 
 # ---------------------------------------------------------------------------

@@ -139,11 +139,6 @@ def bedrock_claude_supports_automatic_caching(model_name: str) -> bool:
 # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
 _STRUCTURED_OUTPUT_UNSUPPORTED_CLAUDE_MODEL_PREFIXES = (
     'claude-opus-4-1',
-    'claude-opus-4-7',
-    'claude-opus-4-8',
-    'claude-opus-5',
-    'claude-sonnet-5',
-    'claude-haiku-5-5',
     'claude-fable-5',
 )
 

@@ -336,6 +336,12 @@ itself closes has none), and the live connection has it as
   the user heard none of (one after it in the same turn) has no transcript. What the agent said is kept in
   the part's `provider_details['original_transcript']`. A response cut off while it is still being
   generated also carries the heard text in `provider_details['corrected_agent_response']`.
+- A text turn goes out under an `id` naming it, and each reply says which text turns it answers (its
+  `in_response_to_ids`), so [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] waits for
+  the reply that answers the text: the one under way, if it names the text, and otherwise the next one. A reply
+  that names a text also answers any text sent before it, as the agent folds text sent while it speaks into one
+  reply, which can name only the latest. (Text sent while the agent speaks usually cuts it off, and the next reply
+  answers it.)
 - [`send(text, respond=False)`](turns.md#text-turns) is a `contextual_update`: the agent reads it from
   its next turn on, without stopping or replying.
 - A response's parallel tool calls each run as soon as they arrive.
@@ -500,12 +506,16 @@ the connection sends an empty audio append (which adds no audio) after 45 second
   (`['cheerful']`). Only lowercase words in square brackets count as tags, so citations (`[1]`), Markdown links, and
   placeholders like `[Your Name]` stay in the text. Set `elevenlabs_strip_audio_tags=False` to keep the transcript
   as ElevenLabs sends it.
-- When a response starts while a tool call is still running (because the user spoke, say), ElevenLabs abandons
-  the call: its result never reaches the model, and a response asked for after it never comes. The session then
+- When ElevenLabs replies to something the user said while a tool call is still running, it abandons the call: its
+  result never reaches the model, and a response asked for after it never comes. The session then
   gets a recoverable [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] of type
   `'tool_calls_abandoned'` naming the calls. The tool keeps running and its result is still recorded in history, but
   no reply to it is waited for: [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
   [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] come when the response that cut in ends.
+- ElevenLabs makes parallel tool calls as back-to-back responses of one call each, and answers all their results
+  with one reply, which the session waits for once:
+  [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] come when it ends.
 - `eleven_realtime_v1_max` sometimes answers a question that needs a tool with two responses: a spoken preamble
   ("Let me check the weather…") that completes on its own, then the tool call in a response nobody asked for.
   Nothing links the two, so [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] and

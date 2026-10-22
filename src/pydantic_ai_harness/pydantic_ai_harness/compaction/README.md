@@ -55,10 +55,12 @@ The retained tail is measured per message with `estimate_message_tokens`, so `ke
 tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
 includes thinking that some providers return as an empty part with only a signature. The messages
 between two responses that carry usage share the difference between their `input_tokens`, which is
-exactly what the provider counted for them. A response a provider continued across several requests
-([Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode))
-enters that difference with its first request's input tokens, since its billed `input_tokens`
-re-count the earlier requests' output. Before the first such response, after the last, and
+exactly what the provider counted for them. A response whose billed usage sums several model
+requests enters that difference with the input tokens of the one that measures its context: the
+first request of a [Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode), or the last sampling pass
+of an [Anthropic response that reports its passes](https://pydantic.dev/docs/ai/models/anthropic/#server-side-tool-loops).
+That last pass also read the response's own earlier passes, so the difference credits them to the
+messages before it, and the tail measures high. Before the first such response, after the last, and
 where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
 ~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
 provider usage is measured with the heuristic as before.
@@ -171,10 +173,12 @@ agent = Agent(
 ### What counts toward the fraction
 
 With a usage anchor, everything the provider billed for the anchored request counts -- including
-tool definitions and `FilePart` payloads, which no character estimate can see. A response a provider
-continued across several requests ([Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode))
-anchors on its first request's input tokens plus its output, since its billed input re-counts the
-earlier requests' output. For the messages
+tool definitions and `FilePart` payloads, which no character estimate can see. A response whose
+billed usage sums several model requests anchors on the input tokens of the one that measures its
+context, plus its output: the first request of a [Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode),
+whose billed input re-counts the earlier requests' output, or the last sampling pass of an
+[Anthropic response that reports its passes](https://pydantic.dev/docs/ai/models/anthropic/#server-side-tool-loops),
+whose billed input re-counts the context of each pass. For the messages
 after the anchor (and for whole histories with no reported usage), the estimator counts every part
 that is sent: prompts, system prompts, tool calls and their results, retry prompts,
 extended-thinking blocks, provider-side tool results, and the instructions, once. When the
@@ -188,8 +192,8 @@ by the implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
 and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart`
-content, `RetryPromptPart` content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most
-recent `ModelRequest.instructions` are now counted too, so the same history measures higher and an
+content, retry content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most recent
+`ModelRequest.instructions` are now counted too, so the same history measures higher and an
 unchanged `max_tokens` compacts earlier. How much earlier depends on how much of the history is
 thinking blocks, retries, and instructions; on a thinking-heavy tool-calling history it can be
 several times the old count. What each strategy clears is unchanged -- only when it runs.
@@ -370,11 +374,15 @@ TieredCompaction(
 a minimum amount of original message text rather than a message count. By default `preserve_first_user_message=True` keeps the first user
 turn even when it falls outside the window, so the agent does not lose the original task.
 
-`ClearToolResults` keeps the last `keep_pairs` intact. Set `clear_tool_inputs=True` to also blank the
+`ClearToolResults` keeps the last `keep_pairs` intact. A retried return, which asks the model to make
+the call again, is never cleared and doesn't count toward `keep_pairs`. Set `clear_tool_inputs=True` to also blank the
 arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never
 cleared. Framework-typed tool results -- core's `search_tools` and `load_capability` returns -- are
 left intact (a small token floor), because their structured content is re-parsed on later requests and
-rewriting it via `dataclasses.replace` would bypass validation and corrupt the part.
+rewriting it via `dataclasses.replace` would bypass validation and corrupt the part. `FileSystem`'s typed
+`read_file` results (`ReadFileReturnPart`) are cleared like any other result and keep their type, unless
+their `metadata` is something other than `None` or a `dict`: a cleared result is marked in its
+`metadata`, so one whose metadata can't hold the mark is left uncleared.
 
 With `max_messages`, the count starts after the last cleared result, because clearing blanks content
 but removes no messages. Clearing then happens in batches: after a clear, the next one waits until
@@ -487,6 +495,13 @@ or spacing, is escaped, so a tool return can't close its message and forge anoth
 early. Each tool return is capped, after that escaping, at `tool_return_max_chars` (default 500)
 characters using the same explicit truncation marker as kept user turns. Raise it, or set it to `None` to
 render each return whole, when the summarizer's context window is large enough to absorb the payloads.
+Content a harness capability added on the user channel and tagged with an `origin` in its
+`TextContent.metadata` starting with `pydantic-ai-harness.` is not a user message. Today that's a
+`BackgroundTools` result and `TrajectoryJudge` feedback. `Memory` snapshots aren't tagged this way yet, so
+they are still summarized as user messages; that gap closes once core provenance lands. Tagged content is
+rendered as a `<harness_data origin="...">` element, capped like a tool return, rather than as
+`role="user"`. When the transcript holds such content, the summary request also tells the summarizer not to
+treat it as the user's requests or standing constraints; other summary requests are unchanged.
 `max_tokens` and `keep_tokens` control when compaction runs and which history messages are retained; they
 do not cap the summary-request payload.
 
@@ -645,8 +660,12 @@ retained tail. With `keep_tokens=0`, retained user copies must fit a zero-token 
 newest tail message still survives.
 Each retained turn is bounded to `keep_user_messages_max_chars` (default 20k) with an explicit
 truncation marker when it overruns. The character budget applies per part, shared across the
-text items of a multi-part prompt; images, audio, and cache points pass through untouched. This
-supersedes `preserve_first_user_message` (which keeps only the first).
+text items of a multi-part prompt; images, audio, and cache points pass through untouched.
+Harness-added content on the user channel, such as a background tool's result, isn't a user turn: it is
+left out of what `keep_user_messages` and `preserve_first_user_message` carry over from the summarized
+prefix (including from a turn an earlier compaction kept), and summarized as data rather than as the
+user's intent. The recent suffix compaction leaves unsummarized is kept as is, harness content included.
+This supersedes `preserve_first_user_message` (which keeps only the first).
 
 ```python
 SummarizingCompaction(max_tokens=120_000, keep_messages=20, keep_user_messages=True)
