@@ -6,18 +6,19 @@ import inspect
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import Context, ContextVar, copy_context
 from copy import copy, deepcopy
 from dataclasses import field, replace
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, assert_never, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeGuard, assert_never, cast
 
 import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar
 
+from pydantic_ai._fallback import AttemptLog
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -29,7 +30,9 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_ids,
     mcp_telemetry_url_tool_names,
     mcp_telemetry_url_toolset_ids,
+    open_request_policy,
 )
+from pydantic_ai._model_request_attempts import AttemptStart
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata, is_str_dict, now_utc
 from pydantic_ai._uuid import uuid7
@@ -376,6 +379,244 @@ def resolve_run_id(
     return str(uuid7())
 
 
+MAX_MODEL_REQUEST_ATTEMPTS = 100
+"""Ceiling on how many times one request step may be attempted.
+
+A step attempts the model more than once when a hook raises
+[`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]: a fallback capability walking a
+chain, or a retry capability re-running the same model. Neither is bounded by
+[`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit], which counts request
+steps rather than attempts, so this is the backstop against a capability that retries forever. It is
+set far above any real chain: exceeding it means a capability bug, not a long chain.
+"""
+
+
+class StepModelSettings(NamedTuple):
+    """A step's model settings, as resolved from the step model's own `settings` and the agent, capability and run layers."""
+
+    merged: ModelSettings | None
+    """The layers merged onto the step model's own `settings`: what the step's request starts from."""
+    layered: ModelSettings | None
+    """The layers alone, what an attempt at another model starts from: see `_AttemptBaseline.settings_for`."""
+
+
+@dataclasses.dataclass
+class _AttemptBaseline:
+    """The request as `before_model_request` left it, before any model-specific preparation.
+
+    Every attempt is prepared from this rather than from the previous attempt's output, so a model
+    never inherits a history translated for a different provider's profile (see #4882) or a
+    compaction decision made for a different context window.
+    """
+
+    messages: list[_messages.ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: models.ModelRequestParameters
+    model: models.Model
+    """The model the hooks left the request to: an attempt at it starts from `model_settings` as is."""
+    hook_settings: dict[str, Any]
+    """The settings the hooks set on top of the step's resolved settings."""
+    hook_removed_settings: set[str]
+    """The resolved settings the hooks removed."""
+    layered_settings: ModelSettings | None
+    """The step's settings from the agent, capabilities and run, without the step model's own `settings`."""
+    copy_tool_definitions: bool = False
+    """Whether each attempt gets its own copies of the tool definitions, schemas included.
+
+    Only when a `prepare_model_request` hook could edit them for one attempt, to keep the common path cheap.
+    """
+
+    @classmethod
+    def capture(
+        cls, request_context: ModelRequestContext, step_settings: StepModelSettings, *, copy_tool_definitions: bool
+    ) -> _AttemptBaseline:
+        """Capture the request as the hooks left it, and what they changed in the step's resolved settings.
+
+        A hook that sets a value equal to the one the step already resolved to counts as leaving it unchanged,
+        so an attempt at another model uses that model's own value.
+        """
+        final: dict[str, Any] = dict(request_context.model_settings or {})
+        resolved: dict[str, Any] = dict(step_settings.merged or {})
+        return cls(
+            messages=list(request_context.messages),
+            model_settings=request_context.model_settings,
+            model_request_parameters=request_context.model_request_parameters,
+            model=request_context.model,
+            hook_settings={key: value for key, value in final.items() if key not in resolved or resolved[key] != value},
+            hook_removed_settings={key for key in resolved if key not in final},
+            layered_settings=step_settings.layered,
+            copy_tool_definitions=copy_tool_definitions,
+        )
+
+    def settings_for(self, model: models.Model) -> ModelSettings | None:
+        """The settings an attempt at `model` starts from.
+
+        The step's settings are built on the step model's own `settings`, which aren't another model's: an
+        attempt at another model starts from the agent, capability and run settings, plus whatever the hooks
+        changed, and that model merges in its own `settings` when it prepares the request, as each
+        `FallbackModel` candidate does.
+        """
+        if model is self.model:
+            return self.model_settings
+        settings = {
+            key: value
+            for key, value in {**(self.layered_settings or {}), **self.hook_settings}.items()
+            if key not in self.hook_removed_settings
+        }
+        return cast(ModelSettings, settings) if settings else None
+
+    def rewind_suspended(self) -> None:
+        """Drop the suspended response a resumed step would continue, so the next attempt starts over.
+
+        A resumed step's first attempt continues the provider-side job of a suspended response. Once
+        that attempt has failed (which cancels the job) or its continuation was rejected, there is
+        nothing left to continue: the next attempt generates the turn afresh from the history before it.
+        """
+        if (
+            self.messages
+            and isinstance(last := self.messages[-1], _messages.ModelResponse)
+            and last.state == 'suspended'
+        ):
+            self.messages.pop()
+
+    def restore(self, request_context: ModelRequestContext) -> None:
+        # Fresh containers, down to the lists, dicts and sets inside the settings and parameters at any depth, so
+        # a hook that edits them in place for one attempt doesn't change what the next attempt starts from. The
+        # messages and other items they hold are shared, as `before_model_request` shares them; so are the tool
+        # definitions, unless a `prepare_model_request` hook could edit them in place.
+        request_context.messages = list(self.messages)
+        settings = self.settings_for(request_context.model)
+        request_context.model_settings = (
+            cast(ModelSettings, {key: _copy_container(value) for key, value in settings.items()})
+            if settings is not None
+            else None
+        )
+        parameters = self.model_request_parameters
+        copy_tools = _copy_tool_definition if self.copy_tool_definitions else _same_tool_definition
+        request_context.model_request_parameters = replace(
+            parameters,
+            function_tools=[copy_tools(tool) for tool in parameters.function_tools],
+            native_tools=list(parameters.native_tools),
+            tool_visibility=_copy_container(parameters.tool_visibility),
+            revealed_tool_names=set(parameters.revealed_tool_names),
+            deferred_capability_ids=set(parameters.deferred_capability_ids),
+            output_tools=[copy_tools(tool) for tool in parameters.output_tools],
+            instruction_parts=_copy_container(parameters.instruction_parts),
+        )
+
+
+def _copy_tool_definition(tool: ToolDefinition) -> ToolDefinition:
+    """A copy of `tool` whose JSON schema and metadata can be edited in place without sharing."""
+    return replace(
+        tool,
+        parameters_json_schema=_copy_container(tool.parameters_json_schema),
+        metadata=_copy_container(tool.metadata),
+    )
+
+
+def _same_tool_definition(tool: ToolDefinition) -> ToolDefinition:
+    return tool
+
+
+def _copy_container(value: T) -> T:
+    """A copy of `value` if it's a list, dict or set, and of the lists, dicts and sets nested in it.
+
+    So it can be edited in place, at any depth, without sharing. Other values, like tool definitions, are shared.
+    """
+    if type(value) is dict:
+        return cast(T, {key: _copy_container(item) for key, item in cast(dict[Any, Any], value).items()})
+    if type(value) is list:
+        return cast(T, [_copy_container(item) for item in cast(list[Any], value)])
+    if isinstance(value, list | dict | set):
+        # A subclass, or a set, whose items are hashable and so not edited in place: a copy of the same type.
+        return cast(T, copy(value))  # pyright: ignore[reportUnknownArgumentType]
+    return value
+
+
+@dataclasses.dataclass
+class _HandlerState:
+    """What the model-request handler has produced so far, read back once the wrapper chain returns."""
+
+    response: _messages.ModelResponse | None = None
+    """The current attempt's response, kept for history when a hook converts it into a `ModelRetry`."""
+    usage_recorded: bool = False
+    """Whether `response`'s usage was already committed at the provider boundary."""
+    accounted_responses: list[_messages.ModelResponse] = dataclasses.field(
+        default_factory=list[_messages.ModelResponse]
+    )
+    """Every provider response whose usage was committed this step, including rejected attempts'."""
+    described_attempts: Sequence[_messages.ModelRequestAttempt] = ()
+    """This step's failed attempts, whose usage was committed when they failed: a response carrying them
+    in its `failed_attempts` only describes that usage, so it isn't counted again."""
+
+    def record(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        response: _messages.ModelResponse,
+        request_context: ModelRequestContext,
+    ) -> None:
+        """Commit a provider response's usage at the provider boundary."""
+        self.response = response
+        self.usage_recorded = True
+        ModelRequestNode._record_response_usage(ctx, response, request_context=request_context)  # pyright: ignore[reportPrivateUsage]
+        self.accounted_responses.append(response)
+
+
+@dataclasses.dataclass
+class _FailedAttempts:
+    """The attempts at a request step that a hook moved on from, recorded the way `FallbackModel` records its own.
+
+    An attempt fails when its error or response leads a hook to raise
+    [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], or a `FallbackExceptionGroup` that ends
+    the step. They're kept in the same `AttemptLog` a `FallbackModel` keeps: on the response the step is
+    answered with, or on that group, and as ERROR child spans of the request's `chat` span.
+
+    The records only describe usage committed elsewhere: a rejected response's usage was committed at the
+    provider boundary when it arrived, before any hook judged it, so they are attached after that and
+    never counted again.
+    """
+
+    log: AttemptLog = dataclasses.field(default_factory=AttemptLog)
+
+    def record(
+        self,
+        request_context: ModelRequestContext,
+        failure: Exception | _messages.ModelResponse,
+        start: AttemptStart,
+    ) -> None:
+        """Record that the attempt started at `start` failed with `failure`, an error or a rejected response."""
+        policy = open_request_policy()
+        self.log.record(
+            request_context.model,
+            failure,
+            start,
+            parent=policy.span if policy else None,
+            tracer=policy.tracer if policy else None,
+        )
+        if isinstance(failure, _messages.ModelResponse):
+            # The rejected response now has its own span, which reports its usage, so the `chat` span
+            # describes only the response that answers, as it does under `FallbackModel`. The billed-response
+            # record holds what the provider billed for it, which is a copy for a resumed suspended response
+            # (see `billed_beyond`), recorded just before the hook rejected it.
+            ledger = request_context._usage_response_ledger  # pyright: ignore[reportPrivateUsage]
+            ledger.rejected.append(ledger.responses[-1])
+        capture_model_response_span_context(request_context, None)
+
+    def record_exhausted(
+        self,
+        request_context: ModelRequestContext,
+        failure: Exception | _messages.ModelResponse,
+        start: AttemptStart,
+        group: exceptions.FallbackExceptionGroup,
+    ) -> None:
+        """Record the last attempt of a chain a hook gave up on by raising `group`, and list every attempt on it."""
+        if group is failure or group.attempts:
+            # The model's own group, such as a `FallbackModel`'s, already lists the attempts it made.
+            return
+        self.record(request_context, failure, start)
+        group.attempts = list(self.log.attempts)
+
+
 @dataclasses.dataclass(kw_only=True)
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
@@ -494,7 +735,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
         [ModelSelector[DepsT], models.ModelSelectionContext[DepsT]], Awaitable[tuple[models.Model, str | None]]
     ]
     enter_model: Callable[[models.Model], Awaitable[None]]
-    get_model_settings: Callable[[RunContext[DepsT]], ModelSettings | None]
+    get_model_settings: Callable[[RunContext[DepsT]], StepModelSettings]
     usage_limits: _usage.UsageLimits
     max_output_retries: int
     end_strategy: EndStrategy
@@ -1178,10 +1419,21 @@ def _billed_by_request(
     return billed_beyond(response, resumed)
 
 
-def _record_billed_usage(usage: _usage.RunUsage, billed: _messages.ModelResponse) -> None:
-    """Record a response's billed usage, and that of the attempts that failed before it."""
+def _record_billed_usage(
+    usage: _usage.RunUsage,
+    billed: _messages.ModelResponse,
+    *,
+    described: Sequence[_messages.ModelRequestAttempt] = (),
+) -> None:
+    """Record a response's billed usage, and that of the attempts that failed before it.
+
+    `described` are attempts whose usage was already committed when they failed, so they're left out.
+    """
     # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
-    _record_attempts_usage(usage, billed.failed_attempts)
+    _record_attempts_usage(
+        usage,
+        [attempt for attempt in billed.failed_attempts or () if not any(attempt is counted for counted in described)],
+    )
     _usage_attribution.record_usage(usage, billed.usage)
 
 
@@ -1360,7 +1612,7 @@ async def model_request_stream(
     *,
     request_context: ModelRequestContext,
     run_context: RunContext[Any],
-) -> AsyncGenerator[models.StreamedResponse]:
+) -> AsyncGenerator[_ContinuationStreamedResponse]:
     """Open the innermost streaming model request, stitching any continuation chain.
 
     Under the bundled durable-execution capabilities (Temporal/DBOS/Prefect) this runs in
@@ -1419,6 +1671,108 @@ async def model_request_stream(
             await sr.aclose()
 
 
+@dataclasses.dataclass
+class _StreamOffer:
+    """An attempt's stream, offered by the attempt loop to the consuming task to be primed."""
+
+    stream: _ContinuationStreamedResponse
+    outcome: asyncio.Future[Exception | None]
+    """Resolved with the error priming raised, or `None` once the stream is open."""
+
+
+@dataclasses.dataclass
+class _StreamHandoff:
+    """How the attempt loop in the `wrap_model_request` task and the consuming task open a stream together."""
+
+    offers: asyncio.Queue[_StreamOffer] = dataclasses.field(default_factory=asyncio.Queue[_StreamOffer])
+    open_error: Exception | None = None
+    """The error the request step ended with when its last attempt failed to open a stream.
+
+    Surfaced to the consumer as a stream that raises it, rather than raised when the stream is
+    entered, so events emitted before the failure still reach the consumer first, as they did when
+    the stream was opened lazily.
+    """
+
+
+class _FailedStreamedResponse(CompletedStreamedResponse):
+    """An empty stream that raises the error its request failed to open with, once it's iterated."""
+
+    def __init__(self, error: Exception, *, model_request_parameters: models.ModelRequestParameters):
+        super().__init__(_messages.ModelResponse(parts=[]), model_request_parameters=model_request_parameters)
+        self._error = error
+
+    async def _get_event_iterator(self) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
+        raise self._error
+        yield  # pragma: no cover
+
+
+async def _serve_stream_offers(
+    stream_offers: asyncio.Queue[_StreamOffer],
+    ready_waiter: asyncio.Task[Any],
+    wrap_task: asyncio.Task[Any],
+) -> None:
+    """Prime the streams the attempt loop offers until one is ready or the wrapped lifecycle finishes.
+
+    Runs in the consuming task: a segment's `model.request_stream(...)` context is entered and exited
+    by the task that iterates it, so the attempt loop in the `wrap_model_request` task can't open it
+    itself. Priming is only possible for the stitched continuation stream; a recovered response is
+    replayed from memory and isn't offered.
+    """
+    while True:
+        offer_getter = asyncio.create_task(stream_offers.get())
+        try:
+            await asyncio.wait({ready_waiter, offer_getter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            if not offer_getter.done():
+                await cancel_and_drain(offer_getter)
+        if offer_getter.cancelled():
+            return
+        offer = offer_getter.result()
+        error: Exception | None = None
+        try:
+            await offer.stream.prime()
+        except Exception as e:
+            error = e
+        if not offer.outcome.done():  # pragma: no branch
+            # Done only if the attempt loop was cancelled while this ran; its unwinding closes the stream.
+            offer.outcome.set_result(error)
+
+
+async def _after_streamed_model_request(
+    root_capability: AbstractCapability[Any],
+    run_context: RunContext[Any],
+    request_context: ModelRequestContext,
+    response: _messages.ModelResponse,
+) -> _messages.ModelResponse:
+    """Run `after_model_request` on a streamed response, which can no longer be re-attempted."""
+    try:
+        return await root_capability.after_model_request(
+            run_context, request_context=request_context, response=response
+        )
+    except exceptions.RetryModelRequest as retry:
+        raise exceptions.UserError(
+            '`RetryModelRequest` cannot be raised from `after_model_request` on a streamed request: '
+            'the response has already been streamed to the consumer, so there is nothing to re-attempt. '
+            'Raise it from `on_model_request_error` instead, which runs while the stream is still being opened.'
+        ) from retry
+
+
+async def _outside_attempts(awaitable: Awaitable[T]) -> T:
+    """Await the once-per-step model request hooks, where a `RetryModelRequest` has no attempt to retry.
+
+    `before_model_request` and `wrap_model_request` run before any attempt; every hook that runs during one
+    has its `RetryModelRequest` handled by the attempt loop, so one that escapes to here came from them.
+    """
+    try:
+        return await awaitable
+    except exceptions.RetryModelRequest as retry:
+        raise exceptions.UserError(
+            '`RetryModelRequest` can only be raised from `prepare_model_request`, `on_model_request_error` or '
+            '`after_model_request`: `before_model_request` and `wrap_model_request` run once per request step, '
+            'before any attempt. To use another model for the whole step, set `request_context.model` instead.'
+        ) from retry
+
+
 def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
     """Show the first-run banner, from whichever path prepared the run's first request.
 
@@ -1465,6 +1819,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     )
     _did_stream: bool = field(repr=False, init=False, default=False)
     last_request_context: ModelRequestContext | None = field(repr=False, init=False, default=None)
+    _step_model_settings: StepModelSettings = field(
+        repr=False, init=False, default=StepModelSettings(merged=None, layered=None)
+    )
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -1514,6 +1871,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 4. The handler resumes, the stream context manager closes, and the task completes.
         stream_ready = anyio.Event()
         stream_done = anyio.Event()
+        # Each attempt's stream is offered to this coroutine to be primed, since its first segment has
+        # to be opened in the task that consumes it; the outcome goes back to the attempt loop, which
+        # can still retry or fall back before anything has reached the consumer. See `_open_stream`.
+        handoff = _StreamHandoff()
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
@@ -1545,20 +1906,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 context_after_hooks = copy_context()
                 before_model_request_context[:] = _context_changes(context_before_hooks, context_after_hooks)
             _handler_request_context = req_ctx
-            # After the before-chain, so the check applies to the model actually being called
-            # (a `before_model_request` hook may have swapped it).
-            _ensure_model_supports_streaming(req_ctx.model)
-            capture_model_request_span_context(req_ctx)
-            # Stamp the request-issue instant so the instrumentation capability can record
-            # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
-            # the first-chunk instant; the delta is the client-side time to first token.
-            request_start = time.perf_counter()
-            # `model_request_stream` stitches the (possibly suspended → complete) segments
-            # into one continuous stream, so the whole chain is presented as a single
-            # `AgentStream` and the model-request hooks wrap it once. The step is counted in
-            # `ctx.state.usage.requests` when its response is committed, not here.
+            baseline = _AttemptBaseline.capture(
+                req_ctx,
+                self._step_model_settings,
+                copy_tool_definitions=ctx.deps.root_capability._has_prepare_model_request,  # pyright: ignore[reportPrivateUsage]
+            )
             try:
-                async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
+                async with AsyncExitStack() as stream_stack:
+                    # `described_attempts` are the attempts this step's loop moved on from, whose usage was committed
+                    # when they failed. Attempts the model itself carries on the stream are counted with it.
+                    sr, req_ctx, request_start, described_attempts = await self._open_stream(
+                        ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack, handoff=handoff
+                    )
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
@@ -1594,12 +1953,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = sr.get()
             _handler_response = response
             _handler_usage_recorded = True
-            self._record_response_usage(ctx, response, request_context=req_ctx)
+            # The attempts the stream was handed over with are described, not billed again.
+            self._record_response_usage(ctx, response, request_context=req_ctx, described=described_attempts)
             accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response, time_to_first_chunk)
-            return await ctx.deps.root_capability.after_model_request(
-                run_context, request_context=req_ctx, response=response
-            )
+            return await _after_streamed_model_request(ctx.deps.root_capability, run_context, req_ctx, response)
 
         wrap_request_context = request_context
         root_capability = ctx.deps.root_capability
@@ -1611,7 +1969,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         else:
             wrap_awaitable = _streaming_handler(wrap_request_context)
-        wrap_task = asyncio.create_task(wrap_awaitable)
+        wrap_task = asyncio.create_task(_outside_attempts(wrap_awaitable))
 
         async def _wrap_response() -> _messages.ModelResponse | None:
             """The response `wrap_model_request` finishes with after abandoning the stream.
@@ -1632,7 +1990,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # so the user's `wrap_model_request` cleanup runs instead of orphaning.
         ready_waiter = asyncio.create_task(stream_ready.wait())
         try:
-            await asyncio.wait({ready_waiter, wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+            await _serve_stream_offers(handoff.offers, ready_waiter, wrap_task)
         except BaseException:
             # `BaseException` to also catch `CancelledError`. Handoff hasn't completed,
             # so both tasks are still ours; drain them so cleanup runs before we re-raise.
@@ -1678,6 +2036,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 finally:
                     await agent_stream.aclose_events()
                 return
+            except Exception as error:
+                if error is not handoff.open_error:
+                    raise
+                # The stream failed to open. Hand the consumer a stream that raises the failure, so events
+                # emitted before it (e.g. by `before_model_request` hooks) reach the consumer first.
+                self._did_stream = True
+                failed_sr = _FailedStreamedResponse(
+                    error, model_request_parameters=wrap_request_context.model_request_parameters
+                )
+                agent_stream = self._build_agent_stream(ctx, failed_sr, wrap_request_context.model_request_parameters)
+                try:
+                    yield agent_stream
+                finally:
+                    await agent_stream.aclose_events()
+                # The consumer didn't iterate the stream far enough to see the failure.
+                raise error
             self._did_stream = True
             replay_sr = CompletedStreamedResponse(
                 model_response,
@@ -1704,6 +2078,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream_error = exc
             raise
         finally:
+            raw_stream = agent_stream_holder[0]._raw_stream_response  # pyright: ignore[reportPrivateUsage]
+            if isinstance(raw_stream, _ContinuationStreamedResponse):
+                # Close a primed segment the consumer never iterated here, in the task that opened it.
+                await raw_stream.release_primed_segment()
             stream_done.set()
 
             try:
@@ -1813,78 +2191,141 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         request_context, run_context = await self._prepare_request(ctx, streaming=False)
 
-        _handler_response: _messages.ModelResponse | None = None
+        state = _HandlerState()
         _handler_called = False
-        _handler_usage_recorded = False
-        accounted_responses: list[_messages.ModelResponse] = []
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
-            nonlocal _handler_called, _handler_response, _handler_usage_recorded
+            nonlocal _handler_called
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
             req_ctx = await self._apply_before_model_request(
                 ctx, run_context, req_ctx, original_request_context=request_context
             )
-
-            # `model_request` resolves any suspended → complete continuation chain (Anthropic
-            # `pause_turn`, OpenAI background mode) and returns the final merged response, so
-            # `wrap_model_request` spans the whole chain and `after_model_request` sees just
-            # the final response. Continuations are not separate request steps: the merged usage
-            # is committed once at the provider-response boundary below, and the step is counted
-            # in `ctx.state.usage.requests` when its response is committed to history.
-            def on_progress(response: _messages.ModelResponse) -> None:
-                nonlocal _handler_response
-                _handler_response = response
-
-            capture_model_request_span_context(req_ctx)
-            try:
-                response = await model_request(
-                    req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
-                )
-                _handler_response = response
-                _handler_usage_recorded = True
-                self._record_response_usage(ctx, response, request_context=req_ctx)
-                accounted_responses.append(response)
-            except exceptions.ModelRetry:
-                raise
-            except Exception as e:
-                if _handler_response is not None:
-                    _handler_usage_recorded = True
-                    self._record_response_usage(ctx, _handler_response, request_context=req_ctx)
-                    accounted_responses.append(_handler_response)
-                response = await self._recover_model_request_error(ctx, run_context, req_ctx, e)
-            _handler_response = response
-            capture_model_response_span_context(req_ctx, response)
-            return await ctx.deps.root_capability.after_model_request(
-                run_context, request_context=req_ctx, response=response
-            )
+            return await self._request_attempts(ctx, run_context, req_ctx, state)
 
         root_capability = ctx.deps.root_capability
         try:
             try:
                 if root_capability._has_wrap_model_request:  # pyright: ignore[reportPrivateUsage]
-                    model_response = await root_capability.wrap_model_request(
-                        run_context,
-                        request_context=request_context,
-                        handler=model_handler,
+                    model_response = await _outside_attempts(
+                        root_capability.wrap_model_request(
+                            run_context,
+                            request_context=request_context,
+                            handler=model_handler,
+                        )
                     )
                 else:
-                    model_response = await model_handler(request_context)
+                    model_response = await _outside_attempts(model_handler(request_context))
             except exceptions.SkipModelRequest as e:
                 model_response = e.response
             except exceptions.ModelRetry:
                 raise  # Propagate to outer handler
         except exceptions.ModelRetry as e:
-            self._enforce_usage_limits(ctx, accounted_responses)
+            self._enforce_usage_limits(ctx, state.accounted_responses)
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
-            if _handler_response is not None:
-                self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+            if state.response is not None:
+                self._append_response(
+                    ctx, state.response, record_usage=not state.usage_recorded, described=state.described_attempts
+                )
             return await self._build_retry_node(ctx, e)
 
-        self._enforce_usage_limits(ctx, accounted_responses)
-        return await self._finish_handling(ctx, model_response, record_usage=not _handler_usage_recorded)
+        self._enforce_usage_limits(ctx, state.accounted_responses)
+        return await self._finish_handling(
+            ctx, model_response, record_usage=not state.usage_recorded, described=state.described_attempts
+        )
+
+    async def _request_attempts(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        state: _HandlerState,
+    ) -> _messages.ModelResponse:
+        """Attempt the request until an attempt's response is accepted, or a hook stops asking for another.
+
+        A hook asks for another attempt by raising [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]
+        from `on_model_request_error` (the attempt raised) or `after_model_request` (its response was
+        rejected). Each attempt is prepared from what the before-chain produced, and its response state
+        starts empty: a response a hook rejected must not survive into history, though its usage, already
+        committed at the provider boundary, stays counted.
+        """
+        baseline = _AttemptBaseline.capture(
+            request_context,
+            self._step_model_settings,
+            copy_tool_definitions=ctx.deps.root_capability._has_prepare_model_request,  # pyright: ignore[reportPrivateUsage]
+        )
+        failed = _FailedAttempts()
+        state.described_attempts = failed.log.attempts
+        while True:
+            baseline.restore(request_context)
+            state.response = None
+            state.usage_recorded = False
+            try:
+                request_context = await self._prepare_attempt(ctx, run_context, request_context)
+            except exceptions.RetryModelRequest as retry:
+                # A `prepare_model_request` hook asked for another model before this attempt was sent.
+                await self._start_next_attempt(ctx, request_context, retry)
+                continue
+            capture_model_request_span_context(request_context)
+            try:
+                return await self._request_attempt(ctx, run_context, request_context, state, failed)
+            except exceptions.RetryModelRequest as retry:
+                baseline.rewind_suspended()
+                await self._start_next_attempt(ctx, request_context, retry)
+
+    async def _request_attempt(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        state: _HandlerState,
+        failed: _FailedAttempts,
+    ) -> _messages.ModelResponse:
+        """Make one attempt: call the model, then run the error or after hooks on the outcome."""
+
+        # `model_request` resolves any suspended → complete continuation chain (Anthropic
+        # `pause_turn`, OpenAI background mode) and returns the final merged response, so
+        # `wrap_model_request` spans the whole chain and `after_model_request` sees just
+        # the final response. Continuations are not separate request steps, so the merged
+        # usage is committed exactly once at the provider-response boundary below.
+        def on_progress(response: _messages.ModelResponse) -> None:
+            state.response = response
+
+        start = AttemptStart()
+        # What the attempt is recorded as failing with, should a hook move on from it: the billed
+        # response, or the error, also when a hook recovered from it (a recovered response was never billed).
+        outcome: Exception | _messages.ModelResponse
+        try:
+            outcome = await model_request(
+                request_context.model, request_context=request_context, run_context=run_context, on_progress=on_progress
+            )
+            # Committed before the earlier attempts are attached, so their usage isn't counted twice.
+            state.record(ctx, outcome, request_context)
+            response = failed.log.attach(outcome)
+        except (exceptions.ModelRetry, exceptions.RetryModelRequest):
+            raise
+        except Exception as e:
+            if state.response is not None:
+                state.record(ctx, state.response, request_context)
+            outcome = e
+            recovered = await self._recover_model_request_error(ctx, run_context, request_context, e, failed, start)
+            # Not billed, so its usage is committed with the step's response, without the attempts it carries.
+            response = failed.log.attach(recovered)
+        state.response = response
+        capture_model_response_span_context(request_context, response)
+        try:
+            return await ctx.deps.root_capability.after_model_request(
+                run_context, request_context=request_context, response=response
+            )
+        except exceptions.RetryModelRequest:
+            failed.record(request_context, outcome, start)
+            raise
+        except exceptions.FallbackExceptionGroup as unrecovered:
+            failed.record_exhausted(request_context, outcome, start, unrecovered)
+            self._raise_usage_limit_exceeded(ctx, unrecovered)
+            raise
 
     async def _prepare_request(
         self,
@@ -1936,8 +2377,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
-        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
-        run_context.model_settings = model_settings
+        model_settings = self._resolve_step_model_settings(ctx, run_context)
 
         request_context = ModelRequestContext(
             model=ctx.deps.model,
@@ -1952,6 +2392,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # cache still counts in `usage.requests`, so it must not get past `request_limit` either.
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
+
+    def _resolve_step_model_settings(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+    ) -> ModelSettings:
+        """Resolve the step's model settings, keeping the layers alone for an attempt at another model."""
+        self._step_model_settings = ctx.deps.get_model_settings(run_context)
+        # A copy, so a hook editing the request's settings in place leaves the resolved ones to compare against.
+        model_settings = ModelSettings(**(self._step_model_settings.merged or {}))
+        run_context.model_settings = model_settings
+        return model_settings
 
     async def _prepare_resume_request(
         self,
@@ -1990,8 +2442,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
-        model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
-        run_context.model_settings = model_settings
+        model_settings = self._resolve_step_model_settings(ctx, run_context)
 
         # Show the hooks the exact history that will be echoed back (ending in the suspended
         # response); the innermost helpers split that response off as the continuation seed.
@@ -2016,7 +2467,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
-    async def _apply_before_model_request(  # noqa: C901
+    async def _apply_before_model_request(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
@@ -2024,7 +2475,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         original_request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Apply `before_model_request` and finalize the request inside the wrapped lifecycle."""
+        """Apply `before_model_request` and finalize the step's persistent state inside the wrapped lifecycle.
+
+        This runs once per request step. Everything that depends on which model serves the request
+        runs per attempt, in `_prepare_attempt`.
+        """
         persistent_messages_before_processing = len(ctx.state.message_history)
         mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
@@ -2053,16 +2508,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         original_request_context.model_id = processed_context.model_id
         request_context = original_request_context
 
-        model = request_context.model
         messages = request_context.messages
-        model_settings = request_context.model_settings or None
-        request_context.model_settings = model_settings
-        model_request_parameters = request_context.model_request_parameters
-
-        run_context.model_settings = model_settings
-
-        model_request_parameters = _keep_default_output_mode(ctx.state, model, model_settings, model_request_parameters)
-        request_context.model_request_parameters = model_request_parameters
+        request_context.model_settings = request_context.model_settings or None
 
         if self._resume_suspended is None:
             if not messages:
@@ -2082,17 +2529,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
-            # Instruction parts are request configuration, but the message recording the
-            # current step must still reflect what was actually sent. Append-on-change blocks are
-            # resolved against the processed history: only a baseline that survived processing can
-            # anchor the prefix.
-            model_request_parameters = replace(
-                model_request_parameters,
+            # Instruction parts are request configuration, but the message recording the current step
+            # must still reflect what was sent. Recorded as the before-chain left them: what
+            # `prepare_model_request` changes for one attempt stays out of history. Append-on-change blocks are
+            # resolved against the processed history: only a baseline that survived processing can anchor the
+            # prefix.
+            request_context.model_request_parameters = replace(
+                request_context.model_request_parameters,
                 instruction_parts=update_instruction_history(
-                    messages, model_request_parameters.instruction_parts, _history_recording_targets(ctx, messages)
+                    messages,
+                    request_context.model_request_parameters.instruction_parts,
+                    _history_recording_targets(ctx, messages),
                 ),
             )
-            _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
+            _apply_instruction_parts(self.request, request_context.model_request_parameters.instruction_parts)
 
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
@@ -2116,9 +2566,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             # The before-chain may have added or removed `load_capability` exchanges in the persistent
             # history, which is what the rest of the step reads availability from. Refresh so the
-            # execution gate agrees with the reveal state `_with_outgoing_reveal_state` derives below;
-            # `ToolManager.for_run_step` re-resolves off this set at dispatch, so a capability that
-            # became active here still governs its own tools through `prepare_tools`.
+            # execution gate agrees with the reveal state `_with_outgoing_reveal_state` derives per
+            # attempt; `ToolManager.for_run_step` re-resolves off this set at dispatch, so a capability
+            # that became active here still governs its own tools through `prepare_tools`.
             _refresh_loaded_capability_ids(ctx)
 
             ctx.deps.new_message_index = _first_new_message_index(
@@ -2127,7 +2577,82 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
+        else:
+            if not (
+                messages
+                and isinstance(suspended := messages[-1], _messages.ModelResponse)
+                and suspended.state == 'suspended'
+            ):
+                raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
 
+            # A processor may have deliberately rewritten persistent history from the request
+            # view, putting the suspended continuation seed back at the tail. Trim the live
+            # persistent history, never `request_context.messages`: request-only hook changes
+            # must not cross the persistence boundary during resume bookkeeping.
+            persistent_messages = ctx.state.message_history
+            if (
+                persistent_messages
+                and isinstance(persistent_tail := persistent_messages[-1], _messages.ModelResponse)
+                and persistent_tail.state == 'suspended'
+            ):
+                _set_resumed_history(ctx, persistent_messages[:-1])
+            else:
+                _set_resumed_history(ctx, persistent_messages)
+
+            # Same reason as in the non-resume branch: processing may have changed which capabilities
+            # the durable history shows as loaded, and the tool calls this continuation comes back
+            # with are dispatched against that history.
+            _refresh_loaded_capability_ids(ctx)
+
+            instructions_target = (
+                _get_history_instructions_source(ctx.state.message_history) or ctx.deps.resumed_request
+            )
+            if instructions_target is not None:
+                _apply_instruction_parts(
+                    instructions_target, request_context.model_request_parameters.instruction_parts
+                )
+
+        self.last_request_context = original_request_context
+
+        return request_context
+
+    async def _prepare_attempt(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Prepare one attempt at the request for the model that is about to serve it.
+
+        Everything here depends on `request_context.model`, so it runs again for every attempt
+        (see [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]) rather than once per
+        request step. The caller restores the post-`before_model_request` request first, so an
+        attempt never inherits preparation done for a different model.
+        """
+        processed_context = await ctx.deps.root_capability.prepare_model_request(run_context, request_context)
+        # Like the before-chain, a hook may return a copy: keep the object outer wrappers hold.
+        request_context.model = processed_context.model
+        request_context.messages = list(processed_context.messages)
+        request_context.model_settings = processed_context.model_settings or None
+        request_context.model_request_parameters = processed_context.model_request_parameters
+        request_context.model_id = processed_context.model_id
+
+        model = request_context.model
+        messages = request_context.messages
+        model_settings = request_context.model_settings
+        # Per attempt, since the default output mode a request keeps is that of the model serving it.
+        model_request_parameters = _keep_default_output_mode(
+            ctx.state, model, model_settings, request_context.model_request_parameters
+        )
+        request_context.model_request_parameters = model_request_parameters
+
+        run_context.model_settings = model_settings
+
+        # A resumed step continues a suspended response, until an attempt at that fails and it's rewound.
+        resuming = (
+            bool(messages) and isinstance(last := messages[-1], _messages.ModelResponse) and last.state == 'suspended'
+        )
+        if not resuming:
             # Normalize consecutive trailing requests for model adapters without changing stored history.
             messages = _clean_message_history(list(messages), repair_last_response=True)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
@@ -2197,53 +2722,151 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The step-start check in `_prepare_request` ran before this request's tokens were counted.
                 ctx.deps.usage_limits.check_before_request(usage)
         else:
-            if not (
-                messages
-                and isinstance(suspended := messages[-1], _messages.ModelResponse)
-                and suspended.state == 'suspended'
-            ):
-                raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
-
-            # A processor may have deliberately rewritten persistent history from the request
-            # view, putting the suspended continuation seed back at the tail. Trim the live
-            # persistent history, never `request_context.messages`: request-only hook changes
-            # must not cross the persistence boundary during resume bookkeeping.
-            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
+            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            persistent_messages = ctx.state.message_history
-            if (
-                persistent_messages
-                and isinstance(persistent_tail := persistent_messages[-1], _messages.ModelResponse)
-                and persistent_tail.state == 'suspended'
-            ):
-                _set_resumed_history(ctx, persistent_messages[:-1])
-            else:
-                _set_resumed_history(ctx, persistent_messages)
-
-            # Same reason as in the non-resume branch: processing may have changed which capabilities
-            # the durable history shows as loaded, and the tool calls this continuation comes back
-            # with are dispatched against that history.
-            _refresh_loaded_capability_ids(ctx)
-
-            instructions_target = (
-                _get_history_instructions_source(ctx.state.message_history) or ctx.deps.resumed_request
-            )
-            if instructions_target is not None:
-                _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
-
             if _has_instruction_state(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
                 # `ModelRequest` next to an existing one. Only merge: the suspended tail is the live
                 # frontier, so its tool calls must not get synthesized returns.
-                messages = _merge_consecutive_messages(model.prepare_messages(messages, model_request_parameters))
+                messages = _merge_consecutive_messages(model.prepare_messages(list(messages), model_request_parameters))
                 request_context.messages = messages
+
+        # The limits were checked at the start of the step, before the first attempt. A later attempt is checked
+        # against token and cost limits again: an earlier attempt's rejected response has been counted since.
+        if request_context.attempt > 1:
+            ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            ctx.deps.usage_limits.check_cost(ctx.state.usage, warn_if_cost_unavailable=False)
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
 
-        self.last_request_context = original_request_context
+        self.last_request_context = request_context
 
         return request_context
+
+    async def _open_stream(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+        *,
+        baseline: _AttemptBaseline,
+        stream_stack: AsyncExitStack,
+        handoff: _StreamHandoff,
+    ) -> tuple[models.StreamedResponse, ModelRequestContext, float, list[_messages.ModelRequestAttempt]]:
+        """Open the stream for this request step, re-attempting while a hook asks for another attempt.
+
+        When an `on_model_request_error` hook exists, each attempt's stream is primed before it's handed
+        over: its first segment is opened and its first event pulled (then replayed). A failure to open
+        it, or one the provider reports before any output, still reaches `on_model_request_error`, which
+        can recover it, or raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to try
+        again. Without such a hook, the stream opens lazily once the consumer iterates it. Once events
+        have reached the consumer there is nothing to rewind, so a later failure propagates (tracked
+        separately by #4140). Returns the open stream, the context of the attempt
+        that produced it, the instant the request was issued, and the attempts this loop moved on from.
+        """
+        failed = _FailedAttempts()
+        while True:
+            baseline.restore(request_context)
+            try:
+                request_context = await self._prepare_attempt(ctx, run_context, request_context)
+            except exceptions.RetryModelRequest as retry:
+                # A `prepare_model_request` hook asked for another model before this attempt was sent.
+                await self._start_next_attempt(ctx, request_context, retry)
+                continue
+            # After the before-chain and `prepare_model_request`, so the check applies to the model
+            # actually being called (a hook or an earlier attempt may have swapped it).
+            _ensure_model_supports_streaming(request_context.model)
+            capture_model_request_span_context(request_context)
+            # Stamp the request-issue instant so the instrumentation capability can record
+            # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
+            # the first-chunk instant; the delta is the client-side time to first token.
+            request_start = time.perf_counter()
+            start = AttemptStart()
+            attempt_stack = AsyncExitStack()
+            try:
+                # `model_request_stream` stitches the (possibly suspended → complete) segments
+                # into one continuous stream, so the whole chain is presented as a single
+                # `AgentStream` and the model-request hooks wrap it once.
+                sr = await attempt_stack.enter_async_context(
+                    model_request_stream(
+                        request_context.model, request_context=request_context, run_context=run_context
+                    )
+                )
+                if ctx.deps.root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
+                    # Only worth opening early when a hook can act on a failure to open: otherwise the
+                    # stream keeps opening lazily, once the consumer starts iterating it.
+                    outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
+                    handoff.offers.put_nowait(_StreamOffer(sr, outcome))
+                    if (error := await outcome) is not None:
+                        raise error
+            except BaseException as e:
+                await attempt_stack.aclose()
+                # Cancellation and control flow aren't failures to open for the error hooks to handle.
+                if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
+                    raise
+                try:
+                    recovered = await self._recover_model_request_error(
+                        ctx, run_context, request_context, e, failed, start
+                    )
+                except exceptions.RetryModelRequest as retry:
+                    baseline.rewind_suspended()
+                    await self._start_next_attempt(ctx, request_context, retry)
+                    continue
+                except Exception as error:
+                    handoff.open_error = error
+                    raise
+                # A hook recovered the failure with a complete response; replay it as a stream so the
+                # consumer sees the same shape either way.
+                replay = CompletedStreamedResponse(
+                    recovered,
+                    model_request_parameters=request_context.model_request_parameters,
+                    replay_events=True,
+                )
+                failed.log.attach_to_stream(replay)
+                return replay, request_context, request_start, failed.log.attempts
+            stream_stack.push_async_exit(attempt_stack)
+            failed.log.attach_to_stream(sr)
+            return sr, request_context, request_start, failed.log.attempts
+
+    async def _start_next_attempt(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        request_context: ModelRequestContext,
+        retry: exceptions.RetryModelRequest,
+    ) -> None:
+        """Move `request_context` on to the next attempt, in place.
+
+        In place because outer `wrap_model_request` wrappers hold this object: mutating it is how
+        instrumentation and other wrappers observe which model actually served the request.
+        """
+        if request_context.attempt >= MAX_MODEL_REQUEST_ATTEMPTS:
+            raise exceptions.UserError(
+                f'Model request was attempted more than the maximum of {MAX_MODEL_REQUEST_ATTEMPTS} times: '
+                'a capability is raising `RetryModelRequest` without making progress.'
+            ) from retry
+
+        if retry.model is not None:
+            model, model_id = await self._resolve_retry_model(ctx, retry.model)
+            await ctx.deps.enter_model(model)
+            request_context.model = model
+            # The run's own model is deliberately left alone: a chain restarts from the top on the
+            # next request step, matching `FallbackModel`, rather than sticking to whichever
+            # candidate happened to serve this one.
+            request_context.model_id = model_id
+
+        request_context.attempt += 1
+
+    async def _resolve_retry_model(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        model: models.Model | models.KnownModelName | str,
+    ) -> tuple[models.Model, str | None]:
+        """Resolve the model a `RetryModelRequest` asked for, honoring `resolve_model_id` capabilities."""
+        if isinstance(model, models.Model):
+            return model, None
+
+        return await ctx.deps.evaluate_model_selector(lambda _: model, _model_selection_context(ctx))
 
     async def _finish_handling(
         self,
@@ -2251,9 +2874,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         record_usage: bool = True,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
         # Append the model response to state.message_history
-        self._append_response(ctx, response, record_usage=record_usage)
+        self._append_response(ctx, response, record_usage=record_usage, described=described)
 
         # Set the `_result` attribute since we can't use `return` in an async iterator
         self._result = CallToolsNode(response)
@@ -2266,6 +2890,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
         error: Exception,
+        failed: _FailedAttempts,
+        start: AttemptStart,
     ) -> _messages.ModelResponse:
         if isinstance(error, exceptions.FallbackExceptionGroup):
             # No response reaches history, but a response a `FallbackModel` rejected was still billed,
@@ -2280,14 +2906,27 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await root_capability.on_model_request_error(
                 run_context, request_context=request_context, error=error
             )
-        except exceptions.FallbackExceptionGroup as unrecovered:
-            # A limit the rejected responses exceeded is what stopped the run, so that's raised, with the
-            # group as its cause.
-            try:
-                ModelRequestNode._enforce_usage_limits(ctx, [])
-            except exceptions.UsageLimitExceeded as limit_exceeded:
-                raise limit_exceeded from unrecovered
+        except exceptions.RetryModelRequest:
+            failed.record(request_context, error, start)
             raise
+        except exceptions.FallbackExceptionGroup as unrecovered:
+            failed.record_exhausted(request_context, error, start, unrecovered)
+            ModelRequestNode._raise_usage_limit_exceeded(ctx, unrecovered)
+            raise
+
+    @staticmethod
+    def _raise_usage_limit_exceeded(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        unrecovered: exceptions.FallbackExceptionGroup,
+    ) -> None:
+        """Raise the usage limit that a fallback chain's billed attempts exceeded, if any, caused by its group.
+
+        A limit the rejected responses exceeded is what stopped the run, so that's raised instead of the group.
+        """
+        try:
+            ModelRequestNode._enforce_usage_limits(ctx, [])
+        except exceptions.UsageLimitExceeded as limit_exceeded:
+            raise limit_exceeded from unrecovered
 
     @staticmethod
     def _append_response(
@@ -2295,6 +2934,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         record_usage: bool = True,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
         """Commit a step's model response to history, counting the step and updating usage tracking.
 
@@ -2307,7 +2947,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response.workspace_ref = ctx.deps.workspace_ref
         _usage_attribution.record_request(ctx.state.usage)
         if record_usage:
-            ModelRequestNode._record_response_usage(ctx, response)
+            ModelRequestNode._record_response_usage(ctx, response, described=described)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
         ctx.state.message_history.append(response)
 
@@ -2317,18 +2957,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         response: _messages.ModelResponse,
         *,
         request_context: ModelRequestContext | None = None,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
         """Commit billed usage at the provider-response boundary.
 
         A request that resumed a suspended response from history counts only what it billed beyond it,
-        and records that in the request's billed-response record too: see `billed_beyond`.
+        and records that in the request's billed-response record too: see `billed_beyond`. `described`
+        are failed attempts whose usage was already committed, when they failed, so a response carrying
+        them only describes it.
         """
         fill_response_cost(response)
         billed = response
         if request_context is not None:
             billed = _billed_by_request(response, request_context.messages)
             request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
-        _record_billed_usage(ctx.state.usage, billed)
+        _record_billed_usage(ctx.state.usage, billed, described=described)
 
     @staticmethod
     def _enforce_usage_limits(
@@ -2923,14 +3566,13 @@ def _drop_unanswered_request_scoped_prompts(messages: list[_messages.ModelMessag
             messages[index] = replace(message, parts=parts)
 
 
-async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
-    selector = ctx.deps.model_selector
-    if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
-        return
-
+def _model_selection_context(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+) -> models.ModelSelectionContext[DepsT]:
+    """The context a model selector or `resolve_model_id` capability sees for the current step."""
     agent = ctx.deps.agent
     assert agent is not None
-    selection_ctx = models.ModelSelectionContext(
+    return models.ModelSelectionContext(
         agent=agent,
         deps=ctx.deps.user_deps,
         model=ctx.deps.model,
@@ -2947,7 +3589,14 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
         run_id=ctx.state.run_id,
         conversation_id=ctx.state.conversation_id,
     )
-    model, model_id = await ctx.deps.evaluate_model_selector(selector, selection_ctx)
+
+
+async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    selector = ctx.deps.model_selector
+    if selector is None or ctx.deps.model_selected_for_step == ctx.state.run_step:
+        return
+
+    model, model_id = await ctx.deps.evaluate_model_selector(selector, _model_selection_context(ctx))
     await ctx.deps.enter_model(model)
     ctx.deps.model = model
     ctx.deps.model_id = model_id

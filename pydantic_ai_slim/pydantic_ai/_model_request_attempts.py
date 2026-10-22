@@ -116,7 +116,7 @@ def record_attempt_span(
                 record_exception(span, failure, include_content=include_content)
                 set_error_status(span, failure, include_content=include_content)
             else:
-                span.set_status(Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler'))
+                span.set_status(Status(StatusCode.ERROR, 'Response rejected'))
         finally:
             span.end(start_time + round(attempt.duration.total_seconds() * 1e9))
 

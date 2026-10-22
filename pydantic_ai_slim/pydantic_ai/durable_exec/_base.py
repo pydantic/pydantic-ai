@@ -30,7 +30,7 @@ from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.agent.wrapper import WrapperAgent
-from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
+from pydantic_ai.capabilities import Instrumentation, ModelFallback, ProcessEventStream
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     CapabilityOrdering,
@@ -1629,6 +1629,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Validate the final request and repair durability after an outer hook swaps the model."""
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def prepare_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Repair durability for each attempt: another attempt may be on a model a hook asked for.
+
+        [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] swaps in the requested model
+        as-is, so without this a fallback or retry attempt would call it inline in workflow code.
+        """
+        return await self._ensure_durable_model(ctx, request_context)
+
+    async def _ensure_durable_model(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
         if not self.in_durable_context:
             return request_context
 
@@ -1859,8 +1878,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: install durable dispatch before outer before-hooks may perform model I/O,
-        # then run the final before-hook repair after every outer request rewrite.
-        return CapabilityOrdering(position='innermost')
+        # then run the final before-hook repair after every outer request rewrite. Inside `ModelFallback`,
+        # which is innermost too, so the per-attempt repair sees the model `ModelFallback` moved to.
+        return CapabilityOrdering(position='innermost', wrapped_by=(ModelFallback,))
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -1926,21 +1946,32 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         sibling [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] gets to reinterpret it.
         Instead no `'default'` is registered; every request for the default carries the raw string
         and re-resolves through the capability chain (or `infer_model`) on the worker.
+
+        An agent without a model of its own can still be bound when a capability can supply one, such as
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+        [`SelectModel`][pydantic_ai.capabilities.SelectModel]. Its requests then carry the model the agent
+        resolves from that capability at run time, like a request a capability moves to another model does,
+        so no `'default'` is registered.
         """
-        if agent.model is None:
+        agent_model = agent.model
+        # Which model a capability supplies may only be known once every capability has bound, or at run
+        # time, so only whether one can supply it is asked here.
+        if agent_model is None and not agent.root_capability._can_supply_model:  # pyright: ignore[reportPrivateUsage]
             raise UserError(
                 f'An agent needs to have a `model` in order to be used with {self.engine_name}, '
                 'it cannot be set at agent run time.'
             )
-        self._default_model_id = agent.model if isinstance(agent.model, str) else None
+        self._default_model_id = agent_model if isinstance(agent_model, str) else None
         default_model: Model | None
-        if isinstance(agent.model, str):
+        if agent_model is None:
+            default_model = None
+        elif isinstance(agent_model, str):
             # Only a `models=` mapping resolves the string to a concrete default here; any other
             # string defers to run-time resolution (a sibling `ResolveModelId`, this capability's
             # registry, or `infer_model`) so it's built worker-side with the run's deps.
-            default_model = self._extra_models.get(agent.model)
+            default_model = self._extra_models.get(agent_model)
         else:
-            default_model = agent.model
+            default_model = agent_model
 
         self._models_by_id = {} if default_model is None else {'default': default_model}
         for model_id, model_instance in self._extra_models.items():

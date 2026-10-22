@@ -33,6 +33,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     HandleDeferredToolCalls,
     LocalWorkspace,
+    ModelFallback,
     NativeTool,
     PrefixTools,
     PrepareOutputTools,
@@ -124,6 +125,8 @@ FIXTURES: dict[str, Fixture] = {
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
     'LocalWorkspace': lambda tmp_path: LocalWorkspace(tmp_path),
     'MCP': lambda _: MCP(local=MCPToolset(_mcp_server())),
+    # The step's model answers, so the fallback model is never sent anything.
+    'ModelFallback': lambda _: ModelFallback(TestModel()),
     'NativeTool': lambda _: NativeTool(CodeExecutionTool()),
     'PrefixTools': lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
     'PrepareOutputTools': lambda _: PrepareOutputTools(lambda ctx, tools: tools),

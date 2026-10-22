@@ -3,7 +3,7 @@
 A model request runs in an activity, so an error it raises reaches the workflow as Temporal's
 `ActivityError` wrapping an `ApplicationError`, rather than as the
 [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the model raised. Workflow-side code that
-handles model errors, like an `on_model_request_error` hook or the `Fallback` capability, would
+handles model errors, like an `on_model_request_error` hook or the `ModelFallback` capability, would
 never see one. So the activity raises the `ApplicationError` itself, with the model error encoded in
 its details, and the workflow raises a rebuilt copy of the original error.
 
