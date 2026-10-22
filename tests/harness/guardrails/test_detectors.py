@@ -53,6 +53,14 @@ def _echo_prompt() -> FunctionModel:
     return FunctionModel(respond)
 
 
+def test_tool_return_helpers_are_not_exported_from_detectors():
+    """The `ToolReturn` helpers moved to a private module stay private where `detectors` uses them."""
+    from pydantic_ai_harness.guardrails import detectors
+
+    assert not hasattr(detectors, 'is_text_tool_return')
+    assert not hasattr(detectors, 'detect_tool_return_content')
+
+
 class TestSecretRedaction:
     """Credentials are rewritten, not refused."""
 
