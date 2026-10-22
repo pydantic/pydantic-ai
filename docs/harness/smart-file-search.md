@@ -151,8 +151,9 @@ fails. Pass `guidance` to replace it, or
 
 ## Telemetry
 
-`SmartFileSearch` adds no spans of its own. With instrumentation on, each judgment is an agent run named
-`smart_file_search` under the tool call's span, so a search's judge cost is grouped under that name.
+`SmartFileSearch` adds no spans of its own, and its judge runs are not instrumented: their prompts carry source
+snippets, so global instrumentation must not export them past the host agent's own `instrument` or
+`include_content` settings. A search shows up as its tool call's span.
 
 ## Agent spec (YAML/JSON)
 
