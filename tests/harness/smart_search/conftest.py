@@ -1,6 +1,6 @@
-"""Shared helpers for the `SmartFileSearch` tests: judges, workspaces, and running the tool through an `Agent`.
+"""Shared helpers for the `SmartSearch` tests: judges, workspaces, and running the tool through an `Agent`.
 
-Every search goes through the public surface: an `Agent` whose `FunctionModel` calls `smart_file_search`, with a
+Every search goes through the public surface: an `Agent` whose `FunctionModel` calls `smart_search`, with a
 judge whose requests show which snippets (`path:line-end (symbol)`) it was asked about.
 """
 
@@ -38,7 +38,7 @@ from pydantic_ai.models.decision import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceTimeoutError
-from pydantic_ai_harness.smart_file_search import SmartFileSearch, SmartFileSearchResult
+from pydantic_ai_harness.smart_search import SmartSearch, SmartSearchResult
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -148,14 +148,14 @@ def judged(model: FakeJev) -> list[Judged]:
     return sorted(out, key=lambda s: (s.path, s.line, s.end_line))
 
 
-def calls_smart_file_search(*calls: Mapping[str, object]) -> FunctionModel:
-    """A run model that calls `smart_file_search` once per `calls` in one response (once by default), then stops."""
+def calls_smart_search(*calls: Mapping[str, object]) -> FunctionModel:
+    """A run model that calls `smart_search` once per `calls` in one response (once by default), then stops."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart('smart_file_search', {'query': 'reject expired sessions', **args})
+                    ToolCallPart('smart_search', {'query': 'reject expired sessions', **args})
                     for args in calls or ({},)
                 ]
             )
@@ -172,9 +172,9 @@ def search_agent(
     concurrency: int = 8,
     cache_index: bool = False,
 ) -> Agent[None, str]:
-    """An agent searching `root` (or the run's `workspace`) with a `SmartFileSearch` judged by `model`."""
-    capability = SmartFileSearch(model=model, threshold=threshold, concurrency=concurrency, cache_index=cache_index)
-    run_model = calls_smart_file_search()  # each run passes its own calls
+    """An agent searching `root` (or the run's `workspace`) with a `SmartSearch` judged by `model`."""
+    capability = SmartSearch(model=model, threshold=threshold, concurrency=concurrency, cache_index=cache_index)
+    run_model = calls_smart_search()  # each run passes its own calls
     if root is None:
         return Agent(run_model, capabilities=[capability])
     return Agent(run_model, capabilities=[LocalWorkspace(root), capability])
@@ -186,7 +186,7 @@ async def search_messages(
     # Unlimited requests: each judgment counts as one, and the request limit is tested on its own.
     result = await agent.run(
         'find it',
-        model=calls_smart_file_search(*calls),
+        model=calls_smart_search(*calls),
         workspace=workspace,
         usage_limits=UsageLimits(request_limit=None),
     )
@@ -199,27 +199,25 @@ def tool_returns(messages: Sequence[ModelMessage]) -> list[ToolReturnPart]:
 
 async def search_all(
     agent: Agent[None, str], *calls: Mapping[str, object], workspace: Workspace | None = None
-) -> list[SmartFileSearchResult]:
-    """The results of `smart_file_search` calls made in parallel in one model response."""
-    results: list[SmartFileSearchResult] = []
+) -> list[SmartSearchResult]:
+    """The results of `smart_search` calls made in parallel in one model response."""
+    results: list[SmartSearchResult] = []
     for part in tool_returns(await search_messages(agent, *calls, workspace=workspace)):
-        assert isinstance(part.content, SmartFileSearchResult), part.content
+        assert isinstance(part.content, SmartSearchResult), part.content
         results.append(part.content)
     return results
 
 
-async def search(
-    agent: Agent[None, str], *, workspace: Workspace | None = None, **args: object
-) -> SmartFileSearchResult:
-    """The result of one `smart_file_search` call with `args`."""
+async def search(agent: Agent[None, str], *, workspace: Workspace | None = None, **args: object) -> SmartSearchResult:
+    """The result of one `smart_search` call with `args`."""
     [result] = await search_all(agent, args, workspace=workspace)
     return result
 
 
 async def search_error(agent: Agent[None, str], *, workspace: Workspace | None = None, **args: object) -> str:
-    """What the model was told when one `smart_file_search` call with `args` asked for a retry or failed."""
+    """What the model was told when one `smart_search` call with `args` asked for a retry or failed."""
     [part] = tool_returns(await search_messages(agent, args, workspace=workspace))
-    assert not isinstance(part.content, SmartFileSearchResult)
+    assert not isinstance(part.content, SmartSearchResult)
     return str(part.content)
 
 
@@ -247,9 +245,9 @@ def indexed(capfire: CaptureLogfire, instrument_all_agents: None) -> Callable[[]
 
     def read() -> list[int | None]:
         return [
-            span['attributes'].get('smart_file_search.indexed_files')
+            span['attributes'].get('smart_search.indexed_files')
             for span in capfire.exporter.exported_spans_as_dict()
-            if span['name'] == 'smart file search'
+            if span['name'] == 'smart search'
         ]
 
     return read
