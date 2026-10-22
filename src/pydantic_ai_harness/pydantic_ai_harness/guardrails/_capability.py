@@ -50,6 +50,7 @@ from pydantic_ai_harness._background_completion import get_background_completion
 from pydantic_ai_harness.guardrails._exceptions import OutputBlocked
 from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
+    GuardrailResult,
     as_guards,
     evaluate_all,
     trace_block,
@@ -103,10 +104,11 @@ def _require_prompt_text(replacement: object, position: int) -> str:
 
 def _find_prompt_part(
     ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]
-) -> tuple[UserPromptPart | None, UserPromptPart | None]:
+) -> tuple[list[UserPromptPart], UserPromptPart | None]:
     """The user's prompt for this run as it appears in this request, and its history original if separate.
 
-    The original is set only when it is a different object from the part sent to the model.
+    The parts are usually one. The original is set only when it is a different object from the
+    parts sent to the model.
 
     The prompt is the most recent `UserPromptPart` in the run's history, `ctx.messages`. `messages`
     is this request's copy of the history, where an outer capability can add a `UserPromptPart` for
@@ -116,39 +118,47 @@ def _find_prompt_part(
     the same object, so the guard reads the rewritten text, and there is no separate original.
 
     When a capability replaced the prompt with a copy, the copy is found in the message the same
-    distance from the end by `_find_copy`, wherever other parts were put around it. The copy is
-    returned with the history part it was made from, so a redaction can reach both. Only when no
-    part there can be told to be the copy, because the request was rebuilt or several parts carry
-    the prompt's timestamp and none has its text, is the most recent part in `messages` used, with
-    no original: nothing ties that part to the history.
+    distance from the end by `_find_copies`, wherever other parts were put around it; several
+    copies with the prompt's text are all returned, so a redaction reaches each of them. The
+    copies are returned with the history part they were made from, so a redaction can reach it
+    too. Only when no part there can be told to be the copy, because the request was rebuilt or
+    several parts carry the prompt's timestamp and none has its text, is the most recent part in
+    `messages` used, with no original: nothing ties that part to the history.
     """
     for from_end, message in enumerate(reversed(ctx.messages), start=1):
         prompt = next((part for part in reversed(message.parts) if isinstance(part, UserPromptPart)), None)
         if prompt is not None:
             break
     else:
-        return _latest_prompt_part(messages), None
+        return _latest_prompt_parts(messages), None
     if any(part is prompt for request in messages for part in request.parts):
-        return prompt, None
-    copy = _find_copy(prompt, messages[-from_end].parts if from_end <= len(messages) else ())
-    if copy is not None:
-        return copy, prompt
-    return _latest_prompt_part(messages), None
+        return [prompt], None
+    copies = _find_copies(prompt, messages[-from_end].parts if from_end <= len(messages) else ())
+    if copies:
+        return copies, prompt
+    return _latest_prompt_parts(messages), None
 
 
-def _find_copy(prompt: UserPromptPart, parts: Sequence[object]) -> UserPromptPart | None:
-    """The copy of `prompt` among `parts`, told apart by its timestamp, or `None`.
+def _find_copies(prompt: UserPromptPart, parts: Sequence[object]) -> list[UserPromptPart]:
+    """The copies of `prompt` among `parts`, told apart by their timestamp, or none.
 
     A copy made with `dataclasses.replace` keeps the prompt's timestamp, even when its text was
     changed, while a part an outer capability creates for this request gets its own, so neither
-    the copy's position nor its text decides. When several parts carry the timestamp, one with the
-    prompt's text is taken; when none of them has it, the copy cannot be told apart.
+    the copy's position nor its text decides. When several parts carry the timestamp, those with
+    the prompt's text are taken, all of them, since the guard's verdict on that text applies to
+    each; when none of them has it, the copy cannot be told apart.
     """
     candidates = [part for part in parts if isinstance(part, UserPromptPart) and part.timestamp == prompt.timestamp]
     same_text = [part for part in candidates if part.content == prompt.content]
     if same_text:
-        return same_text[0]
-    return candidates[0] if len(candidates) == 1 else None
+        return same_text
+    return candidates if len(candidates) == 1 else []
+
+
+def _latest_prompt_parts(messages: Sequence[ModelMessage]) -> list[UserPromptPart]:
+    """The most recent `UserPromptPart` in `messages`, as a list of at most one."""
+    latest = _latest_prompt_part(messages)
+    return [] if latest is None else [latest]
 
 
 def _latest_prompt_part(messages: Sequence[ModelMessage]) -> UserPromptPart | None:
@@ -209,8 +219,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     guard is called again on the original's own text, so a guard with side
     effects or a per-call cost (an LLM classifier) runs twice for that request.
     Only a redaction from that call is written to the history, so the copy's
-    request-only text never reaches it; any other verdict leaves the original,
-    secret included, as it was. A request rebuilt with a new prompt part is not
+    request-only text never reaches it; `allow` leaves the original as it was,
+    and `block` blocks the run before anything is rewritten. A request rebuilt with a new prompt part is not
     tied to the history, so only the part sent to the model is rewritten. A
     later guard in a chain that blocks ends the chain before any rewrite happens.
 
@@ -297,16 +307,47 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     async def _run_guard(
         self,
         ctx: RunContext[AgentDepsT],
-        part: UserPromptPart | None,
+        parts: Sequence[UserPromptPart],
         original: UserPromptPart | None,
         prompt: str,
     ) -> None:
         """Evaluate the guard and act on its verdict.
 
         `allow` returns; `block` raises `SkipModelRequest`; `replace` rewrites
-        the prompt `part` sent to the model and its `original` in the run's
-        history when there is a separate one (see `_redact_history_prompt`);
-        `retry` and `replace` under `parallel=True` raise `UserError`.
+        the prompt `parts` sent to the model and their `original` in the run's
+        history when there is a separate one (see `_history_replacement`);
+        `retry` and `replace` under `parallel=True` raise `UserError`. Every
+        evaluation happens before anything is rewritten, and the redaction spans
+        are recorded once every rewrite has succeeded.
+        """
+        verdict, position = await self._screen(ctx, prompt)
+        if verdict.action == 'allow':
+            return
+        if self.parallel:
+            raise UserError(
+                'InputGuardrail(parallel=True) is incompatible with GuardrailResult.replace(): the model call has '
+                'already started with the original prompt. Use sequential mode for prompt redaction.'
+            )
+        replacement = _require_prompt_text(verdict.replacement, position)
+        if not parts:
+            raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
+        # A copy with the original's text gets the same replacement, under the same span.
+        same_text = original is not None and original.content == parts[0].content
+        own_replacement = None
+        if original is not None and not same_text:
+            own_replacement = await self._history_replacement(ctx, original)
+        for part in parts:
+            _replace_prompt(part, replacement)
+        if original is not None and (same_text or own_replacement is not None):
+            _replace_prompt(original, replacement if own_replacement is None else own_replacement)
+        trace_redaction(ctx, direction='input', replacement=replacement)
+        if own_replacement is not None:
+            trace_redaction(ctx, direction='input', replacement=own_replacement)
+
+    async def _screen(self, ctx: RunContext[AgentDepsT], prompt: str) -> tuple[GuardrailResult, int]:
+        """Run the guard chain on `prompt`, returning an `allow` or `replace` verdict and raising for the others.
+
+        `block` raises `SkipModelRequest`; `retry` and `approve` raise `UserError`.
         """
         verdict, position = await evaluate_all(
             as_guards(self.guard, capability='InputGuardrail'),
@@ -315,8 +356,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             check_replacement=_require_prompt_text,
         )
         match verdict.action:
-            case 'allow':
-                return
+            case 'allow' | 'replace':
+                return verdict, position
             case 'retry':
                 raise UserError(
                     f'An InputGuardrail guard cannot return GuardrailResult.retry(); guard at position {position} '
@@ -331,69 +372,25 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
                 message = verdict.message or _DEFAULT_INPUT_BLOCK_MESSAGE
                 trace_block(ctx, direction='input', message=message)
                 raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
-            case 'replace':
-                if self.parallel:
-                    raise UserError(
-                        'InputGuardrail(parallel=True) is incompatible with GuardrailResult.replace(): the model call has '
-                        'already started with the original prompt. Use sequential mode for prompt redaction.'
-                    )
-                replacement = _require_prompt_text(verdict.replacement, position)
-                if part is None:
-                    raise UserError('InputGuardrail could not find a user prompt to redact in the request.')
-                same_text = original is not None and original.content == part.content
-                _replace_prompt(part, replacement)
-                history_replacement = None
-                if original is not None:
-                    history_replacement = await self._redact_history_prompt(
-                        ctx, original, same_text=same_text, replacement=replacement
-                    )
-                trace_redaction(ctx, direction='input', replacement=replacement)
-                if history_replacement is not None:
-                    trace_redaction(ctx, direction='input', replacement=history_replacement)
             case _:  # pragma: no cover - assert_never exhaustiveness guard
                 assert_never(verdict.action)
 
-    async def _redact_history_prompt(
-        self,
-        ctx: RunContext[AgentDepsT],
-        original: UserPromptPart,
-        *,
-        same_text: bool,
-        replacement: str,
-    ) -> str | None:
-        """Redact the history's `original` of a prompt the model was sent a copy of.
+    async def _history_replacement(self, ctx: RunContext[AgentDepsT], original: UserPromptPart) -> str | None:
+        """The redaction of the history's `original` of a prompt the model was sent a changed copy of.
 
         The history is what later requests in the run, and any stored conversation, replay, so a
-        secret left there reaches the model on the next step. A copy with the original's text gets
-        the same replacement. A copy whose text a capability changed for this request says nothing
-        about what the original should become, so the guard screens the original on its own text,
-        and only a redaction it returns is written there: the copy's request-only text never
-        reaches the history. Any other verdict leaves the original as it is: the first evaluation
-        already decided what this request sends, and this one is about the history only, with no
-        safe text to write. A `retry` or `approve` is not reported here, as the run goes on with
-        the copy the first evaluation accepted.
+        secret left there reaches the model on the next step. A copy whose text a capability
+        changed for this request says nothing about what the original should become, so the guard
+        screens the original on its own text, as it screened the copy: a redaction it returns is
+        written there, so the copy's request-only text never reaches the history, `allow` leaves
+        the original as it is, and `block` blocks the run before anything is rewritten.
 
-        `same_text` is decided before the copy is rewritten: rewriting a text copy changes its
-        content, so comparing afterwards would take an unchanged copy for a changed one and call
-        the guard again.
-
-        Returns the replacement written from that second evaluation, for its own redaction span,
-        or `None` when it wrote nothing or reused `replacement`.
+        Returns `None` when the original is left as it is.
         """
-        if same_text:
-            _replace_prompt(original, replacement)
+        verdict, position = await self._screen(ctx, _prompt_text(original.content))
+        if verdict.action == 'allow':
             return None
-        verdict, position = await evaluate_all(
-            as_guards(self.guard, capability='InputGuardrail'),
-            ctx,
-            _prompt_text(original.content),
-            check_replacement=_require_prompt_text,
-        )
-        if verdict.action != 'replace':
-            return None
-        history_replacement = _require_prompt_text(verdict.replacement, position)
-        _replace_prompt(original, history_replacement)
-        return history_replacement
+        return _require_prompt_text(verdict.replacement, position)
 
     async def wrap_model_request(
         self,
@@ -409,19 +406,19 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         """
         if ctx.run_step > 1:
             return await handler(request_context)
-        part, original = _find_prompt_part(ctx, request_context.messages)
-        content = ctx.prompt if part is None else part.content
+        parts, original = _find_prompt_part(ctx, request_context.messages)
+        content = parts[0].content if parts else ctx.prompt
         if content is None:
             return await handler(request_context)
         prompt = _prompt_text(content)
         if not self.parallel:
-            await self._run_guard(ctx, part, original, prompt)
+            await self._run_guard(ctx, parts, original, prompt)
             return await handler(request_context)
 
         async def run_handler() -> ModelResponse:
             return await handler(request_context)
 
-        guard_task: asyncio.Task[None] = asyncio.create_task(self._run_guard(ctx, part, original, prompt))
+        guard_task: asyncio.Task[None] = asyncio.create_task(self._run_guard(ctx, parts, original, prompt))
         self._parallel_verdict = guard_task
         handler_task: asyncio.Task[ModelResponse] = asyncio.create_task(run_handler())
         try:
