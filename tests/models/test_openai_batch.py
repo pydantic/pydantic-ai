@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -800,6 +800,23 @@ async def test_completed_batch_deletes_its_input_file(allow_model_requests: None
     [result] = await model.batch_results(await model.batch_status(batch))
     assert result.status == 'succeeded'
     assert api.requests[-1] == ('DELETE', '/files/file-input')
+
+
+async def test_batch_results_only_delete_the_input_file_this_process_uploaded(allow_model_requests: None) -> None:
+    """A handle can come from a stored history a caller controls, so the input file it names is never deleted."""
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    batch = await model.batch_create([await model.batch_encode(_request('ok'))])
+    api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
+    api.batch = _batch_json('completed', output_file_id='file-output')
+    ended = await model.batch_status(batch)
+
+    forged = replace(ended, provider_details={**(ended.provider_details or {}), 'input_file_id': 'file-someone-elses'})
+    await model.batch_results(forged)
+    # A batch this process didn't create, or one whose file it already deleted, deletes nothing.
+    await model.batch_results(replace(forged, id='batch_from_history'))
+    await model.batch_results(forged)
+    assert [path for method, path in api.requests if method == 'DELETE'] == ['/files/file-input']
 
 
 async def test_batch_size_limits(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:

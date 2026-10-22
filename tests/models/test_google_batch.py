@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -447,6 +448,35 @@ async def test_gemini_partially_succeeded_job_returns_its_rows(
     with pytest.raises(ModelRateLimitError):
         model.batch_decode(results['failed'], requests['failed'])
     assert deleted == ['files/input']
+
+
+async def test_gemini_batch_results_only_delete_the_input_file_this_process_uploaded(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A handle's `input_file` comes from a stored history a caller controls, so it never names the file to delete."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    deleted = _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}})
+    batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request())]))
+
+    forged = replace(batch, provider_details={**(batch.provider_details or {}), 'input_file': 'files/someone-elses'})
+    await model.batch_results(forged)
+    assert deleted == ['files/input']
+    # Collecting it again, or a job this process didn't create, deletes nothing.
+    await model.batch_results(forged)
+    await model.batch_results(replace(forged, id='batches/from-history'))
+    assert deleted == ['files/input']
+
+
+async def test_gemini_batch_results_keep_the_input_file_of_a_job_still_running(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A handle that claims its job ended doesn't make the job's input file deletable while the job still runs."""
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    deleted = _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_RUNNING'})
+    batch = await model.batch_create([await model.batch_encode(_request())])
+
+    assert await model.batch_results(replace(batch, status='ended')) == []
+    assert deleted == []
 
 
 async def test_gemini_succeeded_job_whose_rows_all_failed(

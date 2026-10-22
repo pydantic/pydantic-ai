@@ -14,6 +14,7 @@ import hashlib
 import io
 import json
 import sys
+from collections import OrderedDict
 from collections.abc import Sequence
 from contextlib import suppress
 from typing import Any, NotRequired, cast
@@ -122,6 +123,15 @@ class _ResultLine(TypedDict):
 
 _RESULT_LINE_ADAPTER = TypeAdapter(_ResultLine)
 
+_UPLOADED_INPUT_FILES: OrderedDict[str, str] = OrderedDict()
+"""The input file this process uploaded for each job it created, by job name, to delete once the job has ended.
+
+A `Batch` handle can come from a stored message history, which a caller controls, and the Gemini API doesn't say which
+file a job reads, so only a file this process uploaded for the job is ever deleted. The oldest are forgotten first,
+which leaves their files to expire on their own.
+"""
+_UPLOADED_INPUT_FILES_SIZE = 1024
+
 
 async def batch_encode(model: GoogleModel, request: BatchRequest) -> EncodedBatchRequest:
     prepared_settings, model_request_parameters = model.prepare_request(
@@ -180,6 +190,10 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
         src=file.name,
         config=CreateBatchJobConfigDict(display_name='pydantic-ai-batch', http_options=no_retries),
     )
+    assert job.name is not None
+    _UPLOADED_INPUT_FILES[job.name] = file.name
+    while len(_UPLOADED_INPUT_FILES) > _UPLOADED_INPUT_FILES_SIZE:
+        _UPLOADED_INPUT_FILES.popitem(last=False)
     return _to_batch(model, job, group, len(requests), {'input_file': file.name})
 
 
@@ -196,9 +210,11 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     _validate_batch_group(model, batch.group, collecting=True)
     client = _batch_client(model)
     job = await client.aio.batches.get(name=batch.id)
-    if isinstance(input_file := (batch.provider_details or {}).get('input_file'), str):
+    if _STATUSES.get(job.state or JobState.JOB_STATE_UNSPECIFIED) == 'ended' and (
+        input_file := _UPLOADED_INPUT_FILES.pop(batch.id, None)
+    ):
         # The job has ended, so its input file isn't needed again; it would otherwise count against the project's
-        # file storage until it expires.
+        # file storage until it expires. The handle's `input_file` isn't trusted: see `_UPLOADED_INPUT_FILES`.
         with suppress(errors.APIError, httpx2.TransportError):
             await client.aio.files.delete(name=input_file)
     if job.dest is None or job.dest.file_name is None:
