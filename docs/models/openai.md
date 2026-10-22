@@ -558,11 +558,14 @@ Call [`connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] on an
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
 
 async def main() -> None:
-    responses_model = OpenAIResponsesModel('{{ openai:medium.name }}')
+    responses_model = OpenAIResponsesModel(
+        '{{ openai:medium.name }}',
+        settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
     agent = Agent()
 
     async with responses_model.connect() as connected_model:
@@ -573,12 +576,13 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The source `responses_model` still uses HTTP. The connection belongs to `connected_model` and closes when its context exits. You can also construct `Agent(connected_model)` inside the context or return it from a model-selection capability. An explicit `model=` argument has the usual precedence over a capability's model selection; leave it out when the capability should choose. Selecting an ordinary model uses HTTP even while another model's socket is open.
+The source `responses_model` still uses HTTP. The connection belongs to `connected_model` and closes when its context exits. With [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id], each request sends only the messages after the response the connection has cached, rather than the whole history. You can also construct `Agent(connected_model)` inside the context or return it from a model-selection capability. An explicit `model=` argument has the usual precedence over a capability's model selection; leave it out when the capability should choose. Selecting an ordinary model uses HTTP even while another model's socket is open.
 
-- Concurrent requests share the connection: each runs on its own [`stream_id` lane](https://developers.openai.com/api/docs/guides/websocket-mode), so parallel runs, tool calls that start nested runs, and parallel subagents can all use one connected model. A run without earlier messages starts a new conversation, even on a connection that served another one.
+- Concurrent requests share the connection: each runs on its own [`stream_id` lane](https://developers.openai.com/api/docs/guides/websocket-mode), so parallel runs, tool calls that start nested runs, and parallel subagents can all use one connected model. OpenAI runs up to 16 responses at once on a connection and queues the rest. A run without earlier messages starts a new conversation, even on a connection that served another one.
 - A request continues on the lane that holds its previous response, so conversations that take turns on one connection each keep their cached response. A connection uses at most 32 named lanes; past that, a request reuses the least recently used free lane, and the conversation whose response that lane cached replays its history on its next request.
 - A provider error, a failed or incomplete response, or a stream closed early ends only that request; the connection stays open. A transport failure closes the connection, and later requests on it raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so a [`FallbackModel`](overview.md#fallback-model) can switch to another model.
 - A connected handle cannot be used after its context exits, and a background run must not outlive that context.
+- OpenAI closes a connection after 60 minutes. Requests after that raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]; open a new `connect()` context to continue.
 
 !!! note "Continuing after a transport change"
     The [history validation rules](#referencing-earlier-responses) also apply on a live socket. Editing earlier messages or expiring a request-scoped prompt causes history replay. The connected model preserves the source model's `history_digest_key`.

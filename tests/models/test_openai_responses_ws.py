@@ -291,6 +291,45 @@ async def test_streaming_sequential_turns(allow_model_requests: None, recorded_r
     assert 'amber' in str(sent[1]['input']).lower()
 
 
+async def test_overlapping_runs_continue_on_their_own_lanes(
+    allow_model_requests: None, recorded_responses: RecordedResponses
+):
+    """A run that overlaps another takes a named lane, and each lane continues from its own store-false response."""
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto', 'openai_store': False}
+    async with recorded_responses.model.connect() as connected:
+        agent = Agent(connected, model_settings=settings)
+        async with agent.run_stream('Reply with the word amber.') as first:
+            chunks = first.stream_text(delta=True)
+            await anext(chunks)
+            # The first response's stream is still open, so the default lane is busy.
+            second = await agent.run('Reply with the word cobalt.')
+            async for _ in chunks:
+                pass
+            first_history = first.all_messages()
+        third = await agent.run('Reply with the word amber again.', message_history=first_history)
+        fourth = await agent.run('Reply with the word cobalt again.', message_history=second.all_messages())
+
+    assert 'cobalt' in second.output.lower()
+    assert 'amber' in third.output.lower()
+    assert 'cobalt' in fourth.output.lower()
+    assert recorded_responses.connections == ['wss://api.openai.com/v1/responses']
+    first_response = first_history[-1]
+    second_response = second.all_messages()[-1]
+    assert isinstance(first_response, ModelResponse) and isinstance(second_response, ModelResponse)
+    frames = [event for event in recorded_responses.cassette.interactions if isinstance(event, CassetteMessage)]
+    sent = [frame.data for frame in frames if frame.direction == 'sent']
+    assert [(frame.get('stream_id'), frame.get('previous_response_id')) for frame in sent] == [
+        (None, None),
+        ('lane-1', None),
+        (None, first_response.provider_response_id),
+        ('lane-1', second_response.provider_response_id),
+    ]
+    assert sent[2]['input'] == [{'role': 'user', 'content': 'Reply with the word amber again.'}]
+    # OpenAI echoes a named lane on every event of its responses and omits it on the default lane.
+    received_lanes = {frame.data.get('stream_id') for frame in frames if frame.direction == 'received'}
+    assert received_lanes == {None, 'lane-1'}
+
+
 async def test_cross_socket_continuation_replays_history(
     allow_model_requests: None, recorded_responses: RecordedResponses
 ):
@@ -770,27 +809,94 @@ async def test_closing_a_response_after_its_terminal_was_routed_frees_its_lane(
     assert [frame.get('stream_id') for frame in socket.sent] == [None, 'lane-1', None]
 
 
-async def test_unattributed_error_fails_the_socket(allow_model_requests: None, sockets: SocketHarness):
-    """An error no active lane owns leaves the connection's state unknown, so every later request fails over."""
+@pytest.mark.parametrize('error', ['unattributed', 'connection_limit'])
+async def test_connection_scoped_error_fails_the_socket(allow_model_requests: None, sockets: SocketHarness, error: str):
+    """An error no active lane owns, or the connection's lifetime limit, fails every later request over."""
     socket = sockets.pending[0]
-    unattributed: Frame = {
-        'type': 'error',
-        'error': {'type': 'server_error', 'code': 'connection_error', 'message': 'connection failed'},
-    }
     socket.responses = deque([text_events(response_id='resp_first')])
+    code = 'connection_error' if error == 'unattributed' else 'websocket_connection_limit_reached'
+    failure: Frame = {'type': 'error', 'error': {'type': 'invalid_request_error', 'code': code, 'message': 'ended'}}
+    if error == 'connection_limit':
+        failure['status'] = 400
+        socket.responses.append([failure])
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
 
     async with source.connect() as connected:
         await Agent(connected).run('first')
-        # Without a `stream_id`, these belong to the idle default lane rather than the named lane waiting.
-        socket.push(text_events()[2], unattributed)
-        with pytest.raises(ModelAPIError, match='Unattributed Responses WebSocket error: connection failed'):
+        if error == 'unattributed':
+            # Without a `stream_id`, these belong to the idle default lane rather than the named lane waiting.
+            socket.push(text_events()[2], failure)
+        with pytest.raises(ModelAPIError, match=f'Responses WebSocket connection failed: {code}: ended'):
             await Agent(connected).run('second')
         assert socket.close_count == 1
-        with pytest.raises(ModelAPIError, match='Unattributed Responses WebSocket error'):
+        with pytest.raises(ModelAPIError, match='Responses WebSocket connection failed'):
             await Agent(connected).run('third')
 
     assert len(socket.sent) == 2
+
+
+async def test_cancelled_send_keeps_the_socket_for_other_lanes(allow_model_requests: None, sockets: SocketHarness):
+    """A cancelled send may already have reached the server, so only its lane waits out that response."""
+    socket = sockets.pending[0]
+    socket.send_gate = anyio.Event()
+    socket.responses.clear()
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+
+    async with source.connect() as connected:
+
+        async def cancelled_run() -> None:
+            await Agent(connected).run('cancelled')
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(cancelled_run)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await socket.sending.wait()
+            tasks.cancel_scope.cancel()
+        socket.send_gate = None
+        socket.responses.append(text_events(response_id='resp_next'))
+        assert (await Agent(connected).run('next')).output == 'ready'
+        assert socket.close_count == 0
+
+    assert [frame.get('stream_id') for frame in socket.sent] == ['lane-1']
+
+
+async def test_parallel_nested_runs_share_the_parent_connection(allow_model_requests: None, sockets: SocketHarness):
+    """A tool can start parallel runs on the connected model its own run is using, each on its own lane."""
+    socket = sockets.pending[0]
+    socket.responses = deque(
+        [tool_call_events('resp_parent', 'call_1'), [], [], text_events('done', response_id='resp_final')]
+    )
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+
+    async with source.connect() as connected:
+        agent = Agent(connected)
+        worker = Agent(connected)
+
+        @agent.tool_plain
+        async def step() -> str:
+            outputs: list[str] = []
+
+            async def run(prompt: str) -> None:
+                outputs.append((await worker.run(prompt)).output)
+
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(run, 'first')
+                tasks.start_soon(run, 'second')
+                # Both nested requests are in flight before either response arrives.
+                with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                    while len(socket.sent) < 3:
+                        socket.sending = anyio.Event()
+                        await socket.sending.wait()
+                socket.push(
+                    *on_lane(text_events(response_id='resp_first'), 'lane-1'),
+                    *on_lane(text_events(response_id='resp_second'), 'lane-2'),
+                )
+            return ' '.join(outputs)
+
+        assert (await agent.run('go')).output == 'done'
+
+    assert [frame.get('stream_id') for frame in socket.sent] == [None, 'lane-1', 'lane-2', None]
+    assert sockets.opened == [socket]
 
 
 async def test_history_provenance_across_transports(allow_model_requests: None, sockets: SocketHarness):

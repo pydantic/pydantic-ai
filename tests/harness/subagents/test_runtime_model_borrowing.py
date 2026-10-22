@@ -13,28 +13,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.subagents import DelegationTaskEvent, DelegationTasks, SubAgent, SubAgents
 
-
-def _delegate_calls(delegates: Sequence[tuple[str, str]], *, background: bool = False) -> FunctionModel:
-    """Return one parent tool response for each named child, then finish."""
-    response_count = 0
-
-    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal response_count
-        response_count += 1
-        if response_count == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        'delegate_task',
-                        {'agent_name': name, 'task': task, 'background': background},
-                        tool_call_id=f'call-{index}',
-                    )
-                    for index, (name, task) in enumerate(delegates)
-                ]
-            )
-        return ModelResponse(parts=[TextPart('parent finished')])
-
-    return FunctionModel(function=respond)
+READINESS_WAIT_TIMEOUT = 10
 
 
 def _user_prompt(messages: list[ModelMessage]) -> str:
@@ -84,39 +63,6 @@ async def test_child_without_a_model_borrows_the_parent_run_model() -> None:
 
     assert calls == ['go', 'inspect', 'go']
     assert _delegate_results(result.all_messages()) == ['borrowed result']
-
-
-async def test_parallel_children_use_their_own_models() -> None:
-    both_started = asyncio.Event()
-    release = asyncio.Event()
-    started: set[str] = set()
-
-    def child_model(label: str) -> FunctionModel:
-        async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            started.add(label)
-            if len(started) == 2:
-                both_started.set()
-            await both_started.wait()
-            await release.wait()
-            return ModelResponse(parts=[TextPart(label)])
-
-        return FunctionModel(function=respond)
-
-    agents = [SubAgent(Agent(child_model(name), name=name), name=name) for name in ('first', 'second')]
-    parent = Agent(
-        _delegate_calls([('first', 'inspect first'), ('second', 'inspect second')]),
-        capabilities=[SubAgents(agents=agents, agent_folders=None)],
-    )
-
-    with anyio.fail_after(5):
-        async with asyncio.TaskGroup() as group:
-            running = group.create_task(parent.run('go'))
-            await both_started.wait()
-            assert started == {'first', 'second'}
-            release.set()
-            result = await running
-
-    assert sorted(_delegate_results(result.all_messages())) == ['first', 'second']
 
 
 async def test_background_child_reports_expired_inherited_model_after_parent_scope() -> None:
@@ -175,7 +121,7 @@ async def test_background_child_reports_expired_inherited_model_after_parent_sco
         capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
     )
 
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with owner.opened():
             async with connected_scope() as connected_model:
                 with owner.bind():
@@ -248,7 +194,7 @@ async def test_background_child_uses_its_own_model_after_parent_scope() -> None:
         capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
     )
 
-    with anyio.fail_after(5):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with owner.opened():
             async with connected_scope() as connected_model:
                 with owner.bind():

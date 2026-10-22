@@ -542,7 +542,7 @@ def _is_azure(client: AsyncOpenAI, system: str) -> bool:
 
 
 def _check_azure_content_filter(
-    e: APIStatusError | ModelHTTPError, client: AsyncOpenAI, system: str, model_name: str
+    e: APIStatusError, client: AsyncOpenAI, system: str, model_name: str
 ) -> ModelResponse | None:
     """Check if the error is an Azure content filter error."""
     # Assign to Any to avoid 'dict[Unknown, Unknown]' inference in strict mode
@@ -2627,8 +2627,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Yield a model bound to one caller-owned Responses WebSocket.
 
         The source model continues to use HTTP. Pass the yielded model to an Agent,
-        an individual run, or a model-selection capability. One response may be active
-        on the connection at a time; incomplete streams and cancellation close it.
+        an individual run, or a model-selection capability. Concurrent requests run on
+        separate `stream_id` lanes of the one socket. A provider error, a stream closed
+        early, or a cancellation ends only its own request; a transport failure fails the
+        socket, and later requests raise `ModelAPIError`. The socket closes when the
+        context exits.
 
         Install `pydantic-ai-slim[openai-responses-websocket]` to enable this method.
         Standalone token counting and compaction continue to use HTTP.

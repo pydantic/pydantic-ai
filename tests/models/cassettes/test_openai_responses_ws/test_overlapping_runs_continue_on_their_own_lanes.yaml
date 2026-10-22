@@ -1,0 +1,1290 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Reply with the word amber.
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+- kind: message
+  direction: received
+  at: 0.163
+  data:
+    type: response.created
+    response:
+      id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+      object: response
+      created_at: 1792630194
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- kind: message
+  direction: received
+  at: 0.195
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+      object: response
+      created_at: 1792630194
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- kind: message
+  direction: received
+  at: 4.524
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0a2286abbde36ddd016ad95db6d96c87d2abed8382102cdd20
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+- kind: message
+  direction: received
+  at: 4.525
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0a2286abbde36ddd016ad95db6d96c87d2abed8382102cdd20
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+- kind: message
+  direction: received
+  at: 4.528
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: amber
+    item_id: msg_0a2286abbde36ddd016ad95db6d96c87d2abed8382102cdd20
+    logprobs: []
+    obfuscation: fx6ErRyRFBr
+    output_index: 0
+    sequence_number: 4
+- kind: message
+  direction: received
+  at: 4.58
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0a2286abbde36ddd016ad95db6d96c87d2abed8382102cdd20
+    logprobs: []
+    output_index: 0
+    sequence_number: 5
+    text: amber
+- kind: message
+  direction: received
+  at: 4.581
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0a2286abbde36ddd016ad95db6d96c87d2abed8382102cdd20
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: amber
+    sequence_number: 6
+- kind: message
+  direction: received
+  at: 4.581
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0a2286abbde36ddd016ad95db6d96c87d2abed8382102cdd20
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: amber
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 7
+- kind: message
+  direction: received
+  at: 4.584
+  data:
+    type: response.completed
+    response:
+      id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+      object: response
+      created_at: 1792630194
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792630198
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: msg_0a2286abbde36ddd016ad95db6d96c87d2abed8382102cdd20
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: amber
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 12
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 17
+      user: null
+      metadata: {}
+    sequence_number: 8
+- kind: message
+  direction: sent
+  at: 4.587
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Reply with the word cobalt.
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 4.734
+  data:
+    type: response.created
+    response:
+      id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+      object: response
+      created_at: 1792630199
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 4.746
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+      object: response
+      created_at: 1792630199
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.74
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.74
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.74
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: c
+    item_id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+    logprobs: []
+    obfuscation: Fp4HEzc9BnLoo6d
+    output_index: 0
+    sequence_number: 4
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.759
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: obalt
+    item_id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+    logprobs: []
+    obfuscation: p7kmO77yVUu
+    output_index: 0
+    sequence_number: 5
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.832
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+    logprobs: []
+    output_index: 0
+    sequence_number: 6
+    text: cobalt
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.832
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: cobalt
+    sequence_number: 7
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.832
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: cobalt
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 8
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 9.832
+  data:
+    type: response.completed
+    response:
+      id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+      object: response
+      created_at: 1792630199
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792630204
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: msg_0ef6d78ec11d364e016ad95dbbf51887d2acf0eb81a85a4e43
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: cobalt
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 12
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 18
+      user: null
+      metadata: {}
+    sequence_number: 9
+    stream_id: lane-1
+- kind: message
+  direction: sent
+  at: 9.837
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Reply with the word amber again.
+    previous_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+    prompt_cache_options:
+      comparison_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+- kind: message
+  direction: received
+  at: 10.115
+  data:
+    type: response.created
+    response:
+      id: resp_0a2286abbde36ddd016ad95dbc425087d2880a1f03820d934e
+      object: response
+      created_at: 1792630204
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+- kind: message
+  direction: received
+  at: 10.116
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0a2286abbde36ddd016ad95dbc425087d2880a1f03820d934e
+      object: response
+      created_at: 1792630204
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+      prompt_cache_diagnostics:
+        type: unavailable
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+- kind: message
+  direction: received
+  at: 13.789
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0a2286abbde36ddd016ad95dc0006887d2b618af2ad557ed60
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+- kind: message
+  direction: received
+  at: 13.789
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0a2286abbde36ddd016ad95dc0006887d2b618af2ad557ed60
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+- kind: message
+  direction: received
+  at: 13.789
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: amber
+    item_id: msg_0a2286abbde36ddd016ad95dc0006887d2b618af2ad557ed60
+    logprobs: []
+    obfuscation: 6PVkY4P2z7Q
+    output_index: 0
+    sequence_number: 4
+- kind: message
+  direction: received
+  at: 13.849
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0a2286abbde36ddd016ad95dc0006887d2b618af2ad557ed60
+    logprobs: []
+    output_index: 0
+    sequence_number: 5
+    text: amber
+- kind: message
+  direction: received
+  at: 13.849
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0a2286abbde36ddd016ad95dc0006887d2b618af2ad557ed60
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: amber
+    sequence_number: 6
+- kind: message
+  direction: received
+  at: 13.849
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0a2286abbde36ddd016ad95dc0006887d2b618af2ad557ed60
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: amber
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 7
+- kind: message
+  direction: received
+  at: 13.85
+  data:
+    type: response.completed
+    response:
+      id: resp_0a2286abbde36ddd016ad95dbc425087d2880a1f03820d934e
+      object: response
+      created_at: 1792630204
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792630208
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: msg_0a2286abbde36ddd016ad95dc0006887d2b618af2ad557ed60
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: amber
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+      prompt_cache_diagnostics:
+        type: cache_hit
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0a2286abbde36ddd016ad95db26f8c87d290742cc990351d5a
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 30
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 5
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 35
+      user: null
+      metadata: {}
+    sequence_number: 8
+- kind: message
+  direction: sent
+  at: 13.855
+  data:
+    type: response.create
+    model: gpt-6-astra
+    input:
+    - role: user
+      content: Reply with the word cobalt again.
+    previous_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+    reasoning:
+      context: all_turns
+    store: false
+    include:
+    - reasoning.encrypted_content
+    prompt_cache_options:
+      comparison_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 14.099
+  data:
+    type: response.created
+    response:
+      id: resp_0ef6d78ec11d364e016ad95dc0464887d2aa7e91560b632a23
+      object: response
+      created_at: 1792630208
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 0
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 14.118
+  data:
+    type: response.in_progress
+    response:
+      id: resp_0ef6d78ec11d364e016ad95dc0464887d2aa7e91560b632a23
+      object: response
+      created_at: 1792630208
+      status: in_progress
+      access_programs: null
+      background: false
+      completed_at: null
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output: []
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+      prompt_cache_diagnostics:
+        type: unavailable
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: auto
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage: null
+      user: null
+      metadata: {}
+    sequence_number: 1
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.231
+  data:
+    type: response.output_item.added
+    item:
+      id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+      type: message
+      status: in_progress
+      content: []
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 2
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.231
+  data:
+    type: response.content_part.added
+    content_index: 0
+    item_id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: ''
+    sequence_number: 3
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.235
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: c
+    item_id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+    logprobs: []
+    obfuscation: wk6pOhnVpdVeEa5
+    output_index: 0
+    sequence_number: 4
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.25
+  data:
+    type: response.output_text.delta
+    content_index: 0
+    delta: obalt
+    item_id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+    logprobs: []
+    obfuscation: 9AM76uZk6Us
+    output_index: 0
+    sequence_number: 5
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.321
+  data:
+    type: response.output_text.done
+    content_index: 0
+    item_id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+    logprobs: []
+    output_index: 0
+    sequence_number: 6
+    text: cobalt
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.322
+  data:
+    type: response.content_part.done
+    content_index: 0
+    item_id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+    output_index: 0
+    part:
+      type: output_text
+      annotations: []
+      logprobs: []
+      text: cobalt
+    sequence_number: 7
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.322
+  data:
+    type: response.output_item.done
+    item:
+      id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+      type: message
+      status: completed
+      content:
+      - type: output_text
+        annotations: []
+        logprobs: []
+        text: cobalt
+      phase: final_answer
+      role: assistant
+    output_index: 0
+    sequence_number: 8
+    stream_id: lane-1
+- kind: message
+  direction: received
+  at: 23.322
+  data:
+    type: response.completed
+    response:
+      id: resp_0ef6d78ec11d364e016ad95dc0464887d2aa7e91560b632a23
+      object: response
+      created_at: 1792630208
+      status: completed
+      access_programs: null
+      background: false
+      completed_at: 1792630217
+      error: null
+      frequency_penalty: 0.0
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      model: gpt-6-astra
+      moderation: null
+      output:
+      - id: msg_0ef6d78ec11d364e016ad95dc98ee087d2a2e16fad81204575
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: cobalt
+        phase: final_answer
+        role: assistant
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+      prompt_cache_diagnostics:
+        type: cache_hit
+      prompt_cache_key: null
+      prompt_cache_options:
+        comparison_response_id: resp_0ef6d78ec11d364e016ad95db7014487d283472f31606b4288
+        mode: implicit
+        ttl: 30m
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 31
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 6
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 37
+      user: null
+      metadata: {}
+    sequence_number: 9
+    stream_id: lane-1

@@ -182,6 +182,8 @@ class ResponsesWebSocket:
 
     def release(self, lane: ResponsesWebSocketLane, *, finished: bool) -> None:
         """Free a lane, or hold an unfinished one until the reader discards the rest of its response."""
+        if lane.abandoned:
+            return
         if not finished:
             lane.receiving.cancel()
             lane.latest_response_id = None
@@ -199,19 +201,19 @@ class ResponsesWebSocket:
         frame = {'type': 'response.create', **body}
         if lane.stream_id is not None:
             frame['stream_id'] = lane.stream_id
-        failure = 'WebSocket request was interrupted before it was sent.'
-        sent = False
+        data = to_json(frame).decode()
         try:
             with anyio.fail_after(timeout.write):
-                await self.connection.send_raw(to_json(frame).decode())
-            sent = True
+                await self.connection.send_raw(data)
         except (OSError, WebSocketException, TimeoutError) as exc:
             failure = f'WebSocket request failed: {exc}'
+            await self._fail(failure)
             raise ModelAPIError(model_name=self.model_name, message=failure) from exc
-        finally:
-            if not sent:
-                # A partially written frame leaves the connection unusable for every lane.
-                await self._fail(failure)
+        except BaseException:
+            # `websockets` writes an unfragmented frame before its only suspension point, so a cancelled send still
+            # reaches the server: discard that response when it arrives instead of reusing the lane before then.
+            self.release(lane, finished=False)
+            raise
         return ResponsesWebSocketStream(self, lane, timeout)
 
     async def receive(self, lane: ResponsesWebSocketLane) -> ResponsesServerEvent:
@@ -241,15 +243,16 @@ class ResponsesWebSocket:
                 (lane for lane in self.lanes if lane.active and lane.stream_id == event.stream_id),
                 None,
             )
-            if lane is None:
-                # Without an active lane to attribute it to, an error leaves the connection's state unknown.
-                if isinstance(event, ResponseWsError):
-                    await self._fail(f'Unattributed Responses WebSocket error: {event.error.message}')
-            elif lane.abandoned:
+            if isinstance(event, ResponseWsError) and (
+                lane is None or event.error.code == 'websocket_connection_limit_reached'
+            ):
+                # An error no active lane owns leaves the connection's state unknown, and the lifetime limit ends it.
+                await self._fail(f'Responses WebSocket connection failed: {event.error.code}: {event.error.message}')
+            elif lane is not None and lane.abandoned:
                 if _is_terminal(event):
                     lane.abandoned = False
                     lane.active = False
-            else:
+            elif lane is not None:
                 lane.events.append(event)
         finally:
             self.reading = False
