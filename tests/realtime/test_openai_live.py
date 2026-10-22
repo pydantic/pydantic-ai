@@ -3015,7 +3015,8 @@ async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
 async def test_the_auto_transcription_default_can_be_set_explicitly() -> None:
     """Live always transcribes with its own model, which is what `'auto'` asks for.
 
-    So settings shared across providers can spell out the default, while a pinned model still raises.
+    So settings shared across providers can spell out the default and start the same session as leaving
+    it out; a pinned model still raises (`test_unsupported_settings_raise_before_connecting`).
     """
     sent: list[dict[str, Any]] = []
 
@@ -3023,11 +3024,12 @@ async def test_the_auto_transcription_default_can_be_set_explicitly() -> None:
         sent.append(json.loads(request.content))
         return _created()
 
-    await _webrtc_model(handler).answer_webrtc_offer(
-        'v=0', model_settings=OpenAILiveModelSettings(input_transcription_model='auto')
-    )
+    model = _webrtc_model(handler)
+    await model.answer_webrtc_offer('v=0')
+    await model.answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(input_transcription_model='auto'))
 
-    assert len(sent) == 1
+    default, explicit_auto = sent
+    assert explicit_auto == default
 
 
 async def test_there_are_no_client_secrets(model: OpenAILiveModel) -> None:
