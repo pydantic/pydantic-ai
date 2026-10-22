@@ -5,11 +5,13 @@ Every scenario runs real agent runs on `FunctionModel`/`TestModel`, in process.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -458,8 +460,37 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.', usage_limits=UsageLimits(request_limit=None))
         lines = result.output.splitlines()
         assert len(lines) == 51
-        assert lines[-1] == '(2 older tasks not shown.)'
+        assert lines[-1] == '(2 older finished tasks not shown.)'
         assert 'finished: ok' in lines[0]
+
+    async def test_list_tasks_keeps_the_newest_running_tasks(self) -> None:
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('slow')), tools=[gate.pause])
+        listed: list[str] = []
+
+        def many(messages: list[ModelMessage]) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('delegate_task', {'agent_name': 'researcher', 'task': f't{i}', 'background': True})
+                    for i in range(52)
+                ]
+            )
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            listed.append(tool_returns(messages)[-1])
+            gate.opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(many, call('list_tasks'), release, text('Done.'), text('Done.'), text('Done.')),
+            capabilities=[controlled(researcher(slow))],
+        )
+        with anyio.fail_after(WAIT):
+            await parent.run('Go.', usage_limits=UsageLimits(request_limit=None))
+        lines = listed[0].splitlines()
+        assert len(lines) == 51
+        assert lines[-1] == '(2 older running tasks not shown.)'
+        assert "'t2'" in lines[0] and "'t51'" in lines[-2]
 
     async def test_max_running_tasks_refuses_another_task(self) -> None:
         gate = Gate()
@@ -1837,3 +1868,195 @@ class TestTaskControlBoundaries:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.')
         assert 'only the agent that started it can resume it' in result.output
+
+
+class TestDelegationTasksConcurrency:
+    """A delegation persisting its acceptance races other users of the same owner."""
+
+    @staticmethod
+    async def accepting(owner: DelegationTasks, run: Callable[[DelegationTask], Awaitable[str]]) -> asyncio.Task[str]:
+        """A background delegation, started and left while it persists its acceptance."""
+        started = asyncio.create_task(
+            owner.delegate(
+                agent_name='worker',
+                prompt='p',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=run,
+            )
+        )
+        while not owner.records:
+            await asyncio.sleep(0)
+        return started
+
+    async def test_waiting_for_a_child_that_has_no_worker_yet(self, tmp_path: Path) -> None:
+        owner = DelegationTasks(directory=tmp_path)
+
+        async def run(record: DelegationTask) -> str:
+            return 'done'
+
+        async with owner.opened():
+            started = await self.accepting(owner, run)
+            assert not owner._workers  # pyright: ignore[reportPrivateUsage]
+            with anyio.fail_after(WAIT):
+                await owner.wait_children(None)
+                await started
+            [record] = owner.records.values()
+            assert (record.status, record.output) == ('finished', 'done')
+
+    async def test_a_delegation_that_fails_to_persist_settles(self, tmp_path: Path) -> None:
+        owner = DelegationTasks(directory=tmp_path)
+
+        async def run(record: DelegationTask) -> str:
+            raise AssertionError('not scheduled')  # pragma: no cover
+
+        async with owner.opened():
+            started = await self.accepting(owner, run)
+            started.cancel()
+            with anyio.fail_after(WAIT):
+                await owner.wait_children(None)
+                with pytest.raises(asyncio.CancelledError):
+                    await started
+            [record] = owner.records.values()
+            assert (record.status, record.outcome) == ('finished', 'cancelled')
+
+    async def test_closing_schedules_no_worker_for_a_delegation_persisting_its_acceptance(self, tmp_path: Path) -> None:
+        owner = DelegationTasks(directory=tmp_path)
+        ran: list[str] = []
+
+        async def run(record: DelegationTask) -> str:
+            ran.append(record.id)  # pragma: no cover
+            return 'done'  # pragma: no cover
+
+        async def lingering(record: DelegationTask) -> str:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                # Its cleanup outlasts the other delegation's save, so closing waits on it meanwhile.
+                with anyio.CancelScope(shield=True):
+                    await anyio.sleep(0.2)
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        async with owner.opened():
+            await owner.delegate(
+                agent_name='worker',
+                prompt='p',
+                conversation_id='root',
+                model=None,
+                background=True,
+                resume=None,
+                run=lingering,
+            )
+            records = len(owner.records)
+            started = asyncio.create_task(
+                owner.delegate(
+                    agent_name='worker',
+                    prompt='p',
+                    conversation_id='root',
+                    model=None,
+                    background=True,
+                    resume=None,
+                    run=run,
+                )
+            )
+            while len(owner.records) == records:
+                await asyncio.sleep(0)
+        assert 'stopped before execution' in await started
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert ran == []
+        assert {(record.status, record.outcome) for record in owner.records.values()} == {('finished', 'cancelled')}
+
+    async def test_an_older_receiver_leaves_a_newer_one_receiving(self) -> None:
+        owner = DelegationTasks()
+        older: list[str] = []
+        newer: list[str] = []
+        steered: list[str] = []
+
+        def enqueue(into: list[str]) -> Callable[[SystemPromptPart], str]:
+            def receive(part: SystemPromptPart) -> str:
+                into.append(part.content)
+                return f'{id(into)}-{len(into)}'
+
+            return receive
+
+        async with owner.opened():
+
+            async def run(record: DelegationTask) -> str:
+                return 'done'
+
+            first = owner.receiving(conversation_id='root', parent_id=None, enqueue=enqueue(older))
+            first.__enter__()
+            with owner.receiving(conversation_id='root', parent_id=None, enqueue=enqueue(newer)):
+                first.__exit__(None, None, None)
+                await owner.delegate(
+                    agent_name='worker',
+                    prompt='p',
+                    conversation_id='root',
+                    model=None,
+                    background=True,
+                    resume=None,
+                    run=run,
+                )
+                with anyio.fail_after(WAIT):
+                    while not newer:
+                        await asyncio.sleep(0)
+            assert older == [] and 'Automated subagent task report' in newer[0]
+
+            async def steered_run(record: DelegationTask) -> str:
+                with owner.receiving(
+                    conversation_id='root', parent_id=record.id, enqueue=enqueue([]), steer=steered.append
+                ):
+                    inner = owner.receiving(
+                        conversation_id='root', parent_id=record.id, enqueue=enqueue([]), steer=lambda text: None
+                    )
+                    inner.__enter__()
+                    inner.__exit__(None, None, None)
+                    assert owner.steer(record.id, 'go on')
+                return 'done'
+
+            receipt = await owner.delegate(
+                agent_name='worker',
+                prompt='p',
+                conversation_id='root',
+                model=None,
+                background=False,
+                resume=None,
+                run=steered_run,
+            )
+            assert 'done' in receipt
+            assert steered == ['go on']
+
+    async def test_a_report_queued_on_an_ended_receiver_goes_to_the_one_still_receiving(self) -> None:
+        owner = DelegationTasks()
+        older: list[str] = []
+        newer: list[str] = []
+
+        def enqueue(into: list[str]) -> Callable[[SystemPromptPart], str]:
+            def receive(part: SystemPromptPart) -> str:
+                into.append(part.content)
+                return f'{id(into)}-{len(into)}'
+
+            return receive
+
+        async def run(record: DelegationTask) -> str:
+            return 'done'
+
+        async with owner.opened():
+            with owner.receiving(conversation_id='root', parent_id=None, enqueue=enqueue(newer)):
+                with owner.receiving(conversation_id='root', parent_id=None, enqueue=enqueue(older)):
+                    await owner.delegate(
+                        agent_name='worker',
+                        prompt='p',
+                        conversation_id='root',
+                        model=None,
+                        background=True,
+                        resume=None,
+                        run=run,
+                    )
+                    with anyio.fail_after(WAIT):
+                        while not older:
+                            await asyncio.sleep(0)
+                assert len(older) == 1 and len(newer) == 1, 'the ended run never delivered it'

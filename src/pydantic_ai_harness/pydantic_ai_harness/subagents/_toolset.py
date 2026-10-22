@@ -805,11 +805,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             return 'You have not started any tasks.'
         running = [record for record in visible if record.status == 'running']
         finished = [record for record in visible if record.status != 'running']
-        room = max(0, _MAX_LISTED_TASKS - len(running))
-        shown = {record.id for record in [*running[:_MAX_LISTED_TASKS], *(finished[-room:] if room else [])]}
+        # Running tasks first, the newest of them when there are too many, then the newest finished ones.
+        listed_running = running[-_MAX_LISTED_TASKS:]
+        room = _MAX_LISTED_TASKS - len(listed_running)
+        listed_finished = finished[-room:] if room else []
+        shown = {record.id for record in [*listed_running, *listed_finished]}
         lines = [_task_line(owner, record) for record in visible if record.id in shown]
-        if omitted := len(visible) - len(lines):
-            lines.append(f'({omitted} older tasks not shown.)')
+        omitted = [
+            f'{count} {kind}'
+            for count, kind in (
+                (len(running) - len(listed_running), 'older running'),
+                (len(finished) - len(listed_finished), 'older finished'),
+            )
+            if count
+        ]
+        if omitted:
+            lines.append(f'({" and ".join(omitted)} tasks not shown.)')
         return '\n'.join(lines)
 
     async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:
