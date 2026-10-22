@@ -34,7 +34,8 @@ On a model trained with a computer tool of its own, the `computer` tool is sent 
 the vocabulary it was trained on: OpenAI's `computer` tool on GPT-5.4 and later. Every other model with image input
 gets the same tool as a function.
 OpenAI can attach safety checks to a call; they are acknowledged automatically when the call runs, so turn on
-`require_approval` to review calls first.
+`require_approval` to review calls first. With `keep_screenshots` set, each request changes earlier history, so OpenAI's
+`openai_previous_response_id` sends the whole conversation again instead of continuing from the last response.
 
 ## Requirements
 

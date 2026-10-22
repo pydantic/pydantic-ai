@@ -6969,18 +6969,18 @@ def _map_computer_call(
 def _map_computer_call_output(
     part: ToolReturnPart, call: ToolCallPart | None, call_id: str
 ) -> list[responses.ResponseInputItemParam]:
-    """A `computer` result as a `computer_call_output`, followed by a user message when the call did not fully run.
+    """A `computer` result as a `computer_call_output`, followed by a user message when it needs more than an image.
 
     The API needs a screenshot in every output, so a result without one (it failed, was denied, or had its screenshot
     left out of this request) sends a blank image instead. The call's safety checks are acknowledged when it ran:
     `ComputerUse(require_approval=True)` is how a user reviews a call before it does. A call with checks is always in
     the request: `previous_response_id` doesn't continue past one.
     """
-    screenshot = next((file.data_uri for file in part.files if isinstance(file, BinaryImage)), _BLANK_SCREENSHOT)
+    screenshot = next((file.data_uri for file in part.files if isinstance(file, BinaryImage)), None)
     output: responses.response_input_param.ComputerCallOutput = {
         'type': 'computer_call_output',
         'call_id': call_id,
-        'output': {'type': 'computer_screenshot', 'image_url': screenshot},
+        'output': {'type': 'computer_screenshot', 'image_url': screenshot or _BLANK_SCREENSHOT},
     }
     if (
         part.outcome == 'success'
@@ -6990,7 +6990,9 @@ def _map_computer_call_output(
         output['acknowledged_safety_checks'] = checks
     metadata: Any = part.metadata
     items: list[responses.ResponseInputItemParam] = [output]
-    if part.outcome != 'success' or (isinstance(metadata, dict) and 'error' in metadata):
-        # The screenshot can't carry text, and the model needs to know what didn't run.
-        items.append(responses.EasyInputMessageParam(role='user', content=part.model_response_str(wrap_if_error=False)))
+    if screenshot is None or part.outcome != 'success' or (isinstance(metadata, dict) and 'error' in metadata):
+        # The output can only carry an image: say what didn't run, or why the image is blank.
+        texts = [item for item in part.content_items() if isinstance(item, str)]
+        note = ' '.join(texts) if texts else part.model_response_str(wrap_if_error=False)
+        items.append(responses.EasyInputMessageParam(role='user', content=note))
     return items
