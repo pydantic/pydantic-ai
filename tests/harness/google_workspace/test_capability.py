@@ -70,10 +70,29 @@ class TestGoogleWorkspace:
         with pytest.raises(UserError, match=message):
             GoogleWorkspace(services=services)  # pyright: ignore[reportArgumentType]
 
-    def test_every_service_has_an_endpoint(self, connections: list[tuple[str, str | None]]) -> None:
+    def test_each_service_connects_to_its_endpoint(self, connections: list[tuple[str, str | None]]) -> None:
         services: tuple[GoogleWorkspaceService, ...] = get_args(GoogleWorkspaceService)
         GoogleWorkspace(services, auth='token').get_toolset()
-        assert len({url for url, _ in connections}) == len(services)
+        assert dict(zip(services, [url for url, _ in connections], strict=True)) == {
+            'gmail': 'https://gmailmcp.googleapis.com/mcp/v1',
+            'drive': 'https://drivemcp.googleapis.com/mcp/v1',
+            'docs': 'https://docsmcp.googleapis.com/mcp/v1',
+            'sheets': 'https://sheetsmcp.googleapis.com/mcp/v1',
+            'slides': 'https://slidesmcp.googleapis.com/mcp/v1',
+            'calendar': 'https://calendarmcp.googleapis.com/mcp/v1',
+            'chat': 'https://chatmcp.googleapis.com/mcp/v1',
+            'people': 'https://people.googleapis.com/mcp/v1',
+        }
+
+    def test_connections_are_identified_by_the_capability_id(self, connections: list[tuple[str, str | None]]) -> None:
+        ids: list[str | None] = []
+
+        def collect(leaf: AbstractToolset[None]) -> None:
+            if isinstance(leaf, MCPToolset):
+                ids.append(leaf.id)
+
+        GoogleWorkspace[None](['gmail', 'calendar'], auth='token', id='mail').get_toolset().apply(collect)
+        assert ids == ['mail-gmail', 'mail-calendar']
 
     @pytest.mark.parametrize('via', ['auth', 'env'])
     def test_fixed_oauth_raises(self, via: str, monkeypatch: pytest.MonkeyPatch) -> None:

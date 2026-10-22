@@ -33,7 +33,7 @@ print(result.output)
 | --- | --- |
 | Not set, `None`, or `''` | `GOOGLE_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Google Workspace tools. A function never uses `GOOGLE_ACCESS_TOKEN`. |
+| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Google Workspace tools. A function never uses `GOOGLE_ACCESS_TOKEN`, and returning `'oauth'` raises an error. |
 
 Use a fixed token for a script that always acts as one account. In an app where each user connects their own Google account, pass a function that reads the current user's token from the run's deps:
 
