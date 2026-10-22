@@ -116,13 +116,11 @@ _OUTPUT_PREVIEW_CHARS = 64 * 1024
 
 
 def _require_asyncio() -> None:
-    """Refuse to start an operation that runs a command off asyncio, before it creates a sandbox."""
+    """Refuse an operation off asyncio before it reaches the E2B SDK, which needs a running asyncio loop."""
     if not running_on_asyncio():
-        # E2B's command handle starts its output reader with `asyncio.create_task`.
-        raise UserError(
-            'E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks, '
-            'and file reads, removes, and `working_dir()` run a command.'
-        )
+        # Its HTTP and RPC calls run under `asyncio.wait_for`, which raises 'no running event loop'
+        # on Trio; E2B's own error wrapping can even report that as a sandbox timeout.
+        raise UserError('E2B needs the asyncio event loop: the E2B SDK runs every request on asyncio.')
 
 
 # Prints a process's start time and then its group id, for the launcher to record and the stop to check:
@@ -270,9 +268,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     starting), a separate command signals the process group when `setsid` is available.
     Custom templates without `setsid` fall back to stopping the command leader only.
 
-    Commands, file reads, removes, and `working_dir()` need the asyncio event loop, because
-    the E2B SDK reads command output on asyncio tasks; under Trio they raise `UserError`
-    before any sandbox is created.
+    The E2B SDK runs every request on asyncio, so under Trio every operation raises
+    `UserError` before it reaches E2B.
 
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
@@ -341,7 +338,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox is still running: one killed elsewhere surfaces on the next operation. Calling this
         does not make you responsible for killing the sandbox; whoever holds the `ref` decides, as before.
         """
-        if self._ref is None and running_on_asyncio():
+        _require_asyncio()
+        if self._ref is None:
             # An AnyIO shield cannot stop native Task.cancel(); the backend owns this task
             # until it has recorded the paid sandbox, even if every caller leaves.
             task = self._acquisition
@@ -443,7 +441,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         return error
 
     async def read_bytes(self, path: str) -> bytes:
-        _require_asyncio()
         sandbox = await self.get_sandbox()
         # envd reports FIFOs as files, and its read of one without a writer waits out the SDK's
         # 60-second request timeout. Probe via the shell before asking envd to open the path (also
@@ -503,7 +500,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             await sandbox.files.make_dir(path, user=self._user)
 
     async def remove(self, path: str) -> None:
-        _require_asyncio()
         sandbox = await self.get_sandbox()
         context = f'Could not remove {path!r}'
         async with self._sdk_errors(sandbox.sandbox_id, context, path):
@@ -531,8 +527,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def _create(self) -> e2b.AsyncSandbox:
         """Provision a fresh E2B sandbox.
 
-        E2B may create the sandbox before its response arrives. The asyncio acquisition task
-        survives caller cancellation, and the Trio path shields this call; `_CREATE_TIMEOUT`
+        E2B may create the sandbox before its response arrives. The acquisition task survives
+        caller cancellation, and the shield keeps this call running too; `_CREATE_TIMEOUT`
         bounds the SDK request, though a response lost after remote creation cannot be recovered. A request E2B refuses
         (rejected credentials, an unknown template, a lifetime over the plan's limit) is
         `WorkspaceUnavailableError`: retrying it cannot succeed. Any other 4xx keeps the upstream error.
@@ -636,7 +632,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
         line = shlex.join(command_argv(command, shell))
         check_timeout(timeout)
-        _require_asyncio()
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
         sandbox = await self.get_sandbox()
         handle: e2b.AsyncCommandHandle | None = None
@@ -743,6 +738,7 @@ async def kill_sandbox(sandbox_id: str) -> None:
     A sandbox that is already gone returns quietly (E2B's kill answers `False`); rejected
     credentials raise `WorkspaceUnavailableError`, like any other operation.
     """
+    _require_asyncio()
     try:
         await e2b.AsyncSandbox.kill(sandbox_id)
     except e2b.AuthenticationException as error:
