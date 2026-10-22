@@ -80,11 +80,11 @@ SystemReminders(
 )
 ```
 
-Every reminder is sent as a system prompt, so the model reads it with the authority of your instructions. Static `Reminder` content and the text a dynamic callable returns are sent as written: return text you wrote yourself. The built-in dynamic reminders never put text they didn't write in system voice. `GoalReanchor` doesn't quote the user at all: it points the model back at the user's first request, which is already in the conversation. `LLMReminder` sends a fixed framework note in system voice, which ranks the reminder below your instructions and the user's request, and the generated text on the user channel in a `<generated_reminder model="...">` tag. The two are one record in the message history, kept and sent together on every later request and seen together by compaction and summaries, so the generated text never reaches the model without the note that says what it is. Any spelling of a closing tag inside it, `</system>` included, is escaped (`&lt;/generated_reminder>`), so it can't end the tag early, and both parts carry `origin` metadata, so the reminders recognize their own records. `LLMReminder` also quotes the transcript it sends the reminder model, in `<goal>` and `<message role="...">` elements.
+Every reminder is sent as a system prompt, so the model reads it with the authority of your instructions. Static `Reminder` content and a `str` a dynamic callable returns are operator text, sent in system voice as written: return only text you wrote yourself. The built-in dynamic reminders never put text they didn't write in system voice. `GoalReanchor` doesn't quote the user at all: it points the model back at the user's first request, which is already in the conversation. `LLMReminder` returns a `GeneratedReminder`, a distinct type rather than a `str`, so string operations can't turn the generated text into operator text; a wrapper that passes it through keeps it as data. `SystemReminders` sends it as a fixed framework note in system voice, which ranks the reminder below your instructions and the user's request, and the generated text on the user channel in a `<generated_reminder model="...">` tag. The two are one record in the message history, kept and sent together on every later request and seen together by compaction and summaries, so the generated text never reaches the model without the note that says what it is. Every opening and closing spelling of a framing tag inside the generated text, `<system>` and the reminder tags included, is escaped (`&lt;system>`), so it can't end its tag, open another or speak as the system, and both parts carry `origin` metadata, so the reminders recognize their own records. `LLMReminder` also quotes the transcript it sends the reminder model, in `<summary>`, `<goal>` and `<message role="...">` elements, starting at the latest native compaction boundary.
 
 ### `GoalReanchor` -- zero-cost goal anchoring
 
-`GoalReanchor` points the model back at the run's first user request and asks it to check its next action advances it. No model call, no dependencies:
+`GoalReanchor` points the model back at the run's first user request and asks it to check its next action advances it. After native compaction it points at the request as the compaction summary records it, when the request itself is no longer in what the model sees. No model call, no dependencies:
 
 ```python
 from pydantic_ai_harness import SystemReminders
@@ -205,3 +205,5 @@ If you use `LLMReminder` with a UI adapter, keep the [message history on the ser
 ::: pydantic_ai_harness.system_reminders.GoalReanchor
 
 ::: pydantic_ai_harness.system_reminders.LLMReminder
+
+::: pydantic_ai_harness.system_reminders.GeneratedReminder

@@ -512,10 +512,12 @@ agent = Agent(
 - `dynamic_reminders`: callables `(ctx) -> str | None`, sync or async, evaluated on **every**
   request, injected raw (no tag). Reminders are system prompts, so return only text you wrote and
   quote user input or tool output as data.
-- `GoalReanchor()` points the model back at the run's first user prompt without repeating it; free.
-  `LLMReminder` puts a fixed note in system voice and the generated text on the user channel
-  (`<generated_reminder model="...">`), kept in history together as one record. Forged closing tags
-  are escaped.
+- `GoalReanchor()` points the model back at the run's first user prompt without repeating it (at the
+  compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
+  `GeneratedReminder`, not a `str`, so it stays data: a fixed note in system voice and the generated
+  text on the user channel (`<generated_reminder model="...">`), kept in history together as one record.
+  A plain `str` a dynamic reminder returns is operator text in system voice. Framing tags in quoted
+  text are escaped.
 - `LLMReminder(model=...)` (model required) makes one extra model call per request; its agent is
   built on first use, so no provider key is needed at construction. On any error it sends
   `GoalReanchor` text instead, logging a warning with the traceback once per run under

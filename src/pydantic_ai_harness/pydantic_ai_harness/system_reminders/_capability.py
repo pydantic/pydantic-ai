@@ -12,6 +12,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Generic, Literal, TypeGuard
 
 from pydantic_ai import Agent
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
@@ -61,22 +62,34 @@ never by their model-visible text.
 """
 
 
-class _QuotedReminder(str):
-    """Reminder text that quotes content the framework didn't write.
+@dataclass(frozen=True)
+class GeneratedReminder:
+    """Reminder text a model generated, which `SystemReminders` never sends in system voice.
 
-    `SystemReminders` sends `note`, the framework's own wording, in system voice, and `data`, the quoted
-    content, on the user channel. As a `str` it reads as both joined, so a wrapper that returns it
-    unchanged, a `ReminderFiredEvent` or an `on_fire` callback still sees the whole reminder.
+    `LLMReminder` returns one. `SystemReminders` sends it as a lasting record of two parts: a fixed framework
+    note in system voice, and `text` quoted on the user channel in a `<generated_reminder>` tag. A plain
+    `str` a dynamic reminder returns is operator text, sent in system voice as written, so this is a
+    distinct type rather than a `str`: string operations can't drop its provenance and promote it.
     """
 
-    note: str
-    data: str
+    text: str
+    """The text the reminder model generated, as it wrote it."""
 
-    def __new__(cls, note: str, data: str) -> _QuotedReminder:
-        self = super().__new__(cls, f'{note}\n\n{data}')
-        self.note = note
-        self.data = data
-        return self
+    model: str
+    """The name of the model that generated it."""
+
+    @property
+    def note(self) -> str:
+        """The framework's note, sent in system voice."""
+        return _LLM_REMINDER_NOTE
+
+    @property
+    def data(self) -> str:
+        """`text` quoted in a `<generated_reminder>` tag, sent on the user channel."""
+        return _quote('generated_reminder', self.text, model=self.model)
+
+    def __str__(self) -> str:
+        return f'{self.note}\n\n{self.data}'
 
 
 _WARNED_RUNS_KEPT = 256
@@ -134,14 +147,17 @@ class Reminder(Generic[AgentDepsT]):
             self.tag = None
 
 
-DynamicReminder = Callable[[RunContext[AgentDepsT]], 'str | None']
+DynamicReminder = Callable[[RunContext[AgentDepsT]], 'str | GeneratedReminder | None']
 """A callable returning reminder text (or `None` to skip), evaluated every model request.
+
+A `str` it returns is operator text, sent in system voice as written, so it must be text you wrote.
+Text a model generated is a `GeneratedReminder`, which `SystemReminders` quotes as data instead.
 
 The callable reads the current `RunContext`, so it subsumes token-budget, post-compaction,
 mode-switch, and other conditions without hardcoded detectors: the user writes the condition.
 """
 
-AsyncDynamicReminder = Callable[[RunContext[AgentDepsT]], 'Awaitable[str | None]']
+AsyncDynamicReminder = Callable[[RunContext[AgentDepsT]], 'Awaitable[str | GeneratedReminder | None]']
 """Async variant of `DynamicReminder`."""
 
 
@@ -273,16 +289,16 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             # spent or reports a fire that never reached the model.
             fired = self._eligible_static(ctx)
             dynamic_texts = await self._collect_dynamic(ctx)
-            texts = [text for _, text in fired] + dynamic_texts
-            if texts:
-                ctx.enqueue(*_reminder_parts(texts))
+            reminders = [text for _, text in fired] + dynamic_texts
+            if reminders:
+                ctx.enqueue(*_reminder_parts(reminders))
                 for key, _text in fired:
                     self._fire_counts[key] = self._fire_counts.get(key, 0) + 1
-                for text in texts:
-                    await ctx.emit(ReminderFiredEvent(text=text))
+                for reminder in reminders:
+                    await ctx.emit(ReminderFiredEvent(text=str(reminder)))
                 if self.on_fire is not None:
-                    for text in texts:
-                        self.on_fire(text)
+                    for reminder in reminders:
+                        self.on_fire(str(reminder))
         return request_context
 
     def _eligible_static(self, ctx: RunContext[AgentDepsT]) -> list[tuple[int, str]]:
@@ -313,8 +329,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
             eligible.append((key, _render_content(reminder)))
         return eligible
 
-    async def _collect_dynamic(self, ctx: RunContext[AgentDepsT]) -> list[str]:
-        texts: list[str] = []
+    async def _collect_dynamic(self, ctx: RunContext[AgentDepsT]) -> list[str | GeneratedReminder]:
+        texts: list[str | GeneratedReminder] = []
         # Keep one stable snapshot for both iteration and durable index lookup. A callback may
         # mutate the public sequence while this request is in progress.
         self._dynamic_snapshot = tuple(self.dynamic_reminders)
@@ -375,10 +391,14 @@ class GoalReanchor(Generic[AgentDepsT]):
     fallback: str = 'Stay on task.'
 
     def __call__(self, ctx: RunContext[AgentDepsT]) -> str | None:
-        if _first_user_text(ctx.messages) is None:
-            return self.fallback
-        # The request is already in the history, so the note points at it rather than repeating the user's text.
-        return _GOAL_NOTE
+        # The model works from the latest compaction summary on, so that is the history the note points into;
+        # it points at the request rather than repeating the user's text.
+        window = post_compaction_window(ctx.messages)
+        if _first_user_text(window) is not None:
+            return _GOAL_NOTE
+        if _starts_with_compaction(window):
+            return _COMPACTED_GOAL_NOTE
+        return self.fallback
 
 
 _LLM_INSTRUCTIONS = (
@@ -392,6 +412,11 @@ _LLM_INSTRUCTIONS = (
 _GOAL_NOTE = (
     "Re-read the user's original request, their first message in this conversation, and check that your next "
     'action advances it. If it is already satisfied, produce the final answer.'
+)
+
+_COMPACTED_GOAL_NOTE = (
+    "Re-read the user's original request, as the summary of the earlier conversation records it, and check that "
+    'your next action advances it. If it is already satisfied, produce the final answer.'
 )
 
 _LLM_REMINDER_NOTE = (
@@ -431,7 +456,7 @@ class LLMReminder(Generic[AgentDepsT]):
         if self.max_context_messages < 1:
             raise ValueError(f'max_context_messages must be >= 1, got {self.max_context_messages}')
 
-    async def __call__(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    async def __call__(self, ctx: RunContext[AgentDepsT]) -> str | GeneratedReminder | None:
         if _request_reserved_for_parent(ctx):
             return GoalReanchor[AgentDepsT]()(ctx)
         try:
@@ -479,11 +504,9 @@ class LLMReminder(Generic[AgentDepsT]):
         text = result.output.strip()
         return text or None
 
-    def _frame(self, text: str | None) -> str | None:
-        """Split generated text from the framework's note: only the note is system voice."""
-        if text is None:
-            return None
-        return _QuotedReminder(_LLM_REMINDER_NOTE, _quote('generated_reminder', text, model=_model_label(self.model)))
+    def _frame(self, text: str | None) -> GeneratedReminder | None:
+        """Mark generated text as such, so `SystemReminders` quotes it instead of sending it in system voice."""
+        return None if text is None else GeneratedReminder(text, _model_label(self.model))
 
 
 def _model_label(model: Model | KnownModelName | str) -> str:
@@ -513,7 +536,7 @@ def _render_content(reminder: Reminder[AgentDepsT]) -> str:
     return reminder.content
 
 
-def _reminder_parts(texts: Sequence[str]) -> list[SystemPromptPart | TextContent]:
+def _reminder_parts(texts: Sequence[str | GeneratedReminder]) -> list[SystemPromptPart | TextContent]:
     """The parts a firing enqueues, in the reminders' configured order, each carrying the same origin metadata.
 
     Reminders in the framework's or the operator's own wording are request-scoped system prompts, consecutive
@@ -531,7 +554,7 @@ def _reminder_parts(texts: Sequence[str]) -> list[SystemPromptPart | TextContent
             plain.clear()
 
     for text in texts:
-        if isinstance(text, _QuotedReminder):
+        if isinstance(text, GeneratedReminder):
             flush_plain()
             parts.append(SystemPromptPart(text.note, metadata={'origin': _REMINDER_ORIGIN}))
             parts.append(TextContent(text.data, metadata={'origin': _REMINDER_ORIGIN}))
@@ -601,6 +624,12 @@ def _build_compact_transcript(messages: Sequence[ModelMessage], max_messages: in
     return '\n\n'.join(sections) if sections else 'No activity yet.'
 
 
+def _starts_with_compaction(window: Sequence[ModelMessage]) -> bool:
+    """Whether a post-compaction window opens with the response holding its `CompactionPart`."""
+    first = window[0] if window else None
+    return isinstance(first, ModelResponse) and bool(first.parts) and isinstance(first.parts[0], CompactionPart)
+
+
 def _compaction_summary(window: Sequence[ModelMessage]) -> str | None:
     """The readable summary that opens a post-compaction window, or `None` when there is none.
 
@@ -627,16 +656,24 @@ def _recent_texts(messages: Sequence[ModelMessage], max_messages: int) -> list[s
     return fragments[-max_messages:]
 
 
-def _quote(tag: str, body: str, **attrs: str) -> str:
-    """Quote `body` as data in a `<tag>` element that its content can't close early or speak as the system.
+_HARNESS_TAGS = ('goal', 'message', 'generated_reminder', 'summary')
+"""The data tags the reminders write, which core's framing tags don't include."""
 
-    The `<` of any closing `</tag>` inside `body`, in any case and with any whitespace (`< /tag >`,
-    `</tag/>`), is neutralized as `&lt;`, and so is that of an opening or closing `<system>`: on models
-    without native mid-conversation system messages, framework voice is `<system>`-tagged user text, so
-    quoted text must not be able to open or close it. Attribute values are HTML-escaped.
+_HARNESS_TAG_OPENERS = re.compile(
+    rf'<(?=\s*(?:/\s*)?(?:{"|".join(_HARNESS_TAGS)})(?=[\s/>]|$))',
+    re.IGNORECASE,
+)
+"""The `<` of an opening or closing reminder tag in every spelling, matched the way core matches its own."""
+
+
+def _quote(tag: str, body: str, **attrs: str) -> str:
+    """Quote `body` as data in a `<tag>` element it can't end early, open another frame in, or speak as the system from.
+
+    The `<` of every opening and closing spelling of every core framing tag (`system`, `context` and
+    `context_diff` among them) and of every reminder tag is neutralized as `&lt;`; nothing else changes.
+    Attribute values are HTML-escaped.
     """
-    # TODO: switch to `pydantic_ai.framing.wrap()` (#10957), which also neutralizes opening tags and other registered frames.
-    unsafe = re.compile(rf'<(?=\s*(?:/\s*(?:{re.escape(tag)}|system)|system)(?=[\s/>]|$))', re.IGNORECASE)
-    escaped = unsafe.sub('&lt;', body)
+    # TODO: switch to the public `pydantic_ai.framing.wrap()` with registered tags (#10957).
+    escaped = _HARNESS_TAG_OPENERS.sub('&lt;', neutralize_tags(body))
     attributes = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items())
     return f'<{tag}{attributes}>\n{escaped}\n</{tag}>'
