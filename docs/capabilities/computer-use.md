@@ -51,12 +51,13 @@ machine.
 | Setting | Default | What it does |
 |---|---|---|
 | `require_approval` | `False` | Ask before any call that does more than look or wait; the run needs a [deferred tool handler](../deferred-tools.md#human-in-the-loop-tool-approval). Turn it on for anything you'd regret an agent clicking. |
-| `keep_screenshots` | `3` | How many recent screenshots each model request carries; older ones become a short note in the request, and the run's history keeps them all. `None` sends every screenshot. |
+| `keep_screenshots` | `None` | How many recent screenshots each model request carries; older ones become a short note in the request, and the run's history keeps them all. Bounds a long run's input tokens, but restarts the provider's prompt cache on every call, so leave it off while caching keeps screenshots cheap. |
 | `settle_seconds` | `0.5` | Pause after acting before the screenshot, so animations and page loads can finish. |
 
 ## Limits
 
-- Each screenshot costs about 1,000 to 3,000 input tokens, which `keep_screenshots` bounds per request.
+- Each screenshot costs about 1,000 to 3,000 input tokens, and every later request carries it again unless
+  `keep_screenshots` is set.
 - Under [durable execution](../durable_execution/overview.md), a retried tool call can repeat actions it already
   performed, such as a click, and every screenshot in the history rides in each model request's payload, so long
   runs can reach Temporal's payload size limit.

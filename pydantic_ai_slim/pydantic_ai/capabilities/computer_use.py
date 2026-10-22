@@ -121,11 +121,12 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     settle_seconds: float = 0.5
     """Pause after the last action before the closing screenshot, so animations and page loads can finish."""
 
-    keep_screenshots: int | None = 3
-    """How many of the most recent screenshots each model request carries.
+    keep_screenshots: int | None = None
+    """How many of the most recent screenshots each model request carries, or `None` for all of them.
 
-    Older ones are replaced with a short note in the request only: the run's history keeps every image. `None`
-    sends every screenshot.
+    Older ones are replaced with a short note in the request only: the run's history keeps every image. Setting it
+    bounds a long run's input tokens, but each new screenshot then changes an earlier part of the request, so the
+    provider's prompt cache restarts there on every call.
     """
 
     id: str | None = 'computer'
