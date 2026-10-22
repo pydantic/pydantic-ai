@@ -19,6 +19,7 @@ if sys.platform != 'emscripten':
 from ._warnings import PydanticAIDeprecationWarning
 
 __all__ = (
+    'DEFAULT_HTTP_LIMITS',
     'DEFAULT_HTTP_TIMEOUT',
     'DEFAULT_MAX_CONNECTIONS',
     'DEFAULT_MAX_KEEPALIVE_CONNECTIONS',
@@ -71,14 +72,15 @@ _NotGivenT = TypeVar('_NotGivenT')
 # The OpenAI and Anthropic SDKs' own connection pool limits, rather than HTTPX's 100 and 20.
 DEFAULT_MAX_CONNECTIONS = 1000
 DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 100
+DEFAULT_HTTP_LIMITS = httpx2.Limits(
+    max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+)
 
 
 def create_async_httpx2_client(
     *,
     timeout: float | httpx2.Timeout = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5),
-    limits: httpx2.Limits = httpx2.Limits(
-        max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
-    ),
+    limits: httpx2.Limits = DEFAULT_HTTP_LIMITS,
     transport: httpx2.AsyncBaseTransport | None = None,
 ) -> httpx2.AsyncClient:
     """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
@@ -98,7 +100,8 @@ def create_async_httpx2_client(
         transport: The transport to send requests through, such as an
             [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport]. It replaces
             the transport the client would otherwise build, so it owns the connection pool: set pool limits
-            on it, or on the transport it wraps. With a transport, HTTPX also stops reading proxies from the
+            on it, or on the transport it wraps (an `AsyncHTTPX2TenacityTransport` without `wrapped` uses
+            these defaults). With a transport, HTTPX also stops reading proxies from the
             `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables; give the transport a `proxy`
             to use one. The timeouts and user agent still apply.
 
