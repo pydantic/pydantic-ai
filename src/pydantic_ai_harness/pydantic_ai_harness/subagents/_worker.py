@@ -194,20 +194,6 @@ class SubAgentWorker(Generic[AgentDepsT]):
         context_token = otel_context.attach(propagate.extract(start.trace_context))
         try:
             await self._run_task(agent, start)
-        except anyio.get_cancelled_exc_class():
-            # The worker is stopping: its delegating run would otherwise wait for this task forever.
-            with anyio.CancelScope(shield=True), anyio.move_on_after(5):
-                try:
-                    await self.transport.send(
-                        TaskFailedEvent(
-                            task_id=start.task_id,
-                            agent_name=start.agent_name,
-                            error='The worker serving this task stopped before it finished.',
-                        )
-                    )
-                except Exception:
-                    _logger.exception('Could not report that sub-agent task %s was stopped.', start.task_id)
-            raise
         except Exception as e:
             # One task's failure, from a misconfigured sub-agent or the transport, doesn't stop the worker,
             # which serves other tasks too. The delegating run is told if the transport still can.
@@ -229,16 +215,33 @@ class SubAgentWorker(Generic[AgentDepsT]):
 
     async def _run_task(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent) -> None:
         link = (_ForwardingWorkerLink if start.forward_events else _WorkerLink)(start=start, transport=self.transport)
+        settled: TaskSettledEvent | None = None
         try:
-            await self.transport.send(TaskStartedEvent(task_id=start.task_id, agent_name=start.agent_name))
-            async with task_group() as group:
-                group.start_soon(link.receive)
-                try:
-                    with delegation_level(start.depth):
-                        settled = await self._attempts(agent, start, link)
-                finally:
-                    group.cancel_scope.cancel()
-            # Once the task settled, its report goes out even if the worker is stopping meanwhile.
+            try:
+                await self.transport.send(TaskStartedEvent(task_id=start.task_id, agent_name=start.agent_name))
+                async with task_group() as group:
+                    group.start_soon(link.receive)
+                    try:
+                        with delegation_level(start.depth):
+                            settled = await self._attempts(agent, start, link)
+                    finally:
+                        group.cancel_scope.cancel()
+            except anyio.get_cancelled_exc_class():
+                # The worker is stopping. Its delegating run would otherwise wait for this task forever, so it
+                # gets the task's report if it settled, or else a failure.
+                report = settled or TaskFailedEvent(
+                    task_id=start.task_id,
+                    agent_name=start.agent_name,
+                    error='The worker serving this task stopped before it finished.',
+                )
+                with anyio.CancelScope(shield=True), anyio.move_on_after(5):
+                    try:
+                        await self.transport.send(report)
+                    except Exception:
+                        _logger.exception('Could not report sub-agent task %s as its worker stopped.', start.task_id)
+                raise
+            assert settled is not None, 'the attempts returned, so the task settled'
+            # Sent even if the worker stops meanwhile, so the report is neither lost nor followed by a failure.
             with anyio.CancelScope(shield=True):
                 await self.transport.send(settled)
         finally:

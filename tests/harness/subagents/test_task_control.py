@@ -1074,6 +1074,45 @@ class TestSubAgentWorker:
         assert output.endswith('(failed):\nThe worker serving this task stopped before it finished.')
         assert recorder.kinds()[-1] == 'sub_agents.task_failed'
 
+    async def test_a_worker_that_stops_while_reporting_a_task_still_reports_it(self) -> None:
+        sending, delivered = anyio.Event(), anyio.Event()
+
+        class Slow(InMemoryTransport):
+            """A transport that is still sending a settled report when the worker stops."""
+
+            async def send(self, message: SubAgentMessage) -> None:
+                if isinstance(message, TaskCompletedEvent):
+                    sending.set()
+                    await delivered.wait()
+                await super().send(message)
+
+        transport = Slow()
+        worker = SubAgentWorker(agents=[SubAgent(child(), name='remote')], transport=transport, deps=None)
+        parent, recorder = remote_parent(
+            transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return
+        )
+        stop = anyio.CancelScope()
+        output = ''
+
+        async def serve() -> None:
+            with stop:
+                await worker.serve()
+
+        async def stop_while_sending() -> None:
+            await sending.wait()
+            stop.cancel()
+            await anyio.lowlevel.checkpoint()
+            delivered.set()
+
+        with anyio.fail_after(WAIT):
+            async with anyio.create_task_group() as group:
+                group.start_soon(serve)
+                group.start_soon(stop_while_sending)
+                output = (await parent.run('Go.')).output
+        assert output.endswith('(ok):\nchild output')
+        kinds = recorder.kinds()
+        assert kinds.count('sub_agents.task_completed') == 1 and 'sub_agents.task_failed' not in kinds
+
     async def test_a_stopping_worker_that_cannot_report_logs_it(self, caplog: pytest.LogCaptureFixture) -> None:
         class NoFailures(InMemoryTransport):
             async def send(self, message: SubAgentMessage) -> None:
@@ -1089,7 +1128,7 @@ class TestSubAgentWorker:
             async with serving(worker):
                 await transport.send(TaskAssignedEvent(task_id='t' * 32, agent_name='remote', prompt='Work.'))
                 await gate.entered.wait()
-        assert 'Could not report that sub-agent task' in caplog.text
+        assert 'as its worker stopped' in caplog.text
 
     async def test_the_least_recently_used_conversation_is_forgotten(self) -> None:
         transport = InMemoryTransport()

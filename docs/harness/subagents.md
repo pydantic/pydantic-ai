@@ -571,10 +571,16 @@ SubAgent(
 ::: pydantic_ai_harness.subagents.TaskRetryEvent
 
 ::: pydantic_ai_harness.subagents.TaskCompletedEvent
+    options:
+        inherited_members: true
 
 ::: pydantic_ai_harness.subagents.TaskFailedEvent
+    options:
+        inherited_members: true
 
 ::: pydantic_ai_harness.subagents.TaskCancelledEvent
+    options:
+        inherited_members: true
 
 ::: pydantic_ai_harness.subagents.AgentCreatedEvent
     options:
