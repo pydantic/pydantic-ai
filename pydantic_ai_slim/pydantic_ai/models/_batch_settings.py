@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from ..exceptions import ModelAPIError, ModelHTTPError, ModelQuotaExceededError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
+    UserError,
+)
 
 if TYPE_CHECKING:
     from . import Model
@@ -60,12 +69,17 @@ def check_batch_settings(
 def transient(error: ModelAPIError) -> bool:
     """Whether a batch request that failed with `error` may succeed if it's submitted again.
 
-    These are the errors a provider SDK retries a live request on: a timeout, a conflict, a rate limit or a server
-    error, plus a request canceled on the provider's side. A request rejected for its content, its credentials or
-    the account's quota fails the same way again.
+    These are the errors a provider SDK retries a live request on: a rate limit, an unavailable or overloaded model,
+    a server error, a timeout or a conflict, plus a request canceled on the provider's side. A request rejected for
+    its content, its size, its credentials or the account's quota fails the same way again.
     """
-    if isinstance(error, ModelQuotaExceededError) or not isinstance(error, ModelHTTPError):
+    if isinstance(error, ModelRateLimitError | ModelUnavailableError | ModelServerError):
+        return True
+    if isinstance(error, ModelQuotaExceededError | ModelContextWindowExceededError) or not isinstance(
+        error, ModelHTTPError
+    ):
         return False
+    # An error without a category, like a custom model's, by its status.
     return error.status_code in _TRANSIENT_STATUS_CODES or error.status_code >= 500
 
 

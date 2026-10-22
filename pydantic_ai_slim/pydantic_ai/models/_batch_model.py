@@ -133,6 +133,8 @@ class _Queued:
     request: EncodedBatchRequest
     future: asyncio.Future[tuple[Batch, dict[str, str] | None]]
     requester: _Requester | None
+    size: int
+    """The bytes the request adds to its batch."""
     withdrawn: bool = False
     """Whether the request was cancelled after its queue was taken for submission, so nobody waits on its result."""
 
@@ -142,8 +144,11 @@ class _Queue:
     model: Model
     """The model that submits the queue: any model whose requests share the queue's group can."""
     max_requests: int
+    max_bytes: int | None
     requests: dict[str, _Queued] = field(default_factory=dict[str, _Queued])
     """The queued requests by their ID in the batch, in the order they were queued."""
+    size: int = 0
+    """The bytes the queued requests take in a batch."""
     duplicates: dict[str, int] = field(default_factory=dict[str, int])
     """How many requests with each body-derived ID were queued, to give the next one a unique ID in constant time."""
     timer: asyncio.TimerHandle | None = None
@@ -151,9 +156,22 @@ class _Queue:
     def unique_id(self, base_id: str) -> str:
         """`base_id`, suffixed if an earlier request in the queue had the same one."""
         count = self.duplicates.get(base_id, 0)
-        self.duplicates[base_id] = count + 1
         # A base ID is a hex digest, so a suffixed ID can't equal another request's base ID.
         return f'{base_id}-{count}' if count else base_id
+
+    def fits(self, size: int) -> bool:
+        """Whether a request of `size` bytes fits in the batch: an empty one takes any request `batch_encode` allowed."""
+        return self.max_bytes is None or not self.requests or self.size + size <= self.max_bytes
+
+    def add(self, queued: _Queued, base_id: str) -> None:
+        self.duplicates[base_id] = self.duplicates.get(base_id, 0) + 1
+        self.requests[queued.request.custom_id] = queued
+        self.size += queued.size
+
+    def remove(self, queued: _Queued) -> None:
+        """Take a request out, which is still in the queue even when the queue was taken for submission."""
+        del self.requests[queued.request.custom_id]
+        self.size -= queued.size
 
 
 _QueueKey = tuple[str, str]
@@ -336,17 +354,26 @@ class BatchPool:
         loop = asyncio.get_running_loop()
         queues = self._queues.setdefault(loop, {})
         key = (model.system, encoded.group)
-        queue = queues.get(key)
-        if queue is None:
-            queue = queues[key] = _Queue(model, max_requests=batch_size(model, self.max_requests))
-        # Derived from the request, so a rerun of the same requests gets the same IDs; unique within the batch.
-        custom_id = queue.unique_id(hashlib.sha256(encoded.body.encode()).hexdigest()[:32])
-        queued = queue.requests[custom_id] = _Queued(
-            replace(encoded, custom_id=custom_id), loop.create_future(), requester
-        )
 
         def submit() -> None:
             self._start_submission(loop, queues, key)
+
+        def queued_in(queue: _Queue) -> _Queued:
+            # Derived from the request, so a rerun of the same requests gets the same IDs; unique within the batch.
+            request = replace(encoded, custom_id=queue.unique_id(base_id))
+            return _Queued(request, future, requester, size=model.batch_request_size(request))
+
+        base_id = hashlib.sha256(encoded.body.encode()).hexdigest()[:32]
+        future: asyncio.Future[tuple[Batch, dict[str, str] | None]] = loop.create_future()
+        queue = queues.get(key) or self._new_queue(queues, key, model)
+        queued = queued_in(queue)
+        if not queue.fits(queued.size):
+            # The batch would exceed the provider's size limit with this request, so it's submitted without it.
+            submit()
+            queue = self._new_queue(queues, key, model)
+            queued = queued_in(queue)
+        queue.add(queued, base_id)
+        custom_id = queued.request.custom_id
 
         if len(queue.requests) >= queue.max_requests:
             submit()
@@ -358,7 +385,7 @@ class BatchPool:
         except asyncio.CancelledError:
             # Leaves the batch if it's still queued. A submission has already taken the queue's requests, so the
             # request is in its batch: it's abandoned once the batch exists, which can cancel the batch.
-            queue.requests.pop(custom_id, None)
+            queue.remove(queued)
             queued.withdrawn = True
             if queued.future.done() and not queued.future.cancelled() and queued.future.exception() is None:
                 self._withdraw(model, queued.future.result()[0], custom_id)
@@ -368,6 +395,12 @@ class BatchPool:
             raise UserError(_EXITED_MESSAGE)
         batch, trace_context = queued.future.result()
         return custom_id, batch, trace_context
+
+    def _new_queue(self, queues: dict[_QueueKey, _Queue], key: _QueueKey, model: Model) -> _Queue:
+        queue = queues[key] = _Queue(
+            model, max_requests=batch_size(model, self.max_requests), max_bytes=model.batch_max_bytes
+        )
+        return queue
 
     async def _submit(self, queue: _Queue) -> None:
         if not (requests := list(queue.requests.values())):

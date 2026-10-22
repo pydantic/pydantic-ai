@@ -30,8 +30,13 @@ from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.direct import model_request_batch
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelOverloadedError,
     ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
     SuspendedResponseExpired,
     UserError,
 )
@@ -47,8 +52,9 @@ from pydantic_ai.usage import UsageLimits
 
 from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
 
-Outcome = Literal['ran', 'expired', 'canceled', 'missing'] | int | BatchJobError
-"""How a scripted batch ends each of its requests: as they ran, unrun, missing, with an HTTP status, or as a failed job."""
+Outcome = Literal['ran', 'expired', 'canceled', 'missing'] | int | ModelAPIError
+"""How a scripted batch ends each of its requests: as they ran, unrun, missing, with an HTTP status, with an error, or
+as a failed job (a `BatchJobError`)."""
 
 
 class ScriptedBatchModel(SlowBatchTestModel):
@@ -58,10 +64,13 @@ class ScriptedBatchModel(SlowBatchTestModel):
         super().__init__(pending_checks=pending_checks)
         self.outcomes = list(outcomes)
         self.ended: dict[str, Outcome] = {}
+        self._errors: dict[str, ModelAPIError] = {}
 
     async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
         batch = await super().batch_create(requests)
-        self.ended[batch.id] = self.outcomes.pop(0) if self.outcomes else 'ran'
+        self.ended[batch.id] = outcome = self.outcomes.pop(0) if self.outcomes else 'ran'
+        if isinstance(outcome, ModelAPIError) and not isinstance(outcome, BatchJobError):
+            self._errors.update(dict.fromkeys((request.custom_id for request in requests), outcome))
         return batch
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
@@ -69,19 +78,33 @@ class ScriptedBatchModel(SlowBatchTestModel):
         outcome = self.ended[batch.id]
         if isinstance(outcome, BatchJobError):
             raise outcome
+        if isinstance(outcome, int | ModelAPIError):
+            status_code = outcome if isinstance(outcome, int) else 0
+            body = to_json({'status_code': status_code, 'body': {'error': 'scripted'}}).decode()
+            return [BatchResult(custom_id=result.custom_id, status='errored', body=body) for result in results]
         if outcome == 'missing':
             return []
-        if outcome in ('expired', 'canceled'):
-            return [BatchResult(custom_id=result.custom_id, status=outcome) for result in results]
-        if isinstance(outcome, int):
-            body = to_json({'status_code': outcome, 'body': {'error': 'scripted'}}).decode()
-            return [BatchResult(custom_id=result.custom_id, status='errored', body=body) for result in results]
-        return results
+        if outcome == 'ran':
+            return results
+        return [BatchResult(custom_id=result.custom_id, status=outcome) for result in results]
 
     def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
-        if result.status == 'errored' and result.body is not None and '"status_code":402' in result.body:
-            raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name=self.model_name)
+        if result.status == 'errored' and (error := self._errors.get(result.custom_id)) is not None:
+            raise error
         return super().batch_decode(result, request)
+
+
+def _categorized(
+    category: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelContextWindowExceededError
+    ],
+    status_code: int,
+) -> ModelHTTPError:
+    return ModelHTTPError.for_category(category, status_code=status_code, model_name='test', body={'error': 'scripted'})
 
 
 def _job_error(status_code: int) -> BatchJobError:
@@ -100,6 +123,11 @@ def _job_error(status_code: int) -> BatchJobError:
         pytest.param(500, id='server-error'),
         pytest.param(529, id='overloaded'),
         pytest.param(_job_error(500), id='failed-job'),
+        pytest.param(_categorized(ModelRateLimitError, 429), id='rate-limit-category'),
+        pytest.param(_categorized(ModelOverloadedError, 529), id='overloaded-category'),
+        pytest.param(_categorized(ModelUnavailableError, 503), id='unavailable-category'),
+        pytest.param(_categorized(ModelServerError, 500), id='server-error-category'),
+        pytest.param(ModelRateLimitError('test', 'Slow down'), id='rate-limit-without-status'),
         pytest.param(_job_error(499), id='canceled-job'),
     ],
 )
@@ -121,7 +149,11 @@ async def test_a_transient_failure_is_submitted_again(outcome: Outcome) -> None:
     [
         pytest.param(400, ModelHTTPError, id='invalid-request'),
         pytest.param(401, ModelHTTPError, id='unauthorized'),
-        pytest.param(402, ModelQuotaExceededError, id='quota'),
+        pytest.param(_categorized(ModelQuotaExceededError, 429), ModelQuotaExceededError, id='quota'),
+        pytest.param(
+            _categorized(ModelContextWindowExceededError, 400), ModelContextWindowExceededError, id='context-window'
+        ),
+        pytest.param(ModelAPIError('test', 'Unknown'), ModelAPIError, id='uncategorized-without-status'),
         pytest.param(_job_error(400), BatchJobError, id='failed-job'),
     ],
 )
@@ -528,3 +560,58 @@ async def test_the_pool_remembers_a_bounded_number_of_statuses_and_cancellations
     await model.cancel_suspended_response(second)
     assert wrapped.canceled == [wrapped.created[0].id, wrapped.created[1].id]
     assert len(pool._canceled) == 1  # pyright: ignore[reportPrivateUsage]
+
+
+class SizedBatchModel(SlowBatchTestModel):
+    """Limits a batch to 100 bytes, with each request taking 40."""
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return 100
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return 40
+
+
+async def test_a_batch_is_submitted_before_a_request_would_take_it_past_the_byte_limit() -> None:
+    wrapped = SizedBatchModel()
+    batching = BatchModelRequests(**FAST_POLLING, max_wait=None)
+    agent = Agent(wrapped, capabilities=[batching])
+
+    runs = [asyncio.create_task(agent.run(f'Question {i}')) for i in range(5)]
+    await wrapped.wait_until(lambda m: m.encoded == 5)
+    await batching.flush()
+    await asyncio.gather(*runs)
+
+    assert [batch.request_count for batch in wrapped.created] == [2, 2, 1]
+
+
+async def test_a_withdrawn_request_frees_its_bytes_in_the_batch() -> None:
+    wrapped = SizedBatchModel()
+    batching = BatchModelRequests(**FAST_POLLING, max_wait=None)
+    agent = Agent(wrapped, capabilities=[batching])
+
+    first = asyncio.create_task(agent.run('one'))
+    await wrapped.wait_until(lambda m: m.encoded == 1)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    runs = [asyncio.create_task(agent.run(f'Question {i}')) for i in range(2)]
+    await wrapped.wait_until(lambda m: m.encoded == 3)
+    await batching.flush()
+    await asyncio.gather(*runs)
+
+    assert [batch.request_count for batch in wrapped.created] == [2]
+
+
+async def test_model_request_batch_splits_batches_by_bytes_and_count() -> None:
+    wrapped = SizedBatchModel()
+    requests = [BatchRequest(custom_id=str(i), messages=[ModelRequest.user_text_prompt(str(i))]) for i in range(5)]
+
+    responses = await model_request_batch(wrapped, requests, **FAST_POLLING)
+    assert all(isinstance(response, ModelResponse) for response in responses)
+    assert [batch.request_count for batch in wrapped.created] == [2, 2, 1]
+
+    wrapped = SizedBatchModel()
+    await model_request_batch(wrapped, requests, max_requests=1, **FAST_POLLING)
+    assert [batch.request_count for batch in wrapped.created] == [1] * 5

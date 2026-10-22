@@ -291,8 +291,7 @@ async def _run_batches(
     batch_custom_ids: list[list[str]] = []
     try:
         for group in groups.values():
-            for start in range(0, len(group), batch_size):
-                chunk = group[start : start + batch_size]
+            for chunk in _chunks(model, group, batch_size):
                 batches.append(await model.batch_create(chunk))
                 batch_custom_ids.append([encoded.custom_id for encoded in chunk])
         for index, batch in enumerate(batches):
@@ -319,6 +318,24 @@ async def _run_batches(
         await _cancel_batches(model, batches)
         raise
     return results
+
+
+def _chunks(
+    model: models.Model, requests: Sequence[batch_models.EncodedBatchRequest], max_requests: int
+) -> Iterator[list[batch_models.EncodedBatchRequest]]:
+    """Split requests into batches of at most `max_requests` requests and the model's `batch_max_bytes` bytes."""
+    max_bytes = model.batch_max_bytes
+    chunk: list[batch_models.EncodedBatchRequest] = []
+    size = 0
+    for request in requests:
+        request_size = model.batch_request_size(request)
+        if chunk and (len(chunk) == max_requests or (max_bytes is not None and size + request_size > max_bytes)):
+            yield chunk
+            chunk, size = [], 0
+        chunk.append(request)
+        size += request_size
+    # `model_request_batch` only splits groups it put a request in.
+    yield chunk
 
 
 def _resubmittable(result: batch_models.BatchResult | ModelAPIError, error: ModelAPIError) -> bool:
