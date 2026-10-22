@@ -7990,6 +7990,53 @@ async def test_adapter_drops_uploaded_file_from_provider_metadata():
     assert any(isinstance(item, UploadedFile) for item in preserved_part.content)
 
 
+async def test_adapter_sanitize_messages_keeps_ui_message_ids_and_app_metadata():
+    """Sanitizing drops the reserved namespace from client messages, but not the ids `load_messages` keeps there.
+
+    The ids are the client's own, so `dump_messages` still gives each message back under the id it was sent with.
+    """
+    ui_messages = [
+        UIMessage(id='user-1', role='user', metadata={'tenant': 'acme'}, parts=[TextUIPart(text='Hello')]),
+        UIMessage(id='assistant-1', role='assistant', parts=[TextUIPart(text='Hi!')]),
+    ]
+    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=ui_messages)
+    adapter = VercelAIAdapter(agent=Agent(model=TestModel()), run_input=run_input)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        sanitized = adapter.sanitize_messages(adapter.messages)
+
+    assert [msg.metadata for msg in sanitized] == snapshot(
+        [
+            {'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': 'user-1'}},
+            {'__pydantic_ai__': {'ui_message_id': 'assistant-1'}},
+        ]
+    )
+    dumped = VercelAIAdapter.dump_messages(sanitized)
+    assert [(msg.id, msg.role) for msg in dumped] == snapshot([('user-1', 'user'), ('assistant-1', 'assistant')])
+    assert dumped[0].metadata == {'tenant': 'acme'}
+
+
+def test_adapter_sanitize_messages_drops_other_reserved_metadata():
+    """Of the reserved namespace, only the UI message id survives; whatever else a client message carries is dropped."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[UserPromptPart('Hello')],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'user-1', 'file_understanding': {}}, 'tenant': 'acme'},
+        ),
+        ModelResponse(parts=[TextPart('Hi!')], metadata={'__pydantic_ai__': {'fallback_model_id': 'function:b'}}),
+    ]
+    run_input = SubmitMessage(trigger='submit-message', id='req_1', messages=[])
+    adapter = VercelAIAdapter(agent=Agent(model=TestModel()), run_input=run_input)
+
+    with pytest.warns(UserWarning, match='`__pydantic_ai__` metadata was dropped from 2 client-submitted message'):
+        sanitized = adapter.sanitize_messages(messages)
+
+    assert [msg.metadata for msg in sanitized] == snapshot(
+        [{'tenant': 'acme', '__pydantic_ai__': {'ui_message_id': 'user-1'}}, None]
+    )
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 @pytest.mark.parametrize('allow_uploaded_files', [True, False])
 async def test_from_request_threads_allow_uploaded_files(allow_uploaded_files: bool):
