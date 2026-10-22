@@ -6,8 +6,8 @@ pair of host directories, its home and its `/tmp`: commands are real `bash -c` p
 own session, so stopping one kills its process group, and file calls act on the host filesystem,
 limited to those two directories like Boat's file API.
 
-Knobs, all keyed by route name (`create`, `get`, `resume`, `delete`, `run`, `start`, `status`,
-`kill`, `read`, `write`, `upload_url`, `download_url`, `transfer`):
+Knobs, all keyed by route name (`create`, `get`, `update`, `resume`, `delete`, `run`, `start`,
+`status`, `kill`, `read`, `write`, `upload_url`, `download_url`, `transfer`):
 
 - `errors[route]`: answers or exceptions served, in order, instead of handling the request; a `None`
   entry lets that request through.
@@ -133,11 +133,19 @@ class FakeSandbox:
             directory.mkdir(parents=True)
         # How many lookups report the sandbox as still starting.
         self.boot_polls = boot_polls
+        # Boat's auto-stop in seconds, `None` when it is off.
+        self.ttl: int | None = 3600
         self.resume_calls = 0
         self.commands: dict[int, FakeCommand] = {}
 
     def info(self) -> dict[str, object]:
-        return {'id': self.id, 'name': f'Box {self.id}', 'state': self.state, 'type': self.machine_type}
+        return {
+            'id': self.id,
+            'name': f'Box {self.id}',
+            'state': self.state,
+            'type': self.machine_type,
+            'ttlSeconds': self.ttl,
+        }
 
     def environment(self) -> dict[str, str]:
         return {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(self.home), 'TMPDIR': str(self.tmp)}
@@ -198,6 +206,7 @@ class FakeBoat:
         self._routes: list[tuple[str, re.Pattern[str], str, Handler]] = [
             ('POST', re.compile(r'/sandboxes'), 'create', self._create),
             ('GET', re.compile(sandbox), 'get', self._get),
+            ('PATCH', re.compile(sandbox), 'update', self._update),
             ('DELETE', re.compile(sandbox), 'delete', self._delete),
             ('POST', re.compile(f'{sandbox}/resume'), 'resume', self._resume),
             ('POST', re.compile(f'{sandbox}/commands'), 'command', self._command),
@@ -335,10 +344,11 @@ class FakeBoat:
             return boat_error(400, 'invalid_ttl', 'ttlSeconds must be an integer between 1 and 2592000, or null.')
         assert isinstance(machine_type, str)
         sandbox = self._new_sandbox(machine_type)
+        # Boat reads `0` as its default.
+        sandbox.ttl = 3600 if ttl == 0 else ttl
         self.create_bodies.append(body)
         self._idempotency[key] = (body, sandbox.id)
-        # Boat reads `0` as its default.
-        return boat_ok('sandbox.created', 202, status='provisioning', ttlSeconds=ttl or 3600, sandbox=sandbox.info())
+        return boat_ok('sandbox.created', 202, status='provisioning', ttlSeconds=sandbox.ttl, sandbox=sandbox.info())
 
     async def _get(self, request: httpx.Request, match: re.Match[str], body: dict[str, object]) -> httpx.Response:
         sandbox = self._sandbox(match)
@@ -351,6 +361,15 @@ class FakeBoat:
             else:
                 sandbox.state = 'idle'
         return boat_ok('sandbox.info', sandbox=sandbox.info())
+
+    async def _update(self, request: httpx.Request, match: re.Match[str], body: dict[str, object]) -> httpx.Response:
+        sandbox = self._sandbox(match)
+        if isinstance(sandbox, httpx.Response):
+            return sandbox
+        ttl = body.get('ttlSeconds')
+        # The backend only sets the auto-stop again, with the sandbox's own.
+        assert body == {'ttlSeconds': sandbox.ttl} and type(ttl) is int and 1 <= ttl <= 2592000
+        return boat_ok('sandbox.updated', sandbox=sandbox.info())
 
     async def _resume(self, request: httpx.Request, match: re.Match[str], body: dict[str, object]) -> httpx.Response:
         sandbox = self._sandbox(match)

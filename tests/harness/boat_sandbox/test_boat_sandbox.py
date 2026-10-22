@@ -28,10 +28,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.boat_sandbox import BoatSandbox, BoatSandboxBackend
-
-# The error type a transient Boat failure propagates as; it is not exported.
-from pydantic_ai_harness.boat_sandbox._api import BoatAPIError
+from pydantic_ai_harness.boat_sandbox import BoatAPIError, BoatSandbox, BoatSandboxBackend
 from pydantic_ai_harness.coder import Coder
 
 from .._tool_calls import call_tools

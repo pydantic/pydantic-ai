@@ -13,8 +13,8 @@ import pytest
 from .fake_boat import FakeBoat
 
 # CI stops the live job after 15 minutes, before a `finally` can delete what it started. Live tests
-# create sandboxes that Boat stops this many seconds after they start, so one left behind that way
-# stops running instead of waiting for Boat's default hour.
+# create sandboxes that Boat stops at most this many seconds after their last operation, so one left
+# behind that way stops running instead of waiting for Boat's default hour.
 LIVE_AUTO_STOP = 900
 # Boat refuses sandbox starts over the account's per-minute limit (12 on its smallest plan) with
 # `429 rate_limited`; a live test starts at most this many.

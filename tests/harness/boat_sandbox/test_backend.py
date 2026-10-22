@@ -11,6 +11,7 @@ import asyncio
 import errno
 import logging
 import os
+import pickle
 import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -28,11 +29,11 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.boat_sandbox import BoatSandbox, BoatSandboxBackend
+from pydantic_ai_harness.boat_sandbox import BoatAPIError, BoatSandbox, BoatSandboxBackend
 
-# The error type a transient Boat failure propagates as, and the factory the backend opens its own
-# clients with; neither is exported, and a test needs both to check what reaches the caller.
-from pydantic_ai_harness.boat_sandbox._api import BoatAPIError, open_client
+# The factory the backend opens its own clients with; it is not exported, and a test needs it to
+# check the client that reaches Boat.
+from pydantic_ai_harness.boat_sandbox._api import open_client
 
 from .fake_boat import FakeBoat, FakeCommand, FakeSandbox, boat_error, boat_ok
 
@@ -126,6 +127,24 @@ def record_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return delays
 
 
+def without_repeats(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Close the window in which a call that is safe to repeat is sent again, so its first failure surfaces."""
+    monkeypatch.setattr('pydantic_ai_harness.boat_sandbox._api._RETRY_WINDOW', 0)
+
+
+def advance_clock(monkeypatch: pytest.MonkeyPatch) -> Callable[[float], None]:
+    """A function that moves the clock the backend reads forward by some seconds, without waiting them out."""
+    offset = 0.0
+    now = anyio.current_time
+
+    def advance(seconds: float) -> None:
+        nonlocal offset
+        offset += seconds
+
+    monkeypatch.setattr(anyio, 'current_time', lambda: now() + offset)
+    return advance
+
+
 def unavailable(sandbox_id: str) -> str:
     return f'The Boat sandbox {sandbox_id!r} no longer exists (it was deleted). {_FRESH}'
 
@@ -211,7 +230,7 @@ class TestCreation:
         # Logged at creation, so a sandbox whose run ended before its ref was stored can be found.
         assert caplog.messages == [f'Created Boat sandbox {sandbox.id}']
         assert await backend.working_dir() == str(directory)
-        mkdir = f'exec sh -c \': MARK; "$@" </dev/null\' sh mkdir -p -- {directory}'
+        mkdir = f'exec sh -c \': MARK; "$@" </dev/null; exit $?\' sh mkdir -p -- {directory}'
         made = [body for body in fake_boat.bodies('run') if 'mkdir' in str(body['command'])]
         assert [{**body, 'command': unmarked(body['command'])} for body in made] == [
             {'command': mkdir, 'timeoutSeconds': 30}
@@ -319,7 +338,8 @@ class TestCreation:
                 id='unknown-snapshot',
             ),
             pytest.param(
-                lambda: BoatSandboxBackend(machine_type='huge'),
+                # A size outside `MachineType`, as an untyped caller can pass.
+                lambda: BoatSandboxBackend(machine_type='huge'),  # pyright: ignore[reportArgumentType]
                 'Could not start Boat sandbox: Boat API returned HTTP 400 (invalid_type): '
                 'type must be one of small, default, large, xlarge',
                 id='unknown-machine-type',
@@ -357,6 +377,24 @@ class TestCreation:
             assert (
                 str(exc_info.value) == f'Boat API returned HTTP {status} (invalid_response): Unexpected Boat response'
             )
+
+    async def test_a_transient_failure_survives_pickling(self, fake_boat: FakeBoat) -> None:
+        # Durable engines and process pools pickle the errors an operation raises.
+        body = boat_error(503, 'out_of_capacity', 'No capacity.', retryable=True).json()
+        fake_boat.errors['create'] = [httpx.Response(503, json={**body, 'retryAfterSeconds': 120})]
+        with pytest.raises(BoatAPIError) as exc_info:
+            await BoatSandboxBackend().run(['true'])
+        error = exc_info.value
+        restored = pickle.loads(pickle.dumps(error))
+        assert type(restored) is BoatAPIError
+        assert (restored.status, restored.code, restored.message, restored.retryable, restored.retry_after) == (
+            503,
+            'out_of_capacity',
+            'No capacity.',
+            True,
+            120,
+        )
+        assert str(restored) == str(error) == 'Boat API returned HTTP 503 (out_of_capacity): No capacity.'
 
     async def test_rejected_credentials_do_not_expose_the_key(self, fake_boat: FakeBoat) -> None:
         fake_boat.errors['create'] = [boat_error(401, 'unauthorized', 'expired token secret-value')]
@@ -523,7 +561,8 @@ class TestAttach:
         existing = fake_boat.sandbox('provisioning')
         backend = BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id))
         assert await backend.exists(f'{existing.home}/missing') is False
-        assert routes(fake_boat)[:4] == ['get', 'get', 'get', 'run']
+        # The first operation on an attached sandbox extends its auto-stop.
+        assert routes(fake_boat)[:5] == ['get', 'get', 'get', 'update', 'run']
 
     @pytest.mark.parametrize('operation', ['run', 'read_bytes', 'exists', 'working_dir'])
     async def test_a_missing_sandbox_remains_terminal(
@@ -556,14 +595,46 @@ class TestAttach:
             f'The Boat sandbox {existing.id!r} is in the {state!r} state and cannot be used. {_FRESH}'
         )
 
-    async def test_a_sandbox_boat_cannot_resume_is_unavailable(self, fake_boat: FakeBoat) -> None:
+    async def test_a_resumed_sandbox_is_checked_again_after_a_pause(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(f'{_BACKEND}._READY_POLL', 0.5)
         existing = fake_boat.sandbox('archived')
-        fake_boat.errors['resume'] = [boat_error(409, 'resume_failed', 'The snapshot of this sandbox has expired.')]
+        delays = record_sleeps(monkeypatch)
+        await BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id)).working_dir()
+        assert routes(fake_boat) == ['get', 'resume', 'get', 'run']
+        assert delays == [0.5]
+
+    @pytest.mark.parametrize('code', ['sandbox_resuming', 'sandbox_stopping', 'sandbox_starting'])
+    async def test_a_resume_refused_while_the_sandbox_changes_state_is_sent_again(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch, code: str
+    ) -> None:
+        monkeypatch.setattr(f'{_BACKEND}._READY_POLL', 0.5)
+        existing = fake_boat.sandbox('archived')
+        fake_boat.errors['resume'] = [boat_error(409, code, 'The sandbox is changing state.')]
+        delays = record_sleeps(monkeypatch)
+        backend = BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id))
+        assert (await backend.run(['echo', 'resumed'])).stdout == 'resumed\n'
+        assert routes(fake_boat)[:5] == ['get', 'resume', 'get', 'resume', 'get']
+        assert delays[:2] == [0.5, 0.5]
+        assert existing.resume_calls == 1
+
+    @pytest.mark.parametrize(
+        ('code', 'message'),
+        [
+            ('snapshot_data_expired', 'The sandbox stayed stopped for 14 days.'),
+            ('resume_failed', 'The snapshot of this sandbox has expired.'),
+        ],
+    )
+    async def test_a_sandbox_boat_cannot_resume_is_unavailable(
+        self, fake_boat: FakeBoat, code: str, message: str
+    ) -> None:
+        existing = fake_boat.sandbox('archived')
+        fake_boat.errors['resume'] = [boat_error(409, code, message)]
         with pytest.raises(WorkspaceUnavailableError) as exc_info:
             await BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id)).run(['true'])
-        assert str(exc_info.value) == (
-            f'Could not resume Boat sandbox {existing.id!r}: The snapshot of this sandbox has expired.'
-        )
+        assert str(exc_info.value) == f'Could not resume Boat sandbox {existing.id!r}: {message}'
+        assert routes(fake_boat) == ['get', 'resume']
 
     async def test_attach_errors_are_translated_or_propagate(self, fake_boat: FakeBoat) -> None:
         existing = fake_boat.sandbox()
@@ -616,6 +687,110 @@ class TestAttach:
         with pytest.raises(TimeoutError) as exc_info:
             await BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id)).working_dir()
         assert str(exc_info.value) == f'Connecting to Boat sandbox {existing.id!r} did not complete within 0.05s.'
+
+
+class TestAutoStop:
+    """Boat stops a sandbox once its auto-stop runs out from creation or resume, whatever runs in it."""
+
+    async def test_an_operation_extends_the_auto_stop_once_half_of_it_has_passed(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        advance = advance_clock(monkeypatch)
+        backend = await started(BoatSandboxBackend(auto_stop=900))
+        path = f'{only(fake_boat).home}/note'
+        advance(449)
+        assert await backend.exists(path) is False
+        assert fake_boat.bodies('update') == []
+        advance(1)
+        assert await backend.exists(path) is False
+        # A full auto-stop from now, which the next operations do not repeat until half of it has passed again.
+        assert fake_boat.bodies('update') == [{'ttlSeconds': 900}]
+        advance(449)
+        assert await backend.exists(path) is False
+        assert fake_boat.bodies('update') == [{'ttlSeconds': 900}]
+        advance(1)
+        assert await backend.exists(path) is False
+        assert fake_boat.bodies('update') == [{'ttlSeconds': 900}, {'ttlSeconds': 900}]
+
+    @pytest.mark.parametrize(('state', 'updates'), [('idle', [{'ttlSeconds': 3600}]), ('archived', [])])
+    async def test_attaching_extends_a_running_sandbox_and_a_resume_sets_it_again(
+        self, fake_boat: FakeBoat, state: str, updates: list[dict[str, object]]
+    ) -> None:
+        # When a running sandbox's deadline was set is unknown, so its first operation sets it.
+        existing = fake_boat.sandbox(state)
+        backend = BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id))
+        for _ in range(2):
+            assert await backend.exists(f'{existing.home}/note') is False
+        assert fake_boat.bodies('update') == updates
+
+    async def test_a_sandbox_without_an_auto_stop_is_not_extended(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        advance = advance_clock(monkeypatch)
+        backend = await started(BoatSandboxBackend(auto_stop=0))
+        advance(30 * 24 * 3600)
+        assert await backend.exists(f'{only(fake_boat).home}/note') is False
+        assert 'update' not in routes(fake_boat)
+
+    async def test_a_long_command_extends_the_auto_stop_between_checks(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        advance = advance_clock(monkeypatch)
+        backend = await started(BoatSandboxBackend(auto_stop=900))
+        fake_boat.errors['status'] = [status(running=True), status(running=False, exit_code=0)]
+        sleep = anyio.sleep
+
+        async def pass_time(delay: float) -> None:
+            advance(450)
+            await sleep(0)
+
+        monkeypatch.setattr(anyio, 'sleep', pass_time)
+        assert (await backend.run(['true'])).exit_code == 0
+        assert routes(fake_boat)[-4:] == ['start', 'status', 'update', 'status']
+
+    async def test_a_failed_extension_does_not_fail_the_operation(
+        self, fake_boat: FakeBoat, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        existing = fake_boat.sandbox()
+        forbidden = boat_error(403, 'api_key_action_forbidden', 'The action is not on the key.')
+        fake_boat.errors['update'] = [forbidden, httpx.ConnectError('offline')]
+        backend = BoatSandboxBackend(ref=WorkspaceRef(provider='boat', id=existing.id))
+        with caplog.at_level(logging.DEBUG, logger=_BACKEND):
+            # Each operation tries again until one succeeds; only the first failure in a row is a warning.
+            for _ in range(4):
+                assert await backend.exists(f'{existing.home}/note') is False
+        assert routes(fake_boat).count('update') == 3
+        assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+            (
+                logging.WARNING,
+                f'Could not extend the auto-stop of Boat sandbox {existing.id}: BoatAPIError('
+                "'Boat API returned HTTP 403 (api_key_action_forbidden): The action is not on the key.')",
+            ),
+            (
+                logging.DEBUG,
+                f"Could not extend the auto-stop of Boat sandbox {existing.id}: ConnectError('offline')",
+            ),
+        ]
+
+    @pytest.mark.parametrize('change', ['deleted', 'stopped'])
+    async def test_an_extension_that_finds_the_sandbox_gone_is_unavailable(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch, change: str
+    ) -> None:
+        advance = advance_clock(monkeypatch)
+        backend = await started(BoatSandboxBackend())
+        assert backend.ref is not None
+        sandbox_id = backend.ref.id
+        if change == 'deleted':
+            await BoatSandbox().destroy(backend.ref)
+            expected = unavailable(sandbox_id)
+        else:
+            fake_boat.errors['update'] = [boat_error(409, 'machine_not_running', 'Sandbox machine is not running.')]
+            expected = stopped(sandbox_id)
+        advance(1800)
+        with pytest.raises(WorkspaceUnavailableError) as exc_info:
+            await backend.run(['true'])
+        assert str(exc_info.value) == expected
+        assert routes(fake_boat)[-1] == 'update'
 
 
 class TestRetries:
@@ -698,14 +873,21 @@ class TestCommands:
         assert result.stdout == 'HELLO'
         assert [{**body, 'command': unmarked(body['command'])} for body in fake_boat.bodies('start')] == [
             {
-                'command': 'exec sh -c \': MARK; "$@" </dev/null\' sh env -- A=1 B=3 A.B=x sh -c \'printf "%s %s" "$A" "$B"\'',
+                'command': 'exec sh -c \': MARK; "$@" </dev/null; exit $?\' sh env -- A=1 B=3 A.B=x '
+                'sh -c \'printf "%s %s" "$A" "$B"\'',
                 'detached': True,
             },
             {
-                'command': "exec sh -c ': MARK; \"$@\" </dev/null' sh env -- A=1 B=2 /bin/sh -c 'printf hello | tr a-z A-Z'",
+                'command': 'exec sh -c \': MARK; "$@" </dev/null; exit $?\' sh env -- A=1 B=2 '
+                "/bin/sh -c 'printf hello | tr a-z A-Z'",
                 'detached': True,
             },
         ]
+
+    async def test_a_command_killed_by_a_signal_reports_its_status(self, fake_boat: FakeBoat) -> None:
+        # The wrapper's `sh` stays the command's parent and exits with the status the shell reports.
+        backend = await started(BoatSandboxBackend())
+        assert (await backend.run(['sh', '-c', 'kill -KILL $$'])).exit_code == 137
 
     async def test_env_names_that_are_not_shell_identifiers_reach_the_command(self, fake_boat: FakeBoat) -> None:
         backend = BoatSandboxBackend(env={'A.B': 'sandbox'})
@@ -839,8 +1021,14 @@ class TestCommands:
         ],
     )
     async def test_a_failed_stop_is_logged_and_the_timeout_still_raises(
-        self, fake_boat: FakeBoat, caplog: pytest.LogCaptureFixture, answer: tuple[int, str, str], logged: bool
+        self,
+        fake_boat: FakeBoat,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        answer: tuple[int, str, str],
+        logged: bool,
     ) -> None:
+        without_repeats(monkeypatch)
         backend = await started(BoatSandboxBackend())
         fake_boat.errors['kill'] = [boat_error(*answer)]
         with anyio.fail_after(10), pytest.raises(WorkspaceTimeoutError):
@@ -946,6 +1134,38 @@ class TestCommands:
         assert str(exc_info.value) == unavailable(sandbox_id)
 
     @pytest.mark.parametrize(
+        ('failure', 'delay'),
+        [
+            pytest.param(lambda: httpx.ConnectError('offline'), 0, id='transport'),
+            pytest.param(lambda: boat_error(500, 'internal_error', 'Internal error.'), 0, id='500'),
+            pytest.param(lambda: httpx.Response(502, text='<html>Bad Gateway</html>'), 0, id='502'),
+            pytest.param(
+                lambda: httpx.Response(
+                    503, json={**boat_error(503, 'no_ready_machine', 'No machine.').json(), 'retryAfterSeconds': 5}
+                ),
+                5,
+                id='503',
+            ),
+            pytest.param(lambda: boat_error(504, 'gateway_timeout', 'Gateway timeout.'), 0, id='504'),
+        ],
+    )
+    async def test_a_failed_check_of_a_running_command_is_sent_again(
+        self,
+        fake_boat: FakeBoat,
+        monkeypatch: pytest.MonkeyPatch,
+        failure: Callable[[], httpx.Response | Exception],
+        delay: float,
+    ) -> None:
+        # A long command is checked many times; one failed check must not end it.
+        backend = await started(BoatSandboxBackend())
+        fake_boat.errors['status'] = [failure()]
+        delays = record_sleeps(monkeypatch)
+        assert await backend.run(['echo', 'done']) == CommandResult(exit_code=0, stdout='done\n', stderr='')
+        # A 503 says how long to wait in its body.
+        assert delays[0] == delay
+        assert 'kill' not in routes(fake_boat)
+
+    @pytest.mark.parametrize(
         'failure',
         [
             pytest.param(lambda: httpx.ConnectError('offline'), id='transport'),
@@ -953,8 +1173,10 @@ class TestCommands:
         ],
     )
     async def test_an_unreadable_result_is_a_workspace_error_and_the_command_is_stopped(
-        self, fake_boat: FakeBoat, failure: Callable[[], httpx.Response | Exception]
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch, failure: Callable[[], httpx.Response | Exception]
     ) -> None:
+        # Once the window for sending the check again has run out.
+        without_repeats(monkeypatch)
         backend = await started(BoatSandboxBackend())
         fake_boat.errors['status'] = [failure()]
         with pytest.raises(
@@ -1058,8 +1280,14 @@ class TestErrorTranslation:
         ],
     )
     async def test_file_call_failures_are_translated(
-        self, fake_boat: FakeBoat, answer: tuple[int, str, str], expected: type[Exception], message: str | None
+        self,
+        fake_boat: FakeBoat,
+        monkeypatch: pytest.MonkeyPatch,
+        answer: tuple[int, str, str],
+        expected: type[Exception],
+        message: str | None,
     ) -> None:
+        without_repeats(monkeypatch)
         backend = await started(BoatSandboxBackend())
         path = f'{only(fake_boat).home}/note'
         fake_boat.errors['read'] = [boat_error(*answer)]
@@ -1067,7 +1295,8 @@ class TestErrorTranslation:
             await backend.read_bytes(path)
         assert type(exc_info.value) is expected
         if message is None:
-            # Transient: it propagates unchanged once a lookup finds the sandbox still running.
+            # Transient: once the read is no longer sent again, it propagates unchanged if a lookup finds the
+            # sandbox still running.
             assert isinstance(exc_info.value, BoatAPIError) and exc_info.value.status == answer[0]
             assert routes(fake_boat)[-2:] == ['read', 'get']
         else:
@@ -1086,8 +1315,13 @@ class TestErrorTranslation:
         ],
     )
     async def test_a_transient_failure_ends_the_run_when_the_sandbox_is_gone_or_stopped(
-        self, fake_boat: FakeBoat, change: str, expected: Callable[[str], str] | None
+        self,
+        fake_boat: FakeBoat,
+        monkeypatch: pytest.MonkeyPatch,
+        change: str,
+        expected: Callable[[str], str] | None,
     ) -> None:
+        without_repeats(monkeypatch)
         backend = await started(BoatSandboxBackend())
         sandbox = only(fake_boat)
         fake_boat.errors['read'] = [boat_error(503, 'no_ready_machine', 'No machine is ready.')]
@@ -1337,9 +1571,12 @@ class TestFiles:
                 await backend.write_bytes(str(path), data)
 
     @pytest.mark.parametrize('target', ['fifo', 'regular-file'])
-    async def test_a_write_that_times_out_is_refused_on_a_fifo(self, fake_boat: FakeBoat, target: str) -> None:
+    async def test_a_write_that_times_out_is_refused_on_a_fifo(
+        self, fake_boat: FakeBoat, monkeypatch: pytest.MonkeyPatch, target: str
+    ) -> None:
         # Boat answers a write to a FIFO only once something reads it, so the request times out; the
-        # path is checked then, rather than before every write.
+        # path is checked once the write is no longer sent again, rather than before every write.
+        without_repeats(monkeypatch)
         backend = await started(BoatSandboxBackend())
         path = only(fake_boat).home / target
         if target == 'fifo':

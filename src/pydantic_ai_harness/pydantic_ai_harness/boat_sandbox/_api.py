@@ -2,11 +2,12 @@
 
 Boat answers every call with a JSON envelope, `{"ok": true, ...}` on success and
 `{"ok": false, "code": ..., "message": ..., "error": {"details": ...}}` otherwise. Its retry signals
-(`409 sandbox_starting`, `502 sandbox_direct_failed` with `sandbox_restoring`, `error.details.retryable`,
-and `429 IP_RATE_LIMIT_EXCEEDED` with its wait in `retryAfter`) come from https://docs.boat.dev/api/v1,
-checked 2026-10-21. Live probes that day saw `retryable: false` on 409 and 502 answers but never
-`sandbox_starting` or `sandbox_restoring`: Boat held commands sent to a sandbox that was still
-starting. No test triggers these signals against real Boat, so re-check them against the docs page.
+(`409 sandbox_starting`, `502 sandbox_direct_failed` with `sandbox_restoring`, `429 IP_RATE_LIMIT_EXCEEDED`
+with its wait in `retryAfter`, and a 503's wait in `retryAfterSeconds`) come from
+https://docs.boat.dev/api/v1, checked 2026-10-21. Live probes that day saw `error.details.retryable:
+false` on 409 and 502 answers but never `sandbox_starting` or `sandbox_restoring`: Boat held commands
+sent to a sandbox that was still starting. No test triggers these signals against real Boat, so
+re-check them against the docs page.
 """
 
 from __future__ import annotations
@@ -29,7 +30,11 @@ Retry = Literal['never', 'not_run', 'idempotent']
 
 
 class BoatAPIError(Exception):
-    """An error answer from Boat, or an answer that is not Boat's envelope (`code` `invalid_response`)."""
+    """An error answer from Boat, or an answer that is not Boat's envelope (`code` `invalid_response`).
+
+    `status` is the HTTP status and `code` and `message` are Boat's. `retryable` is Boat's
+    `error.details.retryable` and `retry_after` the wait in seconds Boat asked for, when it sent them.
+    """
 
     def __init__(
         self,
@@ -47,6 +52,10 @@ class BoatAPIError(Exception):
         self.retryable = retryable
         self.retry_after = retry_after
 
+    def __reduce__(self) -> tuple[type[BoatAPIError], tuple[int, str, str], dict[str, object]]:
+        # `args` holds only the formatted message, so the error is rebuilt from its fields instead.
+        return self.__class__, (self.status, self.code, self.message), self.__dict__
+
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra='ignore', alias_generator=to_camel, populate_by_name=True)
@@ -55,6 +64,8 @@ class _Model(BaseModel):
 class Sandbox(_Model):
     id: str
     state: str
+    # Seconds of Boat's auto-stop, which a `PATCH` sets again from now; `None` when it is off.
+    ttl_seconds: int | None = None
 
 
 class SandboxResponse(_Model):
@@ -111,6 +122,8 @@ class _ErrorEnvelope(_Model):
     message: str
     # Seconds to wait, on an answer to too many requests from one IP address.
     retry_after: float | None = None
+    # Seconds to wait, on a 503.
+    retry_after_seconds: float | None = None
     error: _ErrorBody = Field(default_factory=_ErrorBody)
 
 
@@ -147,20 +160,27 @@ async def call(
 
     `retry` repeats the call only on answers Boat documents as having taken no effect: a sandbox
     that is still starting or being restored (`not_run`), and, for a call that is safe to repeat,
-    any 502 Boat marks retryable and a refusal of too many requests from this IP address
-    (`idempotent`). Any other error answer raises `BoatAPIError`, and `httpx` errors propagate as
-    they are.
+    a transport error, a 500, 502, 503 or 504, and a refusal of too many requests from this IP
+    address (`idempotent`). Repeats stop once `_RETRY_WINDOW` runs out. Any other error answer
+    raises `BoatAPIError`, and `httpx` errors propagate as they are.
     """
     deadline = anyio.current_time() + _RETRY_WINDOW
     while True:
-        response = await client.request(
-            method,
-            path,
-            json=json,
-            params=params,
-            headers=headers,
-            timeout=_REQUEST_TIMEOUT if timeout is None else timeout,
-        )
+        try:
+            response = await client.request(
+                method,
+                path,
+                json=json,
+                params=params,
+                headers=headers,
+                timeout=_REQUEST_TIMEOUT if timeout is None else timeout,
+            )
+        except httpx.TransportError:
+            # The call may have reached Boat, so only one that is safe to repeat is sent again.
+            if retry != 'idempotent' or anyio.current_time() + _RETRY_DELAY >= deadline:
+                raise
+            await anyio.sleep(_RETRY_DELAY)
+            continue
         if response.is_success:
             try:
                 return model.model_validate_json(response.content)
@@ -200,7 +220,7 @@ def _error(response: httpx.Response) -> BoatAPIError:
         envelope.code,
         envelope.message,
         retryable=envelope.error.details.retryable,
-        retry_after=envelope.retry_after,
+        retry_after=envelope.retry_after if envelope.retry_after is not None else envelope.retry_after_seconds,
     )
 
 
@@ -209,10 +229,10 @@ def _retryable(error: BoatAPIError, retry: Retry) -> bool:
         return False
     if error.status == 409 and error.code == 'sandbox_starting':
         return True
-    if error.status == 429:
-        return retry == 'idempotent' and error.code == 'IP_RATE_LIMIT_EXCEEDED'
-    if error.status != 502:
-        return False
-    if error.code == 'sandbox_direct_failed' and 'sandbox_restoring' in error.message:
+    if error.status == 502 and error.code == 'sandbox_direct_failed' and 'sandbox_restoring' in error.message:
         return True
-    return retry == 'idempotent' and error.retryable is True
+    if retry != 'idempotent':
+        return False
+    if error.status == 429:
+        return error.code == 'IP_RATE_LIMIT_EXCEEDED'
+    return error.status in (500, 502, 503, 504)

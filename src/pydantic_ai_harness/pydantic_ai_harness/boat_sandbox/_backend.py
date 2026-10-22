@@ -13,6 +13,8 @@ marked otherwise:
 - The file API reaches only paths that resolve under `/home/user` and `/tmp`.
 - `noEnv` keeps the account's GitHub and Boat tokens out of commands.
 - `ttlSeconds: 0` means Boat's default auto-stop of an hour, and `null` disables it (not exercised).
+- Command activity does not move the auto-stop deadline; `PATCH /sandboxes/{id}` with `ttlSeconds` sets it to
+  that many seconds from now (not exercised).
 - Deleting a sandbox needs `X-Ascii-Confirm-Delete` set to its ID.
 - A stopped command gets about 5 seconds after SIGTERM before SIGKILL (not exercised).
 - Commands run under `bash -lc`, whose `~/.bash_logout` prints to the output unless the command `exec`s.
@@ -68,6 +70,9 @@ if TYPE_CHECKING:
 
 __all__ = ('BoatSandboxBackend',)
 
+MachineType = Literal['small', 'default', 'large', 'xlarge']
+"""Boat's machine sizes; see https://docs.boat.dev/machines."""
+
 _AUTH_MESSAGE = (
     'Boat rejected the credentials. Set BOAT_API_KEY, or pass a configured `httpx.AsyncClient` as `client=`.'
 )
@@ -103,6 +108,8 @@ _MAX_INLINE_FILE_BYTES = 5 * 1024 * 1024
 _READY_STATES = frozenset({'ready', 'idle', 'running'})
 _STOPPED_STATES = frozenset({'archiving', 'archived'})
 _FAILED_STATES = frozenset({'error', 'cancelled'})
+# Boat's 409 codes for a resume refused only while the sandbox is between states.
+_TRANSITIONAL_CODES = frozenset({'sandbox_resuming', 'sandbox_stopping', 'sandbox_starting'})
 # The POSIX error a file call failed with, from the start of Boat's message; a write below a file
 # fails creating the file as a directory.
 _PATH_ERRNOS = {
@@ -298,8 +305,10 @@ def _command_line(argv: Sequence[str], *, marker: str, cwd: str | None, env: Map
 
     Boat runs the string with `bash -lc`. `exec` keeps that login shell from running
     `~/.bash_logout`, which prints to the output. The `sh` it becomes stays the program's parent,
-    with `marker` in its script, so the process list finds it; it exits 125 after printing
-    `<marker>-cwd` when `cwd` is missing.
+    with `marker` in its script, so the process list finds it: the `exit` after the program keeps a
+    `sh` such as dash from replacing itself with the program it runs last. The `sh` exits with the
+    program's status, 127 for a missing program, and 125 after printing `<marker>-cwd` when `cwd`
+    is missing.
     """
     if env:
         # Inside the `sh`, since a `sh` such as dash drops names that are not shell identifiers.
@@ -307,7 +316,7 @@ def _command_line(argv: Sequence[str], *, marker: str, cwd: str | None, env: Map
         argv = ['env', '--', *(f'{name}={value}' for name, value in env.items()), *argv]
     guard = f'cd -- {shlex.quote(cwd)} || {{ printf %s {marker}-cwd; exit 125; }}' if cwd is not None else f': {marker}'
     # `sh` as `$0`, which the shell's own messages, such as a missing program's, start with.
-    return shlex.join(['exec', 'sh', '-c', f'{guard}; "$@" </dev/null', 'sh', *argv])
+    return shlex.join(['exec', 'sh', '-c', f'{guard}; "$@" </dev/null; exit $?', 'sh', *argv])
 
 
 async def _exec(sandbox: _Sandbox, argv: Sequence[str], *, cwd: str | None) -> CommandResult:
@@ -360,8 +369,10 @@ class _SyncShell:
 class _BoatProcess:
     """A detached Boat command, polled until its own process exits."""
 
-    def __init__(self, sandbox: _Sandbox) -> None:
+    def __init__(self, sandbox: _Sandbox, keep_alive: Callable[[], Awaitable[None]]) -> None:
         self._sandbox = sandbox
+        # Extends Boat's auto-stop while the command runs.
+        self._keep_alive = keep_alive
         # In the command's script, so a command whose start Boat never confirmed can still be found and stopped.
         self.marker = _marker()
         self._pid: int | None = None
@@ -413,6 +424,7 @@ class _BoatProcess:
                 break
             await anyio.sleep(interval)
             interval = min(interval * 2, _MAX_POLL_INTERVAL)
+            await self._keep_alive()
         if not status.known or (exit_code := status.exit_code) is None:
             # Boat forgets a command's exit when the sandbox's agent restarts.
             raise await _probe(self._sandbox) or WorkspaceError(
@@ -508,12 +520,14 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             attach with. The caller owns closing it. Without one, the backend opens its own from
             `BOAT_API_KEY` on first use and closes it in `aclose()`.
         ref: Identity of an existing sandbox to attach to on first use.
-        machine_type: Boat machine size for a newly created sandbox, such as `'small'` or
-            `'large'`; Boat's default when `None`.
+        machine_type: Boat machine size for a newly created sandbox: `'small'`, `'default'`,
+            `'large'` or `'xlarge'`; Boat's default when `None`.
         snapshot: Named Boat snapshot a newly created sandbox starts from; Boat's base image when `None`.
-        auto_stop: Seconds after it starts, and after each resume, before Boat stops a newly created
-            sandbox (its disk is kept); `0` disables it, and `None` keeps Boat's default of an hour.
-            Command activity does not postpone it.
+        auto_stop: Seconds a newly created sandbox runs without the backend extending it before
+            Boat stops it (its disk is kept); `0` disables it, and `None` keeps Boat's default of an
+            hour. Once half of the sandbox's auto-stop has passed since it was last set, an operation
+            or a check on a running command sets it again from now, so an active run keeps the
+            sandbox up and an idle one stops.
         working_dir: Absolute directory commands start in and relative paths resolve against; the
             sandbox's own default when `None`, discovered with `pwd -P` on first use.
         env: Environment variables every command gets; a command's own `env` is layered on top.
@@ -526,7 +540,7 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         *,
         client: httpx.AsyncClient | None = None,
         ref: WorkspaceRef | None = None,
-        machine_type: str | None = None,
+        machine_type: MachineType | None = None,
         snapshot: str | None = None,
         auto_stop: int | None = None,
         working_dir: str | None = None,
@@ -553,6 +567,11 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         # A sandbox this backend created still needs its `working_dir` made.
         self._working_dir_pending = False
         self._lock = anyio.Lock()
+        # The sandbox's auto-stop in seconds, read when it is acquired (`None` when it is off), and
+        # when this backend last set its deadline; an attached sandbox's is set on first use.
+        self._ttl: int | None = None
+        self._ttl_set_at: float | None = None
+        self._keep_alive_failing = False
         # Set while nothing will call `aclose()`: the owned client then closes when the last
         # operation in flight ends.
         self._close_after_operation = False
@@ -580,8 +599,40 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                 # A caller cancelled during creation stops here; the next operation makes the directory.
                 await anyio.lowlevel.checkpoint_if_cancelled()
                 await self._make_working_dir(sandbox)
+        await self._keep_alive(sandbox)
         await anyio.lowlevel.checkpoint_if_cancelled()
         return sandbox
+
+    async def _keep_alive(self, sandbox: _Sandbox) -> None:
+        """Set the sandbox's auto-stop deadline again from now once half of it has passed.
+
+        Boat counts the auto-stop from creation or resume, and commands do not move it. Best effort:
+        only a sandbox found deleted or stopped raises.
+        """
+        ttl, set_at, now = self._ttl, self._ttl_set_at, anyio.current_time()
+        if ttl is None or (set_at is not None and now - set_at < ttl / 2):
+            return
+        try:
+            await _api.call(
+                sandbox.client, 'PATCH', sandbox.path(), json={'ttlSeconds': ttl}, model=_api.SandboxResponse
+            )
+        except Exception as error:
+            gone = _translate(error, 'Could not extend the auto-stop', sandbox_id=sandbox.id)
+            if (
+                isinstance(gone, WorkspaceUnavailableError)
+                and isinstance(error, _api.BoatAPIError)
+                and error.status in (404, 409)
+            ):
+                # Deleted or stopped: the operation would find that too.
+                raise gone from error
+            # The next operation tries again; a failure that repeats, such as a key without
+            # `sandbox.update`, is logged at `WARNING` once.
+            level = logging.DEBUG if self._keep_alive_failing else logging.WARNING
+            self._keep_alive_failing = True
+            logger.log(level, 'Could not extend the auto-stop of Boat sandbox %s: %r', sandbox.id, error)
+            return
+        self._keep_alive_failing = False
+        self._ttl_set_at = now
 
     async def _acquire_locked(self) -> _Sandbox:
         """Create or attach to the sandbox; the caller holds `_lock`."""
@@ -590,7 +641,9 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         client = self._client
 
         async def create() -> str:
+            requested = anyio.current_time()
             sandbox_id = await self._create(client)
+            self._ttl_set_at = requested
             self._ref = WorkspaceRef(provider='boat', id=sandbox_id)
             self._working_dir_pending = self._working_dir is not None
             # Logged at creation, so the id can be found whatever ends the run before it is stored.
@@ -662,11 +715,18 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                         info = await _api.call(sandbox.client, 'GET', sandbox.path(), model=_api.SandboxResponse)
                         state = info.sandbox.state
                         if state in _STOPPED_STATES:
+                            requested = anyio.current_time()
                             await _api.call(sandbox.client, 'POST', sandbox.path('/resume'), model=_api.Empty)
+                            # A resume sets the auto-stop deadline again.
+                            self._ttl_set_at = requested
+                            await anyio.sleep(_READY_POLL)
                             continue
                     except _api.BoatAPIError as error:
                         if error.status == 404:
                             raise WorkspaceUnavailableError(_not_found_message(sandbox.id)) from error
+                        if error.status == 409 and error.code in _TRANSITIONAL_CODES:
+                            await anyio.sleep(_READY_POLL)
+                            continue
                         if error.status == 409:
                             # Boat cannot resume it, for example once its snapshot has expired.
                             raise WorkspaceUnavailableError(
@@ -674,6 +734,7 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
                             ) from error
                         raise
                     if state in _READY_STATES:
+                        self._ttl = info.sandbox.ttl_seconds
                         return
                     if (failed := _state_error(sandbox.id, state)) is not None:
                         raise failed
@@ -758,7 +819,7 @@ class BoatSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
             check_env(env)
             # Acquiring the sandbox has its own bound; the timeout is the command's alone.
             sandbox = await self._connect()
-            process = _BoatProcess(sandbox)
+            process = _BoatProcess(sandbox, lambda: self._keep_alive(sandbox))
             line = _command_line(argv, marker=process.marker, cwd=self._working_dir, env={**self._env, **(env or {})})
 
             async def stop() -> None:

@@ -12,7 +12,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import check_env, check_integer, check_working_dir
-from pydantic_ai_harness.boat_sandbox._backend import BoatSandboxBackend, destroy_sandbox
+from pydantic_ai_harness.boat_sandbox._backend import BoatSandboxBackend, MachineType, destroy_sandbox
 
 if TYPE_CHECKING:
     import httpx
@@ -40,9 +40,9 @@ class BoatSandbox(AbstractCapability[AgentDepsT]):
     """Supply an isolated [Boat](https://boat.dev) sandbox as the run's workspace.
 
     A run with no reference creates a fresh sandbox on first use; pass a `WorkspaceRef` to attach
-    to an existing one. Ending a run does not delete the sandbox: Boat stops it after `auto_stop`
-    and keeps it until you delete it. Commands run under `sh -c` as the sandbox's `user` account,
-    and a new sandbox gets none of your Boat account's credentials.
+    to an existing one. Ending a run does not delete the sandbox: Boat stops it once it has been
+    idle for `auto_stop` and keeps it until you delete it. Commands run under `sh -c` as the
+    sandbox's `user` account, and a new sandbox gets none of your Boat account's credentials.
 
     This capability supplies the workspace only. Compose it with capabilities that use it, such
     as `Coder`, `Shell`, and `FileSystem`. See
@@ -54,7 +54,7 @@ class BoatSandbox(AbstractCapability[AgentDepsT]):
     `Authorization: Bearer` header set, to share across runs on one event loop; you close it. When
     `None`, each run opens one from `BOAT_API_KEY` and closes it when the run ends."""
 
-    machine_type: str | None = None
+    machine_type: MachineType | None = None
     """Boat machine size for a newly created sandbox: `'small'`, `'default'`, `'large'` or
     `'xlarge'`; Boat's default when `None`. A size Boat refuses raises `WorkspaceUnavailableError`
     on first use."""
@@ -64,9 +64,10 @@ class BoatSandbox(AbstractCapability[AgentDepsT]):
     An unknown snapshot raises `WorkspaceUnavailableError` on first use."""
 
     auto_stop: int | None = None
-    """Seconds after it starts, and after each resume, before Boat stops a newly created sandbox,
-    keeping its disk; `0` disables it, and `None` keeps Boat's default of an hour. Command activity
-    does not postpone it. Attaching resumes a stopped sandbox."""
+    """Seconds a newly created sandbox runs without the backend extending it before Boat stops it,
+    keeping its disk; `0` disables it, and `None` keeps Boat's default of an hour. The backend
+    extends it while the run works in the sandbox, so an active run keeps it up and an idle one
+    stops. Attaching resumes a stopped sandbox."""
 
     working_dir: str | None = None
     """Absolute directory commands start in and relative paths resolve against; `None` uses the sandbox's own.
