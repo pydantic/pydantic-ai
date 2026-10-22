@@ -18,13 +18,14 @@ from pydantic_ai import (
     DocumentUrl,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.capabilities import FileUnderstanding, file_understanding
+from pydantic_ai.capabilities import FileUnderstanding
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
@@ -289,42 +290,17 @@ def _png(name: str) -> BinaryContent:
     return BinaryContent(f'\x89PNG {name}'.encode(), media_type='image/png', identifier=name)
 
 
-async def test_descriptions_are_bounded(monkeypatch: pytest.MonkeyPatch):
-    """The oldest description goes when the cache is full, so a long-lived agent does not grow without limit."""
-    monkeypatch.setattr(file_understanding, '_MAX_DESCRIPTIONS', 2)
+async def test_separate_conversations_describe_the_same_file_again():
+    """Descriptions live in each conversation's history, not in the process, so runs don't share them."""
     describer = Describer()
     text_only = TestModel(profile=ModelProfile(supports_image_input=False))
     agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
-    for name in ['first', 'second', 'third']:
-        await agent.run([_png(name)])
-    assert describer.calls == 3
-
-    await agent.run([_png('third')])
-    assert describer.calls == 3, 'the newest is still cached'
-    await agent.run([_png('first')])
-    assert describer.calls == 4, 'the oldest was evicted'
-
-
-async def test_a_url_description_is_not_reused_by_another_conversation():
-    """A URL is not its content, so one conversation's description of it is not handed to another.
-
-    The same URL can serve different bytes to different callers and stop resolving once a signature expires,
-    so reusing a description across conversations would hand one caller a description of what another fetched.
-    """
-    describer = Describer()
-    text_only = TestModel(profile=ModelProfile(supports_image_input=False))
-    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
-
-    signed = ImageUrl('https://example.com/receipt.png?signature=abc')
-    await agent.run([signed])
-    await agent.run([signed])
-    assert describer.calls == 2
-
-    # Bytes are their own identity, so those are reused across conversations.
+    await agent.run([ImageUrl('https://example.com/receipt.png?signature=abc')])
+    await agent.run([ImageUrl('https://example.com/receipt.png?signature=abc')])
     await agent.run([_png('chart')])
     await agent.run([_png('chart')])
-    assert describer.calls == 3
+    assert describer.calls == 4
 
 
 async def test_the_same_bytes_under_two_media_types_are_two_files():
@@ -368,10 +344,10 @@ async def test_a_url_is_not_described_twice_within_a_run():
     assert describer.calls == 1
 
 
-async def test_a_url_is_described_every_time_without_a_conversation_id():
-    """With no conversation to scope it to, a URL's description is not kept across requests, only within one.
+async def test_a_file_is_described_every_time_without_a_history_to_record_it_in():
+    """With no request in the run's history, a description is reused only within the request it was made for.
 
-    An agent run always has a conversation id, so this calls the hook directly with a bare `RunContext`.
+    An agent run always has its request in the history, so this calls the hook directly with a bare `RunContext`.
     """
     describer = Describer()
     capability: FileUnderstanding[None] = FileUnderstanding(fallback_subagent_model=FunctionModel(describer))
@@ -388,6 +364,35 @@ async def test_a_url_is_described_every_time_without_a_conversation_id():
         await capability.before_model_request(ctx, request_context)
     assert describer.calls == 2, 'the same URL twice in one request is described once, and again in the next'
     assert ctx.usage.requests == 2
+
+
+async def test_a_file_only_in_the_request_is_recorded_on_the_latest_request():
+    """A file a history processor added to the request isn't in the history, so the latest request records it.
+
+    Application data already under the capability's key that isn't a description map is replaced, not trusted.
+    """
+    describer = Describer()
+    capability: FileUnderstanding[None] = FileUnderstanding(fallback_subagent_model=FunctionModel(describer))
+    item = ImageUrl('https://example.com/cat.png')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('hi')], metadata={'file_understanding': 'not descriptions', 'app': 1})
+    ]
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), messages=history)
+    request_context = ModelRequestContext(
+        model=TestModel(profile=ModelProfile(supports_image_input=False)),
+        messages=[ModelRequest(parts=[UserPromptPart([item])])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    await capability.before_model_request(ctx, request_context)
+    await capability.before_model_request(ctx, request_context)
+    assert describer.calls == 1
+    [request] = history
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == snapshot(
+        {'file_understanding': {'url:https://example.com/cat.png': 'A description of 750ff4.'}, 'app': 1}
+    )
 
 
 async def test_describing_counts_toward_the_runs_usage_and_limits():
@@ -433,31 +438,58 @@ async def test_distinct_files_are_described_concurrently():
 
 
 async def test_a_url_is_described_once_across_the_turns_of_a_conversation():
-    """Each turn of a chat is a run of its own, but continues the conversation, so the URL is described once."""
+    """The description is recorded in the history, so a later turn served by another worker reuses its text."""
+    seen: list[list[ModelMessage]] = []
+
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    def agent(describer: Describer) -> Agent[None, str]:
+        text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
+        return Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
+
+    first_worker, second_worker = Describer(), Describer()
+    first = await agent(first_worker).run([DocumentUrl('https://example.com/report.pdf'), 'What is this?'])
+    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first.all_messages()))
+    await agent(second_worker).run('And who wrote it?', message_history=history)
+
+    assert (first_worker.calls, second_worker.calls) == (1, 0)
+    sent_first, sent_second = seen[0][0], seen[1][0]
+    assert isinstance(sent_first, ModelRequest) and isinstance(sent_second, ModelRequest)
+    assert sent_second.parts == sent_first.parts, 'the earlier request is sent with the same description'
+    # What is recorded is application data on the request, which the model never receives.
+    request = first.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.metadata == snapshot(
+        {'file_understanding': {'url:https://example.com/report.pdf': 'A description of a5f6ba.'}}
+    )
+
+
+async def test_a_file_is_described_once_across_the_requests_of_a_run():
+    """A tool call makes a second request in the same run, which reads the description from the history."""
     describer = Describer()
-    text_only = TestModel(profile=ModelProfile(supports_document_input=False))
+    text_only = TestModel(profile=ModelProfile(supports_image_input=False))
     agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describer))])
 
-    first = await agent.run([DocumentUrl('https://example.com/report.pdf'), 'What is this?'])
-    second = await agent.run('And who wrote it?', message_history=first.all_messages())
-    assert second.conversation_id == first.conversation_id
+    @agent.tool_plain
+    def look_again() -> str:
+        return 'looked'
+
+    result = await agent.run([_png('chart'), 'Look again, then answer.'])
+    assert sum(isinstance(message, ModelRequest) for message in result.all_messages()) == 2
     assert describer.calls == 1
 
 
-async def test_a_long_text_document_is_fetched_again_rather_than_kept():
-    """A downloaded text body over the cache's size limit isn't kept, so the next turn downloads it again."""
+async def test_a_text_document_by_url_is_downloaded_once_per_conversation():
+    """The downloaded text is recorded like a description, so a later turn doesn't download it again."""
     text_only = TestModel(profile=ModelProfile(supports_document_input=False))
     agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(Describer()))])
     with patch('pydantic_ai.capabilities.file_understanding.download_item', new_callable=AsyncMock) as download:
         download.return_value = {'data': 'x' * 100_001, 'data_type': 'text/plain'}
         first = await agent.run([DocumentUrl('https://example.com/big.txt'), 'Summarize.'])
         await agent.run('Again.', message_history=first.all_messages())
-        assert download.call_count == 2
-
-        download.return_value = {'data': 'short', 'data_type': 'text/plain'}
-        third = await agent.run([DocumentUrl('https://example.com/small.txt'), 'Summarize.'])
-        await agent.run('Again.', message_history=third.all_messages())
-        assert download.call_count == 3
+        assert download.call_count == 1
 
 
 @pytest.mark.skipif(not imports_successful(), reason='anthropic or google not installed')

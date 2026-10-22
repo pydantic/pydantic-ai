@@ -2337,3 +2337,34 @@ async def test_file_understanding_describes_through_the_engine() -> None:
     assert isinstance(part, UserPromptPart)
     [content] = part.content
     assert isinstance(content, str) and 'A field guide.' in content
+
+
+async def test_file_understanding_reads_a_recorded_description_instead_of_describing_again() -> None:
+    """The description is in the history, so a run that continues it schedules no `describe` operation.
+
+    This is what keeps a recovered or replayed workflow's operations in line with its recorded ones: whether a file
+    is described depends on the history the run is given, not on what other runs in the process did before.
+    """
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('A field guide.')])
+
+    def agent() -> Agent[None, str]:
+        text_only = FunctionModel(
+            lambda messages, info: ModelResponse(parts=[TextPart('ok')]),
+            profile=ModelProfile(supports_document_input=False),
+        )
+        return Agent(
+            text_only,
+            name='file_understanding_run',
+            capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe)), RecordingDurability()],
+        )
+
+    first = await agent().run([DocumentUrl('https://example.com/guide.pdf')])
+    # A fresh agent and engine, as a restarted worker would have.
+    continued = agent()
+    await continued.run('And again?', message_history=first.all_messages())
+
+    durability = RecordingDurability.from_agent(continued)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == []

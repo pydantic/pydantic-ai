@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, TypeGuard, TypeVar
+
+from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._file_input import SendableFile, inferred_media_type, unsupported_file_input
 from pydantic_ai._utils import format_inlined_text_file, gather, is_text_like_media_type
@@ -29,12 +31,7 @@ if TYPE_CHECKING:
 
 _T = TypeVar('_T')
 
-_MAX_DESCRIPTIONS = 256
-"""Descriptions kept per capability instance; the oldest goes first, so a long-lived agent stays bounded."""
-
-_MAX_CACHED_CHARS = 100_000
-"""Longest text kept for reuse: a downloaded text document can be large, so a longer one is fetched again
-instead of holding up to `_MAX_DESCRIPTIONS` full bodies in memory. Descriptions are well under it."""
+_DESCRIPTIONS_ADAPTER = TypeAdapter(dict[str, str])
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -68,15 +65,13 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     A text-like document (plain text, CSV, JSON, XML, YAML) is not described but inlined as it is, the way models
     that read text files do. A provider file reference ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) is left alone.
 
-    A file is described once and the description reused for the steps that follow, so a history that carries the
-    same file into every request costs one description. Binary content is reused for as long as the capability
-    lives, since the bytes are their own identity; a file given by URL is reused only within the conversation
-    that fetched it, because the same URL can serve different bytes to different callers and stop resolving once
-    a signature expires. A run continues the conversation of the `message_history` it is given, so the turns of
-    one chat share their URL descriptions. The conversation id comes from the caller when one is passed to
-    `run(..., conversation_id=...)`, so a caller that passes the same id to two unrelated runs gets the first
-    run's description of a URL in the second, without the URL being fetched again. A text document given by URL
-    is kept only up to 100,000 characters; a longer one is downloaded again each time a request carries it.
+    A file is described once per conversation. The description is recorded in the message history, in the
+    [`metadata`][pydantic_ai.messages.ModelRequest.metadata] of the request that holds the file (which is not
+    sent to the model), and later requests use that text instead of describing the file again. A turn that
+    continues from `message_history`, another worker serving the next turn, and a durable run replaying its
+    history all see the same description, so earlier requests keep the same content and the describer is not
+    paid for twice. A file given by URL is identified by its URL, and bytes by their content and media type.
+    The downloaded text of a text document given by URL is recorded the same way, so it is not downloaded again.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its
     own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
@@ -103,8 +98,6 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
-    _descriptions: dict[str, str] = field(default_factory=lambda: {}, init=False, repr=False)
-
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -117,6 +110,7 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             return request_context
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
+        recorded = self._recorded_descriptions([*ctx.messages, *request_context.messages])
         descriptions: dict[str, str] = {}
         pending: dict[str, SendableFile] = {}
         unaccepted = False
@@ -127,11 +121,11 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             if _is_text_bytes(item):
                 # Decoded where it is inlined: that costs nothing, so it isn't described or cached.
                 continue
-            identity = _identity(item, ctx.conversation_id)
+            identity = _identity(item)
             if identity in descriptions or identity in pending:
                 continue
-            if (cached := self._descriptions.get(identity)) is not None:
-                descriptions[identity] = cached
+            if (found := recorded.get(identity)) is not None:
+                descriptions[identity] = found
             else:
                 pending[identity] = item
         if not unaccepted:
@@ -139,11 +133,45 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         if pending:
             await self._describe_pending(ctx, pending, descriptions)
+            self._record(ctx.messages, {identity: descriptions[identity] for identity in pending})
 
-        messages = [
-            _substitute(message, profile, descriptions, ctx.conversation_id) for message in request_context.messages
-        ]
+        messages = [_substitute(message, profile, descriptions) for message in request_context.messages]
         return replace(request_context, messages=messages)
+
+    @property
+    def _metadata_key(self) -> str:
+        """Where in a request's `metadata` this capability's descriptions go: one per `id`, as instructions can differ."""
+        return self.id or 'file_understanding'
+
+    def _recorded_descriptions(self, messages: list[ModelMessage]) -> dict[str, str]:
+        """The descriptions recorded in `messages`, by file identity."""
+        recorded: dict[str, str] = {}
+        for message in messages:
+            if isinstance(message, ModelRequest) and message.metadata:
+                recorded.update(_str_dict(message.metadata.get(self._metadata_key)))
+        return recorded
+
+    def _record(self, history: list[ModelMessage], described: dict[str, str]) -> None:
+        """Record `described` in the run's history, on the request that holds each file.
+
+        `RunContext.messages` is the run's persistent history, so this is what the next request, the next turn
+        and a replay read back. A file that is only in this request's messages, not in the history (a history
+        processor can add one), is recorded on the latest request instead.
+        """
+        requests = [i for i, message in enumerate(history) if isinstance(message, ModelRequest)]
+        if not requests:
+            return
+        by_index: dict[int, dict[str, str]] = {}
+        for identity, description in described.items():
+            holder = next((i for i in requests if identity in _identities(history[i])), requests[-1])
+            by_index.setdefault(holder, {})[identity] = description
+        for index, new in by_index.items():
+            message = history[index]
+            assert isinstance(message, ModelRequest)
+            metadata = dict(message.metadata or {})
+            metadata[self._metadata_key] = {**_str_dict(metadata.get(self._metadata_key)), **new}
+            # A new message rather than a changed one, since the caller's `message_history` may hold this object.
+            history[index] = replace(message, metadata=metadata)
 
     async def _describe_pending(
         self, ctx: RunContext[AgentDepsT], pending: dict[str, SendableFile], descriptions: dict[str, str]
@@ -158,14 +186,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
                 usage_limits.check_before_request(ctx.usage + RunUsage(requests=requests))
 
         results = await gather(*(self._describe(item) for item in pending.values()))
-        for (identity, item), (description, usage) in zip(pending.items(), results):
+        for identity, (description, usage) in zip(pending, results):
             # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
             ctx.usage.incr(usage)
             descriptions[identity] = description
-            if _reuse_key(item, ctx.conversation_id) is not None and len(description) <= _MAX_CACHED_CHARS:
-                if len(self._descriptions) >= _MAX_DESCRIPTIONS:
-                    del self._descriptions[next(iter(self._descriptions))]
-                self._descriptions[identity] = description
 
     @durable_operation(name='describe')
     async def _describe(self, item: SendableFile) -> tuple[str, RunUsage]:
@@ -198,9 +222,20 @@ def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
                     yield from part.content_items()
 
 
-def _substitute(
-    message: ModelMessage, profile: ModelProfile, descriptions: dict[str, str], conversation_id: str | None
-) -> ModelMessage:
+def _str_dict(value: object) -> dict[str, str]:
+    """`value` as recorded descriptions, or none: `metadata` belongs to the application too and holds any JSON."""
+    try:
+        return _DESCRIPTIONS_ADAPTER.validate_python(value)
+    except ValidationError:
+        return {}
+
+
+def _identities(message: ModelMessage) -> set[str]:
+    """The identities of the files in `message`."""
+    return {_identity(item) for item in _file_content([message]) if isinstance(item, SendableFile)}
+
+
+def _substitute(message: ModelMessage, profile: ModelProfile, descriptions: dict[str, str]) -> ModelMessage:
     if not isinstance(message, ModelRequest):
         return message
 
@@ -213,7 +248,7 @@ def _substitute(
         if _is_text_bytes(item):
             description = item.data.decode('utf-8')
         else:
-            description = descriptions[_identity(item, conversation_id)]
+            description = descriptions[_identity(item)]
         return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
     original_parts = list(message.parts)
@@ -228,27 +263,15 @@ def _substitute(
     return replace(message, parts=parts) if parts != original_parts else message
 
 
-def _identity(item: SendableFile, conversation_id: str | None) -> str:
-    """What makes two items one file within this request: the reuse key, or for a URL with no conversation, the URL."""
-    if (key := _reuse_key(item, conversation_id)) is not None:
-        return key
-    assert not isinstance(item, BinaryContent), 'bytes always have a reuse key'
-    return f'url:{item.url}'
+def _identity(item: SendableFile) -> str:
+    """What makes two items one file: a URL is identified by itself, bytes by their content and media type.
 
-
-def _reuse_key(item: SendableFile, conversation_id: str | None) -> str | None:
-    """What identifies this file for reuse, or `None` when its description must not be reused.
-
-    Bytes are their own identity, so a description of them holds for anyone who sends the same bytes. A URL is
-    not its content: it can serve different bytes to different callers and stop resolving once a signature
-    expires, so a description of one is kept only for the conversation that fetched it, and not at all without a
-    conversation id to scope it to.
+    The media type is part of the identity, not a label on it: the same bytes are described when they are an
+    image and decoded when they are a CSV, so hashing the bytes alone returns the wrong one.
     """
     if isinstance(item, BinaryContent):
-        # The media type is part of the identity, not a label on it: the same bytes are described when they
-        # are an image and decoded when they are a CSV, so hashing the bytes alone returns the wrong one.
         return hashlib.sha256(item.media_type.encode() + b'\0' + item.data).hexdigest()
-    return f'{conversation_id}:{item.url}' if conversation_id is not None else None
+    return f'url:{item.url}'
 
 
 def _unaccepted_file(item: object, profile: ModelProfile) -> SendableFile | None:
