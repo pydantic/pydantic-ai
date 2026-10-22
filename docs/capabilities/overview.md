@@ -74,7 +74,7 @@ Tools from third-party services, most through the service's own hosted MCP serve
 | [Notion](https://pydantic.dev/docs/ai/harness/notion/) | Harness | Search and edit pages in a Notion workspace through Notion's hosted MCP server |
 | [Slack](https://pydantic.dev/docs/ai/harness/slack/) | Harness | Read and send messages, browse channels, and edit canvases through Slack's hosted MCP server |
 | [Day AI](https://pydantic.dev/docs/ai/harness/day-ai/) | Harness | Search and update CRM records and read meeting context through [Day AI](https://day.ai)'s hosted MCP server |
-| [Grain](https://pydantic.dev/docs/ai/harness/grain/) | Harness | Search and read meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
+| [Grain](https://pydantic.dev/docs/ai/harness/grain/) | Harness | Search and read meetings, transcripts, and notes, and create clips and tag meetings, through [Grain](https://grain.com)'s hosted MCP server |
 | [Pylon](https://pydantic.dev/docs/ai/harness/pylon/) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
 | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [PostHog](https://pydantic.dev/docs/ai/harness/posthog/) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through PostHog's hosted MCP server |

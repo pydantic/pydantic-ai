@@ -2570,20 +2570,6 @@ async def test_text_content_and_cache_points_are_text(allow_model_requests: None
         pytest.param(
             [
                 ModelRequest(parts=[UserPromptPart('Take a photo.')]),
-                ModelResponse(parts=[ToolCallPart('camera', {}, 'call-1')]),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            'camera', ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png')], 'call-1'
-                        )
-                    ]
-                ),
-            ],
-            id='tool_return',
-        ),
-        pytest.param(
-            [
-                ModelRequest(parts=[UserPromptPart('Take a photo.')]),
                 ModelResponse(
                     parts=[
                         NativeToolReturnPart(
@@ -2603,6 +2589,33 @@ async def test_file_in_tool_result_rejected(
     agent = Agent(typesafe_model, output_type=bool, instructions='Is this fine?')
     with pytest.raises(UserError, match='a file in a tool result'):
         await agent.run('Is it a cat?', message_history=history)
+
+
+async def test_file_in_tool_return_is_sent_as_a_note(allow_model_requests: None):
+    """Jev reads no images, so one a tool returned reaches it as a note naming it, rather than failing the run."""
+    seen: list[dict[str, Any]] = []
+
+    def record(request: httpx2.Request) -> httpx2.Response:
+        seen.append(json.loads(request.content))
+        return answers(response={'type': 'noul', 'noul': 0.9})
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Take a photo.')]),
+        ModelResponse(parts=[ToolCallPart('camera', {}, 'call-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'camera',
+                    ['A cat.', BinaryContent(b'\x89PNG', media_type='image/png', identifier='photo')],
+                    'call-1',
+                )
+            ]
+        ),
+    ]
+    agent = Agent(mock_model(record), output_type=bool, instructions='Is this fine?')
+    await agent.run('Is it a cat?', message_history=history)
+
+    assert 'File photo (image/png, 4 bytes) was not sent: this model cannot read images.' in json.dumps(seen[0])
 
 
 async def test_system_prompts_are_judged_not_asked(allow_model_requests: None):
