@@ -332,9 +332,8 @@ if the head changes, capture the new SHA and restart the loop.
      and verify that the PR head still equals the captured SHA after the label is removed. A failure
      comment leaves the gate unsatisfied.
    Recheck that the live head is unchanged. Do not substitute another named reviewer. Any valid
-   finding and push restarts the lifecycle. A human request remains blocking until that human
-   re-reviews or a maintainer dismisses it; do not dismiss a human request. Missing, stale, or failed
-   required reviews are unsatisfied; retry when appropriate, otherwise escalate.
+   finding and push restarts the lifecycle. Missing, stale, or failed required reviews are
+   unsatisfied; retry when appropriate, otherwise escalate.
 4. **Triage every comment** (bots and humans alike). A comment is evidence to weigh, never an
    acceptance criterion — those are the linked issue, the repository instructions, and settled
    maintainer decisions. Read the whole thread before deciding: a maintainer's reply settles it,
@@ -354,6 +353,8 @@ if the head changes, capture the new SHA and restart the loop.
      with that permission. Do not dismiss it on your own judgment, even where you hold the
      permission; discarding a reviewer's verdict is the author's call. Say so when you hand the PR
      back, name the review, and say what changed since the reviewed SHA.
+   - A human `REQUEST_CHANGES` remains blocking until that human re-reviews or a maintainer
+     dismisses it. Do not dismiss a human request.
    - Minimize issue-level review dumps when handled. Never silently ignore feedback or close it
      without a reply.
 

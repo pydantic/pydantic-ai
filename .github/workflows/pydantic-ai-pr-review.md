@@ -70,11 +70,12 @@ concurrency:
   # branches sitting on the same commit, each with its own open PR, cancel each
   # other. Together they name exactly what must not be reviewed twice at once.
   #
-  # Nothing cancels a run in progress. Only `eligibility` can read an approver's
-  # permission, so this key cannot tell a read-only approval from a request; with
-  # cancelling on, either would cancel a review queued for hours in the agent
-  # slot. A later event for the same head waits instead, and then skips as
-  # already reviewed or as not a request.
+  # Nothing cancels or replaces another run. Only `eligibility` can read an
+  # approver's permission, so this key cannot tell a read-only approval from a
+  # request; with cancelling on, either would cancel a review queued for hours in
+  # the agent slot, and without `queue: max` it would replace a pending request.
+  # A later event for the same head waits instead, and then skips as already
+  # reviewed or as not a request.
   #
   # A label other than `final-review` and a review that is not an approval are
   # never requests: each gets a group of its own, so it cannot replace a pending
@@ -82,6 +83,7 @@ concurrency:
   group: >-
     ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && github.event.review.state != 'approved')) && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: false
+  queue: max
 # Deterministic, pre-inference gate: unless `eligibility` says so, no model runs.
 #
 # `eligibility` MUST also be referenced from the prompt body below. gh-aw copies
