@@ -502,7 +502,7 @@ class MediaContext:
 
 All fields default; new fields are added non-breakingly as use cases emerge. Pass what you have, ignore the rest.
 
-**Persistence by store.** `get_metadata(uri)` returns the stored `metadata` mapping and raises `FileNotFoundError` for a blob that was never stored. A repeated `put` keeps the first metadata on the SQLite, MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with metadata replaces it; on `S3MediaStore` every `put` replaces it, and one without metadata clears it. `get_metadata` does not return `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `DiskMediaStore` does not persist it.
+**Persistence by store.** `get_metadata(uri)` returns the stored `metadata` mapping and raises `FileNotFoundError` for a blob that was never stored. A repeated `put` keeps the first metadata on the SQLite, MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with metadata replaces it; on `S3MediaStore` every `put` replaces it, and one without metadata clears it. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` does not return `media_type`: S3 sends it as `Content-Type`, the database stores keep it in a column, and `DiskMediaStore` does not persist it.
 
 - `SqliteMediaStore` writes `metadata` to a JSON column and `media_type` to a dedicated column.
 - `S3MediaStore` sends `metadata` as signed `x-amz-meta-*` headers and `media_type` as `Content-Type`; `get_metadata` reads the `x-amz-meta-*` values back from the HEAD response. Keys must match `[A-Za-z0-9-]+` and come back lowercased.
