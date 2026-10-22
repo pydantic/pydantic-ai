@@ -145,8 +145,8 @@ def rejection_handling(files: list[SourceFile]) -> Iterator[SiblingPair]:
             if number not in added or not match or '.catch(' in statement or '.then(' in statement:
                 continue
             client = match.group(1)
-            # The sibling is a call on the same client, starting on its own line, with `.catch` chained onto it
-            # within the next two lines.
+            # The sibling is a call on the same client anywhere on a line, with `.catch` chained onto it on that
+            # line or within the next two.
             call = re.compile(rf'\b{re.escape(client)}\.\w+\(')
             caught = re.compile(rf'{re.escape(client)}\.\w+\(.*?\)\s*\.catch\(')
             sibling = next(

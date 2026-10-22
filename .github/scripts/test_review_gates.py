@@ -242,6 +242,8 @@ class FakeRepository:
     unpatched: bool = False
     # Replaces `scripted_answer` for the run.
     answer: Callable[[str, str], float] | None = None
+    # The check run whose PATCH fails with a 500.
+    failing_patch: int | None = None
     check_runs: list[dict[str, str | int]] = field(default_factory=list[dict[str, str | int]])
     finished: dict[int, _Finished] = field(default_factory=dict[int, _Finished])
 
@@ -296,6 +298,8 @@ class FakeRepository:
             return httpx2.Response(201, json=self.check_runs[-1])
         if path.startswith('check-runs/') and request.method == 'PATCH':
             check_run_id = int(path.removeprefix('check-runs/'))
+            if check_run_id == self.failing_patch:
+                return httpx2.Response(500)
             patched = json.loads(request.content)
             self.finished[check_run_id] = _Finished.model_validate(patched)
             run = self.check_runs[check_run_id - 1]
@@ -304,7 +308,11 @@ class FakeRepository:
         raise AssertionError(f'unexpected request: {request.method} {request.url}')
 
     def conclusions(self) -> dict[str, _Finished]:
-        return {str(run['name']): self.finished[int(run['id'])] for run in self.check_runs}
+        return {
+            str(run['name']): self.finished[int(run['id'])]
+            for run in self.check_runs
+            if int(run['id']) in self.finished
+        }
 
 
 def scripted_answer(state: str, question: str) -> float:
@@ -397,6 +405,29 @@ async def test_a_failed_run_closes_its_check_runs_and_a_rerun_judges_again(fake:
     await review_gates_main.run(env(fake), ROOT)
 
     assert len(fake.check_runs) == 2 * len(GATES)
+
+
+async def test_a_check_run_left_in_progress_is_judged_again(fake: FakeRepository):
+    fake.check_runs = [
+        {'id': n, 'name': gate.name, 'external_id': f'{key}:head1:{gate.fingerprint}', 'status': 'in_progress'}
+        for n, (key, gate) in enumerate(GATES.items(), start=1)
+    ]
+
+    await review_gates_main.run(env(fake), ROOT)
+
+    assert len(fake.check_runs) == 2 * len(GATES)
+    assert {run['status'] for run in fake.check_runs[len(GATES) :]} == {'completed'}
+
+
+async def test_a_failed_close_still_closes_the_other_check_runs(fake: FakeRepository):
+    fake.compare_status = 502
+    fake.failing_patch = 1
+
+    with pytest.raises(httpx2.HTTPStatusError):
+        await review_gates_main.run(env(fake), ROOT)
+
+    assert sorted(fake.finished) == [2, 3]
+    assert {result.conclusion for result in fake.finished.values()} == {'neutral'}
 
 
 async def test_an_item_the_model_could_not_answer_is_not_judged(fake: FakeRepository):
