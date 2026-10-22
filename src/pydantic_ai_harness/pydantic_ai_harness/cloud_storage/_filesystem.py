@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import posixpath
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import KW_ONLY, dataclass, field
+from datetime import datetime
 from functools import cached_property, partial
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlencode, urlsplit
 
 import anyio
 import anyio.to_thread
@@ -16,7 +17,7 @@ import anyio.to_thread
 try:
     import obstore
     from obstore.exceptions import GenericError, PermissionDeniedError, UnauthenticatedError
-    from obstore.store import from_url
+    from obstore.store import AzureStore, GCSStore, S3Store
 except ImportError as _import_error:
     raise ImportError(
         'Install `pydantic-ai-harness[cloud-storage]` to use cloud storage filesystems.'
@@ -68,6 +69,20 @@ class _ObjectStoreFilesystem(WorkspaceBackend, SupportsFilesystem):
         if scheme not in self._schemes:
             schemes = ' or '.join(f'`{scheme}://`' for scheme in self._schemes)
             raise ValueError(f'{type(self).__name__} URLs start with {schemes}, got {self.url!r}')
+        container, folder = self._location
+        if not container or any(part in ('', '.', '..') for part in folder.split('/') if folder):
+            raise ValueError(
+                f'{type(self).__name__} takes a bucket and a plain folder path, without `//`, `.` or `..`, '
+                f'got {self.url!r}'
+            )
+        if not callable(self.credentials) and self.credentials is not None:
+            check_expiry(self.credentials)
+
+    @cached_property
+    def _location(self) -> tuple[str, str]:
+        """The bucket or container, and the folder in it, decoded once for file tools and mounts alike."""
+        url = urlsplit(self.url)
+        return url.netloc, _folder(url.path)
 
     @property
     def ref(self) -> WorkspaceRef:
@@ -84,13 +99,17 @@ class _ObjectStoreFilesystem(WorkspaceBackend, SupportsFilesystem):
     def _store(self) -> ObjectStore:
         credentials = self.credentials
         provider = credentials if callable(credentials) or credentials is None else lambda: credentials
-        # One call for every cloud: obstore's overloads type `config` and the provider per cloud.
-        return from_url(
-            self.url,
+        container, folder = self._location
+        return self._open(
+            container,
+            prefix=folder or None,
             config=cast(Any, self._config()),
             client_options={'allow_http': True} if (self.endpoint or '').startswith('http://') else None,
             credential_provider=cast(Any, provider),
         )
+
+    # obstore types `config` and the provider per cloud; each subclass names its store.
+    _open: ClassVar[Callable[..., ObjectStore]]
 
     async def read_bytes(self, path: str) -> bytes:
         key = _key(path)
@@ -224,6 +243,7 @@ class S3Filesystem(_ObjectStoreFilesystem):
 
     _schemes = ('s3',)
     _provider = 's3'
+    _open = S3Store
 
     _: KW_ONLY
 
@@ -244,6 +264,25 @@ class S3Filesystem(_ObjectStoreFilesystem):
             config['region'] = self.region
         return config
 
+    def _rclone_remote(self) -> tuple[dict[str, str], str]:
+        """The settings rclone needs for this bucket, without keys, and the folder in its terms."""
+        remote = {'type': 's3', 'provider': 'Other' if self.endpoint else 'AWS', 'env_auth': 'false'}
+        if self.endpoint:
+            remote['endpoint'] = self.endpoint
+        if self.region:
+            remote['region'] = self.region
+        return remote, '/'.join(part for part in self._location if part)
+
+    def _rclone_keys(self, keys: Mapping[str, Any]) -> dict[str, str]:
+        """The keys in rclone's terms."""
+        if not {'access_key_id', 'secret_access_key'} <= keys.keys():
+            raise ValueError('S3 keys need `access_key_id` and `secret_access_key`.')
+        return {
+            'access_key_id': keys['access_key_id'],
+            'secret_access_key': keys['secret_access_key'],
+            'session_token': keys.get('token') or '',
+        }
+
 
 @dataclass(frozen=True)
 class GCSFilesystem(_ObjectStoreFilesystem):
@@ -256,11 +295,12 @@ class GCSFilesystem(_ObjectStoreFilesystem):
     ```
 
     Paths start at `/`, which is the folder in `url`. An empty folder holds a hidden `.pydantic-ai-dir` object.
-    Shell commands can't see it: a [`Mount`][pydantic_ai.workspaces.Mount] of it with `shell=True` is refused.
+    Commands can't see it: a [`Mount`][pydantic_ai.workspaces.Mount] of it with `commands=True` is refused.
     """
 
     _schemes = ('gs',)
     _provider = 'gcs'
+    _open = GCSStore
 
     _: KW_ONLY
 
@@ -288,6 +328,7 @@ class AzureFilesystem(_ObjectStoreFilesystem):
 
     _schemes = ('az', 'https')
     _provider = 'azure'
+    _open = AzureStore
 
     _: KW_ONLY
 
@@ -312,11 +353,54 @@ class AzureFilesystem(_ObjectStoreFilesystem):
         if url.scheme == 'az' and self.account is None:
             raise ValueError('AzureFilesystem needs `account=` with an `az://` URL')
 
+    @cached_property
+    def _location(self) -> tuple[str, str]:
+        url = urlsplit(self.url)
+        if url.scheme == 'az':
+            return url.netloc, _folder(url.path)
+        # `https://<account>.blob.core.windows.net/<container>/<folder>`
+        container, _, folder = _folder(url.path).partition('/')
+        return container, folder
+
+    @property
+    def _account(self) -> str:
+        return self.account or urlsplit(self.url).netloc.split('.', 1)[0]
+
     def _config(self) -> dict[str, str]:
         config = super()._config()
-        if self.account is not None:
-            config['account_name'] = self.account
+        config['account_name'] = self._account
         return config
+
+    def _rclone_remote(self) -> tuple[dict[str, str], str]:
+        """The settings rclone needs for this container, without keys, and the folder in its terms."""
+        remote = {'type': 'azureblob', 'account': self._account}
+        if self.endpoint:
+            remote['endpoint'] = self.endpoint
+        return remote, '/'.join(part for part in self._location if part)
+
+    def _rclone_keys(self, keys: Mapping[str, Any]) -> dict[str, str]:
+        """The keys in rclone's terms: an account key, or a SAS token for the container."""
+        if 'access_key' in keys:
+            return {'key': keys['access_key']}
+        if 'sas_token' in keys:
+            token = keys['sas_token']
+            query = token.lstrip('?') if isinstance(token, str) else urlencode(token)
+            base = self.endpoint or f'https://{self._account}.blob.core.windows.net'
+            return {'sas_url': f'{base.rstrip("/")}/{self._location[0]}?{query}'}
+        raise ValueError('Azure keys for commands need an `access_key` or a `sas_token`.')
+
+
+def _folder(path: str) -> str:
+    """A URL's path without its leading and trailing `/`, decoded; a doubled `/` is kept, to be refused."""
+    path = unquote(path)
+    return (path[1:] if path.startswith('/') else path).rstrip('/')
+
+
+def check_expiry(keys: Mapping[str, Any]) -> None:
+    """Refuse an `expires_at` obstore can't compare: it must be a datetime with a time zone, or `None`."""
+    expires_at = keys.get('expires_at')
+    if expires_at is not None and (not isinstance(expires_at, datetime) or expires_at.tzinfo is None):
+        raise ValueError(f'`expires_at` must be a datetime with a time zone, such as UTC, got {expires_at!r}')
 
 
 def _list(store: ObjectStore, prefix: str, chunk_size: int = 1000) -> obstore.ListStream[Sequence[obstore.ObjectMeta]]:

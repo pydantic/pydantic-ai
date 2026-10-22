@@ -37,7 +37,7 @@ async def main():
     print(result.output)
 ```
 
-The file tools read `2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv`. Pass `workspace=ReadOnlyWorkspace(Workspace(exports))` (both from `pydantic_ai.workspaces`) to refuse changes.
+The file tools read `2026-10-01.csv` from `s3://acme-data/exports/2026-10-01.csv`. Pass `workspace=ReadOnlyWorkspace(exports)` (from `pydantic_ai.workspaces`) to refuse changes.
 
 ## As a folder
 
@@ -66,17 +66,17 @@ def customer_files(ctx: RunContext[Customer]) -> list[Mount]:
 agent = Agent('{{ anthropic:large }}', deps_type=Customer, capabilities=[E2BSandbox(mounts=customer_files), Coder()])
 ```
 
-File tools reach `files/`; shell commands don't, and the model is told so.
+File tools reach `files/`; commands don't, and the model is told so.
 
-## Shell commands
+## Commands
 
-With `Mount('files', files, shell=True)`, the sandbox mounts the bucket with [rclone](https://rclone.org), so commands see the same files as an ordinary folder: `grep -r`, `pandas`, `git` and editors all work there.
+With `Mount('files', files, commands=True)`, the sandbox mounts the bucket with [rclone](https://rclone.org), so commands see the same files as an ordinary folder: `grep -r`, `pandas`, `git` and editors all work there.
 
 That needs:
 
 - a sandbox that allows FUSE: [Docker](docker-sandbox.md) when its `docker_args` give the container `/dev/fuse`;
 - Python 3 in the image; `fuse3` (with apt) and rclone are installed on first use if the image lacks them, which needs internet access;
-- an `S3Filesystem` or `AzureFilesystem` with `credentials=` that expire. Commands in the sandbox can read the keys a mount uses, so only keys with an `expires_at` are handed over, given directly or returned by a function, which is called again before they expire. Make them keys limited to the folder, so a command that reads them can't reach anything else. Azure mounts use the storage account key, so they also need `share_long_lived_credentials=True`.
+- an `S3Filesystem` or `AzureFilesystem` with `credentials=` that expire. Commands in the sandbox can read the keys a mount uses, so only keys with an `expires_at` are handed over, given directly or returned by a function, which is called again before they expire. Make them keys limited to the folder, so a command that reads them can't reach anything else: temporary AWS keys with a session policy, or an Azure SAS token for the container (`{'sas_token': ..., 'expires_at': ...}`). An Azure mount is mounted again to take a new SAS token, so a command still using the folder at that moment fails.
 
 When the sandbox or the keys can't work, the run fails before it starts and says why; a missing Python 3, or no internet to install rclone, shows at the first command. With AWS, a function like this one hands out keys that last 15 minutes and reach only `exports/`:
 
@@ -113,7 +113,7 @@ def exports_keys():
 exports = S3Filesystem('s3://acme-data/exports/', credentials=exports_keys)
 ```
 
-A function whose keys turn out not to expire is only found when the first command runs. What commands write reaches the bucket a few seconds after the file is closed, so a sandbox destroyed right after a run can lose its last writes. If the sandbox restarts while files are still being sent, they are sent when the bucket is mounted again. Files written into the folder while it wasn't mounted, such as after a restart, are moved to `.pydantic-ai-recovered/` next to it when it is mounted again. A sandbox has one set of mounts at a time: a run with other mounts replaces them.
+A function whose keys turn out not to expire is only found when the first command runs. What commands write reaches the bucket a few seconds after the file is closed, so a sandbox destroyed right after a run can lose its last writes. If the sandbox restarts while files are still being sent, they are sent when the bucket is mounted again. Files written into the folder while it wasn't mounted, such as after a restart, are moved to `.pydantic-ai-recovered/` next to it when it is mounted again. A folder that already holds files in the sandbox is refused. A sandbox has one set of mounts at a time: a later run with other mounts replaces them, and a run at the same time with other mounts is refused, so give concurrent runs their own sandboxes.
 
 ## Choosing the class
 
@@ -124,7 +124,7 @@ A function whose keys turn out not to expire is only found when the first comman
 | Google Cloud Storage | `GCSFilesystem('gs://<bucket>/<folder>/')` |
 | Azure Blob Storage | `AzureFilesystem('https://<account>.blob.core.windows.net/<container>/<folder>/')` |
 
-The folder is optional; without it the agent sees the whole bucket. Google Cloud Storage can't be mounted for shell commands.
+The folder is optional; without it the agent sees the whole bucket. Google Cloud Storage can't be mounted for commands.
 
 ## Credentials
 

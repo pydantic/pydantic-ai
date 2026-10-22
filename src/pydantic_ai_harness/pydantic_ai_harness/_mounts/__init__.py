@@ -1,7 +1,7 @@
 """Mounting cloud storage into sandboxes with rclone, shared by every sandbox backend.
 
-A backend implements `SupportsMounts` with these two functions and one primitive of its own: running a command as
-root with one line on stdin, kept out of logs. The line carries the keys; the command is `_helper.py`'s source.
+A backend implements `SupportsMounts` with a `Mounter` and one primitive of its own: running a command as root with one
+line on stdin, kept out of logs. The line carries the keys; the command is `_helper.py`'s source.
 """
 
 from __future__ import annotations
@@ -9,23 +9,19 @@ from __future__ import annotations
 import hashlib
 import json
 import posixpath
-import sys
+import uuid
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlsplit
+from typing import Any, Protocol, cast, runtime_checkable
 
 import anyio
 import anyio.to_thread
 
 from pydantic_ai.workspaces import CommandResult, Mount, MountError
 
-if TYPE_CHECKING:
-    from pydantic_ai_harness.cloud_storage import AzureFilesystem, S3Filesystem
-
-__all__ = ('RunAsRoot', 'check_mount', 'ensure_mounts')
+__all__ = ('Mounter', 'RunAsRoot', 'check_mount')
 
 RunAsRoot = Callable[[Sequence[str], bytes], Awaitable[CommandResult]]
 """Run an argv as root in the sandbox with `stdin` (one line) as its input, which must not reach any log."""
@@ -36,151 +32,170 @@ _ONLY_IF_MOUNTED = (
     """grep -q ' - fuse.rclone pai-' /proc/self/mountinfo || { head -n 1 > /dev/null; echo '{"recovered": []}'; exit 0; }; """
     'exec python3 -c "$1"'
 )
-"""With nothing to mount, the helper only has mounts of an earlier configuration to remove: skip it, and its need for
-Python, when there are none. The request line is still read, as some sandboxes deliver it only to a command that does."""
+"""With nothing to mount, the helper only has mounts of an earlier run to remove: skip it, and its need for Python,
+when there are none. The request line is still read, as some sandboxes deliver it only to a command that does."""
+
+_LEASE = timedelta(minutes=15)
+"""How long a run holds the sandbox's mounts after it last ensured them, so a run that crashed frees them in time."""
+
+_RELEASE_SECONDS = 30
+"""How long the end of a run waits to release its mounts; the lease ends by itself if this gives up."""
 
 _ERROR_TAIL = 500
 """How much of the helper's output a `MountError` quotes when the helper didn't answer."""
 
 
+@runtime_checkable
+class _Mountable(Protocol):
+    """A filesystem rclone can mount: `S3Filesystem` and `AzureFilesystem`."""
+
+    url: str
+    credentials: Any
+    share_long_lived_credentials: bool
+
+    def _rclone_remote(self) -> tuple[dict[str, str], str]: ...
+
+    def _rclone_keys(self, keys: Mapping[str, Any]) -> dict[str, str]: ...
+
+
 def check_mount(mount: Mount) -> None:
     """Refuse a mount whose filesystem rclone can't mount without putting long-lived keys in the sandbox. No I/O."""
-    filesystem = _filesystem(mount)
-    name = type(mount.filesystem).__name__
-    if filesystem is None:
-        # Google Cloud Storage is reachable through file tools; no emulator speaks the API its mounts need to be tested.
+    filesystem = mount.filesystem
+    name = type(filesystem).__name__
+    if not isinstance(filesystem, _Mountable):
         raise MountError(
-            f'{name} cannot be mounted for shell commands: only an `S3Filesystem` or `AzureFilesystem` can. '
-            'Leave `shell` out to reach it with file tools.'
+            f'{name} cannot be mounted for commands; an `S3Filesystem` or `AzureFilesystem` can. '
+            'Leave out `commands=True` and file tools still reach the folder.'
         )
     credentials = filesystem.credentials
     if credentials is None:
         raise MountError(
-            f'{name} finds its keys in the environment, so they cannot be handed to the sandbox to mount it. '
+            f'{name} finds its keys in the environment, so they cannot be handed to the sandbox. '
             'Pass `credentials=`: keys that expire, or a function returning them.'
         )
-    if callable(credentials):
-        return
-    if _key_name(filesystem) not in credentials:
-        raise MountError(f'Mounting {filesystem.url} needs an access key: S3 keys or an Azure account key.')
-    _check_expiry(filesystem, credentials)
+    if not callable(credentials):
+        _keys(filesystem, credentials)
 
 
-async def ensure_mounts(run_as_root: RunAsRoot, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
-    """Mount `mounts` (the whole set) with rclone, repairing lost ones and removing ones no longer wanted.
+class Mounter:
+    """A sandbox backend's rclone mounts: which run holds them, and whether an earlier run may have left some."""
 
-    Returns when the earliest keys expire, so they are refreshed before then.
-    """
-    requests: list[dict[str, Any]] = []
-    keys: dict[str, dict[str, str]] = {}
-    expiries: list[datetime] = []
-    for mount in mounts:
-        # `check_mount` admitted only these.
-        filesystem = cast('S3Filesystem | AzureFilesystem', mount.filesystem)
-        path = posixpath.join(working_dir, mount.path)
-        remote, root = _remote(filesystem)
-        identity = json.dumps([remote, root, mount.read_only, path], sort_keys=True)
-        fingerprint = hashlib.sha256(identity.encode()).hexdigest()[:16]
-        requests.append(
-            {'path': path, 'fingerprint': fingerprint, 'remote': remote, 'root': root, 'read_only': mount.read_only}
+    def __init__(self, run_as_root: RunAsRoot, *, attached: bool) -> None:
+        self._run_as_root = run_as_root
+        self.owner = uuid.uuid4().hex
+        """The run holding the mounts; the capability that built the backend sets its run's id."""
+        # A sandbox this backend creates starts with nothing mounted; one it attaches to may have an earlier run's.
+        self._leftovers_possible = attached
+        self._leased = False
+
+    def needed(self, mounts: Sequence[Mount]) -> bool:
+        """Whether `ensure` has anything to do, so a sandbox isn't started or asked for nothing."""
+        return bool(mounts) or self._leftovers_possible
+
+    async def ensure(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        """Mount `mounts` (the whole set), removing others, and hold them for this run. Returns when to call again."""
+        requests: list[dict[str, Any]] = []
+        keys: dict[str, dict[str, str]] = {}
+        expiries: list[datetime] = []
+        for mount in mounts:
+            filesystem = mount.filesystem
+            assert isinstance(filesystem, _Mountable)  # `check_mount` admitted only these.
+            path = posixpath.join(working_dir, mount.path)
+            remote, root = filesystem._rclone_remote()  # pyright: ignore[reportPrivateUsage]
+            identity = json.dumps([remote, root, mount.read_only, path], sort_keys=True)
+            fingerprint = hashlib.sha256(identity.encode()).hexdigest()[:16]
+            credentials = filesystem.credentials
+            # A credentials function may call out (to STS, say), so it runs off the event loop.
+            fetched = await anyio.to_thread.run_sync(credentials) if callable(credentials) else credentials
+            fresh = cast('Mapping[str, Any]', fetched)
+            keys[fingerprint] = _keys(filesystem, fresh)
+            expires_at: datetime | None = fresh.get('expires_at')
+            requests.append(
+                {
+                    'path': path,
+                    'fingerprint': fingerprint,
+                    'remote': remote,
+                    'root': root,
+                    'read_only': mount.read_only,
+                    'keys_expire': None if expires_at is None else expires_at.timestamp(),
+                }
+            )
+            # Only a function can give fresher keys; given keys are used until they expire.
+            if callable(credentials) and fresh.get('expires_at') is not None:
+                expiries.append(fresh['expires_at'])
+        # The lease is a duration, so the sandbox's clock decides when it ends.
+        lease_until = datetime.now(UTC) + _LEASE
+        reply = await self._call(
+            {
+                'mounts': requests,
+                'keys': keys,
+                'working_dir': working_dir,
+                'owner': self.owner,
+                'lease_seconds': _LEASE.total_seconds(),
+            },
+            only_if_mounted=not mounts,
         )
-        credentials = await _credentials(filesystem)
-        keys[fingerprint] = _keys(filesystem, credentials)
-        # Only a function can give fresher keys; given keys are used until they expire.
-        if callable(filesystem.credentials) and credentials.get('expires_at') is not None:
-            expiries.append(credentials['expires_at'])
-    request = json.dumps({'mounts': requests, 'keys': keys, 'working_dir': working_dir})
-    argv = ['python3', '-c', _HELPER] if mounts else ['sh', '-c', _ONLY_IF_MOUNTED, 'sh', _HELPER]
-    result = await _run_to_the_end(run_as_root, argv, f'{request}\n'.encode())
-    # The last JSON line is the helper's; `sudo` and login shells may print around it.
-    line = next((line for line in reversed(result.stdout.splitlines()) if line.startswith('{')), None)
-    if line is None:
-        output = (result.stderr or result.stdout).strip()[-_ERROR_TAIL:]
-        raise MountError(f'Could not mount storage in the sandbox: {output}')
-    reply = json.loads(line)
-    if 'error' in reply:
-        raise MountError(f'Could not mount storage in the sandbox: {reply["message"]}')
-    for folder in reply['recovered']:
-        warnings.warn(
-            f'Files written into a mount folder while nothing was mounted there were moved to {folder}.', stacklevel=2
-        )
-    return min(expiries, default=None)
+        for folder in reply['recovered']:
+            warnings.warn(
+                f'Files written into a mount folder while the bucket was not mounted there were moved to {folder}.',
+                stacklevel=2,
+            )
+        self._leftovers_possible = False
+        self._leased = bool(mounts)
+        return min([*expiries, lease_until]) if mounts else None
+
+    async def release(self) -> None:
+        """Let other runs mount their own filesystems in the sandbox, leaving this run's mounted until then."""
+        if not self._leased:
+            return
+        self._leased = False
+        # The mounts stay in the sandbox, for the next run to keep or remove.
+        self._leftovers_possible = True
+        # Best effort and bounded, and never the reason a run fails: if the sandbox can't be reached, the lease ends
+        # by itself.
+        with anyio.move_on_after(_RELEASE_SECONDS, shield=True):
+            try:
+                await self._call({'release': self.owner})
+            except Exception:
+                pass
+
+    async def _call(self, request: dict[str, Any], *, only_if_mounted: bool = False) -> dict[str, Any]:
+        argv = ['sh', '-c', _ONLY_IF_MOUNTED, 'sh', _HELPER] if only_if_mounted else ['python3', '-c', _HELPER]
+        # A cancelled caller waits for the helper, which has a deadline of its own: stopped halfway, it could leave a
+        # mount half made, or keep the lock that every later call waits for.
+        result: CommandResult | None = None
+        with anyio.CancelScope(shield=True):
+            result = await self._run_as_root(argv, f'{json.dumps(request)}\n'.encode())
+        assert result is not None  # A shielded scope never swallows the return.
+        # The last JSON line is the helper's; `sudo` and login shells may print around it.
+        line = next((line for line in reversed(result.stdout.splitlines()) if line.startswith('{')), None)
+        if line is None:
+            output = (result.stderr or result.stdout).strip()[-_ERROR_TAIL:]
+            raise MountError(f'Could not mount storage in the sandbox: {output}')
+        reply: dict[str, Any] = json.loads(line)
+        if 'error' in reply:
+            raise MountError(reply['message'])
+        return reply
 
 
-async def _run_to_the_end(run_as_root: RunAsRoot, argv: Sequence[str], stdin: bytes) -> CommandResult:  # pyright: ignore[reportReturnType]
-    # A cancelled caller waits for the helper, which has a deadline of its own: stopped halfway, it could leave a mount
-    # half made, or keep the lock that every later call waits for. (A shielded scope never swallows the return, which
-    # pyright can't tell.)
-    with anyio.CancelScope(shield=True):
-        return await run_as_root(argv, stdin)
+def _keys(filesystem: _Mountable, keys: Mapping[str, Any]) -> dict[str, str]:
+    """The keys in rclone's terms, refused when commands shouldn't be handed them."""
+    # Imported here: it needs the `cloud-storage` extra, which only a filesystem that got this far has.
+    from pydantic_ai_harness.cloud_storage._filesystem import check_expiry
 
-
-def _filesystem(mount: Mount) -> S3Filesystem | AzureFilesystem | None:
-    # Not imported here: it needs the `cloud-storage` extra, which a sandbox without such mounts doesn't. Until
-    # something imports it, no filesystem can be one of these.
-    module = sys.modules.get('pydantic_ai_harness.cloud_storage._filesystem')
-    filesystem = mount.filesystem
-    if module is None or not isinstance(filesystem, (module.S3Filesystem, module.AzureFilesystem)):
-        return None
-    return cast('S3Filesystem | AzureFilesystem', filesystem)
-
-
-def _key_name(filesystem: S3Filesystem | AzureFilesystem) -> str:
-    return 'access_key_id' if urlsplit(filesystem.url).scheme == 's3' else 'access_key'
-
-
-def _check_expiry(filesystem: S3Filesystem | AzureFilesystem, keys: Mapping[str, Any]) -> None:
+    try:
+        check_expiry(keys)
+        converted = filesystem._rclone_keys(keys)  # pyright: ignore[reportPrivateUsage]
+    except ValueError as error:
+        raise MountError(f'The keys for {filesystem.url} cannot be used: {error}') from error
     expires_at = keys.get('expires_at')
     if expires_at is not None and expires_at <= datetime.now(UTC):
-        raise MountError(f'The keys for {filesystem.url} have expired.')
+        raise MountError(
+            f'The keys for {filesystem.url} have expired. Pass keys that expire later, or a function returning fresh ones.'
+        )
     if expires_at is None and not filesystem.share_long_lived_credentials:
         raise MountError(
             f'The keys for {filesystem.url} do not expire, so they are not handed to the sandbox, where commands '
             'could read them. Use keys that expire, or set `share_long_lived_credentials=True`.'
         )
-
-
-async def _credentials(filesystem: S3Filesystem | AzureFilesystem) -> Mapping[str, Any]:
-    credentials = filesystem.credentials
-    # A credentials function may call out (to STS, say), so it runs off the event loop.
-    keys: Mapping[str, Any] = await anyio.to_thread.run_sync(credentials) if callable(credentials) else credentials  # type: ignore[arg-type]
-    _check_expiry(filesystem, keys)
-    return keys
-
-
-def _remote(filesystem: S3Filesystem | AzureFilesystem) -> tuple[dict[str, str], str]:
-    """The filesystem's rclone settings, without keys, and the path of its folder in rclone's terms."""
-    url = urlsplit(filesystem.url)
-    folder = url.path.strip('/')
-    if url.scheme == 's3':
-        s3 = cast('S3Filesystem', filesystem)
-        remote = {'type': 's3', 'provider': 'Other' if s3.endpoint else 'AWS', 'env_auth': 'false'}
-        if s3.endpoint:
-            remote['endpoint'] = s3.endpoint
-        if s3.region:
-            remote['region'] = s3.region
-        return remote, posixpath.join(url.netloc, folder)
-    # Azure: `az://<container>/<folder>` with `account`, or `https://<account>.blob.core.windows.net/<container>/...`.
-    azure = cast('AzureFilesystem', filesystem)
-    if url.scheme == 'az':
-        account, container = cast(str, azure.account), url.netloc
-    else:
-        account = url.netloc.split('.', 1)[0]
-        container, _, folder = folder.partition('/')
-    remote = {'type': 'azureblob', 'account': account}
-    if azure.endpoint:
-        remote['endpoint'] = azure.endpoint
-    return remote, posixpath.join(container, folder)
-
-
-def _keys(filesystem: S3Filesystem | AzureFilesystem, keys: Mapping[str, Any]) -> dict[str, str]:
-    """The keys in rclone's terms."""
-    if 'access_key_id' in keys:
-        return {
-            'access_key_id': keys['access_key_id'],
-            'secret_access_key': keys['secret_access_key'],
-            'session_token': keys.get('token') or '',
-        }
-    if 'access_key' in keys:
-        return {'key': keys['access_key']}
-    raise MountError(f'Mounting {filesystem.url} needs an access key: S3 keys or an Azure account key.')
+    return converted
