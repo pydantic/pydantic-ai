@@ -1,5 +1,5 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering Agent Skills registries, SQL analytics and RAG."
+description: "Find community capability packages for Pydantic AI, covering SQL analytics and RAG."
 ---
 
 # Third-Party Capabilities
@@ -7,12 +7,6 @@ description: "Find community capability packages for Pydantic AI, covering Agent
 [Capabilities](overview.md) are the recommended way for third-party packages to extend Pydantic AI, since they can bundle tools with hooks, instructions, and model settings. See [Extensibility](../extensibility.md) for the full ecosystem, including [third-party toolsets](../toolsets.md#third-party-toolsets) that can also be wrapped as capabilities.
 
 Before reaching for a package here, check the [capability index](overview.md#available-capabilities), which covers Pydantic AI and [Pydantic AI Harness](../harness/index.md), the official capability library, including planning, compaction, sub-agents, guardrails, file system and shell access, and sandboxes. This page lists community packages for use cases those don't cover, or that build on them.
-
-## Agent Skills
-
-Pydantic AI supports [Agent Skills natively](on-demand.md#loading-skills-from-markdown-files) through [on-demand capabilities](on-demand.md), which collapse a skill to a one-line catalog entry until the model loads it, and [Pydantic AI Harness](../harness/index.md) ships [`Skills`](../harness/skills.md), which turns each `SKILL.md` package in a local directory into one of those deferred capabilities. As a community package that builds on `Skills` rather than replacing it:
-
-* [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills) - `SkillsCapability` hands `SKILL.md` discovery, validation, and instruction rendering to Harness's `Skills`, so every skill stays a deferred capability that the model loads with the framework's own `load_capability` tool, and adds what `Skills` deliberately leaves out. Remote skill libraries come from `GitSkillsRegistry` and `S3SkillsRegistry`, materialized to local directories before `Skills` reads them and composable by filtering, prefixing, renaming, and merging. A skill's bundled `references/`, `assets/`, and `scripts/` files become reachable through `read_skill_resource` and `run_skill_script` tools that by default refuse to touch a skill the model has not loaded yet, with `${SKILL_DIR}` placeholders substituted for real paths, so packages that ship reference documents and scripts (such as [Anthropic's](https://github.com/anthropics/skills)) run as written. Scripts execute through a pluggable `SkillScriptExecutor`, with container and virtual-filesystem sandboxes for keeping untrusted skills off the host. Skills can also be defined programmatically in Python, and `include`/`exclude` control which ones reach the catalog. Works with [agent specs](../agent-spec.md), so it can be loaded via [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] / [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec]. Compatible with [agentskills.io](https://agentskills.io).
 
 ## Data & Analytics {#data-analytics}
 
