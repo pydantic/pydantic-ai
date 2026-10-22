@@ -613,3 +613,14 @@ async def test_anthropic_batch_create_errors_are_categorized_and_not_retried(all
     with pytest.raises(ModelOverloadedError):
         await model.batch_create([await model.batch_encode(_request())])
     assert len(api.raw_creates) == 1
+
+
+def test_anthropic_batch_credential_tells_clients_apart_without_secrets() -> None:
+    """Checks and results of a batch are only shared between models that reach it with one credential."""
+
+    def credential(api_key: str) -> str:
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=api_key))
+        return model._batch_credential()  # pyright: ignore[reportPrivateUsage]
+
+    assert credential('first-key') == credential('first-key') != credential('second-key')
+    assert 'first-key' not in credential('first-key')

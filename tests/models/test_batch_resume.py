@@ -75,10 +75,15 @@ class _BatchAPI:
     """Each request's method, path and API key."""
     forgotten: set[str] = field(default_factory=set[str])
     """Batches past their retention, which the API no longer has."""
+    denied_keys: set[str] = field(default_factory=set[str])
+    """API keys of another project, which can't see this one's batches or files."""
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path.removeprefix('/v1')
-        self.calls.append((request.method, path, request.headers['authorization'].removeprefix('Bearer ')))
+        api_key = request.headers['authorization'].removeprefix('Bearer ')
+        self.calls.append((request.method, path, api_key))
+        if api_key in self.denied_keys:
+            return httpx2.Response(404, json={'error': {'message': 'Not found', 'type': 'invalid_request_error'}})
         if request.method == 'POST' and path == '/files':
             file_id = f'file-{len(self.files)}'
             # The JSONL file is the last part of the multipart upload.
@@ -295,3 +300,53 @@ async def test_resuming_many_histories_checks_each_batch_once() -> None:
         '/batches/batch_1',
         '/files/file-output-batch_1/content',
     ]
+
+
+async def _two_histories(api: _BatchAPI) -> tuple[bytes, bytes]:
+    submitting = _agent(api, batching=BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None))
+    first, second = await asyncio.gather(submitting.run('Question 1'), submitting.run('Question 2'))
+    return first.all_messages_json(), second.all_messages_json()
+
+
+async def test_a_credential_the_provider_denies_doesnt_get_cached_results() -> None:
+    """Results fetched with one credential aren't handed to a request checking the batch with another."""
+    api = _BatchAPI(denied_keys={'other-project-key'})
+    first, second = await _two_histories(api)
+    api.complete('batch_0', 'Hi!')
+    shared = BatchModelRequests(**FAST_BATCH_SETTINGS)
+
+    assert (await _resume(api, first, batching=shared))[0] == 'Hi!'
+    with pytest.raises(SuspendedResponseExpired):
+        await _resume(api, second, api_key='other-project-key', batching=shared)
+    assert ('GET', '/batches/batch_0', 'other-project-key') in api.calls
+
+
+async def test_a_credential_the_provider_denies_doesnt_get_a_cached_status() -> None:
+    api = _BatchAPI(denied_keys={'other-project-key'})
+    first, second = await _two_histories(api)
+    shared = BatchModelRequests(poll_interval=timedelta(hours=1), max_poll_interval=timedelta(hours=1))
+
+    assert isinstance((await _resume(api, first, batching=shared))[0], PendingModelResponse)
+    with pytest.raises(SuspendedResponseExpired):
+        await _resume(api, second, api_key='other-project-key', batching=shared)
+    # Another history checked with the first credential still shares its status.
+    assert isinstance((await _resume(api, second, batching=shared))[0], PendingModelResponse)
+    assert [key for _, path, key in api.calls if path == '/batches/batch_0'] == [
+        'submitting-key',
+        'other-project-key',
+    ]
+
+
+async def test_a_credential_the_provider_denies_doesnt_join_a_concurrent_check() -> None:
+    api = _BatchAPI(denied_keys={'other-project-key'})
+    first, second = await _two_histories(api)
+    api.complete('batch_0', 'Hi!')
+    shared = BatchModelRequests(**FAST_BATCH_SETTINGS)
+
+    allowed, denied = await asyncio.gather(
+        _resume(api, first, batching=shared),
+        _resume(api, second, api_key='other-project-key', batching=shared),
+        return_exceptions=True,
+    )
+    assert isinstance(allowed, tuple) and allowed[0] == 'Hi!'
+    assert isinstance(denied, SuspendedResponseExpired)

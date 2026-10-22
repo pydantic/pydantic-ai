@@ -221,6 +221,12 @@ def _batch_group(model: AnthropicModel, betas: Iterable[str]) -> str:
     return json.dumps(group, sort_keys=True)
 
 
+def batch_credential(model: AnthropicModel) -> str:
+    """The endpoint and credential `model` reaches batches with, as hashes."""
+    group = _GROUP_ADAPTER.validate_json(_batch_group(model, ()))
+    return f'{group["endpoint"]}:{group["credential"]}'
+
+
 def _validate_batch_group(model: AnthropicModel, group: str, *, collecting: bool = False) -> None:
     _batch_client(model)
     expected = _GROUP_ADAPTER.validate_json(group)

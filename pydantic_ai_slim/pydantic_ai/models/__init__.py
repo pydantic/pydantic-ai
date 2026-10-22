@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import time
+import uuid
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
@@ -709,6 +710,18 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         [`batch_create`][pydantic_ai.models.Model.batch_create] refuses requests too large for one batch.
         """
         return None
+
+    @cached_property
+    def _batch_instance_id(self) -> str:
+        return uuid.uuid4().hex
+
+    def _batch_credential(self) -> str:
+        """Identifies the endpoint and credential this model reaches batches with.
+
+        `BatchModelRequests` only shares a batch's checks and results between models that give the same identity, so
+        a model with another credential asks the provider itself. By default, the identity is this model instance.
+        """
+        return f'instance:{self._batch_instance_id}'
 
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
         """The bytes `request` adds to a batch, which [`batch_max_bytes`][pydantic_ai.models.Model.batch_max_bytes] limits.

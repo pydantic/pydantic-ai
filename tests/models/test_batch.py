@@ -877,7 +877,10 @@ async def test_a_paused_turn_keeps_its_content_when_the_result_names_a_dated_mod
 
 
 async def test_wrapper_models_forward_the_batch_api() -> None:
-    model = WrapperModel(TestModel())
+    inner = TestModel()
+    model = WrapperModel(inner)
+    # A model's batch checks are shared with the model it wraps, and not with another instance.
+    assert model._batch_credential() == inner._batch_credential() != TestModel()._batch_credential()  # pyright: ignore[reportPrivateUsage]
     request = BatchRequest(custom_id='one', messages=[ModelRequest(parts=[UserPromptPart('Hello')])])
 
     assert model.batch_max_requests == 10_000

@@ -819,6 +819,20 @@ async def test_batch_results_only_delete_the_input_file_this_process_uploaded(al
     assert [path for method, path in api.requests if method == 'DELETE'] == ['/files/file-input']
 
 
+async def test_batch_forgets_the_oldest_uploaded_input_files(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a bounded number of uploads are remembered; a forgotten batch's input file is left for OpenAI to delete."""
+    monkeypatch.setattr('pydantic_ai.models._openai_batch._UPLOADED_INPUT_FILES_SIZE', 0)
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'))
+    model = _fake_model(api)
+    batch = await model.batch_create([await model.batch_encode(_request('ok'))])
+    api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
+    api.batch = _batch_json('completed', output_file_id='file-output')
+    await model.batch_results(await model.batch_status(batch))
+    assert [path for method, path in api.requests if method == 'DELETE'] == []
+
+
 async def test_batch_size_limits(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch) -> None:
     """A request counts the bytes of its line in the input file, which OpenAI limits to 200 MB.
 

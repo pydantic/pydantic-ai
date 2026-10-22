@@ -80,6 +80,9 @@ class WrapperModel(Model):
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
         return self.wrapped.batch_request_size(request)
 
+    def _batch_credential(self) -> str:
+        return self.wrapped._batch_credential()
+
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         return await self.wrapped.batch_encode(request)
 

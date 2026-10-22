@@ -317,6 +317,12 @@ def _batch_group(model: OpenAIResponsesModel) -> str:
     return json.dumps(group, sort_keys=True)
 
 
+def batch_credential(model: OpenAIResponsesModel) -> str:
+    """The endpoint and credential `model` reaches batches with, as hashes."""
+    group: _Group = json.loads(_batch_group(model))
+    return f'{group["endpoint"]}:{group["credential"]}'
+
+
 def _validate_batch_group(model: OpenAIResponsesModel, group: str, *, collecting: bool = False) -> None:
     if not group_matches(group, _batch_group(model), collecting=collecting):
         raise UserError(

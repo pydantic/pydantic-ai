@@ -337,6 +337,12 @@ def _batch_group(model: GoogleModel) -> str:
     return json.dumps(group, sort_keys=True)
 
 
+def batch_credential(model: GoogleModel) -> str:
+    """The endpoint and credential `model` reaches batches with, as hashes."""
+    group: _Group = json.loads(_batch_group(model))
+    return f'{group["endpoint"]}:{group["credential"]}'
+
+
 def _validate_batch_group(model: GoogleModel, group: str, *, collecting: bool = False) -> None:
     if not group_matches(group, _batch_group(model), collecting=collecting):
         raise UserError(

@@ -653,3 +653,26 @@ async def test_gemini_job_that_ended_early_returns_the_rows_it_wrote(
     [result] = await model.batch_results(batch)
     assert (result.custom_id, result.status) == ('ran', 'succeeded')
     assert deleted == ['files/input']
+
+
+def test_gemini_batch_credential_tells_clients_apart_without_secrets() -> None:
+    """Checks and results of a batch are only shared between models that reach it with one credential."""
+
+    def credential(api_key: str) -> str:
+        model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key=api_key))
+        return model._batch_credential()  # pyright: ignore[reportPrivateUsage]
+
+    assert credential('first-key') == credential('first-key') != credential('second-key')
+    assert 'first-key' not in credential('first-key')
+
+
+async def test_gemini_batch_forgets_the_oldest_uploaded_input_files(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a bounded number of uploads are remembered; a forgotten job's input file is left to expire."""
+    monkeypatch.setattr('pydantic_ai.models._google_batch._UPLOADED_INPUT_FILES_SIZE', 0)
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    deleted = _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}})
+    batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request())]))
+    await model.batch_results(batch)
+    assert deleted == []

@@ -1193,6 +1193,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def batch_request_size(self, request: EncodedBatchRequest) -> int:
         return _batch_module().request_size(request)
 
+    def _batch_credential(self) -> str:
+        return _batch_module().batch_credential(self)
+
     async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
         return await _batch_module().batch_encode(self, request)
 

@@ -180,6 +180,13 @@ _QueueKey = tuple[str, str]
 _BatchKey = tuple[str, str, str]
 """The provider, group and ID of a batch: IDs are only unique within one provider account."""
 
+_CheckKey = tuple[str, str, str, str]
+"""The credential a batch is checked with, and the batch's key.
+
+Checks and results are only shared between requests checking a batch with one credential, so a request with another
+one, which a message history's ticket can't vouch for, asks the provider, which decides whether it may see the batch.
+"""
+
 
 def _batch_key(batch: Batch) -> _BatchKey:
     return batch.provider_name, batch.group, batch.id
@@ -265,13 +272,13 @@ class BatchPool:
         self._submissions: set[asyncio.Task[None]] = set()
         # Every request waiting on a batch checks on it, so concurrent checks and the results are shared between them.
         self._polls: dict[
-            tuple[asyncio.AbstractEventLoop, _BatchKey], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
+            tuple[asyncio.AbstractEventLoop, _CheckKey], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
         ] = {}
-        self._results: OrderedDict[_BatchKey, dict[str, BatchResult]] = OrderedDict()
+        self._results: OrderedDict[_CheckKey, dict[str, BatchResult]] = OrderedDict()
         # The last status of each batch still in progress, with when it was checked, so requests resumed one after
         # another, like a loop over stored message histories, share a check per `poll_interval` rather than each
         # making one.
-        self._statuses: OrderedDict[_BatchKey, tuple[float, Batch]] = OrderedDict()
+        self._statuses: OrderedDict[_CheckKey, tuple[float, Batch]] = OrderedDict()
         # The IDs of the requests in each batch this pool submitted that hasn't ended or been cancelled, as only these
         # batches are cancelled once they're abandoned: a ticket in a message history can't be trusted to say which
         # other requests share its batch. The oldest are forgotten first, which leaves their batches running.
@@ -471,18 +478,19 @@ class BatchPool:
     ) -> tuple[Batch, dict[str, BatchResult] | None]:
         """The batch's current state, and its results once it has ended, shared by concurrent checks of the batch."""
         batch = ticket['batch']
-        if (results := self._results.get(_batch_key(batch))) is not None:
-            self._results.move_to_end(_batch_key(batch))
+        check_key: _CheckKey = (model._batch_credential(), *_batch_key(batch))  # pyright: ignore[reportPrivateUsage]
+        if (results := self._results.get(check_key)) is not None:
+            self._results.move_to_end(check_key)
             return batch, results
-        if (status := self._statuses.get(_batch_key(batch))) is not None:
+        if (status := self._statuses.get(check_key)) is not None:
             checked_at, checked = status
             if time.monotonic() - checked_at < self.poll_interval.total_seconds():
                 return checked, None
         loop = asyncio.get_running_loop()
-        key = (loop, _batch_key(batch))
+        key = (loop, check_key)
         if (poll := self._polls.get(key)) is None:
             poll = self._polls[key] = loop.create_task(
-                self._fetch(model, batch, ticket.get('trace_context'), requester)
+                self._fetch(model, batch, check_key, ticket.get('trace_context'), requester)
             )
             poll.add_done_callback(lambda done: self._poll_done(key, done))
         # Waits without cancelling the shared poll when this request is cancelled.
@@ -493,7 +501,7 @@ class BatchPool:
 
     def _poll_done(
         self,
-        key: tuple[asyncio.AbstractEventLoop, _BatchKey],
+        key: tuple[asyncio.AbstractEventLoop, _CheckKey],
         poll: asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]],
     ) -> None:
         self._polls.pop(key, None)
@@ -503,7 +511,12 @@ class BatchPool:
             poll.exception()
 
     async def _fetch(
-        self, model: Model, batch: Batch, trace_context: dict[str, str] | None, requester: _Requester | None
+        self,
+        model: Model,
+        batch: Batch,
+        check_key: _CheckKey,
+        trace_context: dict[str, str] | None,
+        requester: _Requester | None,
     ) -> tuple[Batch, dict[str, BatchResult] | None]:
         links = [] if requester is None else [Link(requester.span.get_span_context())]
         with _batch_span(
@@ -516,15 +529,15 @@ class BatchPool:
             if span is not None:
                 span.set_attribute(BATCH_STATUS_ATTRIBUTE, batch.status)
             if batch.status != 'ended':
-                self._statuses[_batch_key(batch)] = (time.monotonic(), batch)
-                self._statuses.move_to_end(_batch_key(batch))
+                self._statuses[check_key] = (time.monotonic(), batch)
+                self._statuses.move_to_end(check_key)
                 while len(self._statuses) > _SUBMITTED_BATCHES_SIZE:
                     self._statuses.popitem(last=False)
                 return batch, None
             with _expired_after_retention(batch):
                 results = {result.custom_id: result for result in await model.batch_results(batch)}
-        self._statuses.pop(_batch_key(batch), None)
-        self._results[_batch_key(batch)] = results
+        self._statuses.pop(check_key, None)
+        self._results[check_key] = results
         # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
         self._submitted.pop(_batch_key(batch), None)
         self._abandoned.pop(_batch_key(batch), None)
