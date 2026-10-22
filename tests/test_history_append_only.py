@@ -31,6 +31,7 @@ from pydantic_ai.capabilities import (
     Capability,
     CombinedCapability,
     DynamicCapability,
+    FileUnderstanding,
     HandleDeferredToolCalls,
     LocalWorkspace,
     NativeTool,
@@ -121,6 +122,7 @@ def _keep_model(ctx: ModelSelectionContext[Any]) -> Model:
 FIXTURES: dict[str, Fixture] = {
     'CombinedCapability': lambda _: CombinedCapability([Thinking()]),
     'DynamicCapability': lambda _: DynamicCapability(lambda ctx: Thinking()),
+    'FileUnderstanding': lambda _: FileUnderstanding(fallback_subagent_model=TestModel()),
     'HandleDeferredToolCalls': lambda _: HandleDeferredToolCalls(lambda ctx, requests: requests.build_results()),
     'LocalWorkspace': lambda tmp_path: LocalWorkspace(tmp_path),
     'MCP': lambda _: MCP(local=MCPToolset(_mcp_server())),
