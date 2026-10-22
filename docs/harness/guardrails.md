@@ -310,7 +310,7 @@ Any exception raised by the guard propagates as-is -- use `InputBlocked` / `Outp
 
 ## Tool calls
 
-`ToolGuardrail` inspects both sides of a tool call: `guard` sees the validated arguments before the tool runs, `result_guard` sees what it returned before the model does. `result_guard` also screens the message of a `ModelRetry` or `ToolFailed` raised while the tool runs, including inside `CodeMode`, because that text reaches the model too. A screened failure stays a failure. A `ToolGuardrail` `retry` verdict is the guard's own instruction and is never screened.
+`ToolGuardrail` inspects both sides of a tool call: `guard` sees the validated arguments before the tool runs, `result_guard` sees what it returned before the model does. `result_guard` also screens the message of a `ModelRetry` or `ToolFailed` raised while the tool runs, including inside `CodeMode`, because that text reaches the model too. Hooks of a capability ordered inside this one (another `position='innermost'` capability) run within the same screening window, so their raw retries are screened as well, except one from an error hook, which this guard's error hook closes the window on; a capability ordered outside passes through. A screened failure stays a failure. A `ToolGuardrail` `retry` verdict is the guard's own instruction and is never screened.
 
 ```python
 from pathlib import Path
