@@ -434,7 +434,13 @@ class Tasks:
             finished_at=None if record.finished_at is None else datetime.fromtimestamp(record.finished_at, UTC),
             background=record.background,
             resumable=record.resumable,
-            activity=progress.activity if progress is not None else 'starting',
+            activity=(
+                'waiting for an answer'
+                if record.status == 'running' and self.owner.pending_question(record.id) is not None
+                else progress.activity
+                if progress is not None
+                else 'starting'
+            ),
             usage=usage,
         )
 

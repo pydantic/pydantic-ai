@@ -11,6 +11,7 @@ from pathlib import Path
 import anyio
 import pytest
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.cells import cell_len
@@ -57,6 +58,8 @@ from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, run_tasks
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+from pydantic_clai2.ui.prompt.terminal import Terminal
 from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
@@ -807,6 +810,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
 ) -> None:
     """The question shows once, whether it comes during a turn or wakes the idle parent, as a report does."""
     release, idle, continued, asked = (asyncio.Event() for _ in range(4))
+    activities: list[str] = []
     output = io.StringIO()
     reads = 0
     original_read = LivePrompt.read
@@ -885,6 +889,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     async def observe(update: DelegationTaskEvent) -> None:
         assert original_observer is not None
         await original_observer(update)
+        activities.append(shell.tasks.info(update.task).activity)
         # The owner tells its observer once the question is pending.
         if isinstance(update.event, TaskQuestionEvent):
             asked.set()
@@ -903,6 +908,8 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     assert (record.outcome, record.output) == ('ok', 'Chose cheddar')
     assert 'asks: Which flavour?' in output.getvalue()
     assert questions == 1
+    # Once the question is pending, the task's row says it waits.
+    assert 'waiting for an answer' in activities
     prompts = [
         part.content
         for message in shell.session.messages
@@ -961,3 +968,38 @@ async def test_a_custom_agent_with_task_control_shows_its_tasks_questions(tmp_pa
         ended = await shell.run_turn(TurnStart(text='Go.'))
     assert ended.outcome == 'completed', ended.error
     assert output.getvalue().count('asks: Which flavour?') == 1
+
+
+@pytest.mark.parametrize(('prompt', 'wakes'), [('hello', 1), ('explode', 0)])
+async def test_a_question_a_completed_turn_left_unread_wakes_the_editor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, prompt: str, wakes: int
+) -> None:
+    """A question asked as a turn ends starts the next one; after a failed turn, it waits for a prompt."""
+    shell = shell_for(tmp_path, ForkModel(), io.StringIO())
+    shell.console = Console(file=io.StringIO(), force_terminal=True, width=100, height=24)
+    Terminal[None, str](console=shell.console, transcript=TranscriptBuffer(), history=InMemoryHistory()).attach(shell)
+    asked = False
+
+    def waiting(conversation_id: str) -> bool:
+        return asked
+
+    monkeypatch.setattr(shell.tasks, 'waiting', waiting)
+    woken = 0
+
+    def wake(live: LivePrompt) -> None:
+        nonlocal woken
+        woken += 1
+
+    async def read(live: LivePrompt) -> str:
+        nonlocal asked
+        if asked:
+            raise EOFError
+        # The question comes while the turn runs, too late for it to read.
+        asked = True
+        return prompt
+
+    monkeypatch.setattr(LivePrompt, 'wake', wake)
+    monkeypatch.setattr(LivePrompt, 'read', read)
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        assert await shell.run() == 'eof'
+    assert woken == wakes
