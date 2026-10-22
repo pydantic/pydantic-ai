@@ -251,8 +251,9 @@ Gotchas:
   `async with BrowserUse(...) as browser:`. Under `TemporalDurability`, `Agent(...)` raises
   `UserError` with either scope (its toolset has no stable id).
 - Default `'call'` scope launches one Chromium per concurrent call.
-- `file://` navigation is always prohibited. The default factory removes `read_file` and `upload_file`,
-  and `evaluate` too when `sensitive_data` is set.
+- `file://` navigation is always prohibited. The default factory removes `read_file` and `upload_file`.
+  With `sensitive_data` set, every factory's `settings.tools` drops `evaluate`; a factory that builds
+  its own `Tools` must drop it too.
 - browser-use's per-run telemetry event (task, visited URLs, result) is off for the capability's
   agents; `browser_use_telemetry=True` sends it. Set `ANONYMIZED_TELEMETRY=false` to also stop
   browser-use's process-wide PostHog client (which captures uncaught exceptions).
