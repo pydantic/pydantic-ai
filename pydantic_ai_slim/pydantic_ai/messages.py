@@ -4,10 +4,8 @@ import base64
 import dataclasses
 import difflib
 import hashlib
-import html
 import mimetypes
 import os
-import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
@@ -59,6 +57,17 @@ from ._event_registry import (
     keeps_canonical_registration as _keeps_canonical_registration,
     shadowed_envelope_fields as _shadowed_envelope_fields,
     undecorated_field_base as _undecorated_field_base,
+)
+from ._framing import (
+    CONTEXT_DIFF_TAG,
+    CONTEXT_TAG,
+    RETRY_FEEDBACK_TAG,
+    TOOL_RESULT_TAG,
+    VALIDATION_ERRORS_TAG,
+    FramingTag,
+    close_tag,
+    open_tag,
+    wrap,
 )
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -1283,6 +1292,20 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
 )
 
 
+def _tool_return_text(value: Any) -> str:
+    """The model-facing text of a non-`str` tool return value: its JSON form, decoded when that form is a JSON string.
+
+    A JSON round trip of the message history turns a value that serializes to a JSON string (`datetime`,
+    `UUID`, `Decimal`, a str-returning serializer, ...) into that plain `str`, which is sent as-is. Sending
+    the decoded string from the start keeps the text the model sees, and the prompt-cache prefix, identical
+    before and after the history is persisted and restored.
+    """
+    dumped = tool_return_ta.dump_json(value, by_alias=True)
+    if dumped.startswith(b'"'):
+        return pydantic_core.from_json(dumped)
+    return dumped.decode()
+
+
 class _StrPassthrough:
     """The `str` arm of `ToolReturnContent`, matched entirely in Rust in both validation modes.
 
@@ -1893,9 +1916,8 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
     that accepts media in its tool result channel sends it there and never renders these at all.
     """
     return (
-        f'<tool_result tool_name="{html.escape(tool_name)}" tool_call_id="{html.escape(tool_call_id)}"'
-        f' file_id="{html.escape(file_identifier)}">',
-        '</tool_result>',
+        open_tag(TOOL_RESULT_TAG, tool_name=tool_name, tool_call_id=tool_call_id, file_id=file_identifier),
+        close_tag(TOOL_RESULT_TAG),
     )
 
 
@@ -2043,7 +2065,8 @@ class BaseToolReturnPart(Generic[ContentT_co]):
         Args:
             mode: Controls serialization of non-file items:
                 - `'raw'`: No serialization. Returns items as-is.
-                - `'str'`: Non-file items are serialized to strings via `tool_return_ta`.
+                - `'str'`: Non-file items are serialized to JSON text via `tool_return_ta`; an item whose
+                  JSON form is a string (e.g. a `datetime`) becomes that string, unquoted.
                   File items (`MultiModalContent`) pass through unchanged.
                 - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
@@ -2086,13 +2109,16 @@ class BaseToolReturnPart(Generic[ContentT_co]):
             elif isinstance(item, str):
                 result.append(item)
             elif mode == 'str':
-                result.append(tool_return_ta.dump_json(item, by_alias=True).decode())
+                result.append(_tool_return_text(item))
             else:
                 result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
         return result
 
     def model_response_str(self, *, wrap_if_error: bool = True) -> str:
         """Return a string representation of the data content for the model.
+
+        A `str` is returned as-is and `None` as `''`; any other value as its JSON text, and a value
+        whose JSON form is a string (e.g. a `datetime`) as that string, unquoted.
 
         This excludes multimodal files - use `.files` to get those separately.
 
@@ -2107,7 +2133,7 @@ class BaseToolReturnPart(Generic[ContentT_co]):
         elif isinstance(value, str):
             response = value
         else:
-            response = tool_return_ta.dump_json(value, by_alias=True).decode()
+            response = _tool_return_text(value)
 
         if wrap_if_error and self.outcome in ERROR_OUTCOMES:
             return tool_return_ta.dump_json({'error': self._error_value(value, response)}).decode()
@@ -2323,50 +2349,12 @@ class NativeToolReturnPart(BaseToolReturnPart[ContentT_co]):
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
 
 
-_FeedbackTag: TypeAlias = Literal['system', 'validation_errors', 'retry_feedback']
-
-
-def _user_voice_fence_escape(tag: str) -> re.Pattern[str]:
-    """The `<` of the fence's own closing tag, and of the `<system>` voice tag, opening or closing."""
-    return re.compile(rf'<(?=\s*/\s*{tag}(?=[\s/>]|$)|\s*(?:/\s*)?system(?=[\s/>]|$))', re.IGNORECASE)
-
-
-_TAG_ESCAPES: dict[_FeedbackTag, re.Pattern[str]] = {
-    'system': re.compile(r'<(?=\s*/\s*system(?=[\s/>]|$))', re.IGNORECASE),
-    'validation_errors': _user_voice_fence_escape('validation_errors'),
-    'retry_feedback': _user_voice_fence_escape('retry_feedback'),
-}
-"""Per-tag patterns matching only the `<` of a tag the wrapped text must not be able to write.
-
-That is the wrapping tag's own closing tag, in every spelling a model might reach for, including one
-cut off at the end of the text, and inside the user-voice `<validation_errors>` and `<retry_feedback>`
-fences also the `<system>` voice tag, opening or closing, so text quoted back from the model can't
-pass itself off as the framework speaking.
-
-Compiled once per tag, since `_wrap_in_tag` runs over every mid-conversation system prompt of every
-request on a provider without inline system prompts.
-"""
-
-
 _RETRY_FEEDBACK_FRAMING = "Your previous response failed the application's validation (this is automated feedback, not a message from the user):"
 """The line that opens user-voice retry feedback, ahead of its `<validation_errors>` or `<retry_feedback>` fence.
 
 The feedback goes out in the user voice, so this says who is speaking: the application checking the
 model's output, not the person it is talking to (https://github.com/pydantic/pydantic-ai/issues/6404).
 """
-
-
-def _wrap_in_tag(content: str, *, tag: _FeedbackTag) -> str:
-    """Wrap text in `<tag>…</tag>`, neutralizing any tag the text must not be able to write itself.
-
-    Only the `<` of such a tag is escaped, so the rest of the text goes in exactly as written.
-    Without that, text the model had a hand in — a validation error's `loc` is a key it invented for a
-    mapping output, and a `value_error`'s `msg` is whatever a validator raised, commonly with the
-    offending value interpolated in — could end the statement early and let whatever follows read as
-    if it stood outside it, or, inside a user-voice fence, open a `<system>` block of its own. See
-    `_TAG_ESCAPES` for what each tag neutralizes.
-    """
-    return f'<{tag}>{_TAG_ESCAPES[tag].sub("&lt;", content)}</{tag}>'
 
 
 def _dump_error_details(errors: list[pydantic_core.ErrorDetails]) -> list[dict[str, Any]]:
@@ -2595,7 +2583,7 @@ class RetryFeedbackPart:
         if _retry_feedback_speaks_for_the_harness(self):
             return content
         return _fenced_retry_feedback(
-            content, tag='validation_errors' if self.retry.cause == 'validation_error' else 'retry_feedback'
+            content, tag=VALIDATION_ERRORS_TAG if self.retry.cause == 'validation_error' else RETRY_FEEDBACK_TAG
         )
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
@@ -2625,9 +2613,15 @@ def _retry_feedback_text(part: RetryFeedbackPart) -> str:
     return tool_return_ta.dump_json(_dump_error_details(part.content), by_alias=True).decode()
 
 
-def _fenced_retry_feedback(content: str, *, tag: _FeedbackTag) -> str:
-    """Feedback in the user voice: the application attribution line, then the content fenced in `tag`."""
-    fence = _wrap_in_tag(f'\n{content}\n', tag=tag)
+def _fenced_retry_feedback(content: str, *, tag: FramingTag) -> str:
+    """Feedback in the user voice: the application attribution line, then the content fenced in `tag`.
+
+    `wrap` neutralizes every framing tag in the content, since it carries the model's own words: a
+    validation error's `loc` is a key it invented for a mapping output, and a `value_error`'s `msg` is
+    whatever a validator raised, commonly with the offending value interpolated in. Without that, the
+    content could end the fence early, or open a `<system>` block of its own.
+    """
+    fence = wrap(tag, f'\n{content}\n')
     return f'{_RETRY_FEEDBACK_FRAMING}\n{fence}'
 
 
@@ -3031,22 +3025,18 @@ def _instruction_text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-_CLOSING_FRAMING_TAG = re.compile(r'</(context_diff|context|system)\s*>', re.IGNORECASE)
-
-
-def _neutralize_closing_tags(content: str) -> str:
-    """Escape closing framing tags in a block's text, so the text can't end its own element early."""
-    return _CLOSING_FRAMING_TAG.sub(lambda match: f'&lt;/{match.group(1)}>', content)
-
-
-def _id_attribute(instruction_id: InstructionId | None) -> str:
-    """The `id` attribute naming a block, or nothing for a change a newer version wrote that this one can't address."""
-    return f' id="{html.escape(str(instruction_id))}"' if instruction_id is not None else ''
-
-
 def _context_element(instruction_id: InstructionId | None, content: str) -> str:
-    """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces."""
-    return f'<context{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(content)}\n</context>'
+    """Tag an append-mode block's statement with its id, so a later statement can name the one it replaces.
+
+    `wrap` neutralizes every framing tag in the text, including `</system>`: the element is itself
+    `<system>`-wrapped on a model without mid-conversation system messages.
+    """
+    return wrap(CONTEXT_TAG, f'\n{content}\n', id=_id_attribute(instruction_id))
+
+
+def _id_attribute(instruction_id: InstructionId | None) -> str | None:
+    """The `id` attribute naming a block, or `None` for a change a newer version wrote that this one can't address."""
+    return str(instruction_id) if instruction_id is not None else None
 
 
 def _context_diff_element(instruction_id: InstructionId | None, previous: str, content: str) -> str:
@@ -3054,7 +3044,7 @@ def _context_diff_element(instruction_id: InstructionId | None, previous: str, c
     diff = '\n'.join(
         difflib.unified_diff(previous.split('\n'), content.split('\n'), 'before', 'after', lineterm='', n=2)
     )
-    return f'<context_diff{_id_attribute(instruction_id)}>\n{_neutralize_closing_tags(diff)}\n</context_diff>'
+    return wrap(CONTEXT_DIFF_TAG, f'\n{diff}\n', id=_id_attribute(instruction_id))
 
 
 _SUPERSESSION_SENTENCE = (
