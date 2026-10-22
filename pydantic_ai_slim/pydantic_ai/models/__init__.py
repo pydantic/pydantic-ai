@@ -481,8 +481,9 @@ class ModelRequestContext:
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
-    _serving_wrapper: Model | None = field(default=None, repr=False, compare=False)
-    """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it."""
+    _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
+    """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
+    the model it wraps, whose lifecycle its owner manages."""
 
     @property
     def _usage_responses(self) -> tuple[ModelResponse, ...]:

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import sys
 import warnings
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self
+
+import anyio
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -31,6 +35,46 @@ if TYPE_CHECKING:
 
 __all__ = ['WrapperModel']
 
+_borrowed_model: ContextVar[Model | None] = ContextVar('_borrowed_model', default=None)
+"""A model whose lifecycle its owner manages, which a wrapper entered around one request leaves alone."""
+
+
+@asynccontextmanager
+async def serving_wrapper_scope(wrapper: Model, borrowed: Model) -> AsyncGenerator[Model]:
+    """Enter `wrapper`, a capability's wrapper around `borrowed`, around a request it serves.
+
+    `borrowed` isn't entered or exited with it: its owner, like `async with agent:`, manages its lifecycle, and exiting
+    it here could close an HTTP client another request is using. The exit is shielded from cancellation, so it
+    finishes, and its return value is discarded, so it can't suppress the request's error.
+    """
+    token = _borrowed_model.set(borrowed)
+    try:
+        entered = await wrapper.__aenter__()
+    finally:
+        _borrowed_model.reset(token)
+    try:
+        yield entered
+    except BaseException:
+        await _exit_serving_wrapper(wrapper, borrowed, *sys.exc_info())
+        raise
+    else:
+        await _exit_serving_wrapper(wrapper, borrowed, None, None, None)
+
+
+async def _exit_serving_wrapper(
+    wrapper: Model,
+    borrowed: Model,
+    exc_type: type[BaseException] | None,
+    exc_val: BaseException | None,
+    exc_tb: TracebackType | None,
+) -> None:
+    token = _borrowed_model.set(borrowed)
+    try:
+        with anyio.CancelScope(shield=True):
+            await wrapper.__aexit__(exc_type, exc_val, exc_tb)
+    finally:
+        _borrowed_model.reset(token)
+
 
 @dataclass(init=False)
 class WrapperModel(Model):
@@ -47,7 +91,8 @@ class WrapperModel(Model):
         self.wrapped = infer_model(wrapped)
 
     async def __aenter__(self) -> Self:
-        await self.wrapped.__aenter__()
+        if self.wrapped is not _borrowed_model.get():
+            await self.wrapped.__aenter__()
         return self
 
     async def __aexit__(
@@ -56,6 +101,8 @@ class WrapperModel(Model):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
+        if self.wrapped is _borrowed_model.get():
+            return None
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 
     def _refresh_http_client(self) -> None:

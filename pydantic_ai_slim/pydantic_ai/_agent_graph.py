@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
-import sys
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
@@ -107,6 +106,7 @@ from .models._continuation import (
     resumed_response,
 )
 from .models._request_timeout import enforce_request_deadline, start_request_deadline, without_carried_deadline
+from .models.wrapper import serving_wrapper_scope
 from .output import OutputDataT, OutputSpec, PendingModelResponse, StructuredOutputMode
 from .settings import ModelSettings
 from .tools import (
@@ -1151,21 +1151,12 @@ def _keep_default_output_mode(
 
 @asynccontextmanager
 async def _serving_scope(request_context: ModelRequestContext) -> AsyncGenerator[None]:
-    """Enter the model a capability wrapped the request's model in for the request, if any.
-
-    Its `__aexit__` return value is discarded, so it can't suppress the request's error.
-    """
-    if (wrapper := request_context._serving_wrapper) is None:  # pyright: ignore[reportPrivateUsage]
+    """Enter the model a capability wrapped the request's model in for the request, if any."""
+    if (wrapped := request_context._serving_wrapper) is None:  # pyright: ignore[reportPrivateUsage]
         yield
         return
-    await wrapper.__aenter__()
-    try:
+    async with serving_wrapper_scope(*wrapped):
         yield
-    except BaseException:
-        await wrapper.__aexit__(*sys.exc_info())
-        raise
-    else:
-        await wrapper.__aexit__(None, None, None)
 
 
 def _split_resume_seed(
@@ -1778,15 +1769,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
                         partial = agent_stream_holder[0].response
-                        await self._commit_interrupted_response(
-                            ctx,
-                            wrap_request_context.model,
-                            partial,
-                            # The handler recorded the response it billed, unless `wrap_model_request`
-                            # had already stopped it before the consumer did.
-                            _interrupted_response or _interrupted_stream_response(stream_error, partial),
-                            (_handler_request_context or wrap_request_context).messages,
-                        )
+                        # Entered again, as cancelling a suspended response goes through the model that sent it.
+                        async with _serving_scope(wrap_request_context):
+                            await self._commit_interrupted_response(
+                                ctx,
+                                wrap_request_context.model,
+                                partial,
+                                # The handler recorded the response it billed, unless `wrap_model_request`
+                                # had already stopped it before the consumer did.
+                                _interrupted_response or _interrupted_stream_response(stream_error, partial),
+                                (_handler_request_context or wrap_request_context).messages,
+                            )
                 else:
                     try:
                         try:
@@ -2121,12 +2114,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # After the before-chain, so capability model wrappers apply to the model that serves the request, even one a
         # hook swapped in.
         root_capability = ctx.deps.root_capability
-        wrappers: list[models.Model] = []
+        wrappers: list[tuple[models.Model, models.Model]] = []
 
         def wrap(model: models.Model) -> models.Model:
             if (wrapper := root_capability.get_wrapper_model(model)) is None:
                 return model
-            wrappers.append(wrapper)
+            wrappers.append((wrapper, model))
             return wrapper
 
         request_context.model = request_context.model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
@@ -2134,7 +2127,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # applied on this side of a durable unit only answers questions like `continuation_delay`, and the unit enters
         # the one that sends the request.
         request_context._serving_wrapper = next(  # pyright: ignore[reportPrivateUsage]
-            (wrapper for wrapper in wrappers if wrapper is request_context.model), None
+            (wrapped for wrapped in wrappers if wrapped[0] is request_context.model), None
         )
 
         model = request_context.model
