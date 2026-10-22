@@ -1052,9 +1052,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
         format if you need retry semantics to survive a round-trip.
 
-        Consecutive `TextPart`s come back as one, with the first part's `id` and `provider_details`. Their
-        citations are all kept on it, with anchors moved onto the merged text; positions in the answer inside the
-        provider's raw citations are moved only for OpenAI Responses, the one provider they're sent back to.
+        Consecutive `TextPart`s come back as one, with the first part's `id` and `provider_details` and all of
+        their citations, anchored in the merged text.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see
