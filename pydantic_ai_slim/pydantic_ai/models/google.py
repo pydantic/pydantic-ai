@@ -13,17 +13,24 @@ from uuid import UUID, uuid4
 
 import httpx2
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_initial_input_tokens
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    UserError,
+)
 from ..messages import (
+    ERROR_OUTCOMES,
     BinaryContent,
     CachePoint,
     CompactionPart,
     FilePart,
     FileUrl,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -31,13 +38,11 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -69,9 +74,12 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -418,7 +426,8 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
-        return ModelAPIError(model_name=model_name, message=transport_error_message(e))
+        timeout = isinstance(e, httpx2.TimeoutException)
+        return _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout)
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
@@ -431,12 +440,19 @@ def _map_api_error(
                 and message.startswith(f'models/{model_name} is not found ')
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        return ModelHTTPError(
+        status = e.status if isinstance(e.status, str) else None
+        category = _model_errors.google_status_category(status, e.message)
+        # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
+        response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        return ModelHTTPError.for_category(
+            category or _model_errors.http_status_category(status_code, e.message),
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
             suggested_model_id=suggested_model_id,
+            provider_error_code=status,
+            in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 
@@ -1279,7 +1295,7 @@ class GoogleModel(Model[Client]):
                 # of the attribution the framing exists to give it.
                 tool_return_media: list[PartDict] = []
 
-                for part in m.parts:
+                for part in _sendable_request_parts(m.parts):
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
@@ -1288,21 +1304,10 @@ class GoogleModel(Model[Client]):
                         function_response_part, framed_media = await self._map_tool_return(part)
                         message_parts.append(function_response_part)
                         tool_return_media.extend(framed_media)
-                    elif isinstance(part, RetryPromptPart):
-                        if part.tool_name is None:
-                            message_parts.append({'text': part.model_response()})
-                        else:
-                            message_parts.append(
-                                {
-                                    'function_response': {
-                                        'name': part.tool_name,
-                                        'response': {'error': part.model_response()},
-                                        'id': part.tool_call_id,
-                                    }
-                                }
-                            )
-                    elif isinstance(part, ToolAvailabilityDeltaPart):
-                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                        raise _unprojected_instruction_delta_error()
+                    elif isinstance(part, _UnpreparedPart):
+                        raise _unprepared_part_error(part)
                     elif isinstance(part, SpeechPart):  # pragma: no cover
                         # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                         raise _unconverted_speech_part_error()
@@ -1388,7 +1393,7 @@ class GoogleModel(Model[Client]):
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
-        if part.outcome == 'failed':
+        if part.outcome in ERROR_OUTCOMES:
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
             # used for success) for reporting a failed tool call, so this is Gemini's native error
             # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence

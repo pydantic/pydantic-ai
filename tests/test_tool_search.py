@@ -41,6 +41,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelRetry, ToolRetryError, Un
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
+    InstructionBaselinePart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -52,7 +53,6 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolPartKind,
@@ -3103,6 +3103,9 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
     for msg in messages:
         part_trace: list[dict[str, Any]] = []
         for part in msg.parts:
+            if isinstance(part, InstructionBaselinePart):
+                # Records the instructions the request was sent, not a step of the conversation.
+                continue
             if isinstance(part, UserPromptPart):
                 part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
             elif isinstance(part, LoadCapabilityCallPart):
@@ -3496,6 +3499,8 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         for msg in messages:
             part_trace: list[dict[str, Any]] = []
             for part in msg.parts:
+                if isinstance(part, InstructionBaselinePart):
+                    continue
                 if isinstance(part, UserPromptPart):
                     part_info: dict[str, Any] = {'type': 'user', 'content': part.content}
                 elif isinstance(part, LoadCapabilityCallPart):
@@ -7668,8 +7673,10 @@ async def _call_capability_tool_directly(
         return 'refunded'  # pragma: no cover
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
-            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+            if part.outcome != 'retried':
+                continue
+            refusals.append(str(part.content))
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 
@@ -7786,8 +7793,10 @@ async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
     refusals: list[str] = []
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
-            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+            if part.outcome != 'retried':
+                continue
+            refusals.append(str(part.content))
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 

@@ -43,8 +43,10 @@ from .ws_cassettes import RealtimeCassette
 with try_import() as imports_successful:
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime.azure import AzureRealtimeModel
+    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel
     from pydantic_ai.realtime.elevenlabs_agents import (
         ElevenLabsAgentsRealtimeModel,
         ElevenLabsAgentsRealtimeModelSettings,
@@ -59,9 +61,17 @@ pytestmark = [
 ]
 
 _Route = Literal[
-    'openai', 'openai-live', 'azure', 'xai', 'google', 'gateway-openai', 'gateway-google', 'elevenlabs-agents'
+    'openai',
+    'openai-live',
+    'azure',
+    'xai',
+    'elevenlabs',
+    'google',
+    'gateway-openai',
+    'gateway-google',
+    'elevenlabs-agents',
 ]
-_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'google', 'elevenlabs-agents']
+_ModelKind = Literal['openai', 'openai-live', 'azure', 'xai', 'elevenlabs', 'google', 'elevenlabs-agents']
 
 # ElevenLabs Agents wraps a hosted agent, so its "model name" is the id of the agent the cassettes were recorded
 # against (the id is not a secret and pins the recorded REST paths). To re-record, create the agents with
@@ -179,6 +189,17 @@ REALTIME_PARITY_CASES = [
         supports_interruption=True,
         supports_native_tools=False,
         supports_text_output=False,  # Grok Voice always speaks
+    ),
+    RealtimeParityCase(
+        id='elevenlabs-current',
+        model_kind='elevenlabs',
+        model_name='eleven_realtime_v1_mini',
+        route='elevenlabs',
+        supports_image_input=False,  # `input_image` parts are dropped from the item
+        supports_manual_turn_control=True,
+        supports_interruption=True,
+        supports_native_tools=False,
+        supports_text_output=False,  # text output ignores audio input
     ),
     RealtimeParityCase(
         id='google-current',
@@ -308,6 +329,9 @@ def _model(
     if case.model_kind == 'xai':
         assert isinstance(provider, XaiProvider)
         return XaiRealtimeModel(case.model_name, provider=provider, settings=settings)
+    if case.model_kind == 'elevenlabs':
+        assert isinstance(provider, ElevenLabsProvider)
+        return ElevenLabsRealtimeModel(case.model_name, provider=provider, settings=settings)
     if case.model_kind == 'elevenlabs-agents':
         # The hosted agent's tools are workspace state, so one dev agent (with `get_weather` attached)
         # serves every scenario, the tool-free ones included, with the connect-time tool comparison
