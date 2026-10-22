@@ -1998,7 +1998,18 @@ async def _bedrock_replayed_answer(
 async def test_bedrock_replays_own_citations(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    history = _bedrock_history_with_citations('bedrock')
+    """Citations that can't be checked are left out without taking the others on the text with them."""
+    history = _bedrock_history_with_citations(
+        'bedrock',
+        other_citations=[
+            'not a citation',
+            {
+                'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}},
+                'sourceContent': [{'text': 'thirty days'}],
+                'title': 'Document 1',
+            },
+        ],
+    )
 
     assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == snapshot(
         {
@@ -2022,23 +2033,6 @@ async def test_bedrock_replays_own_citations(
     )
 
 
-async def test_bedrock_replays_own_citations_without_title(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-) -> None:
-    """History built by hand or loaded from a UI may lack the title Bedrock always sends."""
-    history = _bedrock_history_with_citations('bedrock', title=None)
-
-    answer = await _bedrock_replayed_answer(bedrock_provider, mocker, history)
-    assert answer['content'][0]['citationsContent']['citations'] == snapshot(
-        [
-            {
-                'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
-                'sourceContent': [{'text': 'thirty days'}],
-            }
-        ]
-    )
-
-
 @pytest.mark.parametrize(
     'history',
     [
@@ -2051,48 +2045,11 @@ async def test_bedrock_replays_own_citations_without_title(
         ),
         pytest.param(
             _bedrock_history_with_citations(
-                'bedrock', location={'documentChar': {'documentIndex': 1, 'start': 21, 'end': 32}}
-            ),
-            id='no-such-document',
-        ),
-        pytest.param(
-            _bedrock_history_with_citations(
                 'bedrock', location={'documentPage': {'documentIndex': 0, 'start': 1, 'end': 2}}
             ),
             id='page-location',
         ),
-        pytest.param(
-            [
-                ModelRequest(parts=[UserPromptPart('Read the policy.')]),
-                ModelResponse(parts=[ToolCallPart('read_policy', {}, tool_call_id='call-1')], provider_name='bedrock'),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            'read_policy',
-                            [BinaryContent(data=b'Refunds take a week.', media_type='text/plain')],
-                            tool_call_id='call-1',
-                        )
-                    ]
-                ),
-                *_bedrock_history_with_citations('bedrock'),
-            ],
-            id='tool-return-document',
-        ),
-        pytest.param(
-            _bedrock_history_with_citations(
-                'bedrock',
-                other_citations=[
-                    {
-                        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}},
-                        'sourceContent': [{'text': 'thirty days'}],
-                    }
-                ],
-            ),
-            id='one-of-two-citations-does-not-select-excerpt',
-        ),
-        pytest.param(
-            _bedrock_history_with_citations('bedrock', other_citations=['not a citation']), id='not-a-citation'
-        ),
+        pytest.param(_bedrock_history_with_citations('bedrock', title=None), id='no-title'),
     ],
 )
 async def test_bedrock_sends_unverifiable_citations_as_text(

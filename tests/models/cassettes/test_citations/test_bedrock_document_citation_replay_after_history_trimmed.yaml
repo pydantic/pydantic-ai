@@ -1,0 +1,586 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - e8887caa-fac0-487e-b99d-ac11c24e8053
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "541"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: How long does shipping take? Cite the document.
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                text: Orders ship within two business days.
+              citations:
+                enabled: true
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: read_warranty_policy
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              description: Read the warranty policy document.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "604"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2097
+        output:
+          message:
+            content:
+            - citationsContent:
+                citations:
+                - location:
+                    documentChar:
+                      documentIndex: 0
+                      end: 37
+                      start: 0
+                  sourceContent:
+                  - text: Orders ship within two business days.
+                  title: Document 1
+                content:
+                - text: Orders ship within two business days.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 1117
+          outputTokens: 26
+          serverToolUsage: {}
+          totalTokens: 1143
+  recorded_at: 2026-10-22T09:12:27.259372+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 02e732e6-1b87-4e70-8b3e-3fdc9cb9515a
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "958"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: How long does shipping take? Cite the document.
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                text: Orders ship within two business days.
+              citations:
+                enabled: true
+        - role: assistant
+          content:
+          - citationsContent:
+              content:
+              - text: Orders ship within two business days.
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 0
+                    start: 0
+                    end: 37
+                sourceContent:
+                - text: Orders ship within two business days.
+                title: Document 1
+        - role: user
+          content:
+          - text: How long is the warranty? Read the warranty policy and cite it.
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: read_warranty_policy
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              description: Read the warranty policy document.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "458"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1789
+        output:
+          message:
+            content:
+            - toolUse:
+                input: {}
+                name: read_warranty_policy
+                toolUseId: tooluse_cw05Doc6y3yT8Prqu4QMRO
+                type: tool_use
+            role: assistant
+        stopReason: tool_use
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 1160
+          outputTokens: 38
+          serverToolUsage: {}
+          totalTokens: 1198
+  recorded_at: 2026-10-22T09:12:29.171778+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - a33af7a1-be7c-47f4-bccd-58d46a4ae066
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "1380"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: How long does shipping take? Cite the document.
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                text: Orders ship within two business days.
+              citations:
+                enabled: true
+        - role: assistant
+          content:
+          - citationsContent:
+              content:
+              - text: Orders ship within two business days.
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 0
+                    start: 0
+                    end: 37
+                sourceContent:
+                - text: Orders ship within two business days.
+                title: Document 1
+        - role: user
+          content:
+          - text: How long is the warranty? Read the warranty policy and cite it.
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: tooluse_cw05Doc6y3yT8Prqu4QMRO
+              name: read_warranty_policy
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_cw05Doc6y3yT8Prqu4QMRO
+              content:
+              - document:
+                  name: Document 2
+                  format: txt
+                  source:
+                    text: Every product has a two-year warranty.
+                  citations:
+                    enabled: true
+              status: success
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: read_warranty_policy
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              description: Read the warranty policy document.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "606"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1768
+        output:
+          message:
+            content:
+            - citationsContent:
+                citations:
+                - location:
+                    documentChar:
+                      documentIndex: 1
+                      end: 38
+                      start: 0
+                  sourceContent:
+                  - text: Every product has a two-year warranty.
+                  title: Document 2
+                content:
+                - text: Every product has a two-year warranty.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 1287
+          outputTokens: 28
+          serverToolUsage: {}
+          totalTokens: 1315
+  recorded_at: 2026-10-22T09:12:31.124438+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - b5903298-c813-441a-bc5b-4a35b36c8342
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "1939"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: How long does shipping take? Cite the document.
+          - document:
+              name: Document 1
+              format: txt
+              source:
+                text: Orders ship within two business days.
+              citations:
+                enabled: true
+        - role: assistant
+          content:
+          - citationsContent:
+              content:
+              - text: Orders ship within two business days.
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 0
+                    start: 0
+                    end: 37
+                sourceContent:
+                - text: Orders ship within two business days.
+                title: Document 1
+        - role: user
+          content:
+          - text: How long is the warranty? Read the warranty policy and cite it.
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: tooluse_cw05Doc6y3yT8Prqu4QMRO
+              name: read_warranty_policy
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_cw05Doc6y3yT8Prqu4QMRO
+              content:
+              - document:
+                  name: Document 2
+                  format: txt
+                  source:
+                    text: Every product has a two-year warranty.
+                  citations:
+                    enabled: true
+              status: success
+        - role: assistant
+          content:
+          - citationsContent:
+              content:
+              - text: Every product has a two-year warranty.
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 1
+                    start: 0
+                    end: 38
+                sourceContent:
+                - text: Every product has a two-year warranty.
+                title: Document 2
+        - role: user
+          content:
+          - text: What is the return window? Cite the document.
+          - document:
+              name: Document 3
+              format: txt
+              source:
+                text: The return window is thirty days from purchase.
+              citations:
+                enabled: true
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: read_warranty_policy
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              description: Read the warranty policy document.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "624"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 1596
+        output:
+          message:
+            content:
+            - citationsContent:
+                citations:
+                - location:
+                    documentChar:
+                      documentIndex: 2
+                      end: 47
+                      start: 0
+                  sourceContent:
+                  - text: The return window is thirty days from purchase.
+                  title: Document 3
+                content:
+                - text: The return window is thirty days from purchase.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 1402
+          outputTokens: 28
+          serverToolUsage: {}
+          totalTokens: 1430
+  recorded_at: 2026-10-22T09:12:32.839638+00:00
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - b8d1fe8e-f7e4-4790-8949-e436b1602b39
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "1882"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: How long is the warranty? Read the warranty policy and cite it.
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: tooluse_cw05Doc6y3yT8Prqu4QMRO
+              name: read_warranty_policy
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_cw05Doc6y3yT8Prqu4QMRO
+              content:
+              - document:
+                  name: Document 1
+                  format: txt
+                  source:
+                    text: Every product has a two-year warranty.
+                  citations:
+                    enabled: true
+              status: success
+        - role: assistant
+          content:
+          - citationsContent:
+              content:
+              - text: Every product has a two-year warranty.
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 0
+                    start: 0
+                    end: 38
+                sourceContent:
+                - text: Every product has a two-year warranty.
+                title: Document 2
+        - role: user
+          content:
+          - text: What is the return window? Cite the document.
+          - document:
+              name: Document 2
+              format: txt
+              source:
+                text: The return window is thirty days from purchase.
+              citations:
+                enabled: true
+        - role: assistant
+          content:
+          - citationsContent:
+              content:
+              - text: The return window is thirty days from purchase.
+              citations:
+              - location:
+                  documentChar:
+                    documentIndex: 1
+                    start: 0
+                    end: 47
+                sourceContent:
+                - text: The return window is thirty days from purchase.
+                title: Document 3
+        - role: user
+          content:
+          - text: >-
+              Without reading any policy again, summarise the warranty and the return window
+              in two sentences, citing the documents.
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: read_warranty_policy
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+              description: Read the warranty policy document.
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "914"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 2068
+        output:
+          message:
+            content:
+            - citationsContent:
+                citations:
+                - location:
+                    documentChar:
+                      documentIndex: 0
+                      end: 38
+                      start: 0
+                  sourceContent:
+                  - text: Every product has a two-year warranty.
+                  title: Document 1
+                content:
+                - text: Every product has a two-year warranty.
+            - text: " "
+            - citationsContent:
+                citations:
+                - location:
+                    documentChar:
+                      documentIndex: 1
+                      end: 47
+                      start: 0
+                  sourceContent:
+                  - text: The return window is thirty days from purchase.
+                  title: Document 2
+                content:
+                - text: The return window is thirty days from purchase.
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 1344
+          outputTokens: 53
+          serverToolUsage: {}
+          totalTokens: 1397
+  recorded_at: 2026-10-22T09:12:35.170007+00:00

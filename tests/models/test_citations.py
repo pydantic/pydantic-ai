@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Literal, assert_never
+from typing import Any, Literal, assert_never
 from urllib.parse import urlparse
 
 import pytest
@@ -1110,3 +1113,88 @@ async def test_bedrock_tool_return_document_citations(
             ),
         ]
     )
+
+
+def read_warranty_policy() -> BinaryContent:
+    """Read the warranty policy document."""
+    return WARRANTY_POLICY
+
+
+@contextmanager
+def _converse_request_bodies(model: BedrockConverseModel) -> Generator[list[dict[str, Any]]]:
+    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too."""
+    bodies: list[dict[str, Any]] = []
+
+    def capture(request: Any, **_: Any) -> None:
+        bodies.append(json.loads(request.body))
+
+    event = 'before-send.bedrock-runtime.Converse'
+    model.client.meta.events.register_last(event, capture)
+    try:
+        yield bodies
+    finally:
+        model.client.meta.events.unregister(event, capture)
+
+
+def _bedrock_document_indices(messages: list[ModelMessage]) -> list[list[Any]]:
+    """The `documentIndex` of each document citation Bedrock returned, per cited text part."""
+    return [
+        [citation['location']['documentChar']['documentIndex'] for citation in part.provider_details['citations']]
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, TextPart) and part.provider_details and 'citations' in part.provider_details
+    ]
+
+
+def _replayed_bedrock_document_indices(body: dict[str, Any]) -> list[list[Any]]:
+    """The `documentIndex` of each replayed document citation, per `citationsContent` block."""
+    return [
+        [citation['location']['documentChar']['documentIndex'] for citation in block['citationsContent']['citations']]
+        for message in body['messages']
+        for block in message['content']
+        if 'citationsContent' in block
+    ]
+
+
+# Body matching would sort this conversation's turns out of order, as for the test above; the requests are pinned
+# from the `before-send` event instead.
+@pytest.mark.vcr()
+@pytest.mark.moves_cache_prefix(reason='the last request leaves the first exchange out of the history')
+async def test_bedrock_document_citation_replay_after_history_trimmed(
+    allow_model_requests: None, request: pytest.FixtureRequest
+) -> None:
+    """Document citations follow their documents, including one a tool returned, when earlier history is left out.
+
+    A support conversation cites the shipping policy from the prompt, the warranty policy a tool returned, and the
+    returns policy from the prompt. Leaving the first exchange out takes the shipping policy with it, so the warranty
+    and returns policies move from 1 and 2 to 0 and 1. Bedrock's citations in the answer to that request show its own
+    numbering, which the replayed citations have to match.
+    """
+    if not bedrock_available():
+        pytest.skip('bedrock dependencies not installed')
+    model = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+    )
+    agent = Agent(model, tools=[read_warranty_policy], model_settings=ModelSettings(citations=True))
+
+    shipping = await agent.run(['How long does shipping take? Cite the document.', SHIPPING_POLICY])
+    warranty = await agent.run(
+        'How long is the warranty? Read the warranty policy and cite it.', message_history=shipping.all_messages()
+    )
+    returns = await agent.run(
+        ['What is the return window? Cite the document.', RETURNS_POLICY], message_history=warranty.all_messages()
+    )
+    # Bedrock numbers the documents shipping 0, warranty 1 (in the tool result) and returns 2.
+    assert _bedrock_document_indices(returns.all_messages()) == snapshot([[0], [1], [2]])
+
+    # What a history processor that leaves out the first exchange would send.
+    with _converse_request_bodies(model) as bodies:
+        summary = await agent.run(
+            'Without reading any policy again, summarise the warranty and the return window in two sentences, '
+            'citing the documents.',
+            message_history=returns.all_messages()[2:],
+        )
+
+    assert _replayed_bedrock_document_indices(bodies[-1]) == snapshot([[0], [1]])
+    assert _bedrock_document_indices(summary.new_messages()) == snapshot([[0], [1]])

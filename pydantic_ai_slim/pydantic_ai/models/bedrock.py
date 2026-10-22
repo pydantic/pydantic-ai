@@ -537,53 +537,68 @@ def _map_citations_for_replay(
 ) -> ContentBlockOutputTypeDef | None:
     """Rebuild the `citationsContent` block Bedrock returned from its raw data on the text part, or return `None`.
 
-    Every citation must be a character range that still selects its cited text from a plain-text document in the
-    request. `document_texts` holds the text of each document in the request's messages, or `None` if it isn't text.
+    Only character ranges that select their cited text from a plain-text document in the request are kept, and only
+    with a title, which Bedrock requires. `document_texts` holds the text of each document before the cited text in
+    the request, in Bedrock's document index order, or `None` for documents that aren't plain text.
     """
-    if not text or not citations:
+    if not text:
         return None
     mapped_citations: list[CitationOutputTypeDef] = []
     for citation in citations:
         location = citation.get('location') if _utils.is_str_dict(citation) else None
         char_location = location.get('documentChar') if _utils.is_str_dict(location) else None
         if not _utils.is_str_dict(char_location):
-            return None
+            continue
         index, start, end = char_location.get('documentIndex'), char_location.get('start'), char_location.get('end')
         source_content = [
             content.get('text') for content in citation.get('sourceContent', []) if _utils.is_str_dict(content)
         ]
+        cited_text = source_content[0] if len(source_content) == 1 else None
+        title = citation.get('title')
         if (
             not isinstance(index, int)
             or not isinstance(start, int)
             or not isinstance(end, int)
-            or not 0 <= index < len(document_texts)
-            or (document_text := document_texts[index]) is None
             or not 0 <= start < end
-            or source_content != [document_text[start:end]]
+            or not isinstance(cited_text, str)
+            or not isinstance(title, str)
         ):
-            return None
-        mapped_citation: CitationOutputTypeDef = {
-            'location': {'documentChar': {'documentIndex': index, 'start': start, 'end': end}},
-            'sourceContent': [{'text': document_text[start:end]}],
-        }
-        if isinstance(title := citation.get('title'), str):
-            mapped_citation['title'] = title
-        mapped_citations.append(mapped_citation)
+            continue
+        # Bedrock numbers documents by their position in the request, which moves when earlier history is left out,
+        # so the citation goes to the document that holds its cited text at its range: the original one if it still
+        # does, otherwise the only other one. With none, or several others, the citation is left out.
+        matches = [
+            i for i, document in enumerate(document_texts) if document is not None and document[start:end] == cited_text
+        ]
+        if index not in matches:
+            if len(matches) != 1:
+                continue
+            index = matches[0]
+        mapped_citations.append(
+            {
+                'location': {'documentChar': {'documentIndex': index, 'start': start, 'end': end}},
+                'sourceContent': [{'text': cited_text}],
+                'title': title,
+            }
+        )
+    if not mapped_citations:
+        return None
     return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_citations}}
 
 
 def _citation_document_texts(messages: Sequence[MessageUnionTypeDef]) -> list[str | None]:
-    """Return the text of each document block in `messages` in order, or `None` if it isn't text.
+    """Return the text of each document block in `messages` in Bedrock's document index order, or `None` if it isn't text.
 
-    Returns no documents if a tool result contains one, as it's unknown whether Bedrock counts those.
+    Bedrock numbers documents in tool results along with the others.
     """
     result: list[str | None] = []
     for message in messages:
         for block in message['content']:
-            if (document := block.get('document')) is not None:
-                result.append(document['source'].get('text'))
-            elif any('document' in item for item in block.get('toolResult', {}).get('content', [])):
-                return []
+            documents = [
+                block.get('document'),
+                *(item.get('document') for item in block.get('toolResult', {}).get('content', [])),
+            ]
+            result.extend(document['source'].get('text') for document in documents if document is not None)
     return result
 
 
