@@ -1,4 +1,4 @@
-"""Tests for how `SmartFileSearch` cuts files into snippets, read back from what the judge is asked about."""
+"""Tests for how `SmartSearch` cuts files into snippets, read back from what the judge is asked about."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ async def _spans(root: Path, name: str, source: str) -> list[tuple[int, int, str
     return [snippet.span for snippet in await _snippets(root, name, source)]
 
 
-class TestSmartFileSearchChunking:
+class TestSmartSearchChunking:
     async def test_python_chunks_follow_declarations(self, tmp_path: Path) -> None:
         by_symbol = {s.symbol: s for s in await _snippets(tmp_path, 'a.py', PY_SOURCE)}
         imports = by_symbol[None]  # adjacent one-liners merge into one target
