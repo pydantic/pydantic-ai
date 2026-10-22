@@ -442,10 +442,6 @@ class TestIsSafeCutoff:
 
 
 class TestFindSafeCutoff:
-    def test_keep_zero_keeps_the_newest_message(self):
-        msgs: list[ModelMessage] = [_user('a'), _assistant('b')]
-        assert find_safe_cutoff(msgs, 0) == 1
-
     def test_fewer_messages_than_keep(self):
         msgs: list[ModelMessage] = [_user('a')]
         assert find_safe_cutoff(msgs, 5) == 0
@@ -502,18 +498,6 @@ class TestFindTokenCutoff:
         # messages[2:] = 8 tokens (fits), messages[1:] = 12 (does not) -> candidate is 2,
         # which splits the pair, so it walks back to 1.
         assert find_token_cutoff(msgs, 8, tokenizer=len) == 1
-
-    @pytest.mark.parametrize(('tool_name', 'cutoff'), [('fn', 1), (None, 2)])
-    def test_walks_back_over_a_legacy_retry_only_when_it_names_a_tool(self, tool_name: str | None, cutoff: int):
-        # TODO(v3): remove along with `RetryPromptPart`
-        # A named retry answers the call before it, like a return; an unnamed one asks for a new final output.
-        msgs: list[ModelMessage] = [
-            _user('a' * 8),
-            _tool_call('fn', 'tc1'),
-            ModelRequest(parts=[legacy_retry_prompt_part('b' * 4, tool_name=tool_name, tool_call_id='tc1')]),
-            _user('c' * 4),
-        ]
-        assert find_token_cutoff(msgs, 8, tokenizer=len) == cutoff
 
     def test_measures_the_tail_with_provider_usage(self):
         """Thinking a provider returns without text counts, so the tail is not mostly unseen tokens."""
@@ -659,6 +643,22 @@ class TestSlidingWindowCompaction:
         messages = _retry_history()
         result = await sw.compact(messages, _make_ctx(messages))
         assert result == messages[1:]
+
+    @pytest.mark.parametrize(('tool_name', 'cutoff'), [('fn', 1), (None, 2)])
+    async def test_keep_tokens_keeps_a_legacy_retry_with_its_call_only_when_it_names_a_tool(
+        self, tool_name: str | None, cutoff: int
+    ):
+        # TODO(v3): remove along with `RetryPromptPart`
+        # A named retry answers the call before it, like a return; an unnamed one asks for a new final output.
+        messages: list[ModelMessage] = [
+            _user('a' * 8),
+            _tool_call('fn', 'tc1'),
+            ModelRequest(parts=[legacy_retry_prompt_part('b' * 4, tool_name=tool_name, tool_call_id='tc1')]),
+            _user('c' * 4),
+        ]
+        sw = SlidingWindowCompaction(max_messages=1, keep_tokens=8, tokenizer=len, preserve_first_user_message=False)
+        result = await sw.compact(messages, _make_ctx(messages))
+        assert result == messages[cutoff:]
 
     async def test_keep_zero_keeps_the_request_being_answered(self):
         sw = SlidingWindowCompaction(max_messages=1, keep_messages=0)
