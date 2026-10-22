@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import posixpath
 import struct
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
@@ -25,9 +26,21 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 
+
+def _png(width: int, height: int) -> bytes:
+    """A complete black RGB PNG of the given size."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+
+    rows = b''.join(b'\x00' + bytes(width * 3) for _ in range(height))
+    header = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
+
+
 FAKE_DISPLAY_SIZE = (1280, 800)
-FAKE_SCREENSHOT = b'\x89PNG\r\n\x1a\n' + struct.pack('>I', 13) + b'IHDR' + struct.pack('>II', *FAKE_DISPLAY_SIZE)
-"""The start of a PNG of the fake display: its signature and the header chunk that carries its size."""
+FAKE_SCREENSHOT = _png(*FAKE_DISPLAY_SIZE)
+"""A screenshot of the fake display."""
 
 
 def _add_parent_directories(directories: set[str], path: str) -> None:
@@ -467,8 +480,6 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
             'scroll',
             'type_text',
             'key_press',
-            'wait',
-            'screenshot',
         }:
             raise UnsupportedComputerActionError(f'the fake display cannot perform {action.kind!r}')
         self._provider.actions.append(action)

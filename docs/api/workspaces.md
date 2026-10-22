@@ -26,8 +26,6 @@
             - TypeText
             - KeyPress
             - HoldKey
-            - Wait
-            - Screenshot
             - WorkspaceCommand
             - CommandResult
             - FileEntry

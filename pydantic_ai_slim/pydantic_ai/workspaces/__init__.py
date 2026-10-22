@@ -10,10 +10,8 @@ from .computer import (
     MouseDown,
     MouseUp,
     MoveMouse,
-    Screenshot,
     Scroll,
     TypeText,
-    Wait,
 )
 from .local import LocalWorkspaceBackend
 from .protocol import (
@@ -52,10 +50,8 @@ __all__ = (
     'MouseUp',
     'MoveMouse',
     'ReadOnlyWorkspace',
-    'Screenshot',
     'Scroll',
     'TypeText',
-    'Wait',
     'Workspace',
     'WrapperWorkspace',
     'WorkspaceBackend',
