@@ -2015,6 +2015,23 @@ def test_provider_health_monitor_serializes_only_triaged_incident_work(tmp_path:
         assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
             'provider-health-monitor-triage'
         ]
+    # Triage gated more narrowly than the monitor step drops completions the monitor would reconcile.
+    triage_condition = (
+        "if: github.event_name == 'workflow_run' && steps.health-artifact.outcome == 'success'\n        id: triage\n"
+    )
+    assert triage_condition in trusted_config
+    _write(
+        monitor,
+        trusted_config.replace(
+            triage_condition,
+            "if: github.event_name == 'workflow_run' && steps.health-artifact.outcome == 'success'"
+            " && github.event.workflow_run.conclusion == 'failure'\n        id: triage\n",
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-triage'
+    ]
 
     triage_permissions = '      contents: read\n    outputs:\n'
     assert triage_permissions in trusted_config
