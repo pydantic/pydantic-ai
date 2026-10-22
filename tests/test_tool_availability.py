@@ -267,8 +267,8 @@ async def test_compaction_hides_schema_without_revoking_callability(provider_nam
     def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert 'hidden' not in {tool.name for tool in info.function_tools}
         for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
-            if part.tool_name == 'hidden':
-                return make_text_response(str(part.content))
+            assert part.tool_name == 'hidden'
+            return make_text_response(str(part.content))
         return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], provider_name)
 
     result = await Agent(FunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)

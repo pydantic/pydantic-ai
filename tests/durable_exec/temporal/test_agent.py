@@ -4637,7 +4637,7 @@ async def test_callable_snapshot_survives_activity_serialization_and_context_cop
 
     @toolset.tool_plain(defer_loading=True)
     def hidden() -> str:
-        return 'hidden'
+        assert False, 'Serializing the callable snapshot must not execute tools'
 
     ctx.tool_manager = await ToolManager(toolset).for_run_step(ctx)
     params = CallToolParams(

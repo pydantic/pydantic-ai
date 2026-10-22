@@ -103,8 +103,7 @@ async def test_disclosed_tool_wins_sandbox_name_collision(dynamic_catalog: bool,
     catalogs: list[str] = []
 
     async def hidden() -> str:
-        calls.append('hidden')
-        return 'hidden result'
+        assert False, 'The hidden colliding tool must not execute'
 
     async def visible() -> str:
         calls.append('visible')
