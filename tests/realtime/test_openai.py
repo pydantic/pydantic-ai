@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1660,6 +1661,41 @@ async def test_connect_without_tools_omits_tools(monkeypatch: pytest.MonkeyPatch
     session = json.loads(ws.sent[0])['session']
     assert 'tools' not in session
     assert 'voice' not in session['audio']['output']
+
+
+async def test_connect_sends_seeded_system_prompts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The standing system prompt opens the session instructions; a later one is seeded in place as `<system>` text."""
+    ws = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+    model = OpenAIRealtimeModel('gpt-realtime')
+    async with model.connect(
+        messages=[*history, ModelRequest(parts=[])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(
+            instruction_parts=[InstructionPart(content='Agent instructions.')]
+        ),
+    ):
+        pass
+
+    assert json.loads(ws.sent[0])['session']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert [
+        (item['item']['role'], [content['text'] for content in item['item']['content']])
+        for item in map(json.loads, ws.sent[1:])
+    ] == snapshot(
+        [
+            ('user', ['hi']),
+            ('assistant', ['hello']),
+            ('user', ['<system>Mid-conversation note.</system>']),
+            ('user', ['more']),
+            ('assistant', ['sure']),
+        ]
+    )
 
 
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4203,9 +4203,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Nothing appends here, so an empty append-mode block has no withdrawal to record.
             instruction_parts = _messages.InstructionPart.sorted([part for part in instruction_parts if part.content])
             resolved_instructions = _messages.InstructionPart.join(instruction_parts)
+            # As in a standard run, the agent's system prompts open a fresh conversation, and seeded
+            # history is taken to carry its own. The model sends this standing prompt as instructions.
+            system_prompt_parts: list[_messages.ModelRequestPart] = []
+            if not message_history:
+                system_prompt_parts.extend(
+                    await _system_prompt.resolve_system_prompts(
+                        self._system_prompts, self._system_prompt_functions, run_context
+                    )
+                )
             request_messages = [
                 *(message_history or ()),
-                _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
+                _messages.ModelRequest(parts=system_prompt_parts, instructions=resolved_instructions or None),
             ]
             model_request_parameters = models.ModelRequestParameters(
                 function_tools=tool_defs,

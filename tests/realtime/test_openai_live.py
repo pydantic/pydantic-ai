@@ -396,6 +396,34 @@ async def test_an_image_needs_respond_true(model: OpenAILiveModel) -> None:
     ]
 
 
+async def test_session_start_carries_seeded_system_prompts(model: OpenAILiveModel) -> None:
+    """The standing system prompt opens the backend instructions; a later one is seeded in place as `<system>` text."""
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='Standing prompt.'), UserPromptPart(content='hi')]),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(parts=[SystemPromptPart(content='Mid-conversation note.'), UserPromptPart(content='more')]),
+        ModelResponse(parts=[TextPart(content='sure')]),
+    ]
+
+    with _patched_connect(ws):
+        async with Agent(instructions='Agent instructions.').realtime(model, message_history=history).session():
+            pass
+
+    session = json.loads(ws.sent[0])['session']
+    assert session['delegation']['responses']['instructions'] == 'Standing prompt.\n\nAgent instructions.'
+    assert session['input'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'hi'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'hello'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': '<system>Mid-conversation note.</system>'}]},
+            {'role': 'user', 'content': [{'type': 'input_text', 'text': 'more'}]},
+            {'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'sure'}]},
+        ]
+    )
+
+
 def test_seeding_projects_history_to_text() -> None:
     """Live seeds from text alone, so tool rounds are rendered as readable user/assistant text."""
     messages = [

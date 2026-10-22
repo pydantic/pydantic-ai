@@ -12,6 +12,7 @@ from typing import Literal, assert_never, overload
 import anyio
 
 from .._framing import SYSTEM_TAG, wrap
+from .._instrumentation import get_instructions
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -20,9 +21,12 @@ from ..messages import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelMessage,
+    ModelRequest,
     RetryFeedbackPart,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextContent,
     TextPart,
     UploadedFile,
@@ -33,6 +37,8 @@ from ..messages import (
 )
 from ..models import (
     ModelRequestParameters,
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
 )
 from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
@@ -40,6 +46,39 @@ from ..settings import ToolChoice
 from ..tools import ToolDefinition
 from .codec import RealtimeSessionInput
 from .settings import ReconnectPolicy
+
+
+def _standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+    """The `SystemPromptPart`s the first request of `messages` opens with."""
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+    if first_request is None:
+        return []
+    standing = first_request.parts[: _standing_system_prompt_count(first_request)]
+    return [part for part in standing if isinstance(part, SystemPromptPart)]
+
+
+def session_instructions(messages: Sequence[ModelMessage], model_request_parameters: ModelRequestParameters) -> str:
+    """The instructions a realtime session is configured with.
+
+    The standing system prompt the first request opens with comes first, then the resolved
+    instructions, the order a standard run's providers send them in. `ModelRequest.instructions`
+    recorded in `messages` are never read: only `model_request_parameters.instruction_parts` count.
+    """
+    blocks = [part.content for part in _standing_system_prompt(messages) if part.content]
+    if instructions := get_instructions(messages, model_request_parameters):
+        blocks.append(instructions)
+    return '\n\n'.join(blocks)
+
+
+def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Turn the mid-conversation `SystemPromptPart`s in seeded history into `<system>`-tagged user text.
+
+    The standing system prompt is left for the seeders to skip, as `session_instructions` carries it.
+    A later system prompt stays where it was in the conversation: the same degradation
+    `Model.prepare_messages` applies for a model without inline system prompts.
+    """
+    standing_prompt_count = len(_standing_system_prompt(messages))
+    return _wrap_non_leading_system_prompts(list(messages), standing_prompt_count=standing_prompt_count)
 
 
 def resolve_advertised_tools(

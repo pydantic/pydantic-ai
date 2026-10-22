@@ -49,7 +49,6 @@ from typing_extensions import TypedDict
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
 from .. import _utils
 from .._genai_prices import best_effort_price
-from .._instrumentation import get_instructions
 from .._run_context import get_current_run_context
 from ..exceptions import UserError
 from ..messages import (
@@ -123,6 +122,8 @@ from ._utils import (
     reconnect_with_backoff,
     resolve_advertised_tools,
     seed_retry_feedback_text,
+    session_instructions,
+    wrap_seeded_system_prompts,
 )
 from .codec import (
     AudioDelta,
@@ -479,8 +480,8 @@ def _seed_item(role: _SeedRole, text: str) -> dict[str, Any] | None:
 def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_SeedRole, str] | None:
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
-    `SystemPromptPart`s are routed through `instructions` instead, exactly as on the Realtime
-    protocol. A tool result becomes user-level text because Live has nowhere to put a function part in
+    The standing system prompt is routed through `instructions` instead, exactly as on the Realtime
+    protocol, and `seed_input_items` has already turned a later one into `<system>`-tagged user text. A tool result becomes user-level text because Live has nowhere to put a function part in
     seeded history, and not a developer note: its content comes from whatever the tool read, which
     must not be replayed with more authority than it had as a tool result.
     """
@@ -530,7 +531,7 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     before we get here.
     """
     items: list[dict[str, Any]] = []
-    for message in messages:
+    for message in wrap_seeded_system_prompts(messages):
         if isinstance(message, ModelRequest):
             seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
         else:
@@ -2333,7 +2334,7 @@ class OpenAILiveModel(RealtimeModel):
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
         self._reject_unsupported(settings)
         handshake_timeout = settings.get('handshake_timeout', 30.0)
-        instructions = get_instructions(messages, model_request_parameters) or ''
+        instructions = session_instructions(messages, model_request_parameters)
         session_config = self._session_config(
             instructions=instructions,
             tools=model_request_parameters.function_tools,
