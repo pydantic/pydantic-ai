@@ -1102,6 +1102,21 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return None
 
+    def _limits_polls(self, response: ModelResponse) -> bool:
+        """Whether polling `response` counts against the graph's limit on how often one job is polled.
+
+        `True` by default; a model whose job ends of its own accord, like a batch the provider expires once its
+        window has passed, returns `False`, so a long job isn't given up on early.
+        """
+        return True
+
+    def _release_suspended_response(self, response: ModelResponse) -> None:
+        """Called when a run ends with `response` still suspended, leaving it for a later run to continue.
+
+        No-op by default; a model that cancels a job once nobody waits on it stops counting this run as waiting.
+        """
+        return None
+
     def _with_serving_wrapper(self, wrap: Callable[[Model], Model]) -> Model:
         """This model with `wrap` applied to the model that sends its requests.
 

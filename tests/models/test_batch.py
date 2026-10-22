@@ -434,6 +434,33 @@ async def test_a_response_that_is_not_waiting_is_cancelled_by_the_wrapped_model(
     await model.cancel_suspended_response(ModelResponse(parts=[], state='suspended'))
 
 
+def test_a_response_that_is_not_waiting_is_released_by_the_wrapped_model() -> None:
+    model = _batched(TestModel(), **FAST_BATCH_SETTINGS)
+    model._release_suspended_response(ModelResponse(parts=[], state='suspended'))  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_an_ended_batchs_results_are_kept_until_every_request_waiting_on_it_has_read_or_left(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Results too large to cache are still kept for the requests waiting on them, and dropped once none are."""
+    monkeypatch.setattr('pydantic_ai.models._batch_model._RESULTS_CACHE_BYTES', 1)
+    wrapped = SlowBatchTestModel()
+    model = _batched(wrapped, **FAST_BATCH_SETTINGS)
+    prompts = [ModelRequest(parts=[UserPromptPart(prompt)]) for prompt in ('one', 'two')]
+    first, second = await asyncio.gather(
+        *(model.request([prompt], None, ModelRequestParameters()) for prompt in prompts)
+    )
+    assert len(wrapped.created) == 1
+
+    response = await model.request([prompts[0], first], None, ModelRequestParameters())
+    assert response.state == 'complete'
+    assert len(model.pool._results) == 1  # pyright: ignore[reportPrivateUsage]
+
+    await model.cancel_suspended_response(second)
+    assert model.pool._results == {}  # pyright: ignore[reportPrivateUsage]
+    assert wrapped.canceled == []
+
+
 async def test_streaming_is_rejected() -> None:
     agent = Agent(TestModel(), capabilities=[BatchModelRequests()])
     with pytest.raises(UserError, match='does not support streaming'):

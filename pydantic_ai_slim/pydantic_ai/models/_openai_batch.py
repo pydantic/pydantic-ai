@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Required, cast
 
-from openai import APIError, AsyncOpenAI, Omit
+from openai import APIError, APIStatusError, AsyncOpenAI, Omit
 from openai.types import Batch as OpenAIBatch, responses
 from pydantic import BaseModel, JsonValue, TypeAdapter
 from pydantic_core import to_json
@@ -188,9 +188,17 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
     lines = (_input_line(request) for request in requests)
     headers = {'User-Agent': get_user_agent()}
     file = await client.files.create(file=('batch.jsonl', b'\n'.join(lines)), purpose='batch', extra_headers=headers)
-    batch = await client.batches.create(
-        input_file_id=file.id, endpoint=_ENDPOINT, completion_window='24h', extra_headers=headers
-    )
+    try:
+        batch = await client.batches.create(
+            input_file_id=file.id, endpoint=_ENDPOINT, completion_window='24h', extra_headers=headers
+        )
+    except APIStatusError as error:
+        if error.status_code < 500:
+            # OpenAI refused to create the batch, so nothing reads the file, which it would otherwise keep for 30 days.
+            # After a server error or no response, the batch may have been created, so the file is left for it.
+            with suppress(APIError):
+                await client.files.delete(file.id)
+        raise
     _UPLOADED_INPUT_FILES[batch_credential(model), batch.id] = _UploadedInputFile(file.id)
     while len(_UPLOADED_INPUT_FILES) > _UPLOADED_INPUT_FILES_SIZE:
         _UPLOADED_INPUT_FILES.popitem(last=False)

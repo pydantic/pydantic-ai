@@ -1021,6 +1021,19 @@ async def test_batch_usage_has_cached_and_reasoning_tokens(allow_model_requests:
     assert response.cost().total_price < standard.cost().total_price
 
 
+@pytest.mark.parametrize('status_code, deleted', [(429, True), (400, True), (500, False)])
+async def test_a_refused_batch_deletes_its_input_file(
+    allow_model_requests: None, status_code: int, deleted: bool
+) -> None:
+    """Nothing reads the file of a batch OpenAI refused; after a server error, the batch may exist and read it."""
+    error = {'error': {'message': 'Refused', 'type': 'invalid_request_error'}}
+    api = _FakeBatchAPI(batch=_batch_json('validating'), create_error=(status_code, error))
+    model = _fake_model(api)
+    with pytest.raises(ModelHTTPError):
+        await model.batch_create([await model.batch_encode(_request())])
+    assert (('DELETE', '/files/file-input') in api.requests) is deleted
+
+
 @pytest.mark.parametrize(
     'status_code,body,error_class',
     [

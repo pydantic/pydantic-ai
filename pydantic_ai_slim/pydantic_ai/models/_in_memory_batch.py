@@ -28,6 +28,8 @@ class _State:
     batches: dict[str, tuple[Batch, list[BatchResult]]] = field(
         default_factory=dict[str, tuple[Batch, list[BatchResult]]]
     )
+    errors: dict[str, Exception] = field(default_factory=dict[str, Exception])
+    """Errors other than HTTP ones that requests raised, by the token their result names, to raise from `batch_decode`."""
 
 
 class InMemoryBatchModel(Model):
@@ -66,6 +68,11 @@ class InMemoryBatchModel(Model):
             except ModelHTTPError as error:
                 body = to_json({'status_code': error.status_code, 'body': error.body}).decode()
                 results.append(BatchResult(custom_id=encoded.custom_id, status='errored', body=body))
+            except Exception as error:
+                # Fails only this request, as it would fail only its own run without batching.
+                state.errors[encoded.body] = error
+                body = to_json({'error': encoded.body}).decode()
+                results.append(BatchResult(custom_id=encoded.custom_id, status='errored', body=body))
             else:
                 body = _RESPONSE_ADAPTER.dump_json(response).decode()
                 results.append(BatchResult(custom_id=encoded.custom_id, status='succeeded', body=body))
@@ -95,6 +102,8 @@ class InMemoryBatchModel(Model):
             return _RESPONSE_ADAPTER.validate_json(result.body)
         if result.status == 'errored' and result.body is not None:
             error = _ERROR_ADAPTER.validate_json(result.body)
+            if isinstance(token := error.get('error'), str):
+                raise self._batch_state.errors[token]
             status_code = error['status_code']
             assert isinstance(status_code, int)
             raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=error['body'])

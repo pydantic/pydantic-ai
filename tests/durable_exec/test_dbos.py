@@ -4880,7 +4880,9 @@ async def test_dbos_durability_batch_model_recovery_does_not_submit_again(dbos: 
     steps = await dbos.list_workflow_steps_async(wfid)
     handle = await DBOS.fork_workflow_async(wfid, len(steps))
     assert await handle.get_result() == output
-    assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
+    # The fork runs the last step, the check that found the batch ended, again: as every request waiting on the batch
+    # had read its results, they're no longer cached, so the check asks the provider again.
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 3)
 
 
 class _DelayedContinuationModel(ScriptedContinuationModel):

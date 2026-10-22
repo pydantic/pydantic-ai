@@ -14,7 +14,7 @@ import threading
 import time
 import weakref
 from collections import OrderedDict
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -59,6 +59,8 @@ from .wrapper import WrapperModel
 
 _TICKET_KEY = 'batch'
 _RESULTS_CACHE_SIZE = 32
+_RESULTS_CACHE_BYTES = 256 * 1024 * 1024
+"""How many bytes of result bodies the results cache keeps of batches no request in this process is known to wait on."""
 _SUBMITTED_BATCHES_SIZE = 1024
 _MAX_FAILED_CHECKS = 3
 """How many checks of a batch in a row may fail in a way a live request is retried on before the request raises."""
@@ -123,6 +125,21 @@ def check_collectable(model: Model, response: ModelResponse) -> None:
         raise UserError(
             f'The message history ends in a request waiting for its result from batch {ticket["batch"].id!r}, '
             'which only `BatchModelRequests` collects: add the capability to the agent or run that resumes it.'
+        )
+
+
+def check_resumable(model: Model, messages: Sequence[ModelMessage]) -> None:
+    """Raise if `messages` end in a request waiting on a batch that `model` won't collect, like `check_collectable`."""
+    if messages and isinstance(last := messages[-1], ModelResponse):
+        check_collectable(model, last)
+
+
+def refuse_pending_batch_request(messages: Sequence[ModelMessage]) -> None:
+    """Raise if `messages` end in a request waiting on a batch, which a new batch request would send again."""
+    if (ticket := _pending_ticket(messages[-1] if messages else None)) is not None:
+        raise UserError(
+            f'The messages end in a request waiting for its result from batch {ticket["batch"].id!r}, which a new '
+            'batch request would send again: collect it with `BatchModelRequests`.'
         )
 
 
@@ -219,6 +236,10 @@ def _batch_key(batch: Batch) -> _BatchKey:
     return batch.provider_name, batch.group, batch.id
 
 
+def _check_key(model: Model, batch: Batch) -> _CheckKey:
+    return (model._batch_credential(), *_batch_key(batch))  # pyright: ignore[reportPrivateUsage]
+
+
 def _take(queues: dict[_QueueKey, _Queue], key: _QueueKey) -> _Queue:
     """Take a queue off for submission, so later requests start a new one."""
     queue = queues.pop(key)
@@ -303,6 +324,10 @@ class BatchPool:
         ] = {}
         # The ended batch, as the provider last described it, and its results.
         self._results: OrderedDict[_CheckKey, tuple[Batch, dict[str, BatchResult]]] = OrderedDict()
+        self._results_bytes: dict[_CheckKey, int] = {}
+        # The IDs of the requests this pool submitted in each ended batch that are still waiting to read their result,
+        # so the batch's results are dropped once they all have, and kept until then.
+        self._unread: dict[_CheckKey, set[str]] = {}
         # The last status of each batch still in progress, with when it was checked, so requests resumed one after
         # another, like a loop over stored message histories, share a check per `poll_interval` rather than each
         # making one.
@@ -498,6 +523,8 @@ class BatchPool:
         """
         key = _batch_key(batch)
         with self._lock:
+            for check_key in [check_key for check_key in self._unread if check_key[1:] == key]:
+                self._read(check_key, custom_id)
             if (submitted := self._submitted.get(key)) is None or custom_id not in submitted:
                 return False
             abandoned = self._abandoned.setdefault(key, set())
@@ -507,12 +534,47 @@ class BatchPool:
             del self._submitted[key], self._abandoned[key]
             return True
 
+    def release(self, batch: Batch) -> None:
+        """Record that a run left a request waiting on `batch` for a later run to collect, so it's never cancelled.
+
+        The later run can't be told apart from one that resumed a history this pool didn't submit, whose abandoning
+        the batch can't cancel it either.
+        """
+        key = _batch_key(batch)
+        with self._lock:
+            self._submitted.pop(key, None)
+            self._abandoned.pop(key, None)
+
+    def collected(self, model: Model, batch: Batch, custom_id: str) -> None:
+        """Record that a request read its result, dropping the batch's results once every request waiting on it has."""
+        with self._lock:
+            self._read(_check_key(model, batch), custom_id)
+
+    def _read(self, check_key: _CheckKey, custom_id: str) -> None:
+        if (unread := self._unread.get(check_key)) is None:
+            return
+        unread.discard(custom_id)
+        if not unread:
+            del self._unread[check_key]
+            self._drop_results(check_key)
+
+    def _drop_results(self, check_key: _CheckKey) -> None:
+        self._results.pop(check_key, None)
+        self._results_bytes.pop(check_key, None)
+
+    def _evict_results(self) -> None:
+        """Drop the least recently used results that no request this pool submitted still waits to read."""
+        while len(self._results) > _RESULTS_CACHE_SIZE or sum(self._results_bytes.values()) > _RESULTS_CACHE_BYTES:
+            if (key := next((key for key in self._results if key not in self._unread), None)) is None:
+                return
+            self._drop_results(key)
+
     async def poll(
         self, model: Model, ticket: _Ticket, requester: _Requester | None
     ) -> tuple[Batch, dict[str, BatchResult] | None]:
         """The batch's current state, and its results once it has ended, shared by concurrent checks of the batch."""
         batch = ticket['batch']
-        check_key: _CheckKey = (model._batch_credential(), *_batch_key(batch))  # pyright: ignore[reportPrivateUsage]
+        check_key = _check_key(model, batch)
         with self._lock:
             if (ended := self._results.get(check_key)) is not None:
                 self._results.move_to_end(check_key)
@@ -576,11 +638,13 @@ class BatchPool:
         with self._lock:
             self._statuses.pop(check_key, None)
             self._results[check_key] = batch, results
+            self._results_bytes[check_key] = sum(len(result.body or '') for result in results.values())
+            # The requests this pool submitted and still waits on read the results, which are kept until they have.
             # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
-            self._submitted.pop(_batch_key(batch), None)
-            self._abandoned.pop(_batch_key(batch), None)
-            while len(self._results) > _RESULTS_CACHE_SIZE:
-                self._results.popitem(last=False)
+            submitted = self._submitted.pop(_batch_key(batch), frozenset[str]())
+            if unread := submitted - self._abandoned.pop(_batch_key(batch), set[str]()):
+                self._unread[check_key] = set(unread)
+            self._evict_results()
         return batch, results
 
 
@@ -667,6 +731,15 @@ class BatchedModel(WrapperModel):
             return self.wrapped.continuation_delay(response)
         return self.pool.poll_delay(ticket['polls'])
 
+    def _limits_polls(self, response: ModelResponse) -> bool:
+        # A batch ends within the provider's batch window, as it expires once that has passed.
+        return _pending_ticket(response) is None and self.wrapped._limits_polls(response)
+
+    def _release_suspended_response(self, response: ModelResponse) -> None:
+        if (ticket := _pending_ticket(response)) is None:
+            return self.wrapped._release_suspended_response(response)
+        self.pool.release(ticket['batch'])
+
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         if (ticket := _pending_ticket(response)) is None:
             return await self.wrapped.cancel_suspended_response(response)
@@ -718,6 +791,7 @@ class BatchedModel(WrapperModel):
             unlisted := self.wrapped._batch_unlisted_status(batch)
         ) is not None:
             result = BatchResult(custom_id=ticket['custom_id'], status=unlisted)
+        self.pool.collected(self.wrapped, batch, ticket['custom_id'])
         try:
             if result is None:
                 raise missing_result_error(self.wrapped.model_name, batch.id)

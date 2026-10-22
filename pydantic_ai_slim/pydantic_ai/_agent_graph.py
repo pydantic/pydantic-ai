@@ -1295,6 +1295,7 @@ async def model_request(  # noqa: C901
                 messages = base_messages
             elif response.state == 'suspended':
                 if return_pending and requested and model.continuation_delay(response) is not None:
+                    model._release_suspended_response(response)  # pyright: ignore[reportPrivateUsage]
                     return response
                 job_id = response.provider_response_id
                 # A response the model polls, such as a batch request waiting for its batch, is waiting on a job rather
@@ -1303,7 +1304,7 @@ async def model_request(  # noqa: C901
                     last_mode is not None and model.continuation_delay(response) is not None
                 ):
                     replace_count += 1
-                    over_limit = replace_count > MAX_BACKGROUND_POLLS
+                    over_limit = replace_count > MAX_BACKGROUND_POLLS and model._limits_polls(response)  # pyright: ignore[reportPrivateUsage]
                     limit_message = (
                         f'Model response for job {job_id!r} remained suspended after polling the maximum '
                         f'of {MAX_BACKGROUND_POLLS} times'

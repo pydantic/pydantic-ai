@@ -110,6 +110,12 @@ class WrapperModel(Model):
     def continuation_delay(self, response: ModelResponse) -> float | None:
         return self.wrapped.continuation_delay(response)
 
+    def _limits_polls(self, response: ModelResponse) -> bool:
+        return self.wrapped._limits_polls(response)
+
+    def _release_suspended_response(self, response: ModelResponse) -> None:
+        self.wrapped._release_suspended_response(response)
+
     async def count_tokens(
         self,
         messages: list[ModelMessage],
