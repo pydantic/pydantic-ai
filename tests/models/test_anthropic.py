@@ -172,6 +172,7 @@ with try_import() as imports_successful:
         BetaMessageParam,
         BetaMessageTokensCount,
         BetaOutputTokensDetails,
+        BetaPlainTextSource,
         BetaRawContentBlockDeltaEvent,
         BetaRawContentBlockStartEvent,
         BetaRawContentBlockStopEvent,
@@ -302,16 +303,37 @@ _ANTHROPIC_WEB_SEARCH_CITATION: dict[str, Any] = {
         pytest.param(_ANTHROPIC_WEB_SEARCH_CITATION, 'bedrock', False, id='other-provider'),
     ],
 )
-async def test_anthropic_replays_only_web_search_citations(citation: Any, provider_name: str, kept: bool):
-    """Web search citations go back to Anthropic, and document citations go back as plain text.
+@pytest.mark.parametrize(
+    ('content', 'anchor', 'fits'),
+    [
+        pytest.param('An answer.', ContentCitationAnchor(start=0, end=10), True, id='unchanged'),
+        pytest.param('An edited answer.', ContentCitationAnchor(start=0, end=10), False, id='edited'),
+        # A UI adapter joined this block with the text before it.
+        pytest.param('Before. An answer.', ContentCitationAnchor(start=8, end=18), False, id='joined'),
+        pytest.param('An answer.', None, False, id='citations-removed'),
+    ],
+)
+async def test_anthropic_replays_only_web_search_citations(
+    citation: Any, provider_name: str, kept: bool, content: str, anchor: ContentCitationAnchor | None, fits: bool
+):
+    """Web search citations go back to Anthropic while they still cover the whole text, which Anthropic cited.
 
-    Unit test: recordings in `test_citations.py` only hold valid web search citations.
+    Document citations go back as plain text. Unit test: recordings in `test_citations.py` only hold valid web search
+    citations of unchanged text.
     """
+    citations = [Citation(sources=[WebCitationSource(url='https://example.com')], anchor=anchor)] if anchor else None
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='mock-api-key'))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Search the web.')]),
         ModelResponse(
-            parts=[TextPart('An answer.', provider_name=provider_name, provider_details={'citations': [citation]})],
+            parts=[
+                TextPart(
+                    content,
+                    provider_name=provider_name,
+                    provider_details={'citations': [citation]},
+                    citations=citations,
+                )
+            ],
             provider_name=provider_name,
         ),
         ModelRequest(parts=[UserPromptPart('Continue.')]),
@@ -322,7 +344,7 @@ async def test_anthropic_replays_only_web_search_citations(citation: Any, provid
     )
 
     [replayed] = cast(list[dict[str, Any]], messages[1]['content'])
-    assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept else None)
+    assert replayed.get('citations') == ([_ANTHROPIC_WEB_SEARCH_CITATION] if kept and fits else None)
 
 
 @pytest.mark.parametrize('source', ['result-123', 'https://example.com/result'])
@@ -361,6 +383,124 @@ def test_anthropic_pdf_or_failed_fetch_is_not_a_fetched_page():
 
     assert _fetched_page(_web_fetch_result(pdf)) is None
     assert _fetched_page(_web_fetch_result(error)) is None
+
+
+@pytest.mark.parametrize('stream', [pytest.param(False, id='request'), pytest.param(True, id='stream')])
+async def test_anthropic_citation_of_page_fetched_in_earlier_turn(allow_model_requests: None, stream: bool):
+    """A page Web Fetch fetched in an earlier turn is still cited as a web page with its URL.
+
+    Unit test: no recording cites a page fetched in an earlier response.
+    """
+    page = BetaWebFetchBlock(
+        type='web_fetch_result',
+        url='https://example.com/page',
+        content=BetaDocumentBlock(
+            type='document',
+            source=BetaPlainTextSource(type='text', media_type='text/plain', data='Page text'),
+            title='Page',
+            citations=None,
+        ),
+    )
+    pdf = page.model_copy(
+        update={
+            'url': 'https://example.com/pdf',
+            'content': page.content.model_copy(
+                update={'source': BetaBase64PDFSource(type='base64', media_type='application/pdf', data='JVBERi0=')}
+            ),
+        }
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Fetch the pages.')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart('web_fetch', {'url': 'https://example.com/page'}, provider_name='anthropic'),
+                *(
+                    NativeToolReturnPart(
+                        'web_fetch',
+                        fetched.model_dump(mode='json'),
+                        tool_call_id=f'srvtoolu_{i}',
+                        provider_name='anthropic',
+                    )
+                    for i, fetched in enumerate([pdf, page])
+                ),
+                # A failed fetch isn't a page.
+                NativeToolReturnPart(
+                    'web_fetch',
+                    {'type': 'web_fetch_tool_error', 'error_code': 'url_not_accessible'},
+                    tool_call_id='srvtoolu_2',
+                    provider_name='anthropic',
+                ),
+                TextPart('Fetched.'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart('What does the page say?')]),
+    ]
+    citation = BetaCitationCharLocation(
+        cited_text='Page text',
+        document_index=1,
+        document_title='Page',
+        start_char_index=0,
+        end_char_index=9,
+        type='char_location',
+    )
+    if stream:
+        client = MockAnthropic.create_stream_mock(
+            [
+                BetaRawMessageStartEvent(
+                    type='message_start',
+                    message=BetaMessage(
+                        id='message-1',
+                        model='claude-sonnet-4-5',
+                        role='assistant',
+                        type='message',
+                        content=[],
+                        stop_reason=None,
+                        usage=BetaUsage(input_tokens=1, output_tokens=0),
+                    ),
+                ),
+                BetaRawContentBlockStartEvent(
+                    type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='It says so.')
+                ),
+                BetaRawContentBlockDeltaEvent(
+                    type='content_block_delta',
+                    index=0,
+                    delta=BetaCitationsDelta(type='citations_delta', citation=citation),
+                ),
+                BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+                BetaRawMessageStopEvent(type='message_stop'),
+            ]
+        )
+    else:
+        client = MockAnthropic.create_mock(
+            completion_message(
+                [BetaTextBlock(text='It says so.', type='text', citations=[citation])],
+                BetaUsage(input_tokens=5, output_tokens=6),
+            )
+        )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client))
+
+    if stream:
+        async with model.request_stream(history, None, ModelRequestParameters()) as response:
+            async for _ in response:
+                pass
+        parts = response.get().parts
+    else:
+        parts = (await model.request(history, None, ModelRequestParameters())).parts
+
+    assert parts == [
+        TextPart(
+            content='It says so.',
+            provider_name='anthropic',
+            provider_details={'citations': [citation.model_dump()]},
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com/page', title='Page', excerpts=['Page text'])],
+                    anchor=ContentCitationAnchor(start=0, end=11),
+                )
+            ],
+        )
+    ]
 
 
 def test_anthropic_character_citation_not_on_fetched_page_is_a_document_citation():
@@ -3922,6 +4062,47 @@ async def test_anthropic_citations_request_setting(
     assert document.get('citations') == ({'enabled': True} if citations else None)
     web_fetch_tool = next(tool for tool in request['tools'] if tool['name'] == 'web_fetch')
     assert web_fetch_tool.get('citations') == web_fetch_citations
+
+
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param(ToolOutput(int), id='tool'),
+        pytest.param(NativeOutput(int), id='native'),
+        pytest.param(PromptedOutput(int), id='prompted'),
+    ],
+)
+async def test_anthropic_citations_off_for_structured_output(allow_model_requests: None, output_type: Any) -> None:
+    """The `citations` setting doesn't turn on document or Web Fetch citations when the output isn't text.
+
+    Anthropic rejects citations with native output, and writes its `<cite>` markup into tool and prompted output.
+    Unit test: it pins the request body, which the default cassette matchers ignore.
+    """
+    response = completion_message(
+        [BetaToolUseBlock(id='1', name='final_result', input={'response': 30}, type='tool_use')]
+        if isinstance(output_type, ToolOutput)
+        else [BetaTextBlock(text='{"response": 30}', type='text')],
+        BetaUsage(input_tokens=5, output_tokens=6),
+    )
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await Agent(
+        model,
+        output_type=output_type,
+        capabilities=[NativeTool(WebFetchTool())],
+        model_settings=ModelSettings(citations=True),
+    ).run(
+        [
+            'What is the return window?',
+            BinaryContent(data=b'Returns are allowed within thirty days.', media_type='text/plain'),
+        ]
+    )
+
+    request = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'citations' not in request['messages'][0]['content'][1]
+    web_fetch_tool = next(tool for tool in request['tools'] if tool['name'] == 'web_fetch')
+    assert web_fetch_tool.get('citations') is None
 
 
 @pytest.mark.parametrize('citations', [pytest.param(False, id='off'), pytest.param(True, id='on')])

@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeAlias, TypeGuard, assert_never, cast, overl
 import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens, marked_context_input_tokens
@@ -156,6 +156,31 @@ def _fetched_page(block: BetaWebFetchToolResultBlock) -> tuple[str, str] | None:
     return None
 
 
+def _include_citations(model_settings: ModelSettings, model_request_parameters: ModelRequestParameters) -> bool:
+    """Whether the `citations` setting turns on document and Web Fetch citations for this request.
+
+    Anthropic rejects citations with native structured output, and writes its `<cite>` markup into tool and prompted
+    output, so they're only turned on for text output.
+    """
+    return model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'
+
+
+def _history_fetched_pages(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
+    """Return the URL and text of each page Web Fetch fetched earlier in the conversation, which a new answer can cite."""
+    pages: list[tuple[str, str]] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind:
+                    try:
+                        page = BetaWebFetchBlock.model_validate(part.content)
+                    except ValidationError:
+                        continue
+                    if isinstance(page.content.source, BetaPlainTextSource):
+                        pages.append((page.url, page.content.source.data))
+    return pages
+
+
 def _fetched_page_url(citation: BetaCitationCharLocation, fetched_pages: Sequence[tuple[str, str]]) -> str | None:
     """Return the URL of the fetched page a character citation quotes, if any.
 
@@ -199,6 +224,17 @@ def _map_citations(
 
 def _citations_provider_details(citations: Sequence[BetaTextCitation]) -> dict[str, Any]:
     return {'citations': [citation.model_dump(mode='json') for citation in citations]}
+
+
+def _citations_fit_text(part: TextPart) -> bool:
+    """Whether a text part is still the block Anthropic cited, so its citations can be sent back.
+
+    Anthropic cites whole blocks, so each citation covers the whole text. One that doesn't, because the text was
+    edited or joined with other text, such as by a UI adapter, would vouch for text it never cited.
+    """
+    return bool(part.citations) and all(
+        citation.anchor == ContentCitationAnchor(start=0, end=len(part.content)) for citation in part.citations or []
+    )
 
 
 def _map_citation_for_replay(citation: dict[str, Any]) -> BetaCitationWebSearchResultLocationParam | None:
@@ -1325,13 +1361,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
-            model_response = self._process_response(response, model_request_parameters, model_settings)
+            model_response = self._process_response(
+                response, model_request_parameters, model_settings, _history_fetched_pages(messages)
+            )
         else:
             # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport
             # error that breaks the stream off, both while it opens and while it's read.
             async with response.source:
                 streamed_response = await self._process_streamed_response(
-                    response, model_request_parameters, model_settings
+                    response, model_request_parameters, model_settings, _history_fetched_pages(messages)
                 )
                 async for _ in streamed_response:
                     pass
@@ -1374,7 +1412,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response.source:
             streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings
+                response, model_request_parameters, model_settings, _history_fetched_pages(messages)
             )
             yield streamed_response
             _mark_continuation_context_input_tokens(messages, streamed_response)
@@ -2033,6 +2071,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response: BetaMessage,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        history_fetched_pages: Sequence[tuple[str, str]] = (),
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
@@ -2053,9 +2092,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         }
         fetched_pages = [
-            page
-            for item in response.content
-            if isinstance(item, BetaWebFetchToolResultBlock) and (page := _fetched_page(item))
+            *history_fetched_pages,
+            *(
+                page
+                for item in response.content
+                if isinstance(item, BetaWebFetchToolResultBlock) and (page := _fetched_page(item))
+            ),
         ]
         for item in response.content:
             if isinstance(item, BetaTextBlock):
@@ -2187,6 +2229,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response: _AnthropicEventStream,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        history_fetched_pages: Sequence[tuple[str, str]] = (),
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -2209,6 +2252,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
+            _history_fetched_pages=history_fetched_pages,
         )
 
     def _get_code_execution_tool_version(
@@ -2316,7 +2360,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     beta_features.add('files-api-2025-04-14')
             elif isinstance(tool, WebFetchTool):  # pragma: no branch
                 web_fetch_tool, beta_feature = self._map_web_fetch_tool(
-                    tool, supports_dynamic_filtering, model_settings.get('citations', False)
+                    tool, supports_dynamic_filtering, _include_citations(model_settings, model_request_parameters)
                 )
                 tools.append(web_fetch_tool)
                 if beta_feature is not None:
@@ -2450,7 +2494,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
-        include_citations = model_settings.get('citations', False)
+        include_citations = _include_citations(model_settings, model_request_parameters)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via
@@ -2748,6 +2792,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             if (
                                 response_part.provider_name == self.system
                                 and isinstance(raw_citations, list)
+                                and _citations_fit_text(response_part)
                                 and (
                                     citations := [
                                         param
@@ -3861,6 +3906,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _enabled_server_tool_names: frozenset[str]
+    _history_fetched_pages: Sequence[tuple[str, str]] = ()
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -3869,7 +3915,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             ignored_server_tool_use_indices: set[int] = set()
             pending_citations: dict[int, list[BetaTextCitation]] = {}
             # Web Fetch citations name their page only by its text, so the fetched pages are kept to find their URLs.
-            fetched_pages: list[tuple[str, str]] = []
+            fetched_pages: list[tuple[str, str]] = list(self._history_fetched_pages)
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in MapStreamDecodeErrors(self._response, self._model_name):

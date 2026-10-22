@@ -596,8 +596,8 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (documents, including those returned by tools, and Web Fetch)
-    * Bedrock (TXT and PDF documents, including those returned by tools, with Anthropic models)
+    * Anthropic (documents, including those returned by tools, and Web Fetch), for text output only
+    * Bedrock (TXT and PDF documents, including those returned by tools, with Anthropic models), for text output only
     * xAI (inline citations)
 
     Providers that always return citations ignore this setting.
