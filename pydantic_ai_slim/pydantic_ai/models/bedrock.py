@@ -883,6 +883,7 @@ class BedrockConverseModel(Model[BaseClient]):
             (variant == 'anthropic' and ('thinking' in fields or effort_replaced))
             or (variant == 'openai' and 'reasoning_effort' in fields)
             or (variant == 'qwen' and 'reasoning_config' in fields)
+            or (variant == 'xai' and 'reasoning' in fields)
         ):
             return ('bedrock_additional_model_requests_fields',)
         return ()

@@ -2215,6 +2215,15 @@ _CROSS_SCOPE_CASES = [
         marks=_needs_bedrock,
     ),
     _CrossScopeCase(
+        'bedrock-xai-reasoning',
+        _bedrock_probe('us.xai.grok-4.7'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'high'}}),
+        'low',
+        _bedrock_sent,
+        overrides=True,
+        marks=_needs_bedrock,
+    ),
+    _CrossScopeCase(
         'openrouter-reasoning',
         lambda s: http_probe(
             lambda c: OpenRouterModel(
