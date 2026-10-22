@@ -45,8 +45,9 @@ depend on the selected model. Profiles are conservative for unlisted models; pas
 `profile` when enabling additional capabilities you have verified.
 
 `Agent` selects the decision adapter for `@cf/cloudflare/clef` and `@cf/cloudflare/clef-flash` and the
-chat adapter for other model IDs. An ID from an unrelated task does not become a chat model; use the
-appropriate interface. For a future decision model, construct `CloudflareClefModel` explicitly.
+chat adapter for every other model ID. `Agent` does not validate catalog tasks; embedding and image
+IDs require `Embedder` and `ImageGenerator` respectively. For a future decision model, construct
+`CloudflareClefModel` explicitly.
 
 ## Embeddings
 

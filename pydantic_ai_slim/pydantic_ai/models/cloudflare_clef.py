@@ -8,10 +8,11 @@ import httpx2
 from pydantic import TypeAdapter, ValidationError
 
 from .._http import to_httpx2_timeout
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..exceptions import UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.decision import decision_model_profile
 from ..providers import Provider
+from ..providers._cloudflare_http import send_request
 from ..providers.cloudflare import CloudflareProvider
 from ..settings import ModelSettings
 from . import _system_one
@@ -145,17 +146,7 @@ class CloudflareClefModel(DecisionModel[httpx2.AsyncClient]):
             )
         except (TypeError, ValueError) as e:
             raise UserError(f'Could not send this request to Cloudflare Workers AI: {e}') from e
-        try:
-            response = await self.client.send(http_request)
-        except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self._model_name, message=f'{type(e).__name__}: {e}') from e
-        if response.is_error:
-            raise ModelHTTPError(
-                status_code=response.status_code,
-                model_name=self._model_name,
-                body=_system_one.error_body(response),
-                headers=dict(response.headers),
-            )
+        response = await send_request(self.client, http_request, model_name=self._model_name)
         try:
             parsed = _response_adapter.validate_json(response.content)
         except ValidationError as e:

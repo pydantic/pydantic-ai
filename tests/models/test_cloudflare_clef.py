@@ -13,7 +13,16 @@ import pytest
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from pydantic_ai import Agent, BinaryContent, ImageUrl
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelTimeoutError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.cloudflare_clef import CloudflareClefModel
 from pydantic_ai.models.decision import (
@@ -310,32 +319,38 @@ async def test_supported_question_ids_are_preserved(question_name: str):
 
 
 @pytest.mark.parametrize(
-    ('status', 'body'),
+    ('status', 'body', 'category'),
     [
-        (401, {'success': False, 'errors': [{'code': 10000, 'message': 'Authentication error'}]}),
-        (500, b'upstream unavailable'),
+        (401, {'success': False, 'errors': [{'code': 10000, 'message': 'Authentication error'}]}, ModelHTTPError),
+        (429, {'errors': [{'message': 'Rate limit exceeded'}]}, ModelRateLimitError),
+        (500, b'upstream unavailable', ModelServerError),
     ],
 )
-async def test_http_errors(status: int, body: object):
+async def test_http_errors(status: int, body: object, category: type[ModelAPIError]):
     captured = mock_model(body, status=status, headers={'cf-ray': 'test-ray'})
     with pytest.raises(ModelHTTPError) as exc:
         await captured.model.decide(DecisionRequest(state='state', questions={'q': NoulQuestion()}), {})
     assert exc.value.status_code == status
+    assert isinstance(exc.value, category)
     assert exc.value.model_name == '@cf/cloudflare/clef-flash'
     assert exc.value.body == (body.decode() if isinstance(body, bytes) else body)
     assert exc.value.headers is not None and exc.value.headers['cf-ray'] == 'test-ray'
 
 
-async def test_transport_error():
+@pytest.mark.parametrize(
+    ('transport_error', 'category'),
+    [(httpx2.ReadTimeout('timed out'), ModelTimeoutError), (httpx2.ConnectError('disconnected'), ModelConnectionError)],
+)
+async def test_transport_error(transport_error: httpx2.TransportError, category: type[ModelAPIError]):
     def handle(request: httpx2.Request) -> httpx2.Response:
-        raise httpx2.ReadTimeout('timed out')
+        raise transport_error
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
         model = CloudflareClefModel(
             '@cf/cloudflare/clef',
             provider=CloudflareProvider(api_key='token', account_id='account', http_client=client),
         )
-        with pytest.raises(ModelAPIError, match='ReadTimeout: timed out'):
+        with pytest.raises(category, match=str(transport_error)):
             await model.decide(DecisionRequest(state='state', questions={'q': NoulQuestion()}), {})
 
 
