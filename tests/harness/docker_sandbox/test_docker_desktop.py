@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
@@ -105,31 +104,12 @@ async def test_a_display_that_went_away_is_started_again(docker: FakeDocker, con
     assert docker.xvfb_starts == 1
 
 
-async def test_a_window_manager_that_is_not_running_is_started_even_with_the_display_up(
-    docker: FakeDocker, container_dir: Path
-) -> None:
-    backend = _desktop(container_dir, image='my-desktop')
-    await Workspace(backend).display_size()
-    assert docker.window_manager_pid
-
-    # As after a start interrupted once the X server was up: the display answers, the window manager isn't there.
-    docker.window_manager_pid = None
-    await Workspace(DockerSandboxBackend(ref=backend.ref, working_dir=str(container_dir), desktop=True)).display_size()
-    assert docker.window_manager_pid
-
-    running = str(os.getpid())
-    docker.window_manager_pid = running
-    await Workspace(DockerSandboxBackend(ref=backend.ref, working_dir=str(container_dir), desktop=True)).display_size()
-    assert docker.window_manager_pid == running
-    assert docker.xvfb_starts == 0
-
-
 async def test_an_image_without_a_working_x_server_fails_at_once(docker: FakeDocker, container_dir: Path) -> None:
     docker.remove_display(can_start=False)
     workspace = Workspace(_desktop(container_dir, image='my-desktop'))
 
     with anyio.fail_after(5):
-        with pytest.raises(WorkspaceError, match='the image needs Xvfb, xdotool and scrot') as error:
+        with pytest.raises(WorkspaceError, match='the image needs Xvfb, xdotool, scrot and setsid') as error:
             await workspace.screenshot()
     assert 'the X server did not start' in str(error.value)
     assert 'Fatal server error' in str(error.value)

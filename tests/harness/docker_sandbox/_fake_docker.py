@@ -157,7 +157,7 @@ Also keeps a host's real Xvfb from starting.
 
 _FAKE_FLUXBOX = """#!/bin/sh
 """
-"""Stands in for the window manager, so a host's real one never starts; whether one runs is up to `window-manager`."""
+"""Stands in for the window manager, so a host's real one never starts."""
 
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
@@ -216,20 +216,6 @@ class FakeDocker:
         (self.bin_dir / 'no-display').touch()
         if not can_start:
             (self.bin_dir / 'xvfb-fails').touch()
-
-    @property
-    def window_manager_pid(self) -> str | None:
-        """What the one container's `window-manager` holds, or `None` without one."""
-        (pidfile,) = (self.bin_dir / 'containers').glob('*.tmp/window-manager') or [None]
-        return pidfile.read_text().strip() if pidfile is not None else None
-
-    @window_manager_pid.setter
-    def window_manager_pid(self, pid: str | None) -> None:
-        for run_dir in (self.bin_dir / 'containers').glob('*.tmp'):
-            if pid is None:
-                (run_dir / 'window-manager').unlink(missing_ok=True)
-            else:
-                (run_dir / 'window-manager').write_text(f'{pid}\n')
 
     @property
     def xvfb_starts(self) -> int:

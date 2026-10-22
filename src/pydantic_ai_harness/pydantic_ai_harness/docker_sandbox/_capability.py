@@ -63,11 +63,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
     desktop: bool = False
-    """Give the container a 1280x800 graphical display, for [`ComputerUse`][pydantic_ai.capabilities.ComputerUse].
-
-    Without an `image`, the capability builds one with a desktop, a terminal and a browser on first use (once per
-    machine). A custom `image` needs Xvfb, `xdotool` and `scrot`.
-    """
+    """Give the container a 1280x800 graphical display, for [`ComputerUse`][pydantic_ai.capabilities.ComputerUse]."""
 
     _executable_path: str = field(init=False, repr=False, compare=False)
 

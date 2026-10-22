@@ -397,11 +397,10 @@ Python up to 3.14.
 - New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
-- `desktop=True` gives the container a 1280x800 X display, started on first use (and again if it died), so
-  `ctx.workspace.has_display` is true and `ComputerUse()` works; commands and files stay available. Without `image`,
-  the first run builds `pydantic-ai-desktop:<hash>` from `DESKTOP_DOCKERFILE` (Debian, fluxbox, xterm, Firefox) and
-  later runs reuse it; a custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`. Under durable execution, build
-  it first (`print(DESKTOP_DOCKERFILE)` piped to `docker build --tag my-desktop -`) and pass `image='my-desktop'`.
+- `desktop=True` gives the container a 1280x800 X display for `ComputerUse()`; commands and files stay available.
+  Without `image`, the first run builds one from `DESKTOP_DOCKERFILE` (Debian, xterm, Firefox) and later runs reuse
+  it; a custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`. Under durable execution, build the image first and
+  pass it as `image`.
 
 ## Remote hosts and bubblewrap
 

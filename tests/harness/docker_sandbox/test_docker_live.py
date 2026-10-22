@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
-import anyio
 import pytest
 
 from pydantic_ai.workspaces import Click, PressKeys, TypeText, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
@@ -161,11 +160,11 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
             shell=True,
             env={'DISPLAY': ':1'},
         )
-        await anyio.sleep(2)
+        await backend.run(['xdotool', 'search', '--sync', '--onlyvisible', '--class', 'xterm'], env={'DISPLAY': ':1'})
 
         await backend.act(Click(x=300, y=180))
         await backend.act(TypeText(text='hello, desktop'))
         await backend.act(PressKeys(keys=('enter',)))
-        await anyio.sleep(1)
 
-        assert (await backend.run(['cat', 'typed.txt'])).stdout == 'hello, desktop\n'
+        typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
+        assert typed.stdout == 'hello, desktop\n'
