@@ -1193,6 +1193,45 @@ def test_bedrock_writer_palmyra():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize('region', ['us', 'global'])
+def test_bedrock_xai_grok(region: str):
+    """xAI Grok via Bedrock: upstream `grok_model_profile` + the `xai` thinking variant.
+
+    The upstream `supports_json_schema_output` / `supports_json_object_output` are turned off because
+    Converse has no structured output for Grok 4.6, and stay off on Grok 4.7 until it's verified there;
+    prompt caching stays at the default (`False`) because explicit `cachePoint` blocks are rejected.
+    """
+    profiles = {
+        version: _normalize(BedrockProvider.model_profile(f'{region}.xai.grok-{version}')) for version in ('4.6', '4.7')
+    }
+    assert profiles == snapshot(
+        {
+            '4.6': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
+            },
+            '4.7': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'grok_default_effort_omitted': True,
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
+            },
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
 def test_bedrock_unknown_provider_returns_none():
     """Bedrock model IDs from an unknown provider prefix → `None`."""
     assert BedrockProvider.model_profile('unknown.foo-v1:0') is None
