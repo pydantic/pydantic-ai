@@ -241,6 +241,23 @@ async def test_an_out_of_range_member_is_refused_and_nothing_runs(allow_model_re
     assert all('less than or equal to 10' in r['content'][0]['text'] for r in results)
 
 
+async def test_a_deferred_computer_tool_stays_a_deferred_function(allow_model_requests: None) -> None:
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    computer = ToolDefinition(
+        name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer', defer_loading=True
+    )
+    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
+    params = ModelRequestParameters(function_tools=[computer, note], allow_text_output=True)
+    await model.request([ModelRequest.user_text_prompt('Look.')], None, params)
+
+    (request,) = get_mock_chat_completion_kwargs(client)
+    assert [(tool.get('type'), tool.get('name'), tool.get('defer_loading')) for tool in request['tools']] == [
+        (None, 'computer', True),
+        (None, 'note', None),
+    ]
+
+
 async def test_an_older_model_gets_a_function(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='done', type='text')))
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
