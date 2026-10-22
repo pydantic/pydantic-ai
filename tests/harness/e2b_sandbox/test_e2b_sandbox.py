@@ -104,7 +104,7 @@ async def test_foreign_reference_is_rejected(fake_e2b: FakeE2B) -> None:
 def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None:
     with pytest.raises(TypeError, match='env keys and values must be strings'):
         E2BSandboxBackend(env=env)  # pyright: ignore[reportArgumentType]
-    with pytest.raises(UserError, match='env keys and values must be strings'):
+    with pytest.raises(UserError, match=r'^`env` keys and values must be strings\.$'):
         E2BSandbox(env=env)  # pyright: ignore[reportArgumentType]
 
 

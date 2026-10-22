@@ -49,6 +49,7 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env_types,
     check_timeout,
     command_argv,
     running_on_asyncio,
@@ -307,8 +308,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
-            raise TypeError('env keys and values must be strings')
+        check_env_types(env)
         if type(sandbox_timeout) is not int or sandbox_timeout < 1:
             raise ValueError(f'sandbox_timeout must be an integer of at least 1, got {sandbox_timeout!r}.')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
@@ -603,7 +603,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         """Run one of the backend's own short commands; `run` already translates SDK failures.
 
         Its deadline is internal, so a timeout names the operation rather than a command the caller
-        never ran; it stays a `WorkspaceTimeoutError` with the command's partial output, as before.
+        never ran; it is still a `WorkspaceTimeoutError` carrying the command's partial output.
         """
         try:
             return await self.run(argv, timeout=_INTERNAL_EXEC_TIMEOUT)
