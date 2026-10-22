@@ -100,7 +100,7 @@ agent = Agent(
 
 `Capability` is a convenience helper for simple bundles of instructions, descriptions, function tools, and toolsets. It accepts callable descriptions, dynamic instruction functions, and dynamic toolset functions. Use a custom `AbstractCapability` for model settings, hooks, native tools, wrapper toolsets, reusable public behavior, or custom per-run logic. Wrapper toolsets are applied during per-run toolset assembly; if wrapper behavior should wait for a deferred capability to load, gate that behavior inside the wrapper.
 
-To defer existing capabilities together (built-in, harness, or custom ones), wrap them instead of rebuilding them as one bundle: `CombinedCapability([WebSearch(), WebFetch()], id='web-research', description='...', defer_loading=True)`. Loading `web-research` activates every member at once. A `CombinedCapability` without an `id` is only a grouping and is merged into the agent's capabilities.
+To defer existing capabilities together (built-in, harness, or custom ones), wrap them instead of rebuilding them as one bundle: `CombinedCapability([WebSearch(), WebFetch()], id='web-research', description='...', defer_loading=True)`. Loading `web-research` activates every member at once. Each member keeps its own ordering position among the agent's capabilities. A `CombinedCapability` without `defer_loading=True` is only a grouping and is merged into the agent's capabilities.
 
 ## Runtime Semantics
 

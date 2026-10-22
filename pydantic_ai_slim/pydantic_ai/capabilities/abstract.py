@@ -1445,7 +1445,7 @@ def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[A
     from .combined import CombinedCapability
 
     if isinstance(capability, CombinedCapability) and not capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
-        return capability.capabilities
+        return capability._branches  # pyright: ignore[reportPrivateUsage]
     return [capability]
 
 
@@ -1556,6 +1556,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
     capability winning.
     """
+    from .combined import _ungrouped  # pyright: ignore[reportPrivateUsage]
     from .wrapper import WrapperCapability
 
     # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
@@ -1565,7 +1566,8 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
     position = 0
     for layer_index, layer in enumerate(layers):
-        for root in chain.from_iterable(map(_combination_roots, layer)):
+        ungrouped: list[AbstractCapability[AgentDepsT]] = _ungrouped(layer)
+        for root in chain.from_iterable(map(_combination_roots, ungrouped)):
             leaf_positions: dict[int, list[int]] = {}
             for leaf in leaf_capabilities(root):
                 leaf_positions.setdefault(id(leaf), []).append(position)

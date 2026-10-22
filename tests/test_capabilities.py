@@ -3301,19 +3301,24 @@ def test_ordering_mixed_positions_in_nested():
     assert [type(c) for c in combined.capabilities] == [OutermostCap, PlainCapA, InnermostCap]
 
 
-def test_ordering_named_nested_combined_is_one_unit():
-    """A nested `CombinedCapability` with an `id` is kept whole and sorted by its members' merged ordering."""
-    plain = PlainCapA()
-    named = CombinedCapability([PlainCapB(), OutermostCap()], id='group')
-    combined = CombinedCapability([plain, named])
-    assert list(combined.capabilities) == [named, plain]
+def test_ordering_deferred_group_children_keep_their_global_positions():
+    """A deferred group is registered as one capability, but each child is ordered as if the group were merged."""
+    plain, middle, outermost, innermost = PlainCapA(), PlainCapB(), OutermostCap(), InnermostCap()
+    group = CombinedCapability([innermost, middle, outermost], id='group', defer_loading=True)
+    combined = CombinedCapability([plain, group])
+    assert [getattr(c, 'wrapped', c) for c in combined.capabilities] == [outermost, plain, middle, innermost]
 
     visited: list[AbstractCapability[Any]] = []
     combined.apply(visited.append)
-    assert visited == [named, *named.capabilities, plain]
+    assert visited == [plain, group, innermost, middle, outermost]
 
-    with pytest.raises(UserError, match='Conflicting positions among nested leaves'):
-        CombinedCapability([CombinedCapability([OutermostCap(), InnermostCap()], id='group'), PlainCapA()])
+    # A group with only an `id` is a plain grouping, merged as before.
+    named = CombinedCapability([PlainCapB(), OutermostCap()], id='named')
+    assert [type(c) for c in CombinedCapability([PlainCapA(), named]).capabilities] == [
+        OutermostCap,
+        PlainCapA,
+        PlainCapB,
+    ]
 
 
 def test_ordering_conflicting_positions_in_custom_nested_capability():

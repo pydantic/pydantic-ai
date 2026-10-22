@@ -23,7 +23,7 @@ from pydantic_ai.capabilities import (
     Toolset,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, CapabilityPosition
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
@@ -836,6 +836,84 @@ async def test_deferred_capability_group_loads_all_members_together(wrap: bool) 
     assert [part.content for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)] == [
         "Capability 'editing_tools' is not loaded on its own."
     ]
+
+
+async def test_a_deferred_group_member_keeps_its_global_hook_position() -> None:
+    """A member that must be outermost or innermost takes that place among all capabilities once its group loads."""
+    calls: list[str] = []
+
+    @dataclass
+    class Recorder(AbstractCapability[object]):
+        name: str = ''
+        position: CapabilityPosition | None = None
+
+        def get_ordering(self) -> CapabilityOrdering | None:
+            return CapabilityOrdering(position=self.position) if self.position else None
+
+        async def before_model_request(
+            self, ctx: RunContext[object], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            calls.append(self.name)
+            return request_context
+
+    group = CombinedCapability[object](
+        [Recorder('member'), Recorder('outer', 'outermost'), Recorder('inner', 'innermost')],
+        id='group',
+        description='Group.',
+        defer_loading=True,
+    )
+    per_request: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        per_request.append(calls.copy())
+        calls.clear()
+        if len(per_request) == 1:
+            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'group'})])
+        return make_text_response('done')
+
+    await Agent(FunctionModel(model_fn), capabilities=[Recorder('first'), group, Recorder('last')]).run('hi')
+
+    assert per_request == [['first', 'last'], ['outer', 'first', 'member', 'last', 'inner']]
+
+
+async def test_a_prefixed_deferred_group_loads_its_prefixed_tools() -> None:
+    """A wrapper over a deferred group adopts its `id` and stands in for it, so the group registers once."""
+
+    def lookup() -> str:
+        return 'found'  # pragma: no cover
+
+    group = CombinedCapability[object](
+        [Capability[object](id='member', tools=[lookup])], id='group', description='Group.', defer_loading=True
+    )
+    visible_tools: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        visible_tools.append(sorted(tool.name for tool in info.function_tools))
+        if len(visible_tools) == 1:
+            return ModelResponse(parts=[ToolCallPart(LOAD_CAPABILITY_TOOL_NAME, {'id': 'group'})])
+        return make_text_response('done')
+
+    await Agent(FunctionModel(model_fn), capabilities=[group.prefix_tools('p')]).run('hi')
+
+    assert visible_tools == [['load_capability'], ['load_capability', 'p_lookup']]
+
+
+async def test_a_copy_of_the_agent_capabilities_registers_a_deferred_group_once() -> None:
+    """`capabilities` lists a deferred group's members one by one, and passing that list back registers the group again."""
+    group = CombinedCapability[object](
+        [Capability[object](id='a', instructions='A.'), Capability[object](id='b')],
+        id='g',
+        description='G.',
+        defer_loading=True,
+    )
+    copied = list(Agent(TestModel(), capabilities=[group]).root_capability.capabilities)
+
+    for capabilities in (copied, [CombinedCapability[object](copied)]):
+        agent = Agent(TestModel(call_tools=[]), capabilities=capabilities)
+        visited: list[AbstractCapability[object]] = []
+        agent.root_capability.apply(visited.append)
+        assert visited.count(group) == 1
+        await agent.run('hi')
 
 
 @pytest.mark.parametrize('also_eager', [False, True], ids=['only-deferred', 'also-eager'])

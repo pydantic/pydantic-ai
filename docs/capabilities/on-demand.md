@@ -132,7 +132,7 @@ web_research = CombinedCapability(
 agent = Agent('{{ anthropic:medium }}', capabilities=[web_research])
 ```
 
-Loading `web-research` activates the tools, instructions, and hooks of both capabilities at once. The capabilities inside the group can't be deferred themselves: pass a capability to the agent separately if the model should load it on its own.
+Loading `web-research` activates the tools, instructions, and hooks of both capabilities at once. Each capability keeps its own [ordering](custom.md#ordering) position among the agent's capabilities, as if it were passed to the agent directly. The capabilities inside the group can't be deferred themselves: pass a capability to the agent separately if the model should load it on its own.
 
 ## Resumable across runs {#resumable-across-runs}
 

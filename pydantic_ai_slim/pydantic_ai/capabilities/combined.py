@@ -43,6 +43,7 @@ from .abstract import (
     WrapOutputValidateHandler,
     _combination_roots,  # pyright: ignore[reportPrivateUsage]
 )
+from .wrapper import WrapperCapability
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -58,10 +59,11 @@ if TYPE_CHECKING:
 class CombinedCapability(AbstractCapability[AgentDepsT]):
     """A capability that combines multiple capabilities.
 
-    Give it an `id` to make the group a capability in its own right: it can then be deferred with
-    `defer_loading=True` (loading it activates every child at once) and replaced by a run-level
-    capability with the same `id`. Without an `id`, a nested `CombinedCapability` is only a grouping,
-    and its children are merged into the enclosing one.
+    A nested `CombinedCapability` is only a grouping: its children are merged into the enclosing
+    one. Give it an `id` and `defer_loading=True` to load its children together instead: the model
+    loads the group by its `id`, and loading it activates every child at once. Each child still
+    keeps its own ordering position among all of the agent's capabilities, as if the group were
+    merged.
 
     When any child returns a fresh instance from
     [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] or
@@ -75,13 +77,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     """
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
-    # Unnamed combined capabilities are flattened for hook/tool ordering, but public instruction overrides
+    # Combined capabilities are flattened for hook/tool ordering, but public instruction overrides
     # belong to the container itself and therefore need a composition view that retains it.
     _instruction_sources: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
+    # The children as registered: plain groupings merged, each deferred group kept as one object.
+    # `capabilities` is derived from it (see `__normalize_capabilities`), so everything that walks or
+    # rebuilds the tree uses this list, and hook dispatch uses `capabilities`.
+    _branches: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.id is not None:
             validate_instruction_id_segment(self.id, kind='Capability id')
+        self.capabilities = _ungrouped(self.capabilities)
         instruction_sources: list[AbstractCapability[AgentDepsT]] = []
         for capability in self.capabilities:
             if (
@@ -102,14 +109,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _registers_itself(self) -> bool:
-        """Whether this container is a capability in its own right rather than a plain grouping.
+        """Whether this container is a deferred group rather than a plain grouping.
 
-        A container with an `id` can be loaded, replaced and addressed as a whole, so it is
-        registered itself and an enclosing container keeps it as one child instead of flattening
-        its children into its own list. A deferred one is kept too even without an `id`, so the
-        run rejects the missing `id` rather than silently merging its children in, undeferred.
+        A deferred group is loaded and replaced as a whole, so it is registered itself and an
+        enclosing container keeps it as one branch instead of merging its children in. Its children
+        are still dispatched one by one, each at its own ordering position (see `_GroupMember`). One
+        without an `id` is kept too, so the run rejects the missing `id` rather than silently
+        merging its children in, undeferred.
         """
-        return self.id is not None or self.defer_loading is True
+        return self.defer_loading is True
 
     def _rebound(
         self,
@@ -138,7 +146,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # overrides continue to represent the container that owns the public method.
         if replacements is None:
             positional: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
-            for old, new in zip(self.capabilities, new_capabilities):
+            for old, new in zip(self._branches, new_capabilities):
                 positional.setdefault(id(old), []).append(new)
             replacements = positional
         # Consumed as a queue so repeats of one object take their decisions in turn. The i-th
@@ -161,9 +169,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             # positions sorting its part last. Its children *are* in `replacements`, having been
             # flattened into the very list that was just rebound, so rebuild it from those.
             assert isinstance(source, CombinedCapability)
-            rebound_children = [
-                child if id(child) not in replacements else take(child) for child in source.capabilities
-            ]
+            rebound_children = [child if id(child) not in replacements else take(child) for child in source._branches]
             surviving = [child for child in rebound_children if child is not None]
             # A retained container that lost every child contributes no instructions any more, so
             # it drops out of the composition view rather than lingering as an empty source.
@@ -181,20 +187,30 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # Splat any nested plain grouping so leaves participate as siblings in the outer
         # ordering pass. Without this, a nested `CombinedCapability` whose leaves span both
         # `outermost` and `innermost` tiers would force `_effective_ordering` to merge them
-        # into a single position and raise `Conflicting positions`. A container that registers
-        # itself is kept whole and ordered as one, as a wrapper is.
-        flat: list[AbstractCapability[AgentDepsT]] = []
+        # into a single position and raise `Conflicting positions`.
+        branches: list[AbstractCapability[AgentDepsT]] = []
         for cap in self.capabilities:
-            flat.extend(_combination_roots(cap))
-        self.capabilities = flat
+            branches.extend(_combination_roots(cap))
+        self._branches = branches
+        # A deferred group stays one branch, but its children are dispatched and ordered one by one, as
+        # if merged: an `outermost` child must still run outside every other capability of the agent.
+        self.capabilities = [
+            member
+            for branch in branches
+            for member in (
+                [_GroupMember(child, group=branch) for child in branch._branches]
+                if isinstance(branch, CombinedCapability) and branch._registers_itself
+                else [branch]
+            )
+        ]
         if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
             self.capabilities = sort_capabilities(list(self.capabilities))
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        # Like a wrapper, it is registered itself, ahead of its children.
+        # Like a wrapper, a deferred group is registered itself, ahead of its children.
         if self._registers_itself:
             visitor(self)
-        for cap in self.capabilities:
+        for cap in self._branches:
             cap.apply(visitor)
 
     def visit_and_replace(
@@ -215,7 +231,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # composition view can drop them too; a positional pairing can't express a removal.
         replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
         unchanged = True
-        for cap in self.capabilities:
+        for cap in self._branches:
             new_cap = cap.visit_and_replace(visitor)
             replacements.setdefault(id(cap), []).append(new_cap)
             if new_cap is not cap:
@@ -266,14 +282,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         )
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
-        new_caps = [capability.for_agent(agent) for capability in self.capabilities]
-        if all(new is old for new, old in zip(new_caps, self.capabilities)):
+        new_caps = [capability.for_agent(agent) for capability in self._branches]
+        if all(new is old for new, old in zip(new_caps, self._branches)):
             return self
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
-        if all(new is old for new, old in zip(new_caps, self.capabilities)):
+        new_caps = await gather(*(c.for_run(ctx) for c in self._branches))
+        if all(new is old for new, old in zip(new_caps, self._branches)):
             return self
         return self._rebound(new_caps)
 
@@ -304,7 +320,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         Computed on access rather than stored, so a rebind can't leave it stale.
         """
-        positions = {id(capability): index for index, capability in enumerate(self.capabilities)}
+        positions = {
+            id(capability.wrapped if isinstance(capability, _GroupMember) else capability): index
+            for index, capability in enumerate(self.capabilities)
+        }
 
         def position(source: AbstractCapability[AgentDepsT]) -> int:
             # A source with no leaf among `capabilities` (nothing does this today) sorts last
@@ -422,6 +441,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         toolsets: list[AbstractToolset[AgentDepsT]] = []
         for capability in self.capabilities:
             toolset = capability.get_toolset()
+            # A deferred group's member contributes on the group's behalf, so loading the group reveals its tools.
+            owner = capability.group if isinstance(capability, _GroupMember) else capability
             if toolset is None:
                 continue
             elif isinstance(toolset, AbstractToolset):
@@ -429,14 +450,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 toolsets.append(
                     CapabilityOwnedToolset(
                         wrapped=toolset,  # pyright: ignore[reportUnknownArgumentType]
-                        capability=capability,
+                        capability=owner,
                     )
                 )
             else:
                 toolsets.append(
                     CapabilityOwnedToolset(
                         wrapped=DynamicToolset[AgentDepsT](toolset_func=toolset),
-                        capability=capability,
+                        capability=owner,
                     )
                 )
         return CombinedToolset(toolsets) if toolsets else None
@@ -1148,10 +1169,54 @@ def bind_capabilities_tier(
     `agent.toolsets` — the `innermost` tier (durability capabilities), whose `for_agent`
     wraps the agent's toolsets and must see all of them.
     """
-    new_caps = [c.for_agent(agent) if is_innermost(c) == innermost else c for c in combined.capabilities]
-    if all(new is old for new, old in zip(new_caps, combined.capabilities, strict=True)):
+
+    def bind(capability: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        if isinstance(capability, CombinedCapability) and capability._registers_itself:  # pyright: ignore[reportPrivateUsage]
+            # Each child of a deferred group binds in its own tier, as it would outside the group.
+            return bind_capabilities_tier(capability, agent, innermost=innermost)
+        return capability.for_agent(agent) if is_innermost(capability) == innermost else capability
+
+    branches = combined._branches  # pyright: ignore[reportPrivateUsage]
+    new_caps = [bind(c) for c in branches]
+    if all(new is old for new, old in zip(new_caps, branches, strict=True)):
         return combined
     return combined._rebound(new_caps)  # pyright: ignore[reportPrivateUsage]
+
+
+def _ungrouped(capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> list[AbstractCapability[AgentDepsT]]:
+    """`capabilities` with each deferred group's `_GroupMember` entries turned back into the group, once.
+
+    A copy of a container's `capabilities` holds those entries, so passing it back in registers each group again.
+    """
+    ungrouped: list[AbstractCapability[AgentDepsT]] = []
+    for capability in capabilities:
+        if isinstance(capability, _GroupMember):
+            if any(seen is capability.group for seen in ungrouped):
+                continue
+            capability = capability.group
+        ungrouped.append(capability)
+    return ungrouped
+
+
+@dataclass
+class _GroupMember(WrapperCapability[AgentDepsT]):
+    """A child of a deferred group, dispatched at its own ordering position.
+
+    It carries the group's `id` and deferral, so every per-capability gate (hooks, instructions,
+    settings, native tools) skips it until the group is loaded. The group itself is what's
+    registered, so this registers nothing: `apply` goes straight to the child, which also gives
+    the ordering pass the child's own ordering.
+    """
+
+    group: CombinedCapability[AgentDepsT] = field(kw_only=True, repr=False)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.id = self.group.id
+        self.defer_loading = True
+
+    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
+        self.wrapped.apply(visitor)
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

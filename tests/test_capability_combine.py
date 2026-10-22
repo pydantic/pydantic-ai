@@ -55,7 +55,7 @@ from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.common_tools.web_fetch import WebFetchLocalTool
 from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -251,6 +251,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'IncludeToolReturnSchemas': Anonymous('one per `ToolSelector`; several selectors compose'),
     'DeferredCapabilityLoader': Anonymous('auto-injected only when absent'),
     'PendingMessageDrainCapability': Anonymous('auto-injected only when absent'),
+    '_GroupMember': Anonymous('internal: dispatches a deferred group member, never registered'),
 }
 
 
@@ -1073,7 +1074,7 @@ async def test_a_run_level_capability_replaces_the_agent_level_one_whole() -> No
 
 
 async def test_a_run_level_group_replaces_the_agent_level_group_whole() -> None:
-    """A named `CombinedCapability` is one capability, so a run-level one with its `id` replaces all its members.
+    """A deferred `CombinedCapability` is one capability, so a run-level one with its `id` replaces all its members.
 
     The replaced group's members are gone with it, so a member id the new group reuses for a
     different class is not a clash.
@@ -1089,22 +1090,22 @@ async def test_a_run_level_group_replaces_the_agent_level_group_whole() -> None:
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen.append(sorted(tool.name for tool in info.function_tools))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'group'})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(
-        FunctionModel(model_fn),
-        capabilities=[CombinedCapability([Capability(id='member', tools=[agent_tool]), Hooks()], id='group')],
-    )
+    def group(*members: AbstractCapability[Any]) -> CombinedCapability[Any]:
+        return CombinedCapability(list(members), id='group', description='Group.', defer_loading=True)
 
-    await agent.run(
-        'hi', capabilities=[CombinedCapability([Toolset(FunctionToolset([run_tool]), id='member')], id='group')]
-    )
+    agent = Agent(FunctionModel(model_fn), capabilities=[group(Capability(id='member', tools=[agent_tool]), Hooks())])
 
-    assert seen == [['run_tool']]
+    await agent.run('hi', capabilities=[group(Toolset(FunctionToolset([run_tool]), id='member'))])
+
+    assert seen == [['load_capability'], ['load_capability', 'run_tool']]
 
 
 async def test_a_group_can_be_prefixed_and_reused_across_layers() -> None:
-    """A wrapper stands in for the named group it wraps, and the same group passed again keeps its members."""
+    """A wrapper over a group, and the same group passed again at run level, keep the group's members."""
 
     def lookup() -> str:
         return 'found'  # pragma: no cover

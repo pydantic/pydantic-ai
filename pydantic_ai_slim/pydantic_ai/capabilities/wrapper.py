@@ -136,8 +136,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _stands_in_for(self, capability: AbstractCapability[AgentDepsT]) -> bool:
         """Whether `capability` is the wrapped capability registering itself under this wrapper's own `id`.
 
-        A container that registers itself (one with an `id`, see `CombinedCapability`) shares that
-        `id` with a wrapper that adopted it, so only the wrapper is registered for the pair.
+        A deferred group (see `CombinedCapability`) is registered itself and shares its `id` with a
+        wrapper that adopted it, so only the wrapper is registered for the pair.
         """
         return capability is self.wrapped and self.id is not None and capability.id == self.id
 

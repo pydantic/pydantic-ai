@@ -1283,18 +1283,20 @@ async def test_an_instruction_part_between_literals_keeps_each_block_independent
 
 
 def test_an_overriding_container_cannot_share_a_key_with_a_sibling():
-    """A container with an `id` is a capability in its own right, so its `id` competes for the same key.
+    """A retained container is an instruction source, so its `id` competes for the same key.
 
-    Its leaves could be distinct while the container itself shared an id with a sibling, and
-    `capability:<id>` would then address both -- rewriting that key would replace text from two
-    unrelated owners.
+    A `CombinedCapability` subclass that overrides `get_instructions` contributes as a source in its
+    own right and is kept out of the flattened capability list so its override survives. That put it
+    outside the uniqueness check that walks the flattened list: its leaves could be distinct while
+    the container itself shared an id with a sibling, and `capability:<id>` then addressed both --
+    rewriting that key would have replaced text from two unrelated owners.
     """
 
     class Group(CombinedCapability[Any]):
         def get_instructions(self) -> str:
             return 'Group override.'  # pragma: no cover -- construction raises before it is asked
 
-    with pytest.raises(UserError, match="Capability id 'dup' is used by capabilities of different types"):
+    with pytest.raises(UserError, match="Capability id 'dup' is used by multiple capabilities that contribute"):
         Agent(
             capabilities=[
                 Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup'),
@@ -1312,7 +1314,7 @@ async def test_a_run_capability_cannot_share_a_key_with_an_overriding_container(
 
     agent = Agent(capabilities=[Group(capabilities=[Capability[Any](instructions='Leaf.', id='leaf')], id='dup')])
 
-    with pytest.raises(UserError, match="Capability id 'dup' is used by capabilities of different types"):
+    with pytest.raises(UserError, match="Capability id 'dup' is used by multiple capabilities that contribute"):
         await run_and_capture(agent, capabilities=[Capability[Any](instructions='Run-level.', id='dup')])
 
 
@@ -1320,7 +1322,7 @@ async def test_for_run_cannot_rebind_onto_a_container_key():
     """`for_run` can hand back an id construction never saw, so the resolved tree is checked too.
 
     Construction validates the capabilities it was given. A capability whose `for_run` returns a
-    different instance can introduce a collision after that point -- here against a named
+    different instance can introduce a collision after that point -- here against a retained
     overriding container -- and no further layer is composed, so nothing else would notice.
     """
 
@@ -1339,7 +1341,7 @@ async def test_for_run_cannot_rebind_onto_a_container_key():
         ]
     )
 
-    with pytest.raises(UserError, match="Capability id 'dup' is used by capabilities of different types"):
+    with pytest.raises(UserError, match="Capability id 'dup' is used by multiple capabilities that contribute"):
         await run_and_capture(agent)
 
 
@@ -1615,20 +1617,21 @@ async def test_a_retained_override_survives_a_rebind_that_replaces_its_children(
         def for_agent(self, agent: Any) -> AbstractCapability[Any]:
             return Rebinding(instructions=self.get_instructions(), id=self.id)
 
-    # No `id`: a named container is a capability in its own right and is never flattened.
     class OverriddenCombined(CombinedCapability[Any]):
+        id = 'group'
+
         def get_instructions(self) -> Any:
             return ['Override.']
 
     agent = Agent(
         capabilities=[
-            OverriddenCombined(capabilities=[Rebinding(instructions='Child.', id='child')]),
+            OverriddenCombined(capabilities=[Rebinding(instructions='Child.', id='child')], id='group'),
             Capability[Any](instructions='Plain.', id='plain'),
         ]
     )
 
     assert await run_and_capture(agent) == [
-        InstructionPart(content='Override.'),
+        InstructionPart(content='Override.', id=capability_instruction_id('group')),
         InstructionPart(content='Plain.', id=capability_instruction_id('plain')),
     ]
 
@@ -1636,13 +1639,13 @@ async def test_a_retained_override_survives_a_rebind_that_replaces_its_children(
     # child does not, so the container is carried across untouched rather than rebuilt.
     unchanged = Agent(
         capabilities=[
-            OverriddenCombined(capabilities=[Capability[Any](instructions='Child.', id='child')]),
+            OverriddenCombined(capabilities=[Capability[Any](instructions='Child.', id='child')], id='group'),
             Rebinding(instructions='Sibling.', id='sibling'),
         ]
     )
 
     assert await run_and_capture(unchanged) == [
-        InstructionPart(content='Override.'),
+        InstructionPart(content='Override.', id=capability_instruction_id('group')),
         InstructionPart(content='Sibling.', id=capability_instruction_id('sibling')),
     ]
 
