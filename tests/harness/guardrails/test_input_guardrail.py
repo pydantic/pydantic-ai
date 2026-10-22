@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
     FinalResultEvent,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -593,8 +594,8 @@ class TestInputGuardrailRedaction:
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my key is [redacted:anthropic_key]'
 
-    async def test_replace_of_a_changed_copy_leaves_the_history_prompt_alone(self):
-        """The verdict is about the copy's text, so it says nothing about what the user's own prompt becomes."""
+    async def test_a_changed_copy_leaves_a_clean_history_prompt_alone(self):
+        """The guard allows the original's own text, so only the copy's request-only secret is redacted."""
         seen, model = _request_prompts_model()
         agent = Agent(
             model, capabilities=[_CopyPrompt(suffix=f'\ncontext: {_SECRET}'), InputGuardrail(guard=redact_secrets)]
@@ -607,8 +608,8 @@ class TestInputGuardrailRedaction:
         assert isinstance(part, UserPromptPart)
         assert part.content == 'hello'
 
-    async def test_a_secret_in_the_prompt_stays_in_the_history_when_the_copy_was_changed(self):
-        """Documented limit: only the changed copy is redacted, so the user's own prompt keeps its secret."""
+    async def test_a_changed_copy_has_the_history_prompt_screened_on_its_own_text(self):
+        """The history gets the redaction of its own text, not the copy's request-only suffix."""
         seen, model = _request_prompts_model()
         agent = Agent(model, capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=redact_secrets)])
 
@@ -617,7 +618,37 @@ class TestInputGuardrailRedaction:
         assert seen == [['my key is [redacted:anthropic_key]\nctx']]
         part = result.all_messages()[0].parts[0]
         assert isinstance(part, UserPromptPart)
-        assert part.content == f'my key is {_SECRET}'
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
+    async def test_a_multimodal_original_of_a_redacted_text_copy_is_a_usage_error(self):
+        """Writing the redaction back would drop the original's attachments, as for any multimodal prompt."""
+        agent = Agent(TestModel(), capabilities=[_FlattenPrompt(), InputGuardrail(guard=redact_secrets)])
+
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await agent.run([f'my key is {_SECRET}', ImageUrl(url='https://example.com/image.png')])
+
+    async def test_a_redacted_copy_is_not_replayed_unredacted_after_a_tool_call(self):
+        """Later steps send the history, which the guard does not screen again, so it must already be clean."""
+        requests: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(str(messages))
+            if len(requests) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='ping', args={})])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(respond), capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=redact_secrets)]
+        )
+
+        @agent.tool_plain
+        def ping() -> str:
+            return 'pong'
+
+        await agent.run(f'my key is {_SECRET}')
+
+        assert len(requests) == 2
+        assert not any(_SECRET in request for request in requests)
 
     async def test_a_later_block_rewrites_neither_a_copied_prompt_nor_the_history(self):
         """A block ends the chain before any rewrite, so the redaction an earlier guard proposed is not applied."""
@@ -1501,6 +1532,27 @@ class _CopyPrompt(AbstractCapability[Any]):
             parts=[
                 dataclasses.replace(part, content=f'{part.content}{self.suffix}')
                 if isinstance(part, UserPromptPart)
+                else part
+                for part in last.parts
+            ],
+        )
+        return await handler(request_context)
+
+
+@dataclasses.dataclass
+class _FlattenPrompt(AbstractCapability[Any]):
+    """Sends the model a text copy of a multimodal prompt, keeping only its text parts."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        request_context.messages[-1] = dataclasses.replace(
+            last,
+            parts=[
+                dataclasses.replace(part, content=' '.join(c for c in part.content if isinstance(c, str)))
+                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
                 else part
                 for part in last.parts
             ],

@@ -187,10 +187,10 @@ Gotchas:
   (all subclass `GuardrailError`) from the guard; any exception propagates as-is.
 - Input `replace` on a multimodal prompt raises `UserError` (it would drop attachments).
 - `InputGuardrail` screens and rewrites the user's prompt part only. Parts another capability adds to the
-  request (`SystemReminders`, `Planning`, `Memory`) are left alone. If one sends the model an unchanged
-  copy of the prompt part, a redaction rewrites the copy and the history's original; a copy with
-  changed text leaves the history's original as it was, secret included. A run resumed without a new
-  prompt screens the most recent prompt in the history again.
+  request (`SystemReminders`, `Planning`, `Memory`) are left alone. If one sends the model a copy of the
+  prompt part, a redaction also reaches the history's original; for a copy with changed text the guard
+  is called again on the original's own text, and only a redaction from it is written there. A run
+  resumed without a new prompt screens the most recent prompt in the history again.
 - Redaction spans carry `guardrail.replacement` under `trace_include_content`, never the original value.
 - `email` also matches `git@github.com`; on code agents use `personal_data(only=['us_ssn', 'credit_card', 'iban'])`.
 - AWS *secret* keys are not in the defaults; add via `extra=`. Regex detectors do not catch prompt injection.
