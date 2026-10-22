@@ -23,6 +23,8 @@ from pydantic_ai_harness.smart_search._search import (
 )
 
 TOOL_NAME = 'smart_search'
+DEFAULT_THRESHOLD = 0.5
+DEFAULT_CONCURRENCY = 8
 
 _INSTRUCTIONS = """\
 ## Code discovery: smart_search first
@@ -67,8 +69,8 @@ class SmartSearchToolset(FunctionToolset[AgentDepsT]):
         self,
         *,
         model: JudgeModel,
-        threshold: float,
-        concurrency: int,
+        threshold: float = DEFAULT_THRESHOLD,
+        concurrency: int = DEFAULT_CONCURRENCY,
         cache_index: bool = False,
         guidance: str | None = None,
         id: str | None = None,

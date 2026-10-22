@@ -412,6 +412,7 @@ def reject_expired(session):
             await agent.run('hi')
 
     def test_toolset_validates_its_settings(self) -> None:
+        SmartSearchToolset[None](model=FakeJev('x'))  # the capability's defaults
         with pytest.raises(ValueError, match='concurrency'):
             SmartSearchToolset[None](model=FakeJev('x'), threshold=0.5, concurrency=0)
         with pytest.raises(ValueError, match='threshold'):
