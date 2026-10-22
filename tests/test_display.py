@@ -347,7 +347,7 @@ def test_no_banner_line_outruns_the_terminal_it_was_rendered_for(render: Callabl
 
 def test_a_terminal_wider_than_the_banner_has_anything_to_say_reads_the_same(render: Callable[..., str]):
     """Growing the column doesn't grow the copy, so nobody with room to spare sees a change."""
-    assert render(width=200) == render(width=None)
+    assert render(width=200) == render(width=120)
 
 
 def test_render_banner_colors_the_logo_and_identity(monkeypatch: pytest.MonkeyPatch, render: Callable[..., str]):
