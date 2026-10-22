@@ -153,14 +153,13 @@ def echo_last_return(messages: list[ModelMessage]) -> ModelResponse:
 
 @dataclass
 class Recorder(AbstractCapability[Any]):
-    """Records every `sub_agents` event the run emits."""
+    """Records every capability event the run emits, which in these runs are the `sub_agents` ones."""
 
     events: list[CapabilityEvent] = field(default_factory=list[CapabilityEvent])
 
     @on_event(CapabilityEvent)
     async def record(self, ctx: RunContext[Any], event: CapabilityEvent) -> None:
-        if event.kind.startswith('sub_agents.'):
-            self.events.append(event)
+        self.events.append(event)
 
     def of(self, event_type: type[Any]) -> list[Any]:
         return [event for event in self.events if isinstance(event, event_type)]
@@ -1709,7 +1708,7 @@ class TestTaskControlBoundaries:
                 assert isinstance(await transport.receive('task:t2:parent'), TaskStartedEvent)
                 assert isinstance(await transport.receive('task:t2:parent'), TaskCompletedEvent)
                 while 'Could not report the failure of sub-agent task t1.' not in caplog.text:
-                    await anyio.sleep(0)
+                    await anyio.sleep(0)  # pragma: lax no cover - the failure may already be logged
         assert "skipped a 'sub_agents.task_message' message" in caplog.text
 
     async def test_a_worker_reports_a_task_the_transport_failed(self) -> None:
