@@ -23,6 +23,18 @@
       "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
       "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
+      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "79a8374f01d4360a68a39a9adaed12657ba3b8e4388f5bd10a3f497695b7f0d3",
+      "reason": "Adds `ComputerUse` to `CAPABILITY_TYPES`; every existing entry is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11037"
     }
   ]
 }

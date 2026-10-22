@@ -103,6 +103,12 @@ The house pattern (spans on `ctx.tracer`, attribute naming, content behind
 - no typecasting (`as` in TypeScript, `cast()` in Python) -- use type narrowing instead
 - prefer the most generic input types possible (reduce dependency chains)
 - don't add comments that restate what the code does
+- capabilities that add to or edit message history, instructions or tools follow core's
+  `agent_docs/message-history-and-caching.md`: history is append-only, content goes in the channel
+  matching who wrote it, framework records are found by type or metadata, never by their text, and
+  any tag a capability wraps around content follows that guide's tag rules (`snake_case` names,
+  escaping every opening and closing spelling of every registered framing tag, through
+  `_framing.wrap()`/`neutralize_tags()`, never a hand-rolled escaper, attributes, no preambles)
 
 ## Writing style
 

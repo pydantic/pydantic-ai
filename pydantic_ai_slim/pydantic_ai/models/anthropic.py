@@ -15,6 +15,8 @@ from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._computer_use import computer_tool
+from .._context_size import mark_context_input_tokens, marked_context_input_tokens
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking
@@ -207,6 +209,8 @@ try:
         BetaCompactionBlock,
         BetaCompactionBlockParam,
         BetaCompactionContentBlockDelta,
+        BetaComputerToolset20260801Param,
+        BetaComputerToolsetConfigsParam,
         BetaContainerParams,
         BetaContainerUploadBlockParam,
         BetaContentBlock,
@@ -329,6 +333,9 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic documents the computer toolset on the Claude API and Google Cloud; Bedrock and Foundry are unverified,
+# so they get the `computer` tool as a function.
+_COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicFoundry)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1225,16 +1232,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
-            return self._process_response(response, model_request_parameters, model_settings)
-        # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
-        # that breaks the stream off, both while it opens and while it's read.
-        async with response.source:
-            streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings
-            )
-            async for _ in streamed_response:
-                pass
-        return streamed_response.get()
+            model_response = self._process_response(response, model_request_parameters, model_settings)
+        else:
+            # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport
+            # error that breaks the stream off, both while it opens and while it's read.
+            async with response.source:
+                streamed_response = await self._process_streamed_response(
+                    response, model_request_parameters, model_settings
+                )
+                async for _ in streamed_response:
+                    pass
+            model_response = streamed_response.get()
+        _mark_continuation_context_input_tokens(messages, model_response)
+        return model_response
 
     async def count_tokens(
         self,
@@ -1270,7 +1280,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response.source:
-            yield await self._process_streamed_response(response, model_request_parameters, model_settings)
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings
+            )
+            yield streamed_response
+            _mark_continuation_context_input_tokens(messages, streamed_response)
 
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1945,7 +1959,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaAdvisorToolResultBlock,
             )
         }
+        computer_def = computer_tool(model_request_parameters)
+        previous: BetaContentBlock | None = None
         for item in response.content:
+            # A member call right after another is part of the same batch.
+            follows_member, previous = _is_computer_member(previous, computer_def), item
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
@@ -1991,6 +2009,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
+                if computer_def is not None and _is_computer_member(item, computer_def):
+                    # A turn's consecutive member calls are one batch: they become one `computer` call.
+                    blocks = [_computer_block(item)]
+                    if follows_member:
+                        blocks[:0] = _computer_blocks(items.pop())
+                    items.append(_computer_call_part(blocks, computer_def.name, self.system))
+                    continue
                 items.append(
                     ToolCallPart(
                         tool_name=item.name,
@@ -2020,7 +2045,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_details = provider_details or {}
             provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
@@ -2031,6 +2056,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
+        if (last_pass_input_tokens := _last_pass_input_tokens(response.usage)) is not None:
+            mark_context_input_tokens(model_response, last_pass_input_tokens)
+        return model_response
 
     def _get_enabled_server_tool_names(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
@@ -2256,6 +2284,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        native_computer = self._native_computer_tool(model_request_parameters)
 
         tool_choice: BetaToolChoiceParam
 
@@ -2269,7 +2298,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
+                if supports and native_computer is not None and native_computer.name in tool_names:
+                    # The toolset can't be named, so it is forced as the only tool on offer.
+                    tool_defs = {native_computer.name: tool_defs[native_computer.name]}
+                    tool_choice = {'type': 'any'}
+                elif supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
                 else:
                     # Forcing not supported (extended thinking, or a model that rejects it outright):
@@ -2297,6 +2330,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
         ]
+        if native_computer is not None and native_computer.name in tool_defs:
+            # The toolset stands in for the `computer` tool; `_computer_call_part` maps its calls back.
+            tools = [tool for tool in tools if tool.get('name') != native_computer.name]
+            tools.append(
+                BetaComputerToolset20260801Param(type='computer_toolset_20260801', configs=_COMPUTER_TOOLSET_CONFIGS)
+            )
 
         # Add cache_control to the last non-deferred tool if enabled. Anthropic rejects
         # `cache_control` on tools with `defer_loading=True` (`Tools with defer_loading
@@ -2358,6 +2397,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
         # verbatim (no pairing logic needed).
         advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
+        # Computer calls replayed as toolset member calls, whose results must be one per member call.
+        # Without the toolset in this request, past member calls are sent back as plain `computer` calls.
+        native_computer = self._sent_computer_toolset(model_settings, model_request_parameters)
+        computer_calls: dict[str, list[dict[str, Any]]] = {}
         bm25_requested = any(
             isinstance(t, ToolSearchTool) and t.strategy == 'bm25' for t in model_request_parameters.native_tools
         )
@@ -2473,6 +2516,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                                 rendered_tool_additions.add(name)
                     elif isinstance(request_part, ToolReturnPart):
+                        if (blocks := computer_calls.get(_guard_tool_call_id(t=request_part))) is not None:
+                            user_content_params.extend(await self._map_computer_results(request_part, blocks))
+                            continue
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
@@ -2606,6 +2652,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         if response_part.content:
                             assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
                     elif isinstance(response_part, ToolCallPart):
+                        if (
+                            native_computer
+                            and response_part.provider_name == self.system
+                            and (blocks := _computer_blocks(response_part))
+                        ):
+                            # Sent back as the member calls they came as, so each result can echo its toolset.
+                            computer_calls[_guard_tool_call_id(t=response_part)] = blocks
+                            assistant_content_params.extend(
+                                BetaToolUseBlockParam(
+                                    id=block['id'],
+                                    type='tool_use',
+                                    name=block['name'],
+                                    input=block['input'],
+                                    toolset_name='computer',
+                                )
+                                for block in blocks
+                            )
+                            continue
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
@@ -3285,6 +3349,74 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
+    def _native_computer_tool(self, model_request_parameters: ModelRequestParameters) -> ToolDefinition | None:
+        """The `computer` tool when this model and client take Anthropic's computer toolset in its place."""
+        if not self.profile.get('anthropic_supports_computer_toolset', False) or isinstance(
+            self.client, _COMPUTER_TOOLSET_UNSUPPORTED_CLIENTS
+        ):
+            return None
+        return computer_tool(model_request_parameters)
+
+    def _sent_computer_toolset(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether this request sends the computer toolset: the model takes it, and tool choice doesn't leave it out."""
+        native_computer = self._native_computer_tool(model_request_parameters)
+        tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        return native_computer is not None and not (
+            isinstance(tool_choice, tuple) and native_computer.name not in tool_choice[1]
+        )
+
+    async def _map_computer_results(
+        self, part: ToolReturnPart, blocks: list[dict[str, Any]]
+    ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
+        """One `computer` result as a result per member call, as the toolset requires.
+
+        The calls before the failed one get `OK`, the failed one its error, and the rest the exact text Anthropic
+        asks for. The screenshot goes on the last call that ran; an error result may only hold text, so when none
+        ran it goes on the first call that didn't, and is left out when the only call failed.
+        """
+        raw_metadata: Any = part.metadata
+        # A result without its metadata, such as one rebuilt by a UI, reads as every call having run.
+        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
+        if part.outcome != 'success':
+            performed, error = 0, part.model_response_str(wrap_if_error=False)
+        else:
+            performed, error = (
+                cast(int, metadata.get('performed', len(blocks))),
+                cast(str | None, metadata.get('error')),
+            )
+        screenshot = [
+            await self._map_file_to_content_block(file, 'tool returns')
+            for file in part.files
+            if isinstance(file, BinaryContent) and file.is_image
+        ]
+        if error is None:
+            with_screenshot = len(blocks) - 1
+        else:
+            with_screenshot = performed - 1 if performed else (1 if len(blocks) > 1 else -1)
+        results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
+        for index, block in enumerate(blocks):
+            if index < performed:
+                text, is_error = 'OK', False
+            elif index == performed and error is not None:
+                text, is_error = error, True
+            else:
+                text, is_error = _COMPUTER_NOT_EXECUTED, False
+            content: list[beta_tool_result_block_param.Content] = [BetaTextBlockParam(text=text, type='text')]
+            if index == with_screenshot:
+                content.extend(cast(list[beta_tool_result_block_param.Content], screenshot))
+            results.append(
+                beta_tool_result_block_param.BetaToolResultBlockParam(
+                    tool_use_id=block['id'],
+                    type='tool_result',
+                    content=content,
+                    is_error=is_error,
+                    toolset_name='computer',
+                )
+            )
+        return results
+
     def _map_tool_definition(
         self,
         f: ToolDefinition,
@@ -3553,6 +3685,43 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     return details
 
 
+def _last_pass_input_tokens(response_usage: BetaUsage | BetaMessageDeltaUsage) -> int | None:
+    """The input tokens of a response's last sampling pass, cache included, or `None` when the passes aren't reported.
+
+    A server-side tool loop samples the model once per tool round, and the top-level usage sums the passes: what they
+    cost, but more than any pass's context. A beta that returns `iterations` (such as `compact-2026-01-12`) reports
+    each pass, and the last `message` one (`fallback_message` when a fallback model served the turn) measures the
+    context; a `compaction` entry measures the compaction, not the context. See `BetaUsage.iterations`.
+
+    A single-pass response gets a value too, though its sum is already its context: each `pause_turn` segment needs a
+    stamp of its own, as the continuation merges the segments' metadata shallowly.
+    """
+    for iteration in reversed(response_usage.iterations or []):
+        if iteration.type in ('message', 'fallback_message'):
+            return iteration.input_tokens + iteration.cache_read_input_tokens + iteration.cache_creation_input_tokens
+    return None
+
+
+def _mark_continuation_context_input_tokens(
+    messages: list[ModelMessage], response: ModelResponse | StreamedResponse
+) -> None:
+    """Give a `pause_turn` continuation segment that didn't report its passes the context size of its own usage.
+
+    Otherwise the continuation's shallow metadata merge would keep an earlier segment's last pass as the context of
+    the merged response. A continuation resends the same betas, so every segment is expected to report `iterations`
+    if the first did; this guards against one that doesn't. A turn that never reported them keeps its summed usage as
+    the context.
+    """
+    previous = messages[-1] if messages else None
+    if (
+        isinstance(previous, ModelResponse)
+        and previous.state == 'suspended'
+        and marked_context_input_tokens(previous) is not None
+        and marked_context_input_tokens(response) is None
+    ):
+        mark_context_input_tokens(response, response.usage.input_tokens)
+
+
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
     provider: str,
@@ -3645,6 +3814,21 @@ class AnthropicStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
+            # A turn's consecutive computer toolset calls stream as one `computer` call, emitted once the batch ends.
+            computer_def = computer_tool(self.model_request_parameters)
+            computer_group: list[dict[str, Any]] = []
+            computer_input: list[str] = []
+
+            def end_computer_call() -> ModelResponseStreamEvent | None:
+                nonlocal computer_group
+                if not computer_group:
+                    return None
+                assert computer_def is not None
+                group, computer_group = computer_group, []
+                return self._parts_manager.handle_part(
+                    vendor_part_id=f'computer-{group[0]["id"]}',
+                    part=_computer_call_part(group, computer_def.name, self.provider_name),
+                )
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
@@ -3674,6 +3858,11 @@ class AnthropicStreamedResponse(StreamedResponse):
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
+                    if _is_computer_member(current_block, computer_def):
+                        computer_input = []
+                        continue
+                    if (computer_call := end_computer_call()) is not None:
+                        yield computer_call
                     if isinstance(current_block, BetaTextBlock) and current_block.text:
                         for event_ in self._parts_manager.handle_text_delta(
                             vendor_part_id=event.index, content=current_block.text
@@ -3821,6 +4010,10 @@ class AnthropicStreamedResponse(StreamedResponse):
                             provider_name=self.provider_name,
                         ):
                             yield event_
+                    elif isinstance(event.delta, BetaInputJSONDelta) and _is_computer_member(
+                        current_block, computer_def
+                    ):
+                        computer_input.append(event.delta.partial_json)
                     elif isinstance(event.delta, BetaInputJSONDelta):
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=event.index,
@@ -3847,6 +4040,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     self._usage = _map_usage(
                         event, self._provider_name, self._provider_url, self._model_name, self._usage
                     )
+                    if (last_pass_input_tokens := _last_pass_input_tokens(event.usage)) is not None:
+                        mark_context_input_tokens(self, last_pass_input_tokens)
                     if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason
@@ -3871,7 +4066,12 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if event.index in ignored_server_tool_use_indices:
+                    if computer_def is not None and _is_computer_member(current_block, computer_def):
+                        block = _computer_block(current_block)
+                        if computer_input:
+                            block['input'] = pydantic_core.from_json(''.join(computer_input))
+                        computer_group.append(block)
+                    elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
                         maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -3898,6 +4098,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
+            if (computer_call := end_computer_call()) is not None:
+                yield computer_call
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -4669,3 +4871,88 @@ def _last_cacheable_block_has_cache_control(anthropic_messages: list[BetaMessage
         None,
     )
     return last is not None and 'cache_control' in last
+
+
+_COMPUTER_TOOLSET_CONFIGS: BetaComputerToolsetConfigsParam = {
+    'zoom': {'enabled': False},
+    'cursor_position': {'enabled': False},
+}
+"""Members the `computer` tool can't serve: both return data the one-screenshot result has no room for."""
+
+_COMPUTER_NOT_EXECUTED = 'Not executed: an earlier computer action in this turn failed.'
+"""The result Anthropic asks for on each member call after one that failed."""
+
+_COMPUTER_CLICKS = {
+    'left_click': ('left', 1),
+    'right_click': ('right', 1),
+    'middle_click': ('middle', 1),
+    'double_click': ('left', 2),
+    'triple_click': ('left', 3),
+}
+
+
+def _is_computer_member(
+    block: BetaContentBlock | None, computer_def: ToolDefinition | None
+) -> TypeGuard[BetaToolUseBlock]:
+    """Whether a block is a computer toolset call that the `computer` tool answers."""
+    return computer_def is not None and isinstance(block, BetaToolUseBlock) and block.toolset_name == 'computer'
+
+
+def _computer_block(item: BetaToolUseBlock) -> dict[str, Any]:
+    return {'id': item.id, 'name': item.name, 'input': cast(dict[str, Any], item.input)}
+
+
+def _computer_blocks(part: ModelResponsePart | None) -> list[dict[str, Any]]:
+    """The member calls a `computer` call part was made from, or none for any other part."""
+    if isinstance(part, ToolCallPart) and part.provider_details and 'computer_blocks' in part.provider_details:
+        return list(part.provider_details['computer_blocks'])
+    return []
+
+
+def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
+    """One computer toolset call as a `computer` tool action; an unknown member fails validation, so the model retries."""
+    coordinate: list[int] = input.get('coordinate') or []
+    position = {'x': coordinate[0], 'y': coordinate[1]} if len(coordinate) == 2 else {}
+    modifiers = [input['text']] if input.get('text') else []  # keys held during a click, move, scroll or drag
+    if name in _COMPUTER_CLICKS:
+        button, count = _COMPUTER_CLICKS[name]
+        return {'type': 'click', **position, 'button': button, 'count': count, 'modifiers': modifiers}
+    match name:
+        case 'mouse_move':
+            return {'type': 'move', **position, 'modifiers': modifiers}
+        case 'left_click_drag':
+            # A missing end leaves the path too short to validate, so the model is asked again.
+            start: list[int] = input.get('start_coordinate') or []
+            ends = [point for point in (start, coordinate) if len(point) == 2]
+            return {'type': 'drag', 'path': [{'x': x, 'y': y} for x, y in ends], 'modifiers': modifiers}
+        case 'left_mouse_down':
+            return {'type': 'mouse_down'}
+        case 'left_mouse_up':
+            return {'type': 'mouse_up'}
+        case 'scroll':
+            amount = min(50, input.get('scroll_amount') or 3)
+            direction = input.get('scroll_direction')
+            return {'type': 'scroll', **position, 'direction': direction, 'amount': amount, 'modifiers': modifiers}
+        case 'type':
+            return {'type': 'type', 'text': input.get('text', '')}
+        case 'key':
+            return {'type': 'keypress', 'keys': [input.get('text', '')], 'repeat': min(50, input.get('repeat') or 1)}
+        case 'hold_key':
+            return {'type': 'hold_key', 'keys': [input.get('text', '')], 'seconds': min(10, input.get('duration') or 1)}
+        case 'wait':
+            return {'type': 'wait', 'seconds': min(10, input.get('duration') or 1)}
+        case 'screenshot':
+            return {'type': 'screenshot'}
+        case _:
+            return {**input, 'type': name}
+
+
+def _computer_call_part(blocks: list[dict[str, Any]], tool_name: str, provider_name: str) -> ToolCallPart:
+    """A turn's computer toolset calls as one `computer` call, keeping the calls to send back as they were."""
+    return ToolCallPart(
+        tool_name,
+        {'actions': [_map_computer_member(block['name'], block['input']) for block in blocks]},
+        tool_call_id=blocks[0]['id'],
+        provider_name=provider_name,
+        provider_details={'computer_blocks': blocks},
+    )
