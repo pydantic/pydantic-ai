@@ -476,8 +476,9 @@ a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserErro
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
 `MacroscopeReview` of `MacroscopeIssue` findings; the agent fixes them with its other tools. No extra,
 but the `macroscope` CLI must be installed and signed in **inside the workspace**. Options: `base`,
-`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none), `id` (toolset id,
-default `'macroscope'`, so it works under durable execution; a Temporal activity gets `timeout` + 30s). A review the CLI stopped early still returns
+`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none), `id='macroscope'`
+(keyword-only; capability and toolset id, so two with the same `id` merge or raise, and it works under
+durable execution; a Temporal activity gets `timeout` + 30s). A review the CLI stopped early still returns
 its findings, with `status='timed_out'` or `'interrupted'`. Pair with `Coder`
 or `FileSystem`/`Shell`: `Agent(..., capabilities=[LocalWorkspace('.'), Coder(), Macroscope(base='main')])`.
 
