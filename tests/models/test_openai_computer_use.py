@@ -338,10 +338,6 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 3, 'modifiers': []},
         ),
         (
-            {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': -9000, 'scroll_y': 10},
-            {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 50, 'modifiers': []},
-        ),
-        (
             {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': 0, 'scroll_y': -20},
             {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'up', 'amount': 1, 'modifiers': []},
         ),
@@ -358,7 +354,15 @@ async def test_computer_calls_from_another_provider_replay_as_function_calls(all
     ],
 )
 def test_openai_actions_map_onto_the_computer_tool(action: dict[str, Any], mapped: dict[str, Any]) -> None:
-    assert _map_computer_action(action) == mapped
+    assert _map_computer_action(action) == [mapped]
+
+
+def test_a_diagonal_scroll_scrolls_both_ways() -> None:
+    action = {'type': 'scroll', 'x': 1, 'y': 2, 'scroll_x': -9000, 'scroll_y': 10}
+    assert _map_computer_action(action) == [
+        {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'left', 'amount': 50, 'modifiers': []},
+        {'type': 'scroll', 'x': 1, 'y': 2, 'direction': 'down', 'amount': 1, 'modifiers': []},
+    ]
 
 
 @pytest.mark.parametrize(
