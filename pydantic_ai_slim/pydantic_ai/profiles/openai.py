@@ -211,6 +211,10 @@ _REASONING_SUPPORT_BY_PREFIX: dict[str, _ReasoningSupport] = {
         supports_context=False,
         efforts=frozenset(('high',)),
     ),
+    # gpt-5-codex reasons by default; it's retired (404 since 2026-07), so its efforts aren't pinned.
+    'gpt-5-codex': _ReasoningSupport(
+        enabled_by_default=True, can_be_disabled=False, supports_mode=False, supports_context=False
+    ),
     # The original GPT-5 family (incl. -mini/-nano) reasons at 'medium' by default, and accepts
     # `minimal` through `high`. See https://platform.openai.com/docs/guides/reasoning
     'gpt-5': _ReasoningSupport(

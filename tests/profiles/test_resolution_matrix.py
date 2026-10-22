@@ -1628,6 +1628,8 @@ def test_github_copilot_openai_family_prefix_arms(model_name: str):
     expected = _normalize(openai_model_profile(model_name))
     assert expected is not None
     expected['openai_chat_supports_max_completion_tokens'] = True
+    # Copilot enforces its own per-id effort lists, so the OpenAI family's accepted efforts aren't carried over.
+    expected.pop('openai_reasoning_efforts', None)
     assert _normalize(GitHubCopilotProvider.model_profile(model_name)) == expected
 
 

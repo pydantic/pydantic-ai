@@ -103,7 +103,8 @@ REASONING_CASES = [
     ReasoningCase(
         model='gpt-5-pro', enabled_by_default=True, efforts=('high',), supports_minimal_reasoning_effort=False
     ),
-    ReasoningCase(model='gpt-5-codex', enabled_by_default=True, efforts=('minimal', 'low', 'medium', 'high')),
+    # Retired (404), so its efforts aren't pinned.
+    ReasoningCase(model='gpt-5-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5-turbo', enabled_by_default=True, efforts=('minimal', 'low', 'medium', 'high')),
     # gpt-5.1..5.4 mainline: reasoning off by default, opt-in via effort
     ReasoningCase(model='gpt-5.1', can_be_disabled=True),
