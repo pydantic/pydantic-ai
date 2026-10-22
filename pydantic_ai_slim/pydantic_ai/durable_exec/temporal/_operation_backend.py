@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, Generic, Literal, Protocol, Required, TypeVar, cast
+from typing import Any, Generic, Literal, Protocol, TypeVar, cast
 
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError
-from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
-from typing_extensions import TypedDict
+from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
@@ -26,22 +25,21 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UserError
 
 from ._activity_execution import execute_activity, execute_child_workflow
 from ._model_errors import model_errors_as_application_errors, rebuilt_model_errors
 from ._operation_names import TemporalOperationNamer
-from ._toolset import heartbeating, model_response_payload_errors
+from ._toolset import (
+    ChildWorkflowOperationConfig,
+    heartbeating,
+    is_child_workflow_metadata,
+    model_response_payload_errors,
+)
 
 ParamsT = TypeVar('ParamsT')
 WireT = TypeVar('WireT')
 ResultT = TypeVar('ResultT')
-
-
-class ChildWorkflowOperationConfig(TypedDict, total=False):
-    """Select a child workflow for a tool-call operation."""
-
-    child_workflow: Required[ChildWorkflowConfig]
 
 
 TemporalOperationConfigValue = ActivityConfig | ChildWorkflowOperationConfig
@@ -119,8 +117,14 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
     async def __call__(self, params: ParamsT, *, config: object | None = None) -> ResultT:
         payload = self._operation.parameter_transport.dump(params)
         resolved_config = cast(TemporalOperationConfigValue, config or self._config)
-        if 'child_workflow' in resolved_config:
-            assert self.child_workflow_registration is not None
+        if is_child_workflow_metadata(resolved_config):
+            if self.child_workflow_registration is None:
+                raise UserError(
+                    f'Toolset {cast(Any, self._operation.operation_id).toolset_id!r} has a tool configured to run '
+                    'as a Temporal child workflow, but no child workflow was registered for it because the '
+                    '`child_workflow` metadata was not present when the agent was constructed. Set it on the tool '
+                    'itself or with a `SetToolMetadata` capability.'
+                )
             child_config = resolved_config['child_workflow'].copy()
             child_config.setdefault('id', f'{workflow.info().workflow_id}--{workflow.uuid4()}')
             transport = cast(TemporalParameterTransport[ParamsT, WireT], self._operation.parameter_transport)
@@ -193,6 +197,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         ],
         non_retryable_model_errors: tuple[type[ModelAPIError], ...] = (),
         runtime: object | None = None,
+        registers_child_workflow: Callable[[str], bool] = lambda toolset_id: False,
     ) -> None:
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
@@ -203,6 +208,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         self._deps_type = deps_type
         self._non_retryable_model_errors = non_retryable_model_errors
         self._runtime = runtime
+        self._registers_child_workflow = registers_child_workflow
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
         self._registrations.remove(registration)
@@ -242,7 +248,12 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         registration = activity.defn(name=name)(activity_handler)
         child_workflow_registration: type | None = None
         registrations: list[Callable[..., object]] = [registration]
-        if isinstance(operation.operation_id, ToolsetCallToolId) and operation.operation_id.toolset_kind == 'function':
+        operation_id = operation.operation_id
+        if (
+            isinstance(operation_id, ToolsetCallToolId)
+            and operation_id.toolset_kind == 'function'
+            and self._registers_child_workflow(operation_id.toolset_id)
+        ):
             runtime = self._runtime
 
             async def run(self: object, params: Any, deps: Any = None) -> ResultT:

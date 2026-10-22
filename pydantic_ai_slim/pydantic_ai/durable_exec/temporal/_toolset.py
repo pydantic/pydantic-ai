@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Self, cast, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Required, Self, cast, get_type_hints
 
 import anyio
 from pydantic import ConfigDict, TypeAdapter, ValidationError, with_config
@@ -15,7 +15,7 @@ from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.durable_exec._toolset import (
@@ -298,6 +298,17 @@ _ValidatedChildWorkflowConfig = with_config(ConfigDict(extra='forbid', arbitrary
     )
 )
 _child_workflow_config_adapter = cast('TypeAdapter[ChildWorkflowConfig]', TypeAdapter(_ValidatedChildWorkflowConfig))
+
+
+class ChildWorkflowOperationConfig(TypedDict, total=False):
+    """Select a child workflow for a tool-call operation."""
+
+    child_workflow: Required[ChildWorkflowConfig]
+
+
+def is_child_workflow_metadata(value: object) -> TypeIs[ChildWorkflowOperationConfig]:
+    """Whether a tool's `'temporal'` metadata value selects a child workflow."""
+    return isinstance(value, dict) and 'child_workflow' in value
 
 
 def validate_child_workflow_config(config: ChildWorkflowConfig, source: str) -> ChildWorkflowConfig:

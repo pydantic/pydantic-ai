@@ -9,9 +9,9 @@ from typing import Protocol
 import anyio
 import pytest
 
-from pydantic_ai import Agent, FunctionToolset
+from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -31,103 +31,223 @@ try:
     from pydantic_ai.durable_exec.temporal import AgentPlugin, TemporalDurability
     from pydantic_ai.durable_exec.temporal._durability import worker_registrations
 
-    from ._shared import TASK_QUEUE
+    from ._shared import TASK_QUEUE, _workflow_failure_cause  # pyright: ignore[reportPrivateUsage]
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
 
 CHILD_WORKFLOW_TYPE = 'agent__child_workflow_agent__toolset__child_workflow_tools__call_tool__child_workflow'
 
 
-async def test_child_workflow_metadata_validation() -> None:
-    async def async_tool() -> str:
-        return 'async'  # pragma: no cover
+_CHILD_WORKFLOW = ChildWorkflowConfig()
 
-    def sync_tool() -> str:
-        return 'sync'  # pragma: no cover
 
-    validation_toolset = FunctionToolset[None](id='validation_tools')
-    validation_toolset.add_function(
-        async_tool,
-        metadata={'temporal': {'child_workflow': ChildWorkflowConfig(), 'summary': 'invalid'}},
-    )
-    validation_toolset.add_function(
-        sync_tool,
-        metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}},
-    )
-    validation_agent = Agent(
-        TestModel(),
-        name='child_workflow_validation',
+def _metadata_error_agent(name: str, toolset: FunctionToolset[None]) -> Agent[None, str]:
+    return Agent(
+        TestModel(call_tools='all'),
+        name=name,
         deps_type=type(None),
-        toolsets=[validation_toolset],
+        toolsets=[toolset],
         capabilities=[TemporalDurability()],
     )
-    durability = TemporalDurability.from_agent(validation_agent)
-    assert durability is not None
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    tools = await validation_toolset.get_tools(ctx)
 
-    with pytest.raises(
-        UserError,
-        match=re.escape("Tool 'async_tool' has invalid Temporal metadata: `child_workflow` must be the only key."),
+
+extra_key_toolset = FunctionToolset[None](id='extra_key_tools')
+
+
+@extra_key_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW, 'summary': 'invalid'}})
+async def extra_key_tool() -> str:
+    return 'unreachable'  # pragma: no cover
+
+
+sync_child_toolset = FunctionToolset[None](id='sync_child_tools')
+
+
+@sync_child_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+def sync_child_tool() -> str:
+    return 'unreachable'  # pragma: no cover
+
+
+invalid_config_toolset = FunctionToolset[None](id='invalid_config_tools')
+
+
+@invalid_config_toolset.tool_plain(
+    metadata={'temporal': {'child_workflow': ChildWorkflowConfig(unknown_option=True)}}  # pyright: ignore[reportCallIssue]
+)
+async def invalid_config_tool() -> str:
+    return 'unreachable'  # pragma: no cover
+
+
+late_child_toolset = FunctionToolset[None](id='late_child_tools')
+_metadata_error_agents = {
+    agent.name: agent
+    for agent in [
+        _metadata_error_agent('child_extra_key', extra_key_toolset),
+        _metadata_error_agent('child_sync_tool', sync_child_toolset),
+        _metadata_error_agent('child_invalid_config', invalid_config_toolset),
+        # The child-workflow tool below is added after the agent was built, so no child workflow is registered.
+        _metadata_error_agent('child_added_late', late_child_toolset),
+    ]
+}
+
+
+@late_child_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def late_child_tool() -> str:
+    return 'unreachable'  # pragma: no cover
+
+
+@workflow.defn
+class MetadataErrorWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        return (await _metadata_error_agents[agent_name].run('call the tool')).output
+
+
+@pytest.mark.parametrize(
+    ('agent_name', 'message'),
+    [
+        (
+            'child_extra_key',
+            "Tool 'extra_key_tool' has invalid Temporal metadata: `child_workflow` must be the only key.",
+        ),
+        (
+            'child_sync_tool',
+            "Temporal metadata for tool 'sync_child_tool' selects a child workflow, but non-async tools cannot run "
+            'in workflow code. Make the tool function async instead.',
+        ),
+        ('child_invalid_config', "Invalid Temporal `ChildWorkflowConfig` in tool 'invalid_config_tool' metadata:"),
+        (
+            'child_added_late',
+            "Toolset 'late_child_tools' has a tool configured to run as a Temporal child workflow, but no child "
+            'workflow was registered for it because the `child_workflow` metadata was not present when the agent '
+            'was constructed. Set it on the tool itself or with a `SetToolMetadata` capability.',
+        ),
+    ],
+)
+async def test_child_workflow_metadata_errors_fail_the_workflow(client: Client, agent_name: str, message: str) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MetadataErrorWorkflow],
+        plugins=[AgentPlugin(_metadata_error_agents[agent_name])],
     ):
-        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('function', toolset_id='validation_tools'), tools['async_tool'], 'async_tool'
-        )
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                MetadataErrorWorkflow.run,
+                agent_name,
+                id=f'test_child_metadata_error_{agent_name}',
+                task_queue=TASK_QUEUE,
+            )
 
-    tools['async_tool'].tool_def.metadata = {'temporal': {'child_workflow': ChildWorkflowConfig()}}
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message.startswith(message)
+
+
+async def test_child_workflow_metadata_rejects_non_function_tool_operation() -> None:
+    """Pin the guard for a non-function tool operation that resolves child-workflow metadata.
+
+    Through the public API, child-workflow metadata only reaches this resolver for function tool calls, so the
+    guard can't be triggered by running an agent; this calls the resolver directly with an MCP operation id.
+    """
+    mcp_metadata_toolset = FunctionToolset[None](id='mcp_metadata_tools')
+
+    @mcp_metadata_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+    async def child_tool() -> str:
+        return 'unreachable'  # pragma: no cover
+
+    durability = TemporalDurability.from_agent(_metadata_error_agent('child_mcp_operation', mcp_metadata_toolset))
+    assert durability is not None
+    tools = await mcp_metadata_toolset.get_tools(RunContext[None](deps=None, model=TestModel(), usage=RunUsage()))
+
     with pytest.raises(
         UserError, match=re.escape('Temporal child workflows are only supported for function tool calls.')
     ):
         durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('mcp', toolset_id='validation_tools'), tools['async_tool'], 'async_tool'
+            ToolsetCallToolId('mcp', toolset_id='mcp_metadata_tools'), tools['child_tool'], 'child_tool'
         )
 
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            "Temporal metadata for tool 'sync_tool' selects a child workflow, but non-async tools cannot run in "
-            'workflow code. Make the tool function async instead.'
-        ),
+
+retry_toolset = FunctionToolset[None](id='retry_child_tools')
+
+
+@retry_toolset.tool(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def flaky_child_tool(ctx: RunContext[None]) -> str:
+    if ctx.retry == 0:
+        raise ModelRetry('Try again.')
+    return 'succeeded on retry'
+
+
+retry_agent = _metadata_error_agent('retry_child_workflow_agent', retry_toolset)
+
+
+@workflow.defn
+class RetryChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await retry_agent.run('call the tool')).output
+
+
+async def test_child_workflow_tool_model_retry(client: Client) -> None:
+    workflow_id = 'test_child_workflow_tool_model_retry'
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[RetryChildWorkflowAgentWorkflow], plugins=[AgentPlugin(retry_agent)]
     ):
-        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('function', toolset_id='validation_tools'), tools['sync_tool'], 'sync_tool'
+        result = await client.execute_workflow(
+            RetryChildWorkflowAgentWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE
         )
 
+    assert 'succeeded on retry' in result
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    # The `ModelRetry` crossed back from the first child as a retry, and the model's second call started another child.
+    assert len(_child_starts(history)) == 2
+    await Replayer(
+        workflows=[RetryChildWorkflowAgentWorkflow],
+        data_converter=pydantic_data_converter,
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
 
-async def test_child_workflow_metadata_rejects_invalid_config() -> None:
-    async def child_tool() -> str:
-        return 'done'  # pragma: no cover
 
-    validation_toolset = FunctionToolset[None](id='invalid_config_tools')
-    validation_toolset.add_function(
-        child_tool,
-        metadata={
-            'temporal': {
-                'child_workflow': ChildWorkflowConfig(unknown_option=True),  # pyright: ignore[reportCallIssue]
-            }
-        },
-    )
-    validation_agent = Agent(
-        TestModel(),
-        name='invalid_child_workflow_config',
-        deps_type=type(None),
-        toolsets=[validation_toolset],
-        capabilities=[TemporalDurability()],
-    )
-    durability = TemporalDurability.from_agent(validation_agent)
-    assert durability is not None
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
-    tools = await validation_toolset.get_tools(ctx)
+deferred_toolset = FunctionToolset[None](id='deferred_child_tools')
 
-    with pytest.raises(
-        UserError,
-        match=re.escape("Invalid Temporal `ChildWorkflowConfig` in tool 'child_tool' metadata:"),
+
+@deferred_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def deferred_child_tool() -> str:
+    raise CallDeferred
+
+
+deferred_agent = Agent(
+    TestModel(call_tools='all'),
+    name='deferred_child_workflow_agent',
+    deps_type=type(None),
+    output_type=[str, DeferredToolRequests],
+    toolsets=[deferred_toolset],
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class DeferredChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        output = (await deferred_agent.run('call the tool')).output
+        assert isinstance(output, DeferredToolRequests)
+        return [call.tool_name for call in output.calls]
+
+
+async def test_child_workflow_tool_call_deferred(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DeferredChildWorkflowAgentWorkflow],
+        plugins=[AgentPlugin(deferred_agent)],
     ):
-        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
-            ToolsetCallToolId('function', toolset_id='invalid_config_tools'), tools['child_tool'], 'child_tool'
+        deferred_tool_names = await client.execute_workflow(
+            DeferredChildWorkflowAgentWorkflow.run, id='test_child_workflow_tool_call_deferred', task_queue=TASK_QUEUE
         )
+
+    assert deferred_tool_names == ['deferred_child_tool']
 
 
 @activity.defn
@@ -175,12 +295,16 @@ class ChildWorkflowAgentWorkflow:
         return (await agent.run('delegate this')).output
 
 
-def _child_start(history: WorkflowHistory):
-    starts = [
+def _child_starts(history: WorkflowHistory):
+    return [
         event.start_child_workflow_execution_initiated_event_attributes
         for event in history.events
         if event.HasField('start_child_workflow_execution_initiated_event_attributes')
     ]
+
+
+def _child_start(history: WorkflowHistory):
+    starts = _child_starts(history)
     assert len(starts) == 1
     return starts[0]
 

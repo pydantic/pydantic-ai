@@ -17,7 +17,7 @@ from pydantic_ai import (
     Tool,
     durable_exec,
 )
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata, durable_operation
 from pydantic_ai.durable_exec import (
     IDENTITY_CODEC,
     JSON_CODEC,
@@ -502,9 +502,24 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
     }
     assert names == TEMPORAL_ACTIVITY_NAMES
 
-    from temporalio.workflow import _Definition as WorkflowDefinition
+    from temporalio.workflow import ChildWorkflowConfig, _Definition as WorkflowDefinition
 
-    workflow_names = {WorkflowDefinition.must_from_class(item).name for item in worker_registrations(durability)[1]}
+    # Child workflow definitions are registered only for toolsets that can select one.
+    assert worker_registrations(durability)[1] == []
+    child_workflow_agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=list(_synthetic_toolsets()),
+        capabilities=[
+            SetToolMetadata(temporal={'child_workflow': ChildWorkflowConfig()}),
+            TemporalDurability(event_stream_handler=_event_handler),
+        ],
+    )
+    child_workflow_durability = TemporalDurability.from_agent(child_workflow_agent)
+    assert child_workflow_durability is not None
+    workflow_names = {
+        WorkflowDefinition.must_from_class(item).name for item in worker_registrations(child_workflow_durability)[1]
+    }
     assert workflow_names == TEMPORAL_CHILD_WORKFLOW_NAMES
     with_workspace = Agent(
         TestModel(),

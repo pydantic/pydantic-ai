@@ -55,14 +55,15 @@ from ._event_stream import (
     workflow_stream_event_handler,
 )
 from ._operation_backend import (
-    ChildWorkflowOperationConfig,
     TemporalBoundOperation,
     TemporalOperationBackend,
     TemporalOperationConfigValue,
 )
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
+    ChildWorkflowOperationConfig,
     TemporalWrapperToolset,
+    is_child_workflow_metadata,
     resolve_tool_activity_config,
     temporalize_toolset as _default_temporalize_toolset,
     tool_result_payload_errors,
@@ -336,7 +337,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
-        self._has_child_workflow_tools = False
+        self._child_workflow_toolset_ids: set[str] = set()
+        self._child_workflow_metadata_capability = False
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -360,6 +362,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
 
         assert self._deps_type is not None
+        # Child workflow definitions are registered only for toolsets that can select one, so workers for agents
+        # that don't use the feature keep exactly their activity registrations.
+        self._child_workflow_toolset_ids = set()
+        self._child_workflow_metadata_capability = False
         agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._operation_backend = TemporalOperationBackend(
             agent_name=self.name,
@@ -370,13 +376,17 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             resolve_tool_config=self._resolve_temporal_tool_config,
             non_retryable_model_errors=self._non_retryable_model_errors,
             runtime=self,
+            registers_child_workflow=self._registers_child_workflow,
         )
         self._register_activities(agent)
 
     def _detect_child_workflow_metadata(self, capability: AbstractCapability[AgentDepsT]) -> None:
-        if isinstance(capability, SetToolMetadata):
-            config = capability.metadata.get('temporal')
-            self._has_child_workflow_tools |= isinstance(config, dict) and 'child_workflow' in config
+        # `SetToolMetadata` can select tools in any toolset, so it enables child workflows for all of them.
+        if isinstance(capability, SetToolMetadata) and is_child_workflow_metadata(capability.metadata.get('temporal')):
+            self._child_workflow_metadata_capability = True
+
+    def _registers_child_workflow(self, toolset_id: str) -> bool:
+        return self._child_workflow_metadata_capability or toolset_id in self._child_workflow_toolset_ids
 
     def _workspace_call_transport(self) -> _WorkspaceCallTransport:
         return _WorkspaceCallTransport(self)
@@ -430,11 +440,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        if isinstance(ts, FunctionToolset):
-            self._has_child_workflow_tools |= any(
-                isinstance(config := (tool.metadata or {}).get('temporal'), dict) and 'child_workflow' in config
-                for tool in ts.tools.values()
-            )
+        if (
+            isinstance(ts, FunctionToolset)
+            and ts.id is not None
+            and any(is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in ts.tools.values())
+        ):
+            self._child_workflow_toolset_ids.add(ts.id)
         return super()._wrap_leaf_toolset(ts)
 
     def get_durable_operation_backend(self) -> TemporalOperationBackend:
@@ -468,15 +479,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         typed_tool = cast(ToolsetTool[Any] | None, tool)
         metadata = typed_tool.tool_def.metadata if typed_tool is not None else None
         metadata_config = metadata.get('temporal') if metadata is not None else None
-        config: ActivityConfig | dict[str, Any] | Literal[False] | None = (
-            cast(dict[str, Any], metadata_config)
-            if isinstance(metadata_config, dict) and 'child_workflow' in metadata_config
-            else None
-        )
-        if config is None:
-            config = resolve_tool_activity_config(typed_tool, name, {})
-        if isinstance(config, dict) and 'child_workflow' in config:
-            if set(config) != {'child_workflow'}:
+        if is_child_workflow_metadata(metadata_config):
+            if set(metadata_config) != {'child_workflow'}:
                 raise UserError(f'Tool {name!r} has invalid Temporal metadata: `child_workflow` must be the only key.')
             # Argument validation never executes the tool body, so it remains an activity even when the call is a child.
             if isinstance(operation_id, ToolsetValidateToolArgumentsId) and operation_id.toolset_kind == 'function':
@@ -489,8 +493,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     f'Temporal metadata for tool {name!r} selects a child workflow, but non-async tools '
                     'cannot run in workflow code. Make the tool function async instead.'
                 )
-            child_config = validate_child_workflow_config(config['child_workflow'], f'tool {name!r} metadata')
+            child_config = validate_child_workflow_config(metadata_config['child_workflow'], f'tool {name!r} metadata')
             return ChildWorkflowOperationConfig(child_workflow=child_config)
+        config = resolve_tool_activity_config(typed_tool, name, {})
         if config is False:
             # The tool-kind checks read `operation_id.toolset_kind` rather than the type of `tool.toolset`: the
             # toolset that provided the tool is not always the durable leaf (wrappers like `PrefixedToolset` rewrite
@@ -568,14 +573,15 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         to run as a child workflow. Use `AgentPlugin` or `PydanticAIPlugin` when child workflows
         are present so both activity and workflow definitions are registered.
         """
-        if self._has_child_workflow_tools:
+        activities, workflows = worker_registrations(self)
+        if workflows:
             raise UserError(
                 '`TemporalDurability.temporal_activities` cannot be used when a tool is configured to run as a '
                 'child workflow because direct activity registration would omit required workflow definitions. '
                 'Configure the worker with `AgentPlugin(agent)`, or use `PydanticAIPlugin` and list the agent on '
                 'the workflow via `__pydantic_ai_agents__`.'
             )
-        return worker_registrations(self)[0]
+        return activities
 
     # --- Capability hooks ---
 
