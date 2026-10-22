@@ -229,7 +229,7 @@ at connect time:
   difference (missing, extra, or differing tools), so the two can never silently disagree.
 - `'sync'`: make the workspace match Pydantic AI over REST before dialing: create missing client
   tools, update differing ones, and re-point the agent's `tool_ids`, which detaches client tools the run
-  doesn't define. A differing tool that another
+  doesn't define (server-side webhook, MCP, and system tools stay attached). A differing tool that another
   agent also uses isn't changed under it: this agent gets a copy of its own. This mutates workspace
   state shared by every conversation with the agent, which is why it is opt-in. Treat it as a
   deploy-time step — a warm-up connect after a tool change — rather than something a customer's
