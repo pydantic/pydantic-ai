@@ -924,9 +924,8 @@ class TestSearchScope:
 
         rendered = await _search(source, 'mango')
 
-        # `model_response()`, not `str(part.content)`: the latter would index a Python repr of the
-        # error list rather than the rendering the model was shown.
-        assert 'Retry: ' in rendered
+        # Core's compact JSON, not `str(part.content)`, which would index a Python repr of the error list.
+        assert 'Retry: [{"type":"missing","loc":["mango"]' in rendered
         assert "{'type': 'missing'" not in rendered
 
     async def test_retry_feedback_truncates_but_stays_searchable(self) -> None:
@@ -1396,7 +1395,21 @@ Found 1 match(es) for 'READY' in 1 persisted messages:
 Found 1 match(es) for 'required' in 1 persisted messages:
 
 [score: 0.3 | run: r1]
-[0] Retry [weather]: 1 validation error(s): [{"type":"missing","loc":["city"],"msg":"Field required","input":{"town":"Paris"}}]\
+[0] Retry [weather]: [{"type":"missing","loc":["city"],"msg":"Field required","input":{"town":"Paris"}}]\
+""")
+
+    async def test_retried_tool_return_validation_errors_render_as_json(self) -> None:
+        """The part a run records for a tool-call retry indexes the same JSON as the legacy part."""
+        errors: list[ErrorDetails] = [
+            {'type': 'missing', 'loc': ('city',), 'msg': 'Field required', 'input': {'town': 'Paris'}}
+        ]
+        part = ToolReturnPart(tool_name='weather', content=errors, tool_call_id='c1', outcome='retried')
+        rendered = await _search(_StubSource({'r1': [ModelRequest(parts=[part])]}), 'required')
+        assert rendered == snapshot("""\
+Found 1 match(es) for 'required' in 1 persisted messages:
+
+[score: 0.3 | run: r1]
+[0] Retry [weather]: [{"type":"missing","loc":["city"],"msg":"Field required","input":{"town":"Paris"}}]\
 """)
 
     async def test_a_long_term_past_the_cutoff_is_shown_whole(self) -> None:
