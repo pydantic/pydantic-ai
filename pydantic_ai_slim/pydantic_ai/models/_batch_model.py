@@ -76,6 +76,8 @@ class _Ticket(TypedDict):
     polls: int
     resubmissions: NotRequired[int]
     """How many times the request was submitted again after a transient failure, which bounds further resubmissions."""
+    continued_response_id: NotRequired[str]
+    """The ID of the suspended response the request continued, which merging the pending response into it replaces."""
     trace_context: NotRequired[dict[str, str]]
     """The W3C trace context of the batch's span, so its checks join the batch's trace in any process."""
 
@@ -356,8 +358,7 @@ class BatchPool:
         except asyncio.CancelledError:
             # Leaves the batch if it's still queued. A submission has already taken the queue's requests, so the
             # request is in its batch: it's abandoned once the batch exists, which can cancel the batch.
-            if queue.requests.get(custom_id) is queued:
-                del queue.requests[custom_id]
+            queue.requests.pop(custom_id, None)
             queued.withdrawn = True
             if queued.future.done() and not queued.future.cancelled() and queued.future.exception() is None:
                 self._withdraw(model, queued.future.result()[0], custom_id)
@@ -561,6 +562,12 @@ class BatchedModel(WrapperModel):
         ticket = _Ticket(custom_id=custom_id, batch=batch, polls=0)
         if resubmissions:
             ticket['resubmissions'] = resubmissions
+        if (
+            isinstance(continued := messages[-1], ModelResponse)
+            and continued.state == 'suspended'
+            and continued.provider_response_id
+        ):
+            ticket['continued_response_id'] = continued.provider_response_id
         if trace_context is not None:
             ticket['trace_context'] = trace_context
         return ModelResponse(
@@ -671,7 +678,10 @@ class BatchedModel(WrapperModel):
             # The pending response holds what a provider continuation, like Anthropic's `pause_turn`, generated before
             # the request, which the request sent as the turn to continue, so it's sent again without the ticket.
             details = {key: value for key, value in (pending.provider_details or {}).items() if key != _TICKET_KEY}
-            messages = [*history, replace(pending, provider_response_id=None, provider_details=details or None)]
+            continued = replace(
+                pending, provider_response_id=ticket.get('continued_response_id'), provider_details=details or None
+            )
+            messages = [*history, continued]
         return await self._submit(
             messages,
             model_settings,
