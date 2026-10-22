@@ -2319,8 +2319,16 @@ async def test_native_cancel_during_wrap_run_cleanup_is_delivered_once():
     assert cleanup_finished.is_set()
 
 
-async def test_tool_timeout_reaches_nested_run_error_hook():
+async def test_tool_timeout_reaches_nested_run_error_hook(monkeypatch: pytest.MonkeyPatch):
     """A tool's `timeout=` that cancels a nested `run()` still reaches the nested agent's `@hooks.on.run_error`."""
+    # The nested model request moves the loop's clock past the deadline, so the deadline can't pass during the nested
+    # run's startup, before there's an `on_run_error` to reach.
+    timeout = 1
+    loop = asyncio.get_running_loop()
+    real_time = loop.time
+    clock_offset = 0
+    monkeypatch.setattr(loop, 'time', lambda: real_time() + clock_offset)
+
     hooks = Hooks[None]()
     run_errors: list[BaseException] = []
 
@@ -2330,6 +2338,8 @@ async def test_tool_timeout_reaches_nested_run_error_hook():
         raise error
 
     async def block(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal clock_offset
+        clock_offset = timeout
         await asyncio.Event().wait()
         raise AssertionError  # pragma: no cover
 
@@ -2342,7 +2352,7 @@ async def test_tool_timeout_reaches_nested_run_error_hook():
 
     agent = Agent(FunctionModel(delegate_once))
 
-    @agent.tool_plain(timeout=0.05)
+    @agent.tool_plain(timeout=timeout)
     async def delegate() -> str:
         result = await sub_agent.run('go', deps=None)
         return result.output  # pragma: no cover
@@ -2398,7 +2408,8 @@ async def test_iter_early_exit_discards_wrap_run_cleanup_failure():
         await anext(agent_run)
 
     assert agent_run.result is None
-    # A task failure no one retrieved is reported to the event loop when the task is collected.
+    # A task failure no one retrieved is reported to the event loop's exception handler when the task is collected, and
+    # the anyio pytest runner's handler re-raises it after the test.
     gc.collect()
 
 
