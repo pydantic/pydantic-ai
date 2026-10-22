@@ -51,9 +51,8 @@ The first eight rows are [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEv
 [standard streamed run](../agent.md#streaming-all-events) yields, so event-handling code written for
 a text agent (rendering parts, logging tool calls) works on a session unchanged. The `Realtime*`
 rows are [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members, the part of
-`AgentStreamEvent` that only a session emits:
-speech detection, interruption, turn completion, reconnection, and recoverable errors have no
-equivalent in a request-response run.
+`AgentStreamEvent` that only a session emits: speech detection, interruption, turn completion,
+reconnection, and recoverable errors have no equivalent in a request-response run.
 
 A capability's [event stream hooks](../hooks.md#event-stream-hooks) see both kinds flow through the
 same stream; see [Capabilities and hooks](capabilities.md#the-event-stream).
