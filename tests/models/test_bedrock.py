@@ -1933,7 +1933,8 @@ async def test_bedrock_leaves_out_citations_it_cannot_check(bedrock_provider: Be
     """Replay leaves out each citation it can't check against a document in the request, and keeps the rest.
 
     The page citation is what Bedrock returns for a PDF, which isn't sent as text; the others only come from history
-    edited after Bedrock sent it. Citations that are sent back are covered by recordings in `test_citations.py`.
+    edited after Bedrock sent it. A citation without a title, which Bedrock rejects, gets the cited document's name,
+    as Bedrock's own titles are. Citations that are sent back are covered by recordings in `test_citations.py`.
     """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     valid: dict[str, Any] = {
@@ -1961,8 +1962,18 @@ async def test_bedrock_leaves_out_citations_it_cannot_check(bedrock_provider: Be
                         'citations': [
                             valid,
                             'not a citation',
-                            {key: value for key, value in valid.items() if key != 'title'},
+                            {**valid, 'sourceContent': []},
                             {**valid, 'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}}},
+                        ]
+                    },
+                ),
+                TextPart(
+                    'Without a title.',
+                    provider_name='bedrock',
+                    provider_details={
+                        'citations': [
+                            {key: value for key, value in valid.items() if key != 'title'},
+                            {**valid, 'title': ''},
                         ]
                     },
                 ),
@@ -1998,6 +2009,23 @@ async def test_bedrock_leaves_out_citations_it_cannot_check(bedrock_provider: Be
                             'sourceContent': [{'text': 'thirty days'}],
                             'title': 'Document 1',
                         }
+                    ],
+                }
+            },
+            {
+                'citationsContent': {
+                    'content': [{'text': 'Without a title.'}],
+                    'citations': [
+                        {
+                            'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+                            'sourceContent': [{'text': 'thirty days'}],
+                            'title': 'Document 1',
+                        },
+                        {
+                            'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
+                            'sourceContent': [{'text': 'thirty days'}],
+                            'title': 'Document 1',
+                        },
                     ],
                 }
             },

@@ -143,6 +143,7 @@ if TYPE_CHECKING:
         ConverseTokensRequestTypeDef,
         CountTokensRequestTypeDef,
         DocumentBlockTypeDef,
+        DocumentBlockUnionTypeDef,
         DocumentSourceTypeDef,
         GuardrailConfigurationTypeDef,
         InferenceConfigurationTypeDef,
@@ -533,16 +534,16 @@ def _citations_provider_details(citations: Sequence[CitationOutputTypeDef | Cita
 
 
 def _map_citations_for_replay(
-    citations: list[Any], text: str, document_texts: list[str | None]
+    citations: list[Any], text: str, documents: Sequence[DocumentBlockUnionTypeDef]
 ) -> ContentBlockOutputTypeDef | None:
     """Rebuild the `citationsContent` block Bedrock returned from its raw data on the text part, or return `None`.
 
-    Only character ranges that select their cited text from a plain-text document in the request are kept, and only
-    with a title, which Bedrock requires. `document_texts` holds the text of each document before the cited text in
-    the request, in Bedrock's document index order, or `None` for documents that aren't plain text.
+    Only character ranges that select their cited text from a plain-text document in the request are kept.
+    `documents` holds each document before the cited text in the request, in Bedrock's document index order.
     """
     if not text:
         return None
+    document_texts = [document['source'].get('text') for document in documents]
     mapped_citations: list[CitationOutputTypeDef] = []
     for citation in citations:
         location = citation.get('location') if _utils.is_str_dict(citation) else None
@@ -554,14 +555,12 @@ def _map_citations_for_replay(
             content.get('text') for content in citation.get('sourceContent', []) if _utils.is_str_dict(content)
         ]
         cited_text = source_content[0] if len(source_content) == 1 else None
-        title = citation.get('title')
         if (
             not isinstance(index, int)
             or not isinstance(start, int)
             or not isinstance(end, int)
             or not 0 <= start < end
             or not isinstance(cited_text, str)
-            or not isinstance(title, str)
         ):
             continue
         # Bedrock numbers documents by their position in the request, which moves when earlier history is left out,
@@ -574,11 +573,14 @@ def _map_citations_for_replay(
             if len(matches) != 1:
                 continue
             index = matches[0]
+        # Bedrock requires a non-empty title but doesn't check it against the document (probed 2026-10-22), and the
+        # title it returns is the document's name, so a citation edited history left without one gets that name.
+        title = citation.get('title')
         mapped_citations.append(
             {
                 'location': {'documentChar': {'documentIndex': index, 'start': start, 'end': end}},
                 'sourceContent': [{'text': cited_text}],
-                'title': title,
+                'title': title if isinstance(title, str) and title else documents[index]['name'],
             }
         )
     if not mapped_citations:
@@ -586,19 +588,19 @@ def _map_citations_for_replay(
     return {'citationsContent': {'content': [{'text': text}], 'citations': mapped_citations}}
 
 
-def _citation_document_texts(messages: Sequence[MessageUnionTypeDef]) -> list[str | None]:
-    """Return the text of each document block in `messages` in Bedrock's document index order, or `None` if it isn't text.
+def _citation_documents(messages: Sequence[MessageUnionTypeDef]) -> list[DocumentBlockUnionTypeDef]:
+    """Return each document block in `messages` in Bedrock's document index order.
 
     Bedrock numbers documents in tool results along with the others.
     """
-    result: list[str | None] = []
+    result: list[DocumentBlockUnionTypeDef] = []
     for message in messages:
         for block in message['content']:
             documents = [
                 block.get('document'),
                 *(item.get('document') for item in block.get('toolResult', {}).get('content', [])),
             ]
-            result.extend(document['source'].get('text') for document in documents if document is not None)
+            result.extend(document for document in documents if document is not None)
     return result
 
 
@@ -1659,7 +1661,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         raw_citations = (item.provider_details or {}).get('citations')
                         citation_block = (
                             _map_citations_for_replay(
-                                cast(list[Any], raw_citations), item.content, _citation_document_texts(bedrock_messages)
+                                cast(list[Any], raw_citations), item.content, _citation_documents(bedrock_messages)
                             )
                             # Replay checks citations against the documents' text, which is only sent as text when
                             # citations are enabled.
