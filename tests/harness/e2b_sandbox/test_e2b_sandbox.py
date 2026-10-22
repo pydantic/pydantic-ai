@@ -151,6 +151,13 @@ async def test_native_handle_is_exposed_without_creation(fake_e2b: FakeE2B) -> N
         E2BSandboxBackend(sandbox=native, ref=WorkspaceRef(provider='e2b', id='other'))
 
 
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+async def test_a_passed_in_sandbox_is_returned_on_trio(fake_e2b: FakeE2B, anyio_backend: str) -> None:
+    # Handing back a sandbox the caller already has makes no E2B request, so Trio is not refused.
+    native = fake_e2b.new_sandbox('sbx-1', None)
+    assert await E2BSandboxBackend(sandbox=native).get_sandbox() is native  # pyright: ignore[reportArgumentType]
+
+
 async def test_agent_without_workspace_use_does_not_create(fake_e2b: FakeE2B) -> None:
     agent = Agent(TestModel(custom_output_text='done'), capabilities=[E2BSandbox()])
     result = await agent.run('hello')
