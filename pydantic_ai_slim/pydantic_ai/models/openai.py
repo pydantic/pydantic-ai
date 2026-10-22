@@ -2085,10 +2085,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
-        # the run is reasoning. A turn another model or provider produced can lack it: a `FallbackModel`
-        # step, or a foreign native tool search that `prepare_messages` splits into a synthesized
-        # `search_tools` turn. `'field'` mode sets the configured field empty on every such turn; `'auto'`
-        # mode is handled after mapping, below.
+        # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
+        # can lack it: a `FallbackModel` step, a resumed run, or a foreign native tool search that
+        # `prepare_messages` splits into a synthesized `search_tools` turn. `'field'` mode sets the configured
+        # field empty on every such turn once the history holds a `ThinkingPart`, or, for a profile that sets
+        # `openai_chat_thinking_requires_field_on_tool_calls`, once the request itself thinks, as it can before
+        # any step has thought; `'auto'` mode is handled after mapping, below.
         send_back_thinking = profile.get('openai_chat_send_back_thinking_parts', 'auto')
         thinking_active = any(
             isinstance(part, ThinkingPart)
@@ -2098,7 +2100,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         )
         backfill_field = (
             profile.get('openai_chat_thinking_field', None)
-            if thinking_active and send_back_thinking == 'field'
+            if send_back_thinking == 'field'
+            and (
+                thinking_active
+                or (
+                    profile.get('openai_chat_thinking_requires_field_on_tool_calls', False)
+                    and self._request_thinks(model_settings, model_request_parameters)
+                )
+            )
             else None
         )
         for message in messages:

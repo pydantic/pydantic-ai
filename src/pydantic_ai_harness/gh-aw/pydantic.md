@@ -11,8 +11,9 @@ pre-agent-steps:
       # imported in place of the installed packages.
       #
       # CLAI 2.0's published `-p` command is the headless interface used by this
-      # engine. The agent hooks and MCP composition require Pydantic AI 2.54.
-      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.54.0"
+      # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
+      # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
+      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
@@ -22,10 +23,16 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.58.0"
+  version: "0.59.0"
   display-name: Pydantic AI
   description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
   mcp: true
+  # gh-aw's threat-detection job runs only on its built-in engines, so a custom engine
+  # names the one it runs on. Without this key gh-aw falls back to `copilot` anyway
+  # and warns on every compile. A workflow's `safe-outputs.threat-detection.engine`
+  # overrides it. The key needs gh-aw v0.89.0 or newer: older compilers reject any
+  # engine key they do not know.
+  detection-engine: copilot
   provider:
     name: github
   behaviors:
@@ -567,15 +574,19 @@ engine:
         // not translate Chat Completions into Messages. So `anthropic/` is addressed
         // with the Messages API: `anthropic:` on `-m`, and ANTHROPIC_BASE_URL for
         // the endpoint. The Copilot and Codex backends are OpenAI-shaped and stay on
-        // Chat Completions, and `PAI_BASE_URL` names a Chat Completions endpoint by
-        // definition, so it keeps every provider there too.
+        // Chat Completions. `copilot/` runs on the `github-copilot:` model, which
+        // applies Copilot's per-family profiles and reads the thinking its Claude
+        // and Gemini models return in `reasoning_text`. `PAI_BASE_URL` names a
+        // generic Chat Completions endpoint by definition, so it keeps every
+        // provider on `openai-chat:`.
         const useMessagesAPI = !configuredBaseUrl && modelProvider === "anthropic";
+        const useCopilotAPI = !configuredBaseUrl && modelProvider === "copilot";
         // The dotted-alias rewrite describes the api-proxy's Copilot backend,
         // which publishes Copilot's Claude models under dotted IDs. Every other
         // destination (the anthropic and openai backends, or an endpoint named
         // by PAI_BASE_URL) gets the id the workflow wrote: a model actually
         // called `claude-sonnet-4-5` there has to arrive as that.
-        const model = !configuredBaseUrl && modelProvider === "copilot"
+        const model = useCopilotAPI
           ? requestedModel.replace(/^(claude-(?:haiku|sonnet|opus)-\d+)-(\d+)$/, "$1.$2")
           : requestedModel;
 
@@ -640,15 +651,27 @@ engine:
           );
         }
         // The AWF api-proxy injects the real upstream credentials and ignores the
-        // inbound key, but neither client constructs itself without one. Setting it
+        // inbound key, but no client constructs itself without one. Setting it
         // also replaces whatever key this step inherited, so the agent process holds
-        // the placeholder rather than a provider credential.
+        // the placeholder rather than a provider credential. gh-aw gives the copilot
+        // backend both its own pair and the OpenAI-compatible one, so both are set
+        // there: the Copilot model reads its own, and an OpenAI-compatible client an
+        // agent builds itself keeps reaching the proxy.
         if (useMessagesAPI) {
           env.ANTHROPIC_BASE_URL = baseUrl;
           env.ANTHROPIC_API_KEY = "awf-anthropic-proxy";
         } else {
           env.OPENAI_BASE_URL = baseUrl;
           env.OPENAI_API_KEY = "awf-copilot-proxy";
+          if (useCopilotAPI) {
+            env.GITHUB_COPILOT_BASE_URL = baseUrl;
+            env.GITHUB_COPILOT_API_KEY = "awf-copilot-proxy";
+            // Copilot rejects a personal access token on a request carrying the
+            // provider's default `vscode-chat` integration id. The api-proxy keeps an
+            // inbound id rather than injecting its own, so the engine sends the id
+            // the proxy would otherwise add.
+            env.GITHUB_COPILOT_INTEGRATION_ID = "agentic-workflows";
+          }
         }
 
         // `-m` is always passed: the composed agent carries no model, and without
@@ -663,7 +686,7 @@ engine:
         const cliArgs = [
           ...commandArgs,
           "-a", agentTarget,
-          "-m", `${useMessagesAPI ? "anthropic" : "openai-chat"}:${model}`,
+          "-m", `${useMessagesAPI ? "anthropic" : useCopilotAPI ? "github-copilot" : "openai-chat"}:${model}`,
         ];
         // The config adapter writes this file only for a workflow that configures
         // MCP tools, so its

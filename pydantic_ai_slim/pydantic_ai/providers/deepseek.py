@@ -60,6 +60,9 @@ class DeepSeekProvider(_OpenAICompatibleProvider):
                 # For a conversation carrying tools, DeepSeek documents that `reasoning_content` must be
                 # passed back in every subsequent request. See https://api-docs.deepseek.com/guides/thinking_mode.
                 openai_chat_send_back_thinking_parts='field',
+                # DeepSeek 400s on a thinking request whose current-turn tool call lacks `reasoning_content`
+                # even when no earlier response thought, as after a `FallbackModel` step served without thinking.
+                openai_chat_thinking_requires_field_on_tool_calls=True,
                 # DeepSeek's Responses endpoint documents merging each function call into the
                 # assistant message adjacent to it, unlike the official Responses API, so an
                 # assistant item between two calls strands the first one without its output.
