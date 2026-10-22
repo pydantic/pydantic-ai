@@ -1271,14 +1271,19 @@ async def test_xai_error_category_mid_stream(allow_model_requests: None):
 
 
 @pytest.mark.parametrize(
-    ('status', 'details', 'error_class'),
+    ('status', 'details', 'categories'),
     [
-        pytest.param('UNAVAILABLE', 'Stream removed (Socket closed)', ModelConnectionError, id='connection-lost'),
-        pytest.param('DEADLINE_EXCEEDED', 'Stream removed (Deadline Exceeded)', ModelTimeoutError, id='deadline'),
+        pytest.param('UNAVAILABLE', 'Stream removed (Socket closed)', {ModelConnectionError}, id='connection-lost'),
+        pytest.param(
+            'DEADLINE_EXCEEDED',
+            'Stream removed (Deadline Exceeded)',
+            {ModelConnectionError, ModelTimeoutError},
+            id='deadline',
+        ),
     ],
 )
 async def test_xai_transport_error_mid_stream(
-    allow_model_requests: None, status: str, details: str, error_class: type[ModelConnectionError]
+    allow_model_requests: None, status: str, details: str, categories: set[type[ModelAPIError]]
 ):
     """A transport failure after the stream started sending responses happened while reading the response."""
     error = _rpc_error(status, details)
@@ -1286,12 +1291,12 @@ async def test_xai_transport_error_mid_stream(
     model = XaiModel(
         'grok-4-1-fast-non-reasoning', provider=XaiProvider(xai_client=MockXai.create_mock_stream([stream]))
     )
-    with pytest.raises(error_class) as exc_info:
+    with pytest.raises(ModelConnectionError) as exc_info:
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
     exc = exc_info.value
-    assert {cls for cls in _CATEGORIES if isinstance(exc, cls)} <= {ModelConnectionError, ModelTimeoutError}
+    assert {cls for cls in _CATEGORIES if isinstance(exc, cls)} == categories
     assert exc.phase == 'read'
     assert exc.in_stream is True
     assert exc.message == details

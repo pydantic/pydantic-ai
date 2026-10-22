@@ -115,7 +115,10 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 
 @contextmanager
 def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[None]:
-    """Turn a gRPC error into the framework's HTTP-shaped errors, mapping its status code to the HTTP equivalent.
+    """Turn a gRPC error into the framework's errors.
+
+    An error the server sent becomes an HTTP-shaped error, its status code mapped to the HTTP equivalent; the client's
+    own transport failures become a `ModelConnectionError` or `ModelTimeoutError` instead.
 
     `in_stream` marks an error that ended a stream after it had started sending responses.
     """
