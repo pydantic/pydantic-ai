@@ -12,12 +12,11 @@ except ImportError as _import_error:
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, get_args
+from typing import Any, ClassVar, Literal
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.durable_exec import JSON_CODEC, BaseDurabilityCapability, DurabilityEngineSpec
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -93,11 +92,6 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
             parallel_execution_mode: Tool-call execution mode applied to runs inside a task.
                 `'parallel'` is excluded; see `AbsurdParallelExecutionMode`.
         """
-        if parallel_execution_mode not in get_args(AbsurdParallelExecutionMode):
-            raise UserError(
-                f'`AbsurdDurability` does not support `parallel_execution_mode={parallel_execution_mode!r}`; '
-                "use 'sequential' or 'parallel_ordered_events'."
-            )
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._parallel_execution_mode: ParallelExecutionMode = parallel_execution_mode
 
