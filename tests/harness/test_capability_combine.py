@@ -700,7 +700,10 @@ def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_set
     second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
 
     merged = SystemReminders.combine(
-        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+        [
+            SystemReminders[Any](dynamic_reminders=[first], cache_ttl=None),
+            SystemReminders[Any](dynamic_reminders=[second], cache_ttl=None),
+        ]
     )
 
     assert isinstance(merged, SystemReminders)
