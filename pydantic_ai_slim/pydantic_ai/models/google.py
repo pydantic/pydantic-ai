@@ -1731,7 +1731,9 @@ class GeminiStreamedResponse(StreamedResponse):
                     is_text = part.text is not None and not part.thought
                     if is_text and (not self._continue_text_run or new_request_vendor_part_id is not None):
                         self._text_runs.append(_GoogleStreamTextRun(part_id=uuid4()))
-                    self._continue_text_run = is_text
+                    # Parts that make no part of their own, such as function responses, leave the text run going.
+                    if is_text or not (_is_signature_only_part(part) or part.function_response is not None):
+                        self._continue_text_run = is_text
 
                     if part.text is not None:
                         if part.thought:
