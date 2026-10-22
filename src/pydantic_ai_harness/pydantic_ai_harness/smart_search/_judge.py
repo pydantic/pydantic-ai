@@ -12,7 +12,6 @@ Every snippet is judged in its own run, so neighboring snippets never lend each 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from typing import Any
 
 import anyio
@@ -22,8 +21,7 @@ from pydantic_ai import Agent
 from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness._judge import claim_request
+from pydantic_ai_harness._judge import claim_request, claimed_request_limits
 from pydantic_ai_harness.smart_search._chunks import Chunk
 
 REQUEST_TIMEOUT_SECONDS = 30
@@ -128,9 +126,9 @@ async def judge(
     one is worse than an error.
     """
     agent = build_agent(model, query)
-    # The claim below already holds each judgment's request slot, checked by `has_request_room`, so the
-    # nested run checks only the token limits; with no limits at all it would apply the default ones.
-    limits = replace(ctx.usage_limits, request_limit=None) if ctx.usage_limits else UsageLimits(request_limit=None)
+    # Judgments start through the gate while others finish, so the nested run takes the claimed-request
+    # limits rather than `claim_offset_limits`, whose preflight would see the other claims too.
+    limits = claimed_request_limits(ctx.usage_limits)
     gate = anyio.Semaphore(concurrency)
     scores: list[float | None] = [None] * len(chunks)
     errors: list[Exception] = []

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import anyio
 import httpx2
 import pytest
 from inline_snapshot import snapshot
@@ -22,7 +23,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import Model
-from pydantic_ai.models.decision import NoulQuestion
+from pydantic_ai.models.decision import DecisionModelSettings, DecisionRequest, DecisionResponse, NoulQuestion
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.system_one import SystemOneModel
@@ -193,6 +194,29 @@ class TestSmartSearch:
         # Each search alone may spend two of the four requests left, but together they stop at four.
         assert sum(r.coverage.evaluated for r in results if isinstance(r, SmartSearchResult)) == 4
         assert result.output == 'done'
+
+    async def test_judgments_starting_while_others_finish_stay_within_the_claims(self, tmp_path: Path) -> None:
+        """A judgment's own run must not count the claims of judgments still running against the request limit."""
+        for i in range(40):
+            (tmp_path / f'm{i}.py').write_text('expired = True\n')
+
+        class Staggered(FakeJev):
+            """Finishes judgments out of step, so new ones start through the gate while others complete."""
+
+            yields: list[int]
+
+            async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+                for _ in range(self.yields.pop(0) if self.yields else 0):
+                    await anyio.sleep(0)
+                return await super().decide(request, model_settings)
+
+        judge_model = Staggered('expired')
+        judge_model.yields = [0, 0, 3, 1] * 20
+        agent = search_agent(tmp_path, judge_model)
+        calls = calls_smart_search({'query': 'expired 0'}, {'query': 'expired 1'})
+        result = await agent.run('find it', model=calls, usage_limits=UsageLimits(request_limit=14))
+        assert result.output == 'done'
+        assert all(isinstance(part.content, SmartSearchResult) for part in tool_returns(result.all_messages()))
 
     async def test_a_judgment_is_exactly_one_request(self, tmp_path: Path) -> None:
         (tmp_path / 'a.py').write_text('expired = True\n')
