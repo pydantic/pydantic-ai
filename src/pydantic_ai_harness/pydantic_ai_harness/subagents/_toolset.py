@@ -386,6 +386,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         created: dict[str, dict[str, SubAgent[AgentDepsT]]] | None = None,
     ) -> None:
         super().__init__(id=id)
+        if remote_agents and not task_control:
+            raise ValueError('`remote_agents` require `task_control=True`.')
+        if dynamic_agents is not None and created is None:
+            raise ValueError(
+                '`dynamic_agents` needs a `created` mapping that is cleared as each run ends, as `SubAgents` does.'
+            )
         self._task_control = task_control
         self._remote: dict[str, RemoteSubAgent] = dict(remote_agents or {})
         self._transport = transport
@@ -942,14 +948,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         assert dynamic is not None, '`create_agent` is only offered with `dynamic_agents` set.'
         if (problem := validate_agent_name(name)) is not None:
             raise ModelRetry(problem)
-        created = self._created.setdefault(ctx.run_id or '', {})
-        creating = self._creating.setdefault(ctx.run_id or '', set())
-        taken = {*self._agents, *self._remote, *created, *creating}
+        run_key = ctx.run_id or ''
+        created = self._created.setdefault(run_key, {})
+        reserved = self._creating.get(run_key, set())
+        taken = {*self._agents, *self._remote, *created, *reserved}
         if self._include_self:
             taken.add(SELF_AGENT_NAME)
         if name in taken:
             raise ModelRetry(f'A sub-agent named {name!r} already exists.')
-        if len(created) + len(creating) >= dynamic.max_agents:
+        if len(created) + len(reserved) >= dynamic.max_agents:
             raise ModelRetry(f'You already created {dynamic.max_agents} sub-agents, the most allowed in one run.')
         if dynamic.models:
             if model is None:
@@ -960,6 +967,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry('You cannot choose a model; omit `model` to use your own.')
         event = AgentCreatedEvent(name=name, description=description, instructions=instructions, model=model)
         # Reserved before listeners see it, so a parallel call cannot take the name or the last place meanwhile.
+        creating = self._creating.setdefault(run_key, set())
         creating.add(name)
         try:
             if _emits_events(ctx):
@@ -977,7 +985,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         finally:
             creating.discard(name)
             if not creating:
-                del self._creating[ctx.run_id or '']
+                del self._creating[run_key]
         return f'Created sub-agent {name!r}. Delegate tasks to it with `{self._tool_name}`.'
 
     async def _run_delegation(

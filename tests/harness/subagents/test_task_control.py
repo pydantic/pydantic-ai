@@ -522,10 +522,12 @@ class TestSubAgentsTaskControl:
         task_id = task_id_in(returns[1])
         assert returns[2] == f"- {task_id} (researcher, running, background, resumable): '{'x' * 80}...'"
 
-    async def test_list_tasks_is_capped(self) -> None:
+    async def test_list_tasks_is_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.subagents._toolset._MAX_LISTED_TASKS', 3)
+
         def many(messages: list[ModelMessage]) -> ModelResponse:
             return ModelResponse(
-                parts=[ToolCallPart('delegate_task', {'agent_name': 'researcher', 'task': f't{i}'}) for i in range(52)]
+                parts=[ToolCallPart('delegate_task', {'agent_name': 'researcher', 'task': f't{i}'}) for i in range(5)]
             )
 
         parent = Agent(
@@ -535,11 +537,12 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             result = await parent.run('Go.', usage_limits=UsageLimits(request_limit=None))
         lines = result.output.splitlines()
-        assert len(lines) == 51
+        assert len(lines) == 4
         assert lines[-1] == '(2 older finished tasks not shown.)'
         assert 'finished: ok' in lines[0]
 
-    async def test_list_tasks_keeps_the_newest_running_tasks(self) -> None:
+    async def test_list_tasks_keeps_the_newest_running_tasks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.subagents._toolset._MAX_LISTED_TASKS', 3)
         gate = Gate()
         slow = Agent(scripted(call('pause'), text('slow')), tools=[gate.pause])
         listed: list[str] = []
@@ -550,7 +553,7 @@ class TestSubAgentsTaskControl:
                     ToolCallPart('delegate_task', {'agent_name': 'quick', 'task': 'q'}),
                     *(
                         ToolCallPart('delegate_task', {'agent_name': 'researcher', 'task': f't{i}', 'background': True})
-                        for i in range(52)
+                        for i in range(5)
                     ),
                 ]
             )
@@ -567,10 +570,10 @@ class TestSubAgentsTaskControl:
         with anyio.fail_after(WAIT):
             await parent.run('Go.', usage_limits=UsageLimits(request_limit=None))
         lines = listed[0].splitlines()
-        assert len(lines) == 51
+        assert len(lines) == 4
         # With no room left, the finished task left out is not called older: it may be newer than those shown.
         assert lines[-1] == '(2 older running tasks and 1 finished task not shown.)'
-        assert "'t2'" in lines[0] and "'t51'" in lines[-2]
+        assert "'t2'" in lines[0] and "'t4'" in lines[-2]
 
     async def test_max_running_tasks_refuses_another_task(self) -> None:
         gate = Gate()
@@ -1968,6 +1971,7 @@ class TestTaskControlEdges:
             call_counts={},
             task_control=True,
             dynamic_agents=DynamicAgents(),
+            created={},
         )
         parent = Agent(
             scripted(
@@ -2029,6 +2033,23 @@ class TestTaskControlEdges:
         # The question itself came whole as its own message.
         assert waiting == f'  Waiting for an answer to: {question[:80] + "..."!r}'
         assert any(question in text_ for text_ in system_texts(result.all_messages()))
+
+    def test_a_toolset_without_the_capability_refuses_what_needs_it(self) -> None:
+        common: dict[str, Any] = dict(
+            agents={},
+            forward_usage=True,
+            inherit_tools=False,
+            shared_capabilities=[],
+            event_stream_handler=None,
+            tool_name='delegate_task',
+            tool_retries=1,
+            contain_errors=False,
+            call_counts={},
+        )
+        with pytest.raises(ValueError, match='`remote_agents` require `task_control=True`'):
+            SubAgentToolset(**common, remote_agents={'remote': RemoteSubAgent(name='remote', description='d')})
+        with pytest.raises(ValueError, match='`dynamic_agents` needs a `created` mapping'):
+            SubAgentToolset(**common, dynamic_agents=DynamicAgents())
 
     async def test_parallel_create_agent_calls_respect_the_name_and_the_cap(self) -> None:
         announced: list[str] = []
