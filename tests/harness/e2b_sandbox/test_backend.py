@@ -1142,6 +1142,24 @@ async def test_a_template_without_ps_keeps_stderr_clean(fake_e2b: FakeE2B, tmp_p
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'hi\n', '')
 
 
+async def _exited(pid: int) -> None:
+    """Wait until `pid` has exited; a zombie no init has reaped yet has exited too, though `kill -0` finds it."""
+    stat = Path(f'/proc/{pid}/stat')
+    has_proc = os.path.exists('/proc/self/stat')
+    while True:
+        try:
+            os.kill(pid, 0)
+            # Reached only while the process still runs.
+            state = stat.read_bytes().rsplit(b') ', 1)[1].split()[0] if has_proc else b''  # pragma: lax no cover
+        except (ProcessLookupError, FileNotFoundError):
+            return
+        # Only where nothing reaps orphans.
+        if state == b'Z':  # pragma: lax no cover
+            return
+        # The process is often already gone.
+        await anyio.sleep(0.01)  # pragma: lax no cover
+
+
 @pytest.mark.skipif(not os.path.exists('/proc/self/stat'), reason='identifies processes through Linux `/proc`')
 async def test_timeout_stops_a_command_on_a_template_without_ps(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     fake_e2b.host_root = tmp_path
@@ -1164,9 +1182,9 @@ async def test_a_leader_stop_reaches_a_command_that_left_its_group(fake_e2b: Fak
     fake_e2b.host_root = tmp_path
     path = _path_without_ps(tmp_path)
     for tool in ('perl', 'ps'):
-        # Both are on every test host.
-        if (source := shutil.which(tool)) is not None:  # pragma: no branch
-            (Path(path) / tool).symlink_to(source)
+        source = shutil.which(tool)
+        assert source is not None
+        (Path(path) / tool).symlink_to(source)
     # A custom template is probed for `setsid`, which this `PATH` lacks.
     backend = await started(template='minimal', env={'PATH': path})
     pid_file = tmp_path / 'pid'
@@ -1218,21 +1236,3 @@ async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: Fak
     finally:
         for handle in fake_e2b.sandboxes[0].commands.handles:
             handle.close()
-
-
-async def _exited(pid: int) -> None:
-    """Wait until `pid` has exited; a zombie no init has reaped yet has exited too, though `kill -0` finds it."""
-    stat = Path(f'/proc/{pid}/stat')
-    has_proc = os.path.exists('/proc/self/stat')
-    while True:
-        try:
-            os.kill(pid, 0)
-            # Reached only while the process still runs.
-            state = stat.read_bytes().rsplit(b') ', 1)[1].split()[0] if has_proc else b''  # pragma: lax no cover
-        except (ProcessLookupError, FileNotFoundError):
-            return
-        # Only where nothing reaps orphans.
-        if state == b'Z':  # pragma: lax no cover
-            return
-        # The process is often already gone.
-        await anyio.sleep(0.01)  # pragma: lax no cover
