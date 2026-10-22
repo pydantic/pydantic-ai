@@ -990,6 +990,12 @@ Toolsets for sandboxed code execution help agents run code in a sandboxed enviro
 
 * [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
+### Web Search
+
+Toolsets that give agents web search and page reading through a search API:
+
+* [`pydantic-ai-contextfetch`](https://github.com/lachy3433/pydantic-ai-contextfetch) - `ContextFetchToolset` with `contextfetch_search` (web search; each result carries the page as Markdown, by default only the parts relevant to the query) and `contextfetch_read` (one URL as Markdown, optionally only the parts relevant to a question) tools, backed by the [ContextFetch](https://contextfetch.dev) API. Reads the key from `CONTEXTFETCH_API_KEY`.
+
 ### LangChain Tools {#langchain-tools}
 
 If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits) from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] which takes a list of LangChain tools. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
