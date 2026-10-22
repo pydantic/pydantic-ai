@@ -59,8 +59,8 @@ Important distinctions:
 Install `pydantic-ai-slim[openai-responses-websocket]` before using `OpenAIResponsesModel.connect()`.
 Pass the yielded model to `Agent(...)`, `run(model=...)`, or a model-selection capability.
 Keep the connection open for every run that borrows it.
-With `OpenAIProvider`, parallel requests share one connection, each on its own `stream_id` lane; other providers run them one at a time.
-`OpenAIProvider` enables lanes whatever its `base_url`: for another service such as xAI or Azure's `/openai/v1`, pass `profile=OpenAIModelProfile(openai_responses_supports_websocket_stream_id=False)` to `OpenAIResponsesModel`, or concurrent conversations can receive each other's events.
+On `api.openai.com`, parallel requests share one connection, each on its own `stream_id` lane.
+Any other host runs them one at a time, including xAI, Azure `/openai/v1` or a proxy reached through `OpenAIProvider`, unless the model's profile sets `openai_responses_supports_websocket_stream_id=True`.
 The connection doesn't reconnect and OpenAI closes it after 60 minutes, so open a new one before then in a long-lived process.
 Retain complete message history when switching to HTTP or another socket. Cached response IDs can be connection-local.
 Do not use a connected model in a durable workflow or flow; open it inside an activity instead.

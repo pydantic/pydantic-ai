@@ -55,6 +55,8 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import NativeOutput
+from pydantic_ai.profiles.openai import OpenAIModelProfile
+from pydantic_ai.providers import Provider
 
 from ..conftest import try_import
 from ..durable_exec.test_durable_operation import JournalDurability
@@ -735,13 +737,32 @@ async def test_context_exit_interrupts_request(allow_model_requests: None, socke
     assert asyncio.all_tasks() == before
 
 
+@pytest.mark.parametrize(
+    ('provider', 'stream_id_lanes'),
+    [
+        pytest.param(lambda: OpenAIProvider(api_key='test'), None, id='openai-host'),
+        pytest.param(lambda: OpenAIProvider(base_url='https://api.x.ai/v1', api_key='test'), True, id='opted-in'),
+    ],
+)
 async def test_concurrent_requests_share_the_socket_on_separate_lanes(
-    allow_model_requests: None, sockets: SocketHarness
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    provider: Callable[[], Provider[AsyncOpenAI]],
+    stream_id_lanes: bool | None,
 ):
-    """An overlapping run takes a named lane on the same socket, and the two responses' events can interleave."""
+    """An overlapping run takes a named lane on the same socket, and the two responses' events can interleave.
+
+    Lanes run by default on OpenAI's own host, and elsewhere when the profile opts in.
+    """
     socket = sockets.pending[0]
     socket.responses.clear()
-    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    source = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=provider(),
+        profile=None
+        if stream_id_lanes is None
+        else OpenAIModelProfile(openai_responses_supports_websocket_stream_id=stream_id_lanes),
+    )
     results: dict[str, str] = {}
 
     async with source.connect() as connected:
@@ -766,11 +787,41 @@ async def test_concurrent_requests_share_the_socket_on_separate_lanes(
     assert socket.close_count == 1
 
 
-async def test_endpoint_without_stream_id_lanes_takes_turns(allow_model_requests: None, sockets: SocketHarness):
-    """Without `stream_id` support in the provider's profile, no lane is named and concurrent requests take turns."""
+@pytest.mark.parametrize(
+    ('provider', 'stream_id_lanes'),
+    [
+        pytest.param(lambda: TogetherProvider(api_key='test'), None, id='other-provider'),
+        pytest.param(lambda: OpenAIProvider(base_url='https://api.x.ai/v1', api_key='test'), None, id='other-host'),
+        pytest.param(
+            lambda: OpenAIProvider(
+                openai_client=AsyncOpenAI(api_key='test', websocket_base_url='wss://proxy.example/v1')
+            ),
+            None,
+            id='other-websocket-host',
+        ),
+        pytest.param(lambda: OpenAIProvider(api_key='test'), False, id='opted-out'),
+    ],
+)
+async def test_endpoint_without_stream_id_lanes_takes_turns(
+    allow_model_requests: None,
+    sockets: SocketHarness,
+    provider: Callable[[], Provider[AsyncOpenAI]],
+    stream_id_lanes: bool | None,
+):
+    """Off OpenAI's WebSocket host, or when the profile opts out, no lane is named and concurrent requests take turns.
+
+    A host without lanes doesn't tag its events with `stream_id`, so one request would read another's response. Lanes
+    need an explicit opt-in there, even through `OpenAIProvider`.
+    """
     socket = sockets.pending[0]
     socket.responses.clear()
-    source = OpenAIResponsesModel('openai/gpt-oss-120b', provider=TogetherProvider(api_key='test'))
+    source = OpenAIResponsesModel(
+        'gpt-4o',
+        provider=provider(),
+        profile=None
+        if stream_id_lanes is None
+        else OpenAIModelProfile(openai_responses_supports_websocket_stream_id=stream_id_lanes),
+    )
     results: dict[str, str] = {}
 
     async with source.connect() as connected:
