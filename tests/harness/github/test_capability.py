@@ -164,6 +164,14 @@ class TestGitHub:
         ):
             Agent(TestModel(), capabilities=[GitHub(auth='a'), GitHub(auth='b', read_only=True)])
 
+    def test_lockdown_is_part_of_the_connection(self) -> None:
+        # Two that differ only in `lockdown` must raise, so a same-id duplicate cannot silently drop the filter.
+        first = GitHub[None](auth='secret-token', lockdown=True)
+        assert GitHub[None].combine([first, GitHub[None](auth='secret-token', lockdown=True)]) is first
+        with pytest.raises(UserError, match=r"disagree on 'lockdown'") as exc_info:
+            Agent(TestModel(), capabilities=[GitHub(auth='secret-token'), GitHub(auth='secret-token', lockdown=True)])
+        assert 'secret-token' not in str(exc_info.value)
+
     @pytest.mark.parametrize('unset', [None, ''])
     def test_unset_id_connects_under_the_default_id(self, unset: str | None) -> None:
         assert GitHub[str | None](id=unset, auth='token').get_toolset().id == 'github'
