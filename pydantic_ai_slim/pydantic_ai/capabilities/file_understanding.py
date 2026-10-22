@@ -70,15 +70,16 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     A text-like document (plain text, CSV, JSON, XML, YAML) is not described but inlined as it is, the way models
     that read text files do. A provider file reference ([`UploadedFile`][pydantic_ai.messages.UploadedFile]) is left alone.
 
-    A file is described once per conversation. The description is recorded in the message history, under the
-    framework's reserved `__pydantic_ai__` namespace in the [`metadata`][pydantic_ai.messages.ModelRequest.metadata]
-    of the request that holds the file (which is not sent to the model), and later requests use that text instead
-    of describing the file again. A turn that continues from `message_history`, another worker serving the next
-    turn, and a durable run replaying its history all see the same description, so earlier requests keep the same
-    content and the describer is not paid for twice. The UI adapters leave that namespace out of the history they
-    send to a client, so a conversation whose history the client holds describes the file again each turn, and a
-    new description can differ, which changes earlier requests and costs the cached prefix. A file given by URL is identified by its URL, and bytes by their content and media type.
-    The downloaded text of a text document given by URL is recorded the same way, so it is not downloaded again.
+    A file is described once per conversation. A file given by URL is identified by its URL, and bytes by their
+    content and media type. The description is recorded in the message history, under the framework's reserved
+    `__pydantic_ai__` namespace in the [`metadata`][pydantic_ai.messages.ModelRequest.metadata] of the request
+    that holds the file (which is not sent to the model), and later requests use that text instead of describing
+    the file again. The downloaded text of a text document given by URL is recorded the same way, so it is not
+    downloaded again. A turn that continues from `message_history`, another worker serving the next turn, and a
+    durable run replaying its history all see the same description, so earlier requests keep the same content and
+    the describer is not paid for twice. The UI adapters leave that namespace out of the history they send to a
+    client, so a conversation whose history the client holds describes the file again each turn, and a new
+    description can differ, which changes earlier requests and costs the cached prefix.
 
     The distinct files a request needs described are described concurrently. Each describing call is a run of its
     own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
