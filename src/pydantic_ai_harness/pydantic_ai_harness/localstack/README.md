@@ -218,8 +218,8 @@ The records are named after the capability's `id`, which defaults to
 `LocalStack` emits no spans of its own. Core's
 [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) already records each
 `aws_cli` and `localstack_health` call as a tool span. Starting and stopping a
-managed container makes no decision worth a span; a failed start raises
-`LocalStackError`.
+managed container makes no decision worth a span. When Docker is missing or
+fails, or LocalStack never becomes ready, the start raises `LocalStackError`.
 
 ## Configuration
 
