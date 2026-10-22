@@ -307,7 +307,6 @@ coverage = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@6c644106e03138abae01d8d60105d4a7ad4916a1",
 ]
 lint = [
-    "griffecli>=2.1.0,<3",
     "mypy>=1.11.2",
     "pyright>=1.1.414",
     "ruff>=0.14.14",
