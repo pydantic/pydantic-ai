@@ -8577,6 +8577,26 @@ async def test_bedrock_openai_gpt_oss_keeps_sampling_settings(
     assert sent['inferenceConfig'] == snapshot({'maxTokens': 256, 'temperature': 0.2, 'topP': 0.3})
 
 
+@pytest.mark.parametrize('model_name', ['us.xai.grok-4.6', 'global.xai.grok-4.7'])
+def test_bedrock_xai_grok_drops_sampling_settings(bedrock_provider: BedrockProvider, model_name: str):
+    """Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, and Grok 4.7 is
+    assumed to match, so they're dropped for both.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    settings = BedrockModelSettings(max_tokens=64, temperature=0.2, top_p=0.3, top_k=5)
+
+    with pytest.warns(UserWarning, match='Sampling parameters') as recorded:
+        prepared, _ = model.prepare_request(settings, ModelRequestParameters())
+
+    assert prepared == snapshot({'max_tokens': 64})
+    assert [str(w.message) for w in recorded] == [
+        f"Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
+        f"'{model_name}'. These settings will be ignored."
+    ]
+
+
 class _CountTokensCapturingClient:
     """Records the `count_tokens` params instead of calling Bedrock."""
 

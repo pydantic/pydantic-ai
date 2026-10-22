@@ -194,7 +194,7 @@ class WebService:
         return 'running' if session.running else 'idle'
 
     def live_changed(self) -> None:
-        """A session opened, closed, changed state, or switched conversation: tell every browser what changed.
+        """A session opened, closed, changed state or queued input, or switched conversation: tell browsers what changed.
 
         Called synchronously by the live sessions, so it never waits and never raises.
         """
@@ -205,6 +205,8 @@ class WebService:
         if message != self._live_sent:
             self._live_sent = message
             self.hub.publish(message)
+        for channel in self.channels():
+            channel.publish_queue()
         for client in self.hub.connected():
             self.follow(client)
 
