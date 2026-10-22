@@ -35,8 +35,19 @@ if [ "${1:-}" = "--writer" ]; then
     shift 2
 fi
 
+USAGE="Usage: $0 [--writer <name>] <one-line-summary> [body-file]
+
+The lane is \$HANDOFF_LANE, else \$CLAUDE_CODE_HOST_SESSION_ID or \$CODEX_THREAD_ID, else the
+tmux session. Export HANDOFF_LANE where none of those is set, or the handoff is unlaned."
+case "${1:-}" in
+    -h|--help)
+        echo "$USAGE"
+        exit 0
+        ;;
+esac
+
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 [--writer <name>] <one-line-summary> [body-file]" >&2
+    echo "$USAGE" >&2
     exit 1
 fi
 
@@ -168,6 +179,15 @@ if [ -z "$LANE_ID" ] && [ -n "${TMUX:-}" ]; then
 fi
 [ -z "$LANE_ID" ] && LANE_ID="unlaned"
 
+print_successor_lane() {
+    if [ "$LANE_ID" = "unlaned" ]; then
+        echo "warning: no lane identity, so this handoff is unlaned and no successor will find it." >&2
+        echo "Export HANDOFF_LANE=<name> and run this again." >&2
+    else
+        echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
+    fi
+}
+
 validate_state_id() {
     local label="$1" value="$2"
     validate_index_text "$label" "$value"
@@ -225,7 +245,7 @@ if [ -n "$SESSION_ID" ] && [ -f "$LEDGER" ]; then
         TMP_INDEX=''
         echo "Amended this session's existing handoff (one handoff per session) → $INDEX" >&2
         echo "Handoff file: $DEST" >&2
-        echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
+        print_successor_lane
         echo "$DEST"
         exit 0
     fi
@@ -305,6 +325,6 @@ fi
 
 echo "Appended handoff index entry → $INDEX" >&2
 echo "Handoff file: $DEST" >&2
-echo "Successor lane: HANDOFF_LANE=$LANE_ID" >&2
+print_successor_lane
 # stdout: path only (for scripting)
 echo "$DEST"
