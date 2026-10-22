@@ -48,8 +48,8 @@ Important distinctions:
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
 - provider citations are on `TextPart.citations`; anchors are Python character offsets into the part's content, and no
-  anchor means the position is unknown; treat sources and `excerpts` as untrusted data; set
-  `model_settings={'citations': True}` for providers that need an opt-in; the provider's own citation data is
+  anchor means the position is unknown; treat sources and `excerpts` as untrusted data; add the `Citations()`
+  capability for providers that need an opt-in; the provider's own citation data is
   in the part's `provider_details['citations']`
 - citations in message history are sent back only to the provider that produced them (Anthropic, Bedrock, OpenAI
   Responses), and only while they still match the request; other providers get plain text
