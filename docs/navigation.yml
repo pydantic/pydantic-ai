@@ -91,6 +91,11 @@ navigation:
         slug: "core-concepts/direct"
         aliases:
           - "direct"
+      - page: "Batch Processing"
+        path: "batch.md"
+        slug: "core-concepts/batch"
+        aliases:
+          - "batch"
       - page: "Retries"
         path: "retries.md"
         slug: "core-concepts/retries"
@@ -611,11 +616,6 @@ navigation:
           - page: "Thread Executor"
             path: "capabilities/thread-executor.md"
             slug: "capabilities/thread-executor"
-          - page: "Batch Model Requests"
-            path: "batch.md"
-            slug: "capabilities/batch"
-            aliases:
-              - "batch"
       - section: "Loop Customization"
         slug: ""
         contents:

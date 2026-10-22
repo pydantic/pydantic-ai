@@ -454,7 +454,9 @@ Resolution results are cached by model ID and resolver tree for the duration of 
 
 ## Wrapping the model
 
-[`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] lets a capability wrap the model that serves each model request with a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], to change how requests are sent. It's called for every request, after the [`before_model_request`](#model-request-hooks) hooks, with the model that will send it: the agent's model, one passed to the run as `model=`, or one a capability or hook [selected](#selecting-the-model). [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] uses it to send requests through the provider's [batch API](../batch.md).
+[`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] lets a capability wrap the model that serves each model request with a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel], to change how requests are sent. [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] uses it to send requests through the provider's [batch API](../batch.md).
+
+Unlike [`get_wrapper_toolset`](#toolset-wrapping), which wraps the toolset once per run, `get_wrapper_model` is called for every model request, with the model that will send that request. That's the model chosen after [model selection](#selecting-the-model) and every [`before_model_request`](#model-request-hooks) hook have run: the agent's model, one passed to the run as `model=`, one a capability's `get_model` such as [`SelectModel`](select-model.md) selected, or one a hook swapped in, whatever the order of the capabilities. So a run that switches models partway through gets each request wrapped around the model serving it.
 
 ```python {title="wrapper_model_example.py"}
 from dataclasses import dataclass
