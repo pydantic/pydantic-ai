@@ -23,6 +23,12 @@
       "fingerprint": "c4aa7c8b9e94bd5ada5a90325d99ca764fed5f8bd156d31ef511842e4d854f3a",
       "reason": "False positive: `BackgroundTools` still inherits `prepare_tools` from `AbstractCapability` with the same signature. Griffe reports the removed override, not a removed method; the tool preparation moved into the wrapper toolset.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10613"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "e3cbeaca4cd1a6c06b48a95afcd22e314cd2699e757a3c2b395dd659020b40ae",
+      "reason": "The `iban` pattern in the harness `DEFAULT_PII_PATTERNS` gains a `(?=[A-Za-z]{2}\\d{2})` lookahead ahead of its country-code alternation; it matches exactly the same text and only skips the alternation at positions that cannot start an IBAN.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10841"
     }
   ]
 }
