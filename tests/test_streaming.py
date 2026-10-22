@@ -7313,7 +7313,7 @@ async def test_node_stream_early_exit_closes_event_stream(usage_limits: UsageLim
     """
 
     async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
-        for piece in ('aa', 'bb', 'cc'):
+        for piece in ('aa', 'bb', 'cc'):  # pragma: no branch
             yield piece
 
     agent = Agent(FunctionModel(stream_function=stream_function))
