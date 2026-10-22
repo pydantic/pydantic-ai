@@ -607,21 +607,14 @@ class DelegationTasks:
                 record.delivered = True
                 await self.save(record)
 
-    async def wait_children(self, task_id: str | None, *, conversation_id: str | None = None) -> None:
+    async def wait_children(self, task_id: str | None) -> None:
         """Wait for direct children before the child's final output can settle, or until one asks a question.
 
-        `None` waits for the children of the top-level run, of `conversation_id` when given. A child waiting
-        for an answer would otherwise wait for its parent forever, so its question ends the wait and the
-        parent gets a turn to answer it.
+        `None` waits for the children of the top-level run. A child waiting for an answer would otherwise
+        wait for its parent forever, so its question ends the wait and the parent gets a turn to answer it.
         """
         while True:
-            running = [
-                r.id
-                for r in self.records.values()
-                if r.parent_id == task_id
-                and r.status == 'running'
-                and (conversation_id is None or r.conversation_id == conversation_id)
-            ]
+            running = [r.id for r in self.records.values() if r.parent_id == task_id and r.status == 'running']
             if not running or any(child in self._questions for child in running):
                 return
             woken = asyncio.ensure_future(self._woken.wait())

@@ -9,8 +9,8 @@ and `output` are cut at `MAX_EVENT_TEXT_CHARS` with a `truncated` flag, so an
 event stream that is persisted or forwarded to a UI cannot be flooded by one
 verbose delegation. A `SubAgentMessage` is not cut: it is the message itself,
 which a transport carries to the other side of the task, so its prompt, question,
-answer, or output arrives whole. A listener that persists or forwards these
-messages bounds them itself.
+answer, or output arrives whole. Nor is the model's text in `AgentCreatedEvent`.
+A listener that persists or forwards these events bounds them itself.
 
 As with any capability event, a listener that raises aborts the parent run.
 """

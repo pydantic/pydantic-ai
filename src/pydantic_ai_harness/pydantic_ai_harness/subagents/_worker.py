@@ -238,7 +238,9 @@ class SubAgentWorker(Generic[AgentDepsT]):
                         settled = await self._attempts(agent, start, link)
                 finally:
                     group.cancel_scope.cancel()
-            await self.transport.send(settled)
+            # Once the task settled, its report goes out even if the worker is stopping meanwhile.
+            with anyio.CancelScope(shield=True):
+                await self.transport.send(settled)
         finally:
             with anyio.CancelScope(shield=True):
                 await self.transport.release(f'task:{start.task_id}:worker')

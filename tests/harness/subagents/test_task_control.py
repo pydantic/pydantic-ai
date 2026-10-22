@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import anyio
+import anyio.lowlevel
 import pytest
 from pydantic import TypeAdapter
 
@@ -1040,7 +1041,14 @@ class TestSubAgentWorker:
         assert result.output.endswith('(failed):\nThis worker has no conversation to resume.')
 
     async def test_a_worker_that_stops_fails_its_running_tasks(self) -> None:
-        transport = InMemoryTransport()
+        class Checkpointing(InMemoryTransport):
+            """A transport whose sends wait on the event loop, as a real one does."""
+
+            async def send(self, message: SubAgentMessage) -> None:
+                await anyio.lowlevel.checkpoint()
+                await super().send(message)
+
+        transport = Checkpointing()
         gate = Gate()
         blocked = Agent(scripted(call('pause'), text('unreachable')), tools=[gate.pause], name='remote')
         worker = SubAgentWorker(agents=[SubAgent(blocked)], transport=transport, deps=None)
@@ -1641,20 +1649,15 @@ class TestTaskControlEdges:
         assert any(question in text_ for text_ in system_texts(result.all_messages()))
 
     async def test_parallel_create_agent_calls_respect_the_name_and_the_cap(self) -> None:
-        arrived = 0
-        everyone = anyio.Event()
+        announced: list[str] = []
 
         @dataclass
         class Slow(AbstractCapability[Any]):
-            calls: int = 2
-
             @on_event(AgentCreatedEvent)
-            async def wait_for_the_others(self, ctx: RunContext[Any], event: AgentCreatedEvent) -> None:
-                nonlocal arrived
-                arrived += 1
-                if arrived == self.calls:
-                    everyone.set()
-                await everyone.wait()
+            async def let_the_others_run(self, ctx: RunContext[Any], event: AgentCreatedEvent) -> None:
+                announced.append(event.name)
+                for _ in range(5):
+                    await anyio.lowlevel.checkpoint()
 
         def both(*names: str) -> ModelResponse:
             return ModelResponse(
@@ -1665,8 +1668,7 @@ class TestTaskControlEdges:
             )
 
         async def outcomes(capability: SubAgents[Any], *names: str) -> list[str]:
-            nonlocal arrived, everyone
-            arrived, everyone = 0, anyio.Event()
+            announced.clear()
             parent = Agent(scripted(both(*names), text('Done.')), capabilities=[capability, Slow()])
             with anyio.fail_after(WAIT):
                 result = await parent.run('Go.')
@@ -1676,8 +1678,13 @@ class TestTaskControlEdges:
 
         exists, created = await outcomes(SubAgents(dynamic_agents=DynamicAgents()), 'poet', 'poet')
         assert "A sub-agent named 'poet' already exists." in exists and created.startswith("Created sub-agent 'poet'")
+        # The refused call is refused before listeners hear of it.
+        assert announced == ['poet']
         created, capped = await outcomes(SubAgents(dynamic_agents=DynamicAgents(max_agents=1)), 'poet', 'bard')
         assert created.startswith('Created sub-agent') and 'the most allowed in one run' in capped
+        assert len(announced) == 1
+        bard, poet = await outcomes(SubAgents(dynamic_agents=DynamicAgents()), 'poet', 'bard')
+        assert bard.startswith("Created sub-agent 'bard'") and poet.startswith("Created sub-agent 'poet'")
 
 
 class TestDynamicAgentLimits:
@@ -2223,31 +2230,6 @@ class TestDelegationTasksConcurrency:
                         while not older:
                             await asyncio.sleep(0)
                 assert len(older) == 1 and len(newer) == 1, 'the ended run never delivered it'
-
-    async def test_a_top_level_wait_keeps_to_its_conversation(self) -> None:
-        owner = DelegationTasks()
-        gate = anyio.Event()
-
-        async def blocked(record: DelegationTask) -> str:
-            await gate.wait()
-            return 'done'
-
-        async with owner.opened():
-            await owner.delegate(
-                agent_name='worker',
-                prompt='p',
-                conversation_id='other',
-                model=None,
-                background=True,
-                resume=None,
-                run=blocked,
-            )
-            with anyio.fail_after(WAIT):
-                await owner.wait_children(None, conversation_id='mine')
-            assert [record.status for record in owner.records.values()] == ['running']
-            gate.set()
-            with anyio.fail_after(WAIT):
-                await owner.wait_children(None)
 
     async def test_closing_the_owner_cancels_a_running_task_once(self) -> None:
         observed: list[DelegationTaskEvent] = []

@@ -172,7 +172,7 @@ Both are notifications. One delegation is one `delegate_task` call, so a start a
 
 A delegation refused before the child runs (an unknown sub-agent, a model key off the menu, an exhausted `max_calls` budget) emits nothing; the tool result says why. An exception that propagates out of the delegate tool (a shared usage limit, an uncontained crash, a cancellation) ends without an end event. A `SubAgentToolset` registered directly in `Agent(toolsets=[...])` has no owning capability and emits nothing. As with any capability event, a listener that raises aborts the parent run.
 
-`task` and `output` are cut at `MAX_EVENT_TEXT_CHARS` (4096) with a `truncated` flag, so a persisted or forwarded event stream cannot be flooded by one verbose delegation.
+Their `task` and `output` are cut at `MAX_EVENT_TEXT_CHARS` (4096) with a `truncated` flag, so these two events cannot flood a persisted or forwarded event stream with one verbose delegation. The [task events](#task-events) and `AgentCreatedEvent` are not cut.
 
 ```python
 from pydantic_ai import Agent
@@ -227,7 +227,7 @@ orchestrator = Agent(
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
 - **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task, and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
 - Only one `SubAgents` on an agent can set `task_control`. Task control and `dynamic_agents` are not supported under durable execution, where a run that uses them raises a `UserError`.
-- Task control runs tasks as asyncio tasks, as `DelegationTasks` always has, so it needs the asyncio event loop: AnyIO's Trio backend is not supported.
+- Task control and `DelegationTasks` run tasks as asyncio tasks, so they need the asyncio event loop: AnyIO's Trio backend is not supported.
 
 ### Task events
 
@@ -235,7 +235,7 @@ With task control, every step of a task is a typed capability event in the `sub_
 
 | Event | When | A listener can |
 |---|---|---|
-| `TaskAssignedEvent`, `TaskFollowUpEvent` | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
+| `TaskAssignedEvent`, `TaskFollowUpEvent` (`TaskRequestEvent` matches both) | a task is about to start, or to resume | rewrite `prompt`, or `veto()` it |
 | `TaskStartedEvent` | the task's run is starting, locally or on a worker | |
 | `TaskBackgroundedEvent` | the task moved to the background; `reason` is `requested`, `auto`, or `question` | |
 | `TaskProgressEvent` | an event of the task's own run, with `forward_events=True` | |
@@ -246,7 +246,7 @@ With task control, every step of a task is a typed capability event in the `sub_
 | `TaskRetryEvent` | a worker is running a failed remote task again | |
 | `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
 
-Unlike `DelegationStartEvent` and `DelegationEndEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. A listener that persists or forwards them bounds them itself.
+Unlike `DelegationStartEvent` and `DelegationEndEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. Nor is `AgentCreatedEvent`. A listener that persists or forwards them bounds them itself.
 
 Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartEvent` and `DelegationEndEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
 
@@ -298,7 +298,7 @@ orchestrator = Agent(
 ```
 
 - **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessage` events above. `InMemoryTransport` serves a worker in the same process.
-- **The transport is the trust boundary.** Anyone who can send to it can run the served agents, with their tools and `deps`, and read what they return. Put authentication, authorization, and network binding in your transport. A worker's output and errors reach the delegating model as tool results, like a local delegate's.
+- **The transport is the trust boundary.** Anyone who can send to it can run the served agents, with their tools and `deps`, and read what they return. Put authentication, authorization, and network binding in your transport. A worker's output and errors reach the delegating model like a local delegate's: in the foreground as tool results, in the background as framed reports.
 - **A transport reports a lost worker.** A worker that stops sends `TaskFailedEvent` for the tasks it was running. One that dies without doing so can't: the delegating run then waits for its report until the run is cancelled, unless `receive` raises when the worker is gone. Heartbeats are not part of the protocol.
 - **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. Of each `SubAgent` it serves, it uses only the agent and name: the `SubAgent`'s own run controls, such as its `usage_limits`, `timeout_seconds`, or `on_failure`, don't apply there. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
 - **A task nobody picks up fails.** The worker sends `TaskStartedEvent` when it starts a task. A remote task that no worker picks up within `accept_timeout` seconds (default `30`) fails, and a remote task that stops without its worker's report, for example because its delegating run ended, is force-cancelled on the worker.
@@ -500,7 +500,7 @@ SubAgent(
 `SubAgents` keeps its existing foreground-only behavior unless a caller explicitly
 opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
 delegate tool's schema, gives every child a stable conversation ID, and owns every
-worker until shutdown. Use `DelegationReports` on the parent run to deliver settled
+worker, an asyncio task, until shutdown. Use `DelegationReports` on the parent run to deliver settled
 background reports through core's `SystemPromptPart` queue. The reports are
 explicitly automated, untrusted data, not user instructions or permission grants.
 No extra agent loop is implemented. Reports default to `priority='when_idle'`
