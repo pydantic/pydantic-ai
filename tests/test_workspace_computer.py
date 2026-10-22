@@ -127,6 +127,11 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
         PressKeys(keys=('exec',)),
         PressKeys(keys=('ctrl', 'a b')),
         Click(modifiers=('ctrl', 'exec')),
+        # xdotool matches command names in any case.
+        Click(modifiers=('GETACTIVEWINDOW', 'WindowKill')),
+        HoldKeys(keys=('Exec',), seconds=1),
+        # A command only newer xdotool releases have.
+        PressKeys(keys=('windowquit',)),
         HoldKeys(keys=('--help',), seconds=1),
         PressKeys(keys=('é',)),
     ],
@@ -246,6 +251,8 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
             {'type': 'hold_key', 'keys': ['ESC'], 'seconds': 1},
             {'type': 'keypress', 'keys': ['ctrl+shift+T']},
             {'type': 'keypress', 'keys': ['+']},
+            {'type': 'keypress', 'keys': ['ctrl+shift++']},
+            {'type': 'keypress', 'keys': ['ctrl++']},
         ]
     )
     assert actions == [
@@ -254,6 +261,8 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         HoldKeys(keys=('escape',), seconds=1),
         PressKeys(keys=('ctrl', 'shift', 't')),
         PressKeys(keys=('+',)),
+        PressKeys(keys=('ctrl', 'shift', '+')),
+        PressKeys(keys=('ctrl', '+')),
     ]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
     invalid_actions: list[dict[str, object]] = [
