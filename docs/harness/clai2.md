@@ -413,7 +413,9 @@ asyncio.run(main())
 ```
 
 The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, unless a capability you pass
+in `clai2`, except that `coder`'s `task_control` is off: pass
+`plugin_settings={'coder': {'task_control': True}}` to give the model the task tools
+and background delegation. The file and shell tools work in `workspace`, unless a capability you pass
 supplies a workspace, and `AGENTS.md` or `CLAUDE.md` is read from it. Model names
 resolve as in `clai2`, with CLAI's per-model defaults. Nothing else you saved for
 `clai2` applies: no saved, drop-in, or project plugins, no `.clai/settings.json`, no

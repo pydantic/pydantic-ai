@@ -68,6 +68,10 @@ class CoderSettings(BaseModel):
     workspace: str | None = Field(default=None, description='Deprecated workspace option, retained for saved settings.')
     repo_context: bool = Field(default=True, description='Include repository instructions with coding tools.')
     sub_agents: bool = Field(default=True, description='Enable delegation to sub-agents.')
+    task_control: bool = Field(
+        default=True,
+        description=('With sub-agents, let the model run tasks in the background and steer, answer, or cancel them.'),
+    )
     agent_folders: list[str] = Field(
         default_factory=list,
         description=(
@@ -343,8 +347,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             repo_context=settings.repo_context,
             sub_agents=settings.sub_agents,
             agent_folders=settings.folders(home=Path.home()) or None,
-            # The model manages its delegations: background tasks, steering, questions, and cancellation.
-            task_control=settings.sub_agents,
+            task_control=settings.sub_agents and settings.task_control,
         )
         if self._skills is None or self._skill_workspace is None:
             return (coder,)

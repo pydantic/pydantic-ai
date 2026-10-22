@@ -69,6 +69,10 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
     return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()], name='clai2')
 
 
+_HOST_DEFAULTS: Mapping[str, Mapping[str, JsonValue]] = {'coder': {'task_control': False}}
+"""Stock settings an application's agent starts from instead of the CLI's: task control is opt-in there."""
+
+
 @asynccontextmanager
 async def open_stock_agent(
     *,
@@ -87,7 +91,9 @@ async def open_stock_agent(
     each run must pass one.
 
     `plugin_settings` maps a built-in's id to settings merged over its stock ones, such as
-    `{'coder': {'sub_agents': False}}`. Nothing saved for the `clai2` CLI applies: no saved or drop-in
+    `{'coder': {'sub_agents': False}}`. Unlike in the CLI, `coder`'s `task_control` is off: pass
+    `{'coder': {'task_control': True}}` to give the model the task tools and background delegation.
+    Nothing saved for the `clai2` CLI applies: no saved or drop-in
     plugins, no project `.clai/settings.json`, no saved model settings or `chain:` fallback chains.
     Raises `UserError` when `plugin_settings` names another plugin, and `PluginSettingsError` when a
     built-in rejects its merged settings.
@@ -103,7 +109,11 @@ async def open_stock_agent(
             f'`plugin_settings` configures only {", ".join(map(repr, stock))}, not {", ".join(map(repr, unknown))}.'
         )
     declarations = [
-        plugin.model_copy(update={'settings': {**plugin.settings, **overrides.get(plugin.id, {})}})
+        plugin.model_copy(
+            update={
+                'settings': {**plugin.settings, **_HOST_DEFAULTS.get(plugin.id, {}), **overrides.get(plugin.id, {})}
+            }
+        )
         for plugin in stock.values()
     ]
     # Unlike `create_stock_agent`, no guide to customizing the terminal app, whose plugins never load here.

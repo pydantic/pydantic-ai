@@ -1923,7 +1923,9 @@ already in the background remain owned by the session.
 
 Supplied agents keep their existing delegation behavior. The managed task UI is
 not installed on them or on headless invocations; a headless stock run still has
-the task tools, and waits for its background children's reports before it ends. Saved Coder `sub_agents: false`
+the task tools, and waits for its background children's reports before it ends.
+Turn off `task_control` in `/plugins configure coder` to keep `delegate_task`
+without the task tools or background delegation. Saved Coder `sub_agents: false`
 and declarations omitting that setting remain opt-outs. CLAI adds no tools when
 delegation is disabled.
 
@@ -2777,7 +2779,9 @@ asyncio.run(main())
 ```
 
 The agent has the `coder`, `repo_context`, and `compaction` built-ins, configured as
-in `clai2`. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
+in `clai2`, except that `coder`'s `task_control` is off: pass
+`plugin_settings={'coder': {'task_control': True}}` to give the model the task tools
+and background delegation. The file and shell tools work in `workspace`, and `AGENTS.md` or `CLAUDE.md`
 is read from it. A capability you pass that supplies a workspace, such as a sandbox,
 takes its place, and a run's own `workspace=` replaces it for that run. Commands get
 this process's environment minus LLM provider API keys. Model names resolve as in
