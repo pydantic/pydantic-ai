@@ -117,23 +117,31 @@ def _find_prompt_part(
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
     the same object, so the guard reads the rewritten text, and there is no separate original.
 
-    When a capability replaced the prompt with a copy, the copy is found in the message the same
-    distance from the end by `_find_copies`, wherever other parts were put around it; several
-    copies with the prompt's text are all returned, so a redaction reaches each of them. The
-    copies are returned with the history part they were made from, so a redaction can reach it
-    too. Only when no part there can be told to be the copy, because the request was rebuilt or
-    several parts carry the prompt's timestamp and none has its text, is the most recent part in
-    `messages` used, with no original: nothing ties that part to the history.
+    When a capability replaced the prompt with a copy, the copies are found by `_find_copies` in
+    the most recent message holding a part with the prompt's timestamp, wherever other parts or
+    messages were put around it, so neither a message appended for this request nor history
+    trimmed from the start moves them; several copies with the prompt's text are all returned, so
+    a redaction reaches each of them. The copies are returned with the history part they were made
+    from, so a redaction can reach it too. Only when no part can be told to be the copy, because
+    the request was rebuilt or several parts carry the prompt's timestamp and none has its text, is
+    the most recent part in `messages` used, with no original: nothing ties that part to the
+    history.
     """
-    for from_end, message in enumerate(reversed(ctx.messages), start=1):
-        prompt = next((part for part in reversed(message.parts) if isinstance(part, UserPromptPart)), None)
-        if prompt is not None:
-            break
-    else:
+    latest = _latest_prompt_parts(ctx.messages)
+    if not latest:
         return _latest_prompt_parts(messages), None
+    prompt = latest[0]
     if any(part is prompt for request in messages for part in request.parts):
         return [prompt], None
-    copies = _find_copies(prompt, messages[-from_end].parts if from_end <= len(messages) else ())
+    holder = next(
+        (
+            message
+            for message in reversed(messages)
+            if any(isinstance(part, UserPromptPart) and part.timestamp == prompt.timestamp for part in message.parts)
+        ),
+        None,
+    )
+    copies = [] if holder is None else _find_copies(prompt, holder.parts)
     if copies:
         return copies, prompt
     return _latest_prompt_parts(messages), None

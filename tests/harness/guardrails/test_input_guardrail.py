@@ -764,6 +764,18 @@ class TestInputGuardrailRedaction:
         assert part.content == 'my key is [redacted:anthropic_key]'
         assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
 
+    async def test_a_copy_is_redacted_when_a_request_only_message_is_appended_after_it(self):
+        """A whole `ModelRequest` appended for this request is not taken for the prompt."""
+        seen, model = _request_prompts_model_all()
+        agent = Agent(model, capabilities=[_CopyAndAppendRequest(), InputGuardrail(guard=redact_secrets)])
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]', 'injected note']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == 'my key is [redacted:anthropic_key]'
+
     async def test_a_redacted_copy_is_not_replayed_unredacted_after_a_tool_call(self):
         """Later steps send the history, which the guard does not screen again, so it must already be clean."""
         requests: list[str] = []
@@ -1566,6 +1578,32 @@ class TestFindPromptPart:
         assert part is copied
         assert original is prompt
 
+    def test_a_copied_prompt_is_found_before_a_message_appended_after_it(self):
+        """A whole request-only message appended after the prompt's does not take the copy's place."""
+        prompt = UserPromptPart(content='the prompt')
+        copied = dataclasses.replace(prompt)
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[copied]), ModelRequest(parts=[_added('injected')])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
+
+    def test_a_copied_prompt_is_found_after_history_trimmed_from_the_start(self):
+        earlier = UserPromptPart(content='earlier turn', timestamp=_EARLIER)
+        prompt = UserPromptPart(content='current turn')
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[earlier]),
+            ModelResponse(parts=[TextPart(content='assistant')]),
+            ModelRequest(parts=[prompt]),
+        ]
+        copied = dataclasses.replace(prompt)
+        request: list[ModelMessage] = [ModelRequest(parts=[copied]), ModelRequest(parts=[_added('injected')])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        (part,), original = _find_prompt_part(run_ctx, request)
+        assert part is copied
+        assert original is prompt
+
     def test_a_copy_with_changed_text_is_found_by_its_timestamp(self):
         prompt = UserPromptPart(content='the prompt')
         changed = dataclasses.replace(prompt, content='the prompt\ncontext')
@@ -1836,6 +1874,43 @@ class _CopyPrompt(AbstractCapability[Any]):
             ],
         )
         return await handler(request_context)
+
+
+@dataclasses.dataclass
+class _CopyAndAppendRequest(AbstractCapability[Any]):
+    """Sends a copy of the prompt part and appends a request-only `ModelRequest` after its message."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        last = request_context.messages[-1]
+        assert isinstance(last, ModelRequest)
+        copied = [dataclasses.replace(part) if isinstance(part, UserPromptPart) else part for part in last.parts]
+        request_context.messages = [
+            *request_context.messages[:-1],
+            dataclasses.replace(last, parts=copied),
+            ModelRequest(parts=[UserPromptPart(content='injected note')]),
+        ]
+        return await handler(request_context)
+
+
+def _request_prompts_model_all() -> tuple[list[list[str]], FunctionModel]:
+    """A model that records the text of every `UserPromptPart` in every message of the first request."""
+    seen: list[list[str]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(
+            [
+                str(part.content)
+                for message in messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            ]
+        )
+        return ModelResponse(parts=[TextPart(content='ok')])
+
+    return seen, FunctionModel(respond)
 
 
 @dataclasses.dataclass
