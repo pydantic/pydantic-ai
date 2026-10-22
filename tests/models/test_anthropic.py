@@ -13081,6 +13081,51 @@ async def test_anthropic_count_tokens_preserves_tool_search_replay(allow_model_r
     assert any(str(tool.get('type', '')).startswith('tool_search_tool_') for tool in create_kwargs['tools'])
 
 
+async def test_anthropic_tool_search_replay_names_matches_no_longer_declared(allow_model_requests: None):
+    """A local `search_tools` return whose matches are all absent from this request's `tools` is
+    replayed as text naming them, not as the toolset's no-matches message.
+
+    Anthropic rejects a `tool_reference` to a tool outside the request's `tools`, so the replay
+    filters references against the declared tools. When that filter removes every match — the tool
+    was folded into a code-execution tool, or its toolset failed to produce it this turn — the search
+    still found tools, and "No matching tools found" sends the model searching again.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/10518
+    """
+    c = completion_message([BetaTextBlock(text='done', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    mock_client = MockAnthropic.create_mock(c)
+    m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    search_tools = ToolDefinition(name='search_tools', parameters_json_schema={'type': 'object'})
+    still_deferred = ToolDefinition(name='gmail_search', parameters_json_schema={'type': 'object'}, defer_loading=True)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Send a Slack message')]),
+        ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['slack']}, tool_call_id='search-1')]),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(content={'discovered_tools': [{'name': 'slack_send'}]}, tool_call_id='search-1')
+            ]
+        ),
+    ]
+
+    await m.request(messages, None, ModelRequestParameters(function_tools=[search_tools, still_deferred]))
+
+    [create_kwargs] = get_mock_chat_completion_kwargs(mock_client)
+    assert create_kwargs['messages'][-1]['content'][0] == snapshot(
+        {
+            'tool_use_id': 'search-1',
+            'type': 'tool_result',
+            'content': [
+                {
+                    'text': 'Discovered tools: slack_send. None is declared as a top-level tool in this request.',
+                    'type': 'text',
+                }
+            ],
+            'is_error': False,
+        }
+    )
+
+
 async def test_anthropic_count_tokens_keeps_defer_loading(allow_model_requests: None):
     """`count_tokens` marks a deferred tool `defer_loading` exactly as the real request does.
 
