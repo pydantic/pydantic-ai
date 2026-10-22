@@ -4047,9 +4047,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if _is_computer_member(current_block, computer_def):
                         block = _computer_block(current_block)
-                        if computer_input:
-                            # A member cut off mid-input (`max_tokens`) keeps what parsed, and validation refuses what's missing.
-                            block['input'] = pydantic_core.from_json(''.join(computer_input), allow_partial=True)
+                        # A member cut off mid-input (`max_tokens`) keeps what parsed; validation refuses what's missing.
+                        block['input'] = pydantic_core.from_json(''.join(computer_input) or '{}', allow_partial=True)
                         computer_group.append(block)
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
