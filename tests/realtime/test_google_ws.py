@@ -230,6 +230,32 @@ async def test_rejected_config_raises_realtime_error(
     )
 
 
+async def test_proactive_audio_on_the_default_client(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """`google_proactive_audio` opens and answers on the provider's default client.
+
+    `proactivity` is served on `v1alpha` only, and the provider's client is on the SDK default `v1beta`, so the
+    Live connection dials `v1alpha` itself; the setup frame carries the field.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(_MODEL, provider=provider)
+    agent = Agent(instructions='Answer in two or three words.')
+
+    settings = GoogleRealtimeModelSettings(google_proactive_audio=True)
+    async with agent.realtime(model, model_settings=settings).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            await session.wait_for_reply()
+
+    [setup] = sent_frames_containing(cassette, 'proactivity')
+    assert setup['setup']['proactivity'] == {'proactive_audio': True}
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart) and part.transcript
+
+
 @pytest.mark.parametrize('model_name', [_MODEL, 'gemini-3.8-live'])
 async def test_image_then_typed_question(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, model_name: str

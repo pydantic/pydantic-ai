@@ -17,6 +17,7 @@ Application Default Credentials.
 from __future__ import annotations as _annotations
 
 import asyncio
+import copy
 import time
 import warnings
 from collections import deque
@@ -33,7 +34,7 @@ from typing_extensions import TypedDict
 try:
     import websockets
     from google.genai import Client, errors as genai_errors, types as genai_types
-    from google.genai.live import AsyncSession, ConnectionClosed
+    from google.genai.live import AsyncLive, AsyncSession, ConnectionClosed
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Gemini realtime model, '
@@ -254,10 +255,9 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     Always on for the Gemini 3.8 Live models, so there it can be left unset. They reject an explicit
     `False`, which is never sent: `False` just leaves the field out.
 
-    Gemini serves `proactivity` on the Developer API's `v1alpha` only, and the API version belongs to
-    the client, so the client has to be built for it — `connect` raises
-    [`UserError`][pydantic_ai.exceptions.UserError] naming the fix rather than letting the session fail
-    to open. Unavailable on Vertex AI, whose version line has no `v1alpha`."""
+    Gemini serves `proactivity` on the Developer API's `v1alpha` only, so the session's Live connection
+    is opened on `v1alpha` whatever version the provider's client is on; the client itself is left
+    unchanged. Unavailable on Vertex AI, whose version line has no `v1alpha`."""
     google_input_transcription: bool
     """Whether to transcribe input audio. Defaults to `True`.
 
@@ -1080,38 +1080,36 @@ class GoogleRealtimeModel(RealtimeModel):
             language_code=language_code,
         )
 
-    def _check_proactive_audio_api_version(self, settings: GoogleRealtimeModelSettings) -> None:
-        """Reject a proactive-audio session on a client that can't carry the setting.
+    def _live(self, settings: GoogleRealtimeModelSettings) -> AsyncLive:
+        """The Live API to dial: the client's own, or a `v1alpha` view of it for proactive audio.
 
         `proactivity` is served on the Gemini Developer API's `v1alpha` only: on any other version the
         API answers `1007 Invalid JSON payload received. Unknown name "proactivity" at 'setup'` and the
-        session never opens (verified live 2026-09-16 on the SDK default `v1beta` and on an explicit one,
-        against `gemini-2.5-flash-native-audio-latest`, `gemini-3.8-live`, and
-        `gemini-3.8-live-extended-thinking`).
+        session never opens (verified live 2026-10-22 on the SDK default `v1beta` against
+        `gemini-2.5-flash-native-audio-latest`, `gemini-3.1-flash-live-preview`, `gemini-3.8-live`, and
+        `gemini-3.8-live-extended-thinking`, all of which accept it on `v1alpha`).
 
-        The version is a property of the *client*, which `google-genai` reads when it builds the
-        WebSocket path and which ordinary `GoogleModel` requests on the same client read too — so it is
-        the caller's to set, not ours to swap for the duration of a handshake. Saying so here turns an
-        opaque close code into an instruction.
+        `google-genai` builds the Live WebSocket path from the client's `api_version` and rejects a
+        per-connect `http_options`, so a proactive-audio session dials through a shallow copy of the
+        client's API client with only the version changed. The caller's client is left untouched, so
+        its other requests (including concurrent `GoogleModel` ones) keep their version. The copy's
+        `HttpOptions` is a shallow copy too, so it shares the client's `headers` dict, which
+        `_single_ws_user_agent` and `_ws_trace_context` adjust for the handshake.
 
-        Vertex AI is left alone: its version line has no `v1alpha`, and what it does with `proactivity`
-        isn't something this has been checked against.
+        Vertex AI is left alone: its version line has no `v1alpha`.
         """
-        if not settings.get('google_proactive_audio', False) or self.client.vertexai:
-            return
-        api_version = self.client._api_client._http_options.api_version  # pyright: ignore[reportPrivateUsage]
-        if api_version == _PROACTIVITY_API_VERSION:
-            return
-        raise UserError(
-            f'`google_proactive_audio=True` needs a client on the `{_PROACTIVITY_API_VERSION}` API version, '
-            f'but this one is on `{api_version}`, where Gemini Live rejects the setting and the session '
-            'fails to open. Build the client with that version and hand it to the provider:\n\n'
-            '    from google import genai\n'
-            '    from google.genai import types\n'
-            '    from pydantic_ai.providers.google import GoogleProvider\n\n'
-            f'    client = genai.Client(api_key=..., http_options=types.HttpOptions(api_version={_PROACTIVITY_API_VERSION!r}))\n'
-            '    provider = GoogleProvider(client=client)'
-        )
+        live = self.client.aio.live
+        api_client = self.client._api_client  # pyright: ignore[reportPrivateUsage]
+        http_options = api_client._http_options  # pyright: ignore[reportPrivateUsage]
+        if (
+            not settings.get('google_proactive_audio', False)
+            or self.client.vertexai
+            or http_options.api_version == _PROACTIVITY_API_VERSION
+        ):
+            return live
+        alpha_client = copy.copy(api_client)
+        alpha_client._http_options = http_options.model_copy(update={'api_version': _PROACTIVITY_API_VERSION})  # pyright: ignore[reportPrivateUsage]
+        return AsyncLive(alpha_client)
 
     def _input_transcription(self, settings: GoogleRealtimeModelSettings) -> bool:
         """Whether to transcribe the user's audio.
@@ -1322,7 +1320,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 '`reconnect` policy, or leave `google_enable_session_resumption` unset so the '
                 'policy enables resumption.'
             )
-        self._check_proactive_audio_api_version(settings)
+        live = self._live(settings)
         if settings.get('google_affective_dialog', False) and not self._google_profile.get(
             'google_supports_affective_dialog', True
         ):
@@ -1365,7 +1363,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 initial_history_in_client_content=history_in_client_content and not dialed,
             )
             dialed = True
-            opening = client.aio.live.connect(model=self.model, config=config)
+            opening = live.connect(model=self.model, config=config)
             async with _ws_connect_lock():
                 with ExitStack() as stack:
                     stack.enter_context(_single_ws_user_agent(client))
