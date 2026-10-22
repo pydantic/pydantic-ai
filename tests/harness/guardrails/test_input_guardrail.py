@@ -1388,6 +1388,16 @@ class TestFindPromptPart:
         run_ctx, _ = _build_ctx_and_req(messages=history)
         assert _find_prompt_part(run_ctx, request) is changed
 
+    def test_the_prompt_text_decides_between_several_same_timestamp_copies(self):
+        """When several parts carry the prompt's timestamp, the one with the prompt's text is the copy."""
+        prompt = UserPromptPart(content='the prompt')
+        other = dataclasses.replace(prompt, content='other')
+        copied = dataclasses.replace(prompt)
+        history: list[ModelMessage] = [ModelRequest(parts=[prompt])]
+        request: list[ModelMessage] = [ModelRequest(parts=[other, copied])]
+        run_ctx, _ = _build_ctx_and_req(messages=history)
+        assert _find_prompt_part(run_ctx, request) is copied
+
     def test_falls_back_to_the_latest_part_when_the_copy_cannot_be_told_apart(self):
         prompt = UserPromptPart(content='the prompt')
         first = dataclasses.replace(prompt, content='one')
