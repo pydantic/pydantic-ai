@@ -9,19 +9,6 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
-> This capability incorporates the task-list features of the standalone [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) library -- persistent stores, subtasks, dependencies, and events -- which it supersedes. If you are migrating from `pydantic-ai-todo`, the tools are renamed:
->
-> | `pydantic-ai-todo` | `Planning` |
-> |---|---|
-> | `write_todos` | `write_plan` |
-> | `read_todos` | `read_plan` |
-> | `add_todo` | `add_task` |
-> | `update_todo_status` / `update_todo_statuses` | `update_task_status` / `update_task_statuses` |
-> | `remove_todo` | `remove_task` |
-> | `add_subtask`, `set_dependency`, `get_available_tasks` | unchanged |
->
-> Two differences to plan for: there is no connection-string convenience (`create_storage(backend=...)` and friends are gone -- you construct your own asyncpg pool or Redis client, which is what keeps the harness driver-free), and `PlanEvent` carries no `timestamp`, so a consumer that ordered or logged by it supplies its own clock.
-
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## The problem

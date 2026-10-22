@@ -32,6 +32,12 @@
     },
     {
       "against": "v2.59.0",
+      "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
+      "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "d8317571d93e30c3b2fb40996053f456d57a0a50be26450768cf18c7cabec9fa",
       "reason": "Harness 0.x: `SystemReminders.cache_ttl` is deprecated and has no effect, because reminders no longer place a cache breakpoint of their own. Its effective default is `None`; leaving it unset warns that the old `'5m'` breakpoint is gone, so callers are told.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
