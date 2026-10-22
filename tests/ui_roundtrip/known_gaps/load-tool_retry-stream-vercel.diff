@@ -1,6 +1,6 @@
 --- expected
 +++ actual
-@@ -34,6 +34 @@
+@@ -37,6 +37 @@
 -     "outcome": "retried",
 -     "retry": {
 -      "cause": "model_retry",
@@ -8,7 +8,7 @@
 -      "max_retries": 2
 -     }
 +     "outcome": "failed"
-@@ -177,6 +172 @@
+@@ -192,6 +187 @@
 -     "outcome": "retried",
 -     "retry": {
 -      "cause": "model_retry",

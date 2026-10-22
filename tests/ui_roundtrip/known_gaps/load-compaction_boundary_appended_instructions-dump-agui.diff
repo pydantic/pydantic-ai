@@ -1,6 +1,6 @@
 --- expected
 +++ actual
-@@ -32,18 +32,6 @@
+@@ -35,19 +35,7 @@
 -    },
 -    {
 -     "kind": "tool-availability-delta",
@@ -13,6 +13,7 @@
 -  ],
 -  [
 -   "response",
+-   {},
 -   [
 -    {
 -     "kind": "compaction",
@@ -24,8 +25,9 @@
 +  ],
 +  [
 +   "response",
++   {},
 +   [
-@@ -128,7 +115,0 @@
+@@ -139,7 +126,0 @@
 -    },
 -    {
 -     "kind": "tool-availability-delta",
@@ -33,7 +35,7 @@
 -      "secret"
 -     ],
 -     "tool_call_id": "unlock-5"
-@@ -306,7 +286,0 @@
+@@ -333,7 +313,0 @@
 -    },
 -    {
 -     "kind": "tool-availability-delta",

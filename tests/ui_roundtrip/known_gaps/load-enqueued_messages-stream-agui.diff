@@ -1,6 +1,6 @@
 --- expected
 +++ actual
-@@ -33,22 +32,0 @@
+@@ -36,24 +35,0 @@
 -    },
 -    {
 -     "kind": "user-prompt",
@@ -10,6 +10,7 @@
 -  ],
 -  [
 -   "response",
+-   {},
 -   [
 -    {
 -     "kind": "text",
@@ -19,11 +20,12 @@
 -  ],
 -  [
 -   "request",
+-   {},
 -   [
 -    {
 -     "kind": "user-prompt",
 -     "content": "Synthetic follow-up"
-@@ -139,22 +116,0 @@
+@@ -152,24 +127,0 @@
 -    },
 -    {
 -     "kind": "user-prompt",
@@ -33,6 +35,7 @@
 -  ],
 -  [
 -   "response",
+-   {},
 -   [
 -    {
 -     "kind": "text",
@@ -42,6 +45,7 @@
 -  ],
 -  [
 -   "request",
+-   {},
 -   [
 -    {
 -     "kind": "user-prompt",

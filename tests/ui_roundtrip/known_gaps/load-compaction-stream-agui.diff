@@ -1,6 +1,6 @@
 --- expected
 +++ actual
-@@ -15,5 +14,0 @@
+@@ -17,5 +16,0 @@
 -    {
 -     "kind": "compaction",
 -     "content": "Summary so far.",
