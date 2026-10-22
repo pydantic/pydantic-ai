@@ -12,8 +12,8 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BinaryContent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
-from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai.capabilities import FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     FilePart,
@@ -1177,14 +1177,63 @@ async def test_text_output_is_refused(allow_model_requests: None):
     assert model.requests == []
 
 
-def test_decision_models_take_images_only_when_the_class_reads_them():
-    """A decision model reads no documents, audio or video, and images only when the class says so."""
+async def test_file_understanding_describes_what_a_decision_model_cannot_read(allow_model_requests: None):
+    """A document is described for a decision model, and an image is too unless the class reads images.
+
+    Documents, audio and video are always described here: `DecisionModel.profile` hard-codes them `False` and
+    `DecisionRequest` carries images only, so the accepting side is unreachable for this adapter (it is covered
+    on a plain model in `tests/test_capability_file_understanding.py`).
+    """
+
+    def describe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('A description of the file.')])
+
+    image = BinaryContent(b'\x89PNG', media_type='image/png', identifier='chart')
+    prompt = ['The report and its chart:', DocumentUrl('https://example.com/report.pdf', identifier='report'), image]
+
     text_only = InMemoryDecisionModel()
     assert text_only.profile.get('supports_image_input') is False
     assert text_only.profile.get('supports_document_input') is False
-    assert text_only.profile.get('supports_audio_file_input') is False
     assert text_only.profile.get('supports_video_input') is False
-    assert ImageEnabledDecisionModel().profile.get('supports_image_input') is True
+    await Agent(
+        text_only,
+        output_type=bool,
+        instructions='Is this urgent?',
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
+    ).run(prompt)
+    [request] = text_only.requests
+    assert request.state == snapshot("""\
+The report and its chart:
+
+-----BEGIN FILE id="report" type="text/plain"-----
+A description of the file.
+-----END FILE id="report"-----
+
+-----BEGIN FILE id="chart" type="text/plain"-----
+A description of the file.
+-----END FILE id="chart"-----\
+""")
+    assert request.images == ()
+
+    reads_images = ImageEnabledDecisionModel()
+    assert reads_images.profile.get('supports_image_input') is True
+    await Agent(
+        reads_images,
+        output_type=bool,
+        instructions='Is this urgent?',
+        capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(describe))],
+    ).run(prompt)
+    [request] = reads_images.requests
+    assert request.state == snapshot("""\
+The report and its chart:
+
+-----BEGIN FILE id="report" type="text/plain"-----
+A description of the file.
+-----END FILE id="report"-----
+
+<image 1>\
+""")
+    assert request.images == (image,)
 
 
 class Escalation(BaseModel):
