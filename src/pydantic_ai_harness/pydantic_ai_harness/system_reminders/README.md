@@ -167,7 +167,7 @@ Per-run state (the request counter and per-reminder fire counts) is isolated via
 
 ## Caching guarantee
 
-Reminders never go into the leading system prompt or instructions. They're request-scoped system prompts at the tail of the request, so across turns the history grows append-only and stays eligible for a cache hit, and the only added cost is reading each reminder once.
+Reminders never go into the leading system prompt or instructions, and the history only ever grows by appending, so it stays eligible for a cache hit. Plain reminders, `GoalReanchor` included, are request-scoped system prompts at the tail of the request, and the only added cost is reading each one once. An `LLMReminder` record is not request-scoped: every firing adds its note and generated text to the history for good, and every later request sends all of them again. Those accumulated records are read from cache when the prefix before them is cached, and paid for in full when it isn't, so gate `LLMReminder` with a cadence and turn on caching for your model.
 
 `SystemReminders` doesn't place a cache breakpoint of its own. Turn on caching for your model (for example `anthropic_cache` or `anthropic_cache_messages`, `bedrock_cache_messages`, or `openrouter_cache_messages`), and the breakpoint it places lands before the reminder. `cache_ttl` is deprecated and has no effect: pass `cache_ttl=None`. Left unset, it warns that the default `'5m'` breakpoint is gone, and set to `'5m'` or `'1h'` it warns that it's ignored.
 

@@ -74,7 +74,8 @@ from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
-from pydantic_ai_harness.system_reminders import Reminder
+from pydantic_ai_harness.subagents import AgentOverride
+from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 
 async def _decline(request: AskUserRequest) -> AskUserResponse:
@@ -651,6 +652,26 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
         # would take the other value, re-enabling it in *either* order -- so an explicit disable
         # never survived. Composing only the roster is what makes that impossible.
         pytest.param('agent_folders', {'agent_folders': None}, {'agent_folders': 'agents'}, id='agent_folders'),
+        pytest.param(
+            'agent_overrides',
+            {'agent_overrides': {'alpha': AgentOverride(model=TestModel(settings={'temperature': 0.0}))}},
+            {'agent_overrides': {'alpha': AgentOverride(model=TestModel(settings={'temperature': 1.0}))}},
+            id='agent_overrides_model_settings',
+        ),
+        pytest.param(
+            'shared_capabilities',
+            {
+                'shared_capabilities': [
+                    SummarizingCompaction(model=TestModel(settings={'temperature': 0.0}), max_messages=10)
+                ]
+            },
+            {
+                'shared_capabilities': [
+                    SummarizingCompaction(model=TestModel(settings={'temperature': 1.0}), max_messages=10)
+                ]
+            },
+            id='shared_capabilities_model_settings',
+        ),
     ],
 )
 def test_sub_agents_compose_the_roster_and_nothing_else(
@@ -668,6 +689,22 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
     with pytest.raises(UserError, match=f'disagree on {field_name!r}'):
         SubAgents.combine([first, second])
+
+
+def test_system_reminders_keep_two_llm_reminders_whose_models_differ_only_in_settings() -> None:
+    """Reminders asking two differently configured models are two reminders, so both keep firing.
+
+    Not a VCR test: `combine` makes no request.
+    """
+    first = LLMReminder[Any](model=TestModel(settings={'temperature': 0.0}))
+    second = LLMReminder[Any](model=TestModel(settings={'temperature': 1.0}))
+
+    merged = SystemReminders.combine(
+        [SystemReminders[Any](dynamic_reminders=[first]), SystemReminders[Any](dynamic_reminders=[second])]
+    )
+
+    assert isinstance(merged, SystemReminders)
+    assert list(merged.dynamic_reminders) == [first, second]
 
 
 def _child(name: str) -> Agent[Any, str]:
