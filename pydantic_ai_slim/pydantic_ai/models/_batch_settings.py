@@ -1,23 +1,33 @@
-"""Checking the batch arguments shared by `BatchModelRequests` and `model_request_batch`."""
+"""The batch arguments and resubmission policy shared by `BatchModelRequests` and `model_request_batch`."""
 
 from __future__ import annotations
 
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, ModelQuotaExceededError, UserError
 
 if TYPE_CHECKING:
     from . import Model
+    from .batch import BatchResult
 
+DEFAULT_MAX_REQUESTS = 1_000
+DEFAULT_MAX_RESUBMISSIONS = 2
 DEFAULT_POLL_INTERVAL = timedelta(seconds=30)
 DEFAULT_MAX_POLL_INTERVAL = timedelta(minutes=10)
 
+_TRANSIENT_STATUS_CODES = frozenset({408, 409, 429, 499})
+"""The 4xx statuses a provider SDK retries a live request on, and 499, a request canceled on the provider's side."""
 
-def check_batch_intervals(*, max_requests: int | None, poll_interval: timedelta, max_poll_interval: timedelta) -> None:
+
+def check_batch_intervals(
+    *, max_requests: int | None, max_resubmissions: int, poll_interval: timedelta, max_poll_interval: timedelta
+) -> None:
     """Check the arguments that don't depend on the model."""
     if max_requests is not None and max_requests <= 0:
         raise UserError('`max_requests` must be positive.')
+    if max_resubmissions < 0:
+        raise UserError('`max_resubmissions` must not be negative.')
     if poll_interval <= timedelta(0) or max_poll_interval < poll_interval:
         raise UserError('`poll_interval` must be positive and no longer than `max_poll_interval`.')
 
@@ -30,8 +40,40 @@ def batch_size(model: Model, max_requests: int | None) -> int:
 
 
 def check_batch_settings(
-    model: Model, *, max_requests: int | None, poll_interval: timedelta, max_poll_interval: timedelta
+    model: Model,
+    *,
+    max_requests: int | None,
+    max_resubmissions: int,
+    poll_interval: timedelta,
+    max_poll_interval: timedelta,
 ) -> int:
     """Check the arguments, and return the most requests per batch: `max_requests` capped by, or else, the provider limit."""
-    check_batch_intervals(max_requests=max_requests, poll_interval=poll_interval, max_poll_interval=max_poll_interval)
+    check_batch_intervals(
+        max_requests=max_requests,
+        max_resubmissions=max_resubmissions,
+        poll_interval=poll_interval,
+        max_poll_interval=max_poll_interval,
+    )
     return batch_size(model, max_requests)
+
+
+def transient(error: ModelAPIError) -> bool:
+    """Whether a batch request that failed with `error` may succeed if it's submitted again.
+
+    These are the errors a provider SDK retries a live request on: a timeout, a conflict, a rate limit or a server
+    error, plus a request canceled on the provider's side. A request rejected for its content, its credentials or
+    the account's quota fails the same way again.
+    """
+    if isinstance(error, ModelQuotaExceededError) or not isinstance(error, ModelHTTPError):
+        return False
+    return error.status_code in _TRANSIENT_STATUS_CODES or error.status_code >= 500
+
+
+def resubmittable(result: BatchResult, error: ModelAPIError) -> bool:
+    """Whether a request whose `result` raised `error` may succeed in a new batch: one the batch didn't run, or a transient error."""
+    return result.status in ('expired', 'canceled') or transient(error)
+
+
+def missing_result_error(model_name: str, batch_id: str) -> ModelAPIError:
+    """The error for a request a batch ended without a result for."""
+    return ModelAPIError(model_name, f'Batch {batch_id!r} ended without a result for the request.')

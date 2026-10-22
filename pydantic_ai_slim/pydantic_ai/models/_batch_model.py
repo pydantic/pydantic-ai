@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import itertools
 import math
+import time
 import weakref
 from collections import OrderedDict
 from collections.abc import AsyncGenerator, Generator
@@ -37,11 +37,22 @@ from typing_extensions import TypedDict
 from .._instrumentation import model_attributes, open_request_policy
 from .._run_context import RunContext
 from .._utils import cancel_and_drain
-from ..exceptions import UserError
+from ..exceptions import ModelAPIError, ModelHTTPError, SuspendedResponseExpired, UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import Model, ModelRequestParameters, StreamedResponse
-from ._batch_settings import DEFAULT_MAX_POLL_INTERVAL, DEFAULT_POLL_INTERVAL, batch_size, check_batch_intervals
+from ._batch_codec import BatchJobError
+from ._batch_settings import (
+    DEFAULT_MAX_POLL_INTERVAL,
+    DEFAULT_MAX_REQUESTS,
+    DEFAULT_MAX_RESUBMISSIONS,
+    DEFAULT_POLL_INTERVAL,
+    batch_size,
+    check_batch_intervals,
+    missing_result_error,
+    resubmittable,
+    transient,
+)
 from .batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 from .wrapper import WrapperModel
 
@@ -63,6 +74,8 @@ class _Ticket(TypedDict):
     custom_id: str
     batch: Batch
     polls: int
+    resubmissions: NotRequired[int]
+    """How many times the request was submitted again after a transient failure, which bounds further resubmissions."""
     trace_context: NotRequired[dict[str, str]]
     """The W3C trace context of the batch's span, so its checks join the batch's trace in any process."""
 
@@ -127,8 +140,18 @@ class _Queue:
     model: Model
     """The model that submits the queue: any model whose requests share the queue's group can."""
     max_requests: int
-    requests: list[_Queued] = field(default_factory=list[_Queued])
+    requests: dict[str, _Queued] = field(default_factory=dict[str, _Queued])
+    """The queued requests by their ID in the batch, in the order they were queued."""
+    duplicates: dict[str, int] = field(default_factory=dict[str, int])
+    """How many requests with each body-derived ID were queued, to give the next one a unique ID in constant time."""
     timer: asyncio.TimerHandle | None = None
+
+    def unique_id(self, base_id: str) -> str:
+        """`base_id`, suffixed if an earlier request in the queue had the same one."""
+        count = self.duplicates.get(base_id, 0)
+        self.duplicates[base_id] = count + 1
+        # A base ID is a hex digest, so a suffixed ID can't equal another request's base ID.
+        return f'{base_id}-{count}' if count else base_id
 
 
 _QueueKey = tuple[str, str]
@@ -148,6 +171,20 @@ def _take(queues: dict[_QueueKey, _Queue], key: _QueueKey) -> _Queue:
     if queue.timer is not None:
         queue.timer.cancel()
     return queue
+
+
+@contextmanager
+def _expired_after_retention(batch: Batch) -> Generator[None]:
+    """Raise `SuspendedResponseExpired` for a batch the provider no longer has, as for an expired background response."""
+    try:
+        yield
+    except ModelHTTPError as error:
+        if error.status_code != 404:
+            raise
+        raise SuspendedResponseExpired(
+            f'Batch {batch.id!r} could not be checked because {batch.provider_name!r} no longer has it or its results: '
+            'providers keep them for a limited time, and only for the project or workspace that created them.'
+        ) from error
 
 
 @contextmanager
@@ -182,18 +219,23 @@ class BatchPool:
     def __init__(
         self,
         *,
-        max_requests: int = 100,
+        max_requests: int = DEFAULT_MAX_REQUESTS,
         max_wait: timedelta | None = timedelta(seconds=30),
+        max_resubmissions: int = DEFAULT_MAX_RESUBMISSIONS,
         poll_interval: timedelta = DEFAULT_POLL_INTERVAL,
         max_poll_interval: timedelta = DEFAULT_MAX_POLL_INTERVAL,
     ) -> None:
         check_batch_intervals(
-            max_requests=max_requests, poll_interval=poll_interval, max_poll_interval=max_poll_interval
+            max_requests=max_requests,
+            max_resubmissions=max_resubmissions,
+            poll_interval=poll_interval,
+            max_poll_interval=max_poll_interval,
         )
         if max_wait is not None and max_wait <= timedelta(0):
             raise UserError('`max_wait` must be positive.')
         self.max_requests = max_requests
         self.max_wait = max_wait
+        self.max_resubmissions = max_resubmissions
         self.poll_interval = poll_interval
         self.max_poll_interval = max_poll_interval
         # Queues hold futures, which belong to one event loop, so each loop gets its own.
@@ -206,11 +248,17 @@ class BatchPool:
             tuple[asyncio.AbstractEventLoop, _BatchKey], asyncio.Task[tuple[Batch, dict[str, BatchResult] | None]]
         ] = {}
         self._results: OrderedDict[_BatchKey, dict[str, BatchResult]] = OrderedDict()
+        # The last status of each batch still in progress, with when it was checked, so requests resumed one after
+        # another, like a loop over stored message histories, share a check per `poll_interval` rather than each
+        # making one.
+        self._statuses: OrderedDict[_BatchKey, tuple[float, Batch]] = OrderedDict()
         # The IDs of the requests in each batch this pool submitted that hasn't ended or been cancelled, as only these
         # batches are cancelled once they're abandoned: a ticket in a message history can't be trusted to say which
         # other requests share its batch. The oldest are forgotten first, which leaves their batches running.
         self._submitted: OrderedDict[_BatchKey, frozenset[str]] = OrderedDict()
         self._abandoned: dict[_BatchKey, set[str]] = {}
+        # The batches this pool cancelled, whose canceled requests aren't submitted again.
+        self._canceled: OrderedDict[_BatchKey, None] = OrderedDict()
         # The batches each request span is already linked to, so a span waiting on several checks links to one once.
         self._linked: weakref.WeakKeyDictionary[Span, set[_BatchKey]] = weakref.WeakKeyDictionary()
 
@@ -224,7 +272,7 @@ class BatchPool:
         loop = asyncio.get_running_loop()
         queues = self._queues.pop(loop, {})
         for key in list(queues):
-            for queued in _take(queues, key).requests:
+            for queued in _take(queues, key).requests.values():
                 queued.future.set_exception(UserError(_EXITED_MESSAGE))
         await cancel_and_drain(
             *(task for task in self._submissions if task.get_loop() is loop),
@@ -268,7 +316,7 @@ class BatchPool:
         task = loop.create_task(self._submit(queue))
         self._submissions.add(task)
         task.add_done_callback(self._submissions.discard)
-        requests = list(queue.requests)
+        requests = list(queue.requests.values())
 
         def settle(_: asyncio.Task[None]) -> None:
             # A submission that was cancelled, for example by `close()` or as the event loop shuts down, leaves nothing
@@ -290,13 +338,10 @@ class BatchPool:
         if queue is None:
             queue = queues[key] = _Queue(model, max_requests=batch_size(model, self.max_requests))
         # Derived from the request, so a rerun of the same requests gets the same IDs; unique within the batch.
-        base_id = custom_id = hashlib.sha256(encoded.body.encode()).hexdigest()[:32]
-        taken = {queued.request.custom_id for queued in queue.requests}
-        duplicates = itertools.count(1)
-        while custom_id in taken:
-            custom_id = f'{base_id}-{next(duplicates)}'
-        queued = _Queued(replace(encoded, custom_id=custom_id), loop.create_future(), requester)
-        queue.requests.append(queued)
+        custom_id = queue.unique_id(hashlib.sha256(encoded.body.encode()).hexdigest()[:32])
+        queued = queue.requests[custom_id] = _Queued(
+            replace(encoded, custom_id=custom_id), loop.create_future(), requester
+        )
 
         def submit() -> None:
             self._start_submission(loop, queues, key)
@@ -311,7 +356,8 @@ class BatchPool:
         except asyncio.CancelledError:
             # Leaves the batch if it's still queued. A submission has already taken the queue's requests, so the
             # request is in its batch: it's abandoned once the batch exists, which can cancel the batch.
-            queue.requests = [other for other in queue.requests if other is not queued]
+            if queue.requests.get(custom_id) is queued:
+                del queue.requests[custom_id]
             queued.withdrawn = True
             if queued.future.done() and not queued.future.cancelled() and queued.future.exception() is None:
                 self._withdraw(model, queued.future.result()[0], custom_id)
@@ -323,7 +369,7 @@ class BatchPool:
         return custom_id, batch, trace_context
 
     async def _submit(self, queue: _Queue) -> None:
-        if not (requests := queue.requests):
+        if not (requests := list(queue.requests.values())):
             # Every queued request was cancelled before the deadline.
             return
         requester = next((queued.requester for queued in requests if queued.requester is not None), None)
@@ -365,7 +411,24 @@ class BatchPool:
     async def _cancel(self, model: Model, batch: Batch) -> None:
         # Best effort, like cancelling an abandoned request's batch: nobody is left to report a failure to.
         with suppress(Exception):
-            await model.batch_cancel(batch)
+            await self.cancel(model, batch)
+
+    async def cancel(self, model: Model, batch: Batch) -> None:
+        """Cancel a batch every request this pool submitted in has abandoned, remembering that it did."""
+        self._canceled[_batch_key(batch)] = None
+        while len(self._canceled) > _SUBMITTED_BATCHES_SIZE:
+            self._canceled.popitem(last=False)
+        await model.batch_cancel(batch)
+
+    def may_resubmit(self, ticket: _Ticket) -> bool:
+        """Whether a request that failed in its batch in a way a new batch may not repeat is submitted again.
+
+        Not when it already was `max_resubmissions` times, or when this pool cancelled its batch.
+        """
+        return (
+            ticket.get('resubmissions', 0) < self.max_resubmissions
+            and _batch_key(ticket['batch']) not in self._canceled
+        )
 
     def abandon(self, batch: Batch, custom_id: str) -> bool:
         """Record that a request no longer waits on its batch, and return whether to cancel the batch.
@@ -392,6 +455,10 @@ class BatchPool:
         if (results := self._results.get(_batch_key(batch))) is not None:
             self._results.move_to_end(_batch_key(batch))
             return batch, results
+        if (status := self._statuses.get(_batch_key(batch))) is not None:
+            checked_at, checked = status
+            if time.monotonic() - checked_at < self.poll_interval.total_seconds():
+                return checked, None
         loop = asyncio.get_running_loop()
         key = (loop, _batch_key(batch))
         if (poll := self._polls.get(key)) is None:
@@ -425,12 +492,19 @@ class BatchPool:
         ) as span:
             if span is not None:
                 span.set_attribute(BATCH_ID_ATTRIBUTE, batch.id)
-            batch = await model.batch_status(batch)
+            with _expired_after_retention(batch):
+                batch = await model.batch_status(batch)
             if span is not None:
                 span.set_attribute(BATCH_STATUS_ATTRIBUTE, batch.status)
             if batch.status != 'ended':
+                self._statuses[_batch_key(batch)] = (time.monotonic(), batch)
+                self._statuses.move_to_end(_batch_key(batch))
+                while len(self._statuses) > _SUBMITTED_BATCHES_SIZE:
+                    self._statuses.popitem(last=False)
                 return batch, None
-            results = {result.custom_id: result for result in await model.batch_results(batch)}
+            with _expired_after_retention(batch):
+                results = {result.custom_id: result for result in await model.batch_results(batch)}
+        self._statuses.pop(_batch_key(batch), None)
         self._results[_batch_key(batch)] = results
         # Requests abandoned while it ran no longer matter: an ended batch can't be cancelled.
         self._submitted.pop(_batch_key(batch), None)
@@ -461,17 +535,19 @@ class BatchedModel(WrapperModel):
         if (ticket := _pending_ticket(last_message)) is not None:
             assert isinstance(last_message, ModelResponse)
             return await self._check(
-                ticket,
-                last_message,
-                BatchRequest(
-                    custom_id=ticket['custom_id'],
-                    messages=messages[:-1],
-                    model_settings=model_settings,
-                    model_request_parameters=model_request_parameters,
-                ),
-                requester,
+                ticket, last_message, messages[:-1], model_settings, model_request_parameters, requester
             )
+        return await self._submit(messages, model_settings, model_request_parameters, requester, resubmissions=0)
 
+    async def _submit(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        requester: _Requester | None,
+        *,
+        resubmissions: int,
+    ) -> ModelResponse:
         encoded = await self.wrapped.batch_encode(
             BatchRequest(
                 custom_id='',
@@ -483,6 +559,8 @@ class BatchedModel(WrapperModel):
         custom_id, batch, trace_context = await self.pool.enqueue(self.wrapped, encoded, requester)
         self.pool.link(requester, batch, trace_context)
         ticket = _Ticket(custom_id=custom_id, batch=batch, polls=0)
+        if resubmissions:
+            ticket['resubmissions'] = resubmissions
         if trace_context is not None:
             ticket['trace_context'] = trace_context
         return ModelResponse(
@@ -517,14 +595,33 @@ class BatchedModel(WrapperModel):
         if (ticket := _pending_ticket(response)) is None:
             return await self.wrapped.cancel_suspended_response(response)
         if self.pool.abandon(ticket['batch'], ticket['custom_id']):
-            await self.wrapped.batch_cancel(ticket['batch'])
+            await self.pool.cancel(self.wrapped, ticket['batch'])
 
     async def _check(
-        self, ticket: _Ticket, pending: ModelResponse, request: BatchRequest, requester: _Requester | None
+        self,
+        ticket: _Ticket,
+        pending: ModelResponse,
+        history: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        requester: _Requester | None,
     ) -> ModelResponse:
+        if (provider := ticket['batch'].provider_name) != self.wrapped.system:
+            raise UserError(
+                f'The message history waits on a batch submitted to {provider!r}, '
+                f"which the {self.wrapped.system!r} model serving this request can't check."
+            )
         trace_context = ticket.get('trace_context')
         self.pool.link(requester, ticket['batch'], trace_context)
-        batch, results = await self.pool.poll(self.wrapped, ticket, requester)
+        try:
+            batch, results = await self.pool.poll(self.wrapped, ticket, requester)
+        except BatchJobError as error:
+            # The job ended without running its requests, which a new batch may well do.
+            if transient(error) and self.pool.may_resubmit(ticket):
+                return await self._resubmit(
+                    ticket, pending, history, model_settings, model_request_parameters, requester
+                )
+            raise
         if results is None:
             # Unchanged apart from the poll count: the same `provider_response_id` makes the graph replace the pending
             # response with this one, so content the response accumulated before the batch is kept.
@@ -532,11 +629,53 @@ class BatchedModel(WrapperModel):
             checked['batch'] = batch
             checked['polls'] += 1
             return replace(pending, provider_details={**(pending.provider_details or {}), **_ticket_details(checked)})
-        result = results.get(ticket['custom_id']) or BatchResult(custom_id=ticket['custom_id'], status='expired')
-        response = self.wrapped.batch_decode(result, request)
+        result = results.get(ticket['custom_id'])
+        try:
+            if result is None:
+                raise missing_result_error(self.wrapped.model_name, batch.id)
+            response = self.wrapped.batch_decode(
+                result,
+                BatchRequest(
+                    custom_id=ticket['custom_id'],
+                    messages=history,
+                    model_settings=model_settings,
+                    model_request_parameters=model_request_parameters,
+                ),
+            )
+        except ModelAPIError as error:
+            # A request the batch didn't run, or that failed in a way a live request is retried on, is submitted again,
+            # as a provider SDK retries a live request: re-reading the same result would fail the same way every time.
+            if (result is None or resubmittable(result, error)) and self.pool.may_resubmit(ticket):
+                return await self._resubmit(
+                    ticket, pending, history, model_settings, model_request_parameters, requester
+                )
+            raise
         # Replaces the internal ticket that merging the pending response would otherwise carry into the final one.
-        response.provider_details = {
-            **(response.provider_details or {}),
-            _TICKET_KEY: {'id': batch.id, 'custom_id': ticket['custom_id']},
-        }
+        details: dict[str, Any] = {'id': batch.id, 'custom_id': ticket['custom_id']}
+        if resubmissions := ticket.get('resubmissions'):
+            details['resubmissions'] = resubmissions
+        response.provider_details = {**(response.provider_details or {}), _TICKET_KEY: details}
         return response
+
+    async def _resubmit(
+        self,
+        ticket: _Ticket,
+        pending: ModelResponse,
+        history: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        requester: _Requester | None,
+    ) -> ModelResponse:
+        messages = history
+        if pending.parts:
+            # The pending response holds what a provider continuation, like Anthropic's `pause_turn`, generated before
+            # the request, which the request sent as the turn to continue, so it's sent again without the ticket.
+            details = {key: value for key, value in (pending.provider_details or {}).items() if key != _TICKET_KEY}
+            messages = [*history, replace(pending, provider_response_id=None, provider_details=details or None)]
+        return await self._submit(
+            messages,
+            model_settings,
+            model_request_parameters,
+            requester,
+            resubmissions=ticket.get('resubmissions', 0) + 1,
+        )

@@ -290,6 +290,10 @@ async def test_a_run_with_pending_output_ends_once_its_batch_is_submitted() -> N
     # The new check replaces the pending response, rather than being added after it.
     assert len(still_pending.all_messages()) == len(result.all_messages())
 
+    # Another process again: a check in the same pool within `poll_interval` would share the last status.
+    agent = Agent(
+        wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)], output_type=[str, PendingModelResponse]
+    )
     finished = await agent.run(message_history=still_pending.all_messages())
     assert finished.output == 'success (no tool calls)'
     assert (len(wrapped.created), wrapped.status_checks, wrapped.canceled) == (1, 2, [])
@@ -360,14 +364,18 @@ async def test_a_batch_error_reaches_the_run() -> None:
     assert exc_info.value.body == {'error': 'bad request'}
 
 
-async def test_a_result_missing_from_the_batch_is_a_model_error() -> None:
-    @dataclass(init=False)
-    class LosingModel(TestModel):
+async def test_a_result_missing_from_the_batch_is_submitted_again_and_then_a_model_error() -> None:
+    """A batch that ended without the request's result didn't run it: it's resubmitted, then reported as missing."""
+
+    class LosingModel(SlowBatchTestModel):
         async def batch_results(self, batch: Batch) -> list[BatchResult]:
             return []
 
-    with pytest.raises(ModelAPIError, match='expired before the model ran it'):
-        await Agent(LosingModel(), capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]).run('Hello')
+    wrapped = LosingModel()
+    with pytest.raises(ModelAPIError, match=r"Batch 'batch_\w+' ended without a result for the request\.") as exc_info:
+        await Agent(wrapped, capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS)]).run('Hello')
+    assert type(exc_info.value) is ModelAPIError
+    assert len(wrapped.created) == 3
 
 
 async def test_abandoning_every_request_cancels_the_batch() -> None:

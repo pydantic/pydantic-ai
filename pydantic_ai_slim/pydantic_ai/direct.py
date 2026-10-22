@@ -25,7 +25,15 @@ from ._utils import run_until_complete as _run_until_complete
 from .exceptions import ModelAPIError, UserError
 from .models import StreamedResponse, batch as batch_models, instrumented as instrumented_models
 from .models._batch_codec import BatchJobError
-from .models._batch_settings import DEFAULT_MAX_POLL_INTERVAL, DEFAULT_POLL_INTERVAL, check_batch_settings
+from .models._batch_settings import (
+    DEFAULT_MAX_POLL_INTERVAL,
+    DEFAULT_MAX_RESUBMISSIONS,
+    DEFAULT_POLL_INTERVAL,
+    check_batch_settings,
+    missing_result_error,
+    resubmittable,
+    transient,
+)
 from .models._request_timeout import enforce_request_deadline, open_request_stream, start_request_deadline
 
 __all__ = (
@@ -151,6 +159,7 @@ async def model_request_batch(
     requests: Sequence[batch_models.BatchRequest],
     *,
     max_requests: int | None = None,
+    max_resubmissions: int = DEFAULT_MAX_RESUBMISSIONS,
     poll_interval: timedelta = DEFAULT_POLL_INTERVAL,
     max_poll_interval: timedelta = DEFAULT_MAX_POLL_INTERVAL,
 ) -> list[messages.ModelResponse | ModelAPIError]:
@@ -161,6 +170,10 @@ async def model_request_batch(
     growing interval until it ends. Cancelling the call, for example with `asyncio.timeout`, cancels the batches that
     haven't ended. A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError],
     since one request in a batch can't be timed out separately.
+
+    Requests a batch ended without running, for example because they expired, and requests that failed with a rate
+    limit, timeout or server error are submitted again in new batches, up to `max_resubmissions` times, as a
+    provider SDK retries a live request.
 
     ```py title="model_request_batch_example.py"
     from pydantic_ai import ModelRequest
@@ -193,6 +206,8 @@ async def model_request_batch(
         model: The model to send the requests to. We allow `str` here since the actual list of allowed models changes frequently.
         requests: The requests to send, each with its own messages, settings and parameters. Their `custom_id`s must be unique.
         max_requests: The most requests per batch. Defaults to the provider's limit, which also caps it.
+        max_resubmissions: How many times a request that the batch didn't run, or that failed with a transient error,
+            is submitted again in a new batch. `0` returns the error instead.
         poll_interval: How long to wait before first checking a batch. The interval grows by half after every check,
             up to `max_poll_interval`.
         max_poll_interval: The longest wait between checks of a batch.
@@ -203,7 +218,11 @@ async def model_request_batch(
     """
     model_instance = models.infer_model(model)
     batch_size = check_batch_settings(
-        model_instance, max_requests=max_requests, poll_interval=poll_interval, max_poll_interval=max_poll_interval
+        model_instance,
+        max_requests=max_requests,
+        max_resubmissions=max_resubmissions,
+        poll_interval=poll_interval,
+        max_poll_interval=max_poll_interval,
     )
     if len({request.custom_id for request in requests}) != len(requests):
         raise UserError('Each batch request needs a unique `custom_id`.')
@@ -216,13 +235,56 @@ async def model_request_batch(
             'To stop waiting, cancel the call, which cancels its batches.'
         )
 
-    groups: dict[str, list[batch_models.EncodedBatchRequest]] = {}
-    for request in requests:
-        request = dataclasses.replace(
+    requests = [
+        dataclasses.replace(
             request,
             model_request_parameters=_ensure_instruction_parts(request.messages, request.model_request_parameters),
         )
-        encoded = await model_instance.batch_encode(request)
+        for request in requests
+    ]
+    outcomes: dict[str, messages.ModelResponse | ModelAPIError] = {}
+    unanswered = requests
+    resubmissions = 0
+    while unanswered:
+        results = await _run_batches(
+            model_instance,
+            unanswered,
+            batch_size=batch_size,
+            poll_interval=poll_interval,
+            max_poll_interval=max_poll_interval,
+        )
+        retry: list[batch_models.BatchRequest] = []
+        for request in unanswered:
+            result = results[request.custom_id]
+            try:
+                if isinstance(result, ModelAPIError):
+                    raise result
+                outcomes[request.custom_id] = model_instance.batch_decode(result, request)
+            except ModelAPIError as error:
+                outcomes[request.custom_id] = error
+                if resubmissions < max_resubmissions and _resubmittable(result, error):
+                    retry.append(request)
+        unanswered = retry
+        resubmissions += 1
+    return [outcomes[request.custom_id] for request in requests]
+
+
+async def _run_batches(
+    model: models.Model,
+    requests: Sequence[batch_models.BatchRequest],
+    *,
+    batch_size: int,
+    poll_interval: timedelta,
+    max_poll_interval: timedelta,
+) -> dict[str, batch_models.BatchResult | ModelAPIError]:
+    """Submit `requests` in as few batches as allowed, wait for them all, and return each request's result.
+
+    That's an error for the requests of a job that ended without results, and for a request a batch ended without a
+    result for.
+    """
+    groups: dict[str, list[batch_models.EncodedBatchRequest]] = {}
+    for request in requests:
+        encoded = await model.batch_encode(request)
         groups.setdefault(encoded.group, []).append(encoded)
 
     batches: list[batch_models.Batch] = []
@@ -231,40 +293,40 @@ async def model_request_batch(
         for group in groups.values():
             for start in range(0, len(group), batch_size):
                 chunk = group[start : start + batch_size]
-                batches.append(await model_instance.batch_create(chunk))
+                batches.append(await model.batch_create(chunk))
                 batch_custom_ids.append([encoded.custom_id for encoded in chunk])
         for index, batch in enumerate(batches):
             batches[index] = await _wait_for_batch(
-                model_instance,
+                model,
                 # Later batches ran while the earlier ones were waited for, so they're checked straight away.
-                batch if index == 0 else await model_instance.batch_status(batch),
+                batch if index == 0 else await model.batch_status(batch),
                 poll_interval=poll_interval,
                 max_poll_interval=max_poll_interval,
             )
-        results: dict[str, batch_models.BatchResult | BatchJobError] = {}
+        results: dict[str, batch_models.BatchResult | ModelAPIError] = {}
         for batch, custom_ids in zip(batches, batch_custom_ids, strict=True):
             try:
-                results.update({result.custom_id: result for result in await model_instance.batch_results(batch)})
+                batch_results = {result.custom_id: result for result in await model.batch_results(batch)}
             except BatchJobError as error:
                 # The job ended without results, so its error is each of its requests' outcome.
                 results.update(dict.fromkeys(custom_ids, error))
+            else:
+                for custom_id in custom_ids:
+                    results[custom_id] = batch_results.get(custom_id) or missing_result_error(
+                        model.model_name, batch.id
+                    )
     except BaseException:
-        await _cancel_batches(model_instance, batches)
+        await _cancel_batches(model, batches)
         raise
+    return results
 
-    responses: list[messages.ModelResponse | ModelAPIError] = []
-    for request in requests:
-        result = results.get(request.custom_id) or batch_models.BatchResult(
-            custom_id=request.custom_id, status='expired'
-        )
-        if isinstance(result, BatchJobError):
-            responses.append(result)
-            continue
-        try:
-            responses.append(model_instance.batch_decode(result, request))
-        except ModelAPIError as error:
-            responses.append(error)
-    return responses
+
+def _resubmittable(result: batch_models.BatchResult | ModelAPIError, error: ModelAPIError) -> bool:
+    """Whether a request that failed with `error` is submitted again: see `resubmittable`."""
+    if isinstance(result, BatchJobError):
+        return transient(result)
+    # Otherwise an error is the batch's missing result for the request.
+    return isinstance(result, ModelAPIError) or resubmittable(result, error)
 
 
 async def _wait_for_batch(

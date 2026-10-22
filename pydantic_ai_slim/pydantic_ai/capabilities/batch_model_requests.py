@@ -7,7 +7,12 @@ from typing import Any, Self
 
 from pydantic_ai.models import Model
 from pydantic_ai.models._batch_model import BatchedModel, BatchPool
-from pydantic_ai.models._batch_settings import DEFAULT_MAX_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
+from pydantic_ai.models._batch_settings import (
+    DEFAULT_MAX_POLL_INTERVAL,
+    DEFAULT_MAX_REQUESTS,
+    DEFAULT_MAX_RESUBMISSIONS,
+    DEFAULT_POLL_INTERVAL,
+)
 
 from .abstract import AbstractCapability
 
@@ -27,7 +32,7 @@ class BatchModelRequests(AbstractCapability[Any]):
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import BatchModelRequests
 
-    batching = BatchModelRequests(max_requests=500, max_wait=timedelta(seconds=10))
+    batching = BatchModelRequests(max_requests=5_000, max_wait=timedelta(minutes=5))
     agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[batching])
     ```
 
@@ -39,6 +44,10 @@ class BatchModelRequests(AbstractCapability[Any]):
     end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the
     agent's `output_type`. See [Batch processing](../batch.md) for a guide.
 
+    A request the batch ended without running, for example because it expired, or that failed with a rate limit or
+    server error, is submitted again in a new batch, up to `max_resubmissions` times, as a provider SDK retries a live
+    request. Other errors, like an invalid request, reach the run as usual.
+
     The capability wraps whichever model serves each request, which must have a batch API. Requests can't be
     streamed, and batching needs an `asyncio` event loop. Submissions and checks run as tasks shared by the requests
     waiting on them; using the capability as an async context manager cancels any that are still running when it
@@ -47,7 +56,7 @@ class BatchModelRequests(AbstractCapability[Any]):
 
     _: KW_ONLY
 
-    max_requests: int = 100
+    max_requests: int = DEFAULT_MAX_REQUESTS
     """The most requests one batch holds. The provider's own limit caps it."""
 
     max_wait: timedelta | None = timedelta(seconds=30)
@@ -57,8 +66,17 @@ class BatchModelRequests(AbstractCapability[Any]):
     [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush] is called.
     """
 
+    max_resubmissions: int = DEFAULT_MAX_RESUBMISSIONS
+    """How many times a request is submitted again in a new batch after it expired, was canceled by someone other than
+    this capability, or failed with a rate limit, timeout or server error. `0` raises the error instead.
+    """
+
     poll_interval: timedelta = DEFAULT_POLL_INTERVAL
-    """How long to wait before first checking a submitted batch. The interval grows by half after every check."""
+    """How long to wait before first checking a submitted batch. The interval grows by half after every check.
+
+    Checks of a batch made within `poll_interval` of each other, like those of runs resumed one after another from
+    their message histories, share one status request.
+    """
 
     max_poll_interval: timedelta = DEFAULT_MAX_POLL_INTERVAL
     """The longest wait between checks of a submitted batch."""
@@ -70,6 +88,7 @@ class BatchModelRequests(AbstractCapability[Any]):
         self._pool = BatchPool(
             max_requests=self.max_requests,
             max_wait=self.max_wait,
+            max_resubmissions=self.max_resubmissions,
             poll_interval=self.poll_interval,
             max_poll_interval=self.max_poll_interval,
         )
