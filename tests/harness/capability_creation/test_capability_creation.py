@@ -638,17 +638,15 @@ class TestCapabilityStore:
         store = CapabilityStore(tmp_path)
         store.write('marker', VALID_CODE)
         store.write('marker', NO_SUBCLASS_CODE)
-        unlink = Path.unlink
 
         def failing_unlink(path: Path, missing_ok: bool = False) -> None:
-            if path.name == 'marker.rejected.py':
-                raise PermissionError('read-only')
-            unlink(path, missing_ok=missing_ok)
+            raise PermissionError(f'cannot remove {path.name}')
 
         monkeypatch.setattr(Path, 'unlink', failing_unlink)
         record = store.write('marker', _marker_code('Bar', 'V2'))
         assert record.class_name == 'Bar'
         assert store.list_all() == [record]
+        assert (tmp_path / 'marker.rejected.py').exists()
 
     def test_replacing_the_source_removes_an_older_rejected_source(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
