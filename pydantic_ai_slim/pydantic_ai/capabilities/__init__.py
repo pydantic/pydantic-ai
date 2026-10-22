@@ -46,7 +46,7 @@ from .image_generation import ImageGeneration
 from .include_return_schemas import IncludeToolReturnSchemas
 from .instrumentation import Instrumentation
 from .local_workspace import LocalWorkspace
-from .mcp import MCP
+from .mcp import MCP, MCPAuthorizationTokenFunc
 from .native_or_local import NativeOrLocalTool
 from .native_tool import NativeTool
 from .prefix_tools import PrefixTools
@@ -139,6 +139,7 @@ __all__ = [
     'IncludeToolReturnSchemas',
     'LocalWorkspace',
     'MCP',
+    'MCPAuthorizationTokenFunc',
     'PrefixTools',
     'PrepareOutputTools',
     'PrepareTools',
