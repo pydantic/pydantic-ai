@@ -629,7 +629,9 @@ A Temporal workflow's execution history is capped at around 50,000 events or 50M
 
 [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] can do this at a point the agent can resume from. Pass `continue_as_new`, a sync or async function that receives the run's [`RunContext`][pydantic_ai.tools.RunContext]. Just before each model request, the capability checks `workflow.info().is_continue_as_new_suggested()`. If Temporal suggests continuing, it calls your function, which calls `workflow.continue_as_new()` with the arguments your workflow's `@workflow.run` method needs to resume, including the conversation so far. At that point, every tool result from the previous step is already in the history and nothing is in flight.
 
-Your function can also return without calling `workflow.continue_as_new()` to keep going, for example until the run has reached a minimum [`run_step`][pydantic_ai.tools.RunContext.run_step]. It is called again before the next model request for as long as Temporal keeps suggesting a continuation. As an async function, it can first [execute an activity](https://docs.temporal.io/develop/python/core-application#activity-execution), for example to store the history somewhere else and pass a reference instead. Setting `continue_as_new=None`, the default, leaves the feature disabled.
+The Temporal server decides when to suggest continuing, based on the history's event count and size. To continue earlier or later, tune its `limit.historyCount.suggestContinueAsNew` and `limit.historySize.suggestContinueAsNew` [dynamic config](https://docs.temporal.io/references/dynamic-configuration) values, which can be set per namespace.
+
+As an async function, yours can first [execute an activity](https://docs.temporal.io/develop/python/core-application#activity-execution), for example to store the history somewhere else and pass a reference instead. It can also return without calling `workflow.continue_as_new()` to wait for a condition only your application can judge; it is then called again before the next model request. Setting `continue_as_new=None`, the default, leaves the feature disabled.
 
 !!! warning "`continue_as_new` arguments share Temporal's per-payload size limit"
     Like activity and workflow inputs, each argument passed to `continue_as_new` counts against Temporal's per-payload size limit (see [Large Payloads](#large-payloads)). Bound the history you carry, for example by compacting it with a history-processing capability like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], or [offload large payloads to your own storage](#offloading-payloads-to-your-own-storage).
@@ -651,8 +653,6 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 
 def continue_as_new(ctx: RunContext) -> None:
-    if ctx.run_step < 10:
-        return  # Defer until the run has reached step 10.
     workflow.continue_as_new(
         args=[None, ctx.messages, ctx.usage, ctx.usage_limits],
     )
