@@ -2328,7 +2328,7 @@ async def test_direct_decide_sends_image_evidence_with_ordered_labels(
                             **detail_field,
                         },
                         {'type': 'input_text', 'text': '<image 2>:'},
-                        {'type': 'input_image', 'image_url': IsStr(regex=r'^data:image/jpeg;base64,.+$')},
+                        {'type': 'input_image', 'image_url': 'data:image/jpeg;base64,c2Vjb25k'},
                     ],
                 }
             ],
