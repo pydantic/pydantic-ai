@@ -42,7 +42,7 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
     from pydantic_ai_harness import SmartSearch
 
     agent = Agent(
-        'openai:gpt-6-luna',
+        'openai:gpt-6-astra',
         capabilities=[LocalWorkspace('.'), SmartSearch('system-one:clm-latest')],
     )
     ```
