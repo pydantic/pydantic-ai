@@ -2638,12 +2638,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         The source model continues to use HTTP. Pass the yielded model to an Agent,
         an individual run, or a model-selection capability. Concurrent requests run on
-        separate `stream_id` lanes of the one socket when the SDK client's WebSocket host is
-        `api.openai.com`, or when the profile sets `openai_responses_supports_websocket_stream_id`
-        to `True`; on other hosts, or when it's `False`, they take turns. A provider error,
-        a stream closed early, or a cancellation ends only its own request; a transport
-        failure fails the socket, and later requests raise `ModelConnectionError`. The
-        socket closes when the context exits, and a request still running then raises
+        separate `stream_id` lanes of the one socket when the profile's
+        `openai_responses_supports_websocket_stream_id` is `True`, which it is by default only
+        when the SDK client's WebSocket host is `api.openai.com`; otherwise they take turns.
+        A provider error, a stream closed early, or a cancellation ends only its own request;
+        a transport failure fails the socket, and later requests raise `ModelConnectionError`.
+        The socket closes when the context exits, and a request still running then raises
         `UserError`.
 
         Install `pydantic-ai-slim[openai-responses-websocket]` to enable this method.
@@ -2686,18 +2686,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         request_headers['User-Agent'] = headers['user-agent']
         settings: ModelSettings = {**(self.settings or {}), 'extra_headers': request_headers}
         timeout = HTTPX2Timeout(to_httpx2_timeout(settings.get('timeout', self.client.timeout)))
-        stream_id_lanes = self.profile.get('openai_responses_supports_websocket_stream_id')
-        if stream_id_lanes is None:
-            # Unlike the client-class rule in `models/AGENTS.md`, this decides by host: lanes on an endpoint that
-            # doesn't route events by `stream_id` hand one conversation another's answer, while lanes off only make
-            # requests take turns. OpenAI runs named lanes; Azure OpenAI and xAI document one response in flight per
-            # connection, and xAI accepts a `stream_id` without echoing it on its events. The socket's host is
-            # `websocket_base_url`'s when the SDK client sets one.
-            # https://developers.openai.com/api/docs/guides/websocket-mode
-            # https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/websockets
-            # https://docs.x.ai/developers/advanced-api-usage/websocket-mode
-            websocket_url = HTTPX2URL(self.client.websocket_base_url or self.client.base_url)
-            stream_id_lanes = websocket_url.host == 'api.openai.com'
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             websocket = await ResponsesWebSocket.connect(
                 self.client,
@@ -2706,7 +2694,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 headers,
                 timeout,
                 websocket_connection_options or {},
-                NAMED_LANE_LIMIT if stream_id_lanes else 0,
+                NAMED_LANE_LIMIT if self.profile.get('openai_responses_supports_websocket_stream_id', False) else 0,
             )
         try:
             connected = _utils.replace_no_init(self, _websocket=websocket)
@@ -2831,6 +2819,28 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if response.state == 'suspended' and (response.provider_details or {}).get('background'):
             return _OPENAI_BACKGROUND_POLL_INTERVAL
         return None
+
+    def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
+        """Default `openai_responses_supports_websocket_stream_id` by the host the SDK client opens sockets on.
+
+        The provider's value, and the user's `profile=`, override it.
+        """
+        # This is the one host-based default `models/AGENTS.md` allows: lanes on an endpoint that doesn't route events
+        # by `stream_id` hand one conversation another's answer, while lanes off only make requests take turns, and a
+        # proxy or gateway in front of OpenAI can opt back in through the profile. OpenAI runs named lanes; Azure OpenAI
+        # and xAI document one response in flight per connection, and xAI accepts a `stream_id` without echoing it on
+        # its events. The socket connects to `websocket_base_url` when the SDK client sets one. This reads the provider's
+        # client because a subclass's `client` can depend on the profile being resolved, as `BedrockMantleResponsesModel`'s
+        # does; its clients differ only in path.
+        # https://developers.openai.com/api/docs/guides/websocket-mode
+        # https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/websockets
+        # https://docs.x.ai/developers/advanced-api-usage/websocket-mode
+        client = self._provider.client
+        websocket_url = HTTPX2URL(client.websocket_base_url or client.base_url)
+        host_default = OpenAIModelProfile(
+            openai_responses_supports_websocket_stream_id=websocket_url.host == 'api.openai.com'
+        )
+        return merge_profile(host_default, profile)
 
     @cached_property
     def profile(self) -> OpenAIModelProfile:

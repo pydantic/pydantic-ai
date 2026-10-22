@@ -946,7 +946,7 @@ def test_openai_responses_allowed_tools_ignore_unavailable_tools(tool_choice: To
     an unknown name or a changed order. The live API returns a 400 for an `allowed_tools` name the request doesn't
     define. `tool_b` is revealed via history, so it is absent from `declared_tool_defs` but stays forceable.
     """
-    m = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=MagicMock()))
+    m = OpenAIResponsesModel('gpt-4o-mini', provider=OpenAIProvider(api_key='test'))
     params = ModelRequestParameters(
         function_tools=[make_tool('tool_c'), make_tool('tool_a'), make_tool('tool_b')],
         output_tools=[make_tool('final_result')],
@@ -1155,8 +1155,7 @@ async def test_openai_chat_fallback_single_tool_filters_tool_defs(allow_model_re
 @skip_if_no_openai
 async def test_openai_responses_fallback_single_tool_uses_allowed_tools(allow_model_requests: None):
     """`ToolOrOutput` single function tool on a no-forcing Responses model uses `allowed_tools` to preserve cache."""
-    mock_client = MagicMock()
-    provider = OpenAIProvider(openai_client=mock_client)
+    provider = OpenAIProvider(api_key='test')
     profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     m = OpenAIResponsesModel('gpt-4o-mini', provider=provider, profile=profile)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=True)
@@ -1219,9 +1218,7 @@ async def test_openai_responses_forcing_follows_thinking_state(
     allow_model_requests: None, thinking: ThinkingLevel | None, expected_tool_choice: str
 ):
     """The Responses API path reads the same flag, since DeepSeek rejects forcing on both endpoints."""
-    m = OpenAIResponsesModel(
-        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
-    )
+    m = OpenAIResponsesModel('stub', provider=OpenAIProvider(api_key='test'), profile=thinking_conditional_profile())
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False, thinking=thinking)
 
     _, tool_choice = m._get_responses_tool_choice({}, params)  # pyright: ignore[reportPrivateUsage]
@@ -1262,9 +1259,7 @@ async def test_openai_responses_explicit_forcing_with_thinking_raises(
     allow_model_requests: None, tool_choice: ToolChoice
 ):
     """An explicit forcing request can't be silently downgraded on the Responses API path either."""
-    m = OpenAIResponsesModel(
-        'stub', provider=OpenAIProvider(openai_client=MagicMock()), profile=thinking_conditional_profile()
-    )
+    m = OpenAIResponsesModel('stub', provider=OpenAIProvider(api_key='test'), profile=thinking_conditional_profile())
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)
 
     with pytest.raises(UserError, match=r'does not support forcing tool use while thinking is enabled'):
@@ -1293,7 +1288,7 @@ async def test_openai_responses_tool_or_output_forcing_without_required_support_
     """`ToolOrOutput` without direct output falls back to `'auto'` on models that don't support forcing (Responses API)."""
     m = OpenAIResponsesModel(
         'stub',
-        provider=OpenAIProvider(openai_client=MagicMock()),
+        provider=OpenAIProvider(api_key='test'),
         profile=OpenAIModelProfile(supports_forced_tool_choice=False),
     )
     params = ModelRequestParameters(function_tools=[make_tool('tool_a')], allow_text_output=False)

@@ -167,6 +167,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_phase': False,
     'openai_supports_prompt_cache_breakpoints': False,
     'openai_responses_supports_prompt_cache_diagnostics': False,
+    'openai_responses_supports_websocket_stream_id': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
     'anthropic_supports_fast_speed': False,

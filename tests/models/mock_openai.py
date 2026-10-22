@@ -110,6 +110,7 @@ class MockOpenAIResponses:
     retrieve_responses: Sequence[MockResponse] | None = None
     retrieve_stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     base_url: str = 'https://api.openai.com/v1'
+    websocket_base_url: str | None = None
     api_key: str = 'mock-api-key'
 
     @cached_property
