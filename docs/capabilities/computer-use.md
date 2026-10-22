@@ -30,6 +30,10 @@ async def main():
 The agent keeps the rest of the workspace, so it can mix desktop steps with commands and file tools on the same
 machine.
 
+On a model trained with a computer tool of its own, the `computer` tool is sent as that native tool, so the model uses
+the vocabulary it was trained on: OpenAI's `computer` tool on GPT-5.4 and later. Every other model with image input
+gets the same tool as a function, and Gemini 3 models are asked for coordinates on the 0-999 grid they point on.
+
 ## Requirements
 
 - **A workspace with a display.** A run without a workspace, or a workspace without a display, fails at its start
