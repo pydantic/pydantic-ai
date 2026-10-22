@@ -83,6 +83,7 @@ _XDOTOOL_COMMANDS = frozenset(
         'getactivewindow',
         'getdisplaygeometry',
         'getmouselocation',
+        'getwindowclassname',
         'getwindowfocus',
         'getwindowgeometry',
         'getwindowname',
@@ -109,16 +110,20 @@ _XDOTOOL_COMMANDS = frozenset(
         'windowclose',
         'windowfocus',
         'windowkill',
+        'windowlower',
         'windowmap',
         'windowminimize',
         'windowmove',
+        'windowquit',
         'windowraise',
         'windowreparent',
         'windowsize',
+        'windowstate',
         'windowunmap',
     }
 )
-"""`xdotool help`'s command names: xdotool reads one among key names as the start of the next command, such as `exec`."""
+"""xdotool's command names, from its newest source: xdotool reads one among key names, in any case, as the start of the
+next command, such as `exec`."""
 
 _COMMAND_TIMEOUT = 60
 """Maximum time for one display command; the longest bounded action, typing 2,000 characters, takes about 25 s."""
@@ -136,7 +141,8 @@ _PNG_END = b'IEND\xaeB`\x82'
 
 def _keysym(key: str) -> str:
     keysym = _KEYSYMS.get(key, key)
-    if not _KEYSYM_PATTERN.fullmatch(keysym) or keysym in _XDOTOOL_COMMANDS:
+    # xdotool reads any argument that names one of its commands, in any case, as that command.
+    if not _KEYSYM_PATTERN.fullmatch(keysym) or keysym.lower() in _XDOTOOL_COMMANDS:
         raise UnsupportedComputerActionError(f'X11Computer cannot press the key {key!r}.')
     return keysym
 

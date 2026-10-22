@@ -111,10 +111,15 @@ def _normalize_key(key: str) -> str:
     return key
 
 
+def _split_combination(key: str) -> list[str]:
+    # `ctrl+s` is one combination written as one name; a lone `+`, or one after the last `+` (`ctrl++`), is the plus key.
+    if len(key) > 2 and key.endswith('++'):
+        return [*_split_combination(key[:-2]), '+']
+    return key.split('+') if len(key) > 1 and '+' in key.strip('+') else [key]
+
+
 def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    # `ctrl+s` is one combination written as one name; a lone `+` is the plus key.
-    split = (part for key in keys for part in (key.split('+') if len(key) > 1 and '+' in key.strip('+') else [key]))
-    return tuple(_normalize_key(key) for key in split if key)
+    return tuple(_normalize_key(part) for key in keys for part in _split_combination(key) if part)
 
 
 def _check_position(x: int | None, y: int | None) -> None:
@@ -122,7 +127,7 @@ def _check_position(x: int | None, y: int | None) -> None:
         raise ValueError('give both `x` and `y`, or neither to act at the pointer')
 
 
-@dataclass(frozen=True, config=_CONFIG)
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class Point:
     """A position on the screenshot."""
 
