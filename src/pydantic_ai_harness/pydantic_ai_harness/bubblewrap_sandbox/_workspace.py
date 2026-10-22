@@ -226,7 +226,9 @@ class BubblewrapWorkspace(WrapperWorkspace):
     `bwrap --new-session` so the backend can stop foreground descendants on timeout or cancellation;
     with a controlling terminal, kernels permitting `TIOCSTI` could let sandboxed commands inject input
     into the host terminal. `LocalWorkspaceBackend` starts a new session and `SSHWorkspaceBackend` uses
-    `ssh -T`, so both satisfy this requirement; custom backends must do so too.
+    `ssh -T`. `E2BSandboxBackend` and `ModalSandboxBackend` run commands through their providers' non-PTY
+    command APIs, so no terminal is attached, with or without `setsid` in the image. All four satisfy this
+    requirement; custom backends must do so too.
 
     Commands see the host read-only, with an empty `/run`, a private `/tmp`, and no network, and can only
     write to the working directory. Without the network, a seccomp filter also stops them from connecting to
