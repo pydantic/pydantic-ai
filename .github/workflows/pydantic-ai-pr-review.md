@@ -68,22 +68,20 @@ concurrency:
   # the older run then skipped itself under current-head authority below, so
   # nothing replaced the review it cancelled (#6904). The SHA alone would let two
   # branches sitting on the same commit, each with its own open PR, cancel each
-  # other. Together they name exactly what must not be reviewed twice at once —
-  # and a later request for one head still supersedes an in-flight review of it,
-  # which is the one cancellation worth keeping.
+  # other. Together they name exactly what must not be reviewed twice at once.
   #
-  # A label other than `final-review`, a review that is not an approval, and an
-  # approval from someone who is not a collaborator are not requests: each gets a
-  # group of its own, so it cannot cancel a review queued for the same head.
-  # `author_association` can misreport a collaborator as `CONTRIBUTOR`; that
-  # approval then runs alongside a queued review instead of replacing it. An org
-  # member with only read access approves as `MEMBER`, so that approval still
-  # cancels a queued review. `roles:` then stops the new run before the model,
-  # which leaves the head unreviewed with no `CI Review skipped` check and no
-  # `ci-review-failed` label. Accepted, because such members rarely review here.
+  # Nothing cancels a run in progress. Only `eligibility` can read an approver's
+  # permission, so this key cannot tell a read-only approval from a request; with
+  # cancelling on, either would cancel a review queued for hours in the agent
+  # slot. A later event for the same head waits instead, and then skips as
+  # already reviewed or as not a request.
+  #
+  # A label other than `final-review` and a review that is not an approval are
+  # never requests: each gets a group of its own, so it cannot replace a pending
+  # request for the same head.
   group: >-
-    ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && (github.event.review.state != 'approved' || (github.event.review.author_association != 'OWNER' && github.event.review.author_association != 'MEMBER' && github.event.review.author_association != 'COLLABORATOR')))) && format('-{0}', github.run_id) || '' }}
-  cancel-in-progress: true
+    ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && github.event.review.state != 'approved')) && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: false
 # Deterministic, pre-inference gate: unless `eligibility` says so, no model runs.
 #
 # `eligibility` MUST also be referenced from the prompt body below. gh-aw copies
@@ -311,6 +309,7 @@ jobs:
           RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           RUN_HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEWER: ${{ github.event.review.user.login }}
           LABEL_NAME: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -360,6 +359,11 @@ jobs:
             # whatever is on the PR now.
             if [ "$EVENT_NAME" = 'pull_request_review' ]; then
               [ "$REVIEW_STATE" = 'approved' ] || skip "a ${REVIEW_STATE} review is not a review request"
+              # `.permission`, not `.role_name`: it maps `maintain` and custom roles
+              # onto their base level. An unreadable permission is not a request.
+              REVIEWER_PERMISSION=$(gh api "repos/${REPO}/collaborators/${REVIEWER}/permission" --jq .permission 2>/dev/null || true)
+              [ "$REVIEWER_PERMISSION" = 'admin' ] || [ "$REVIEWER_PERMISSION" = 'write' ] \
+                || skip "an approval from ${REVIEWER} (${REVIEWER_PERMISSION:-no} access) is not a review request"
             else
               [ "$LABEL_NAME" = 'final-review' ] || skip "label ${LABEL_NAME} is not a review request"
               EXPLICIT_REQUEST=true
