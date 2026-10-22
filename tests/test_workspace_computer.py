@@ -333,6 +333,8 @@ def test_has_display_follows_wrappers_without_io() -> None:
 def test_the_schema_tells_the_model_what_each_field_means() -> None:
     schema = TypeAdapter(ComputerAction).json_schema()['$defs']
     assert all(definition['required'][0] == 'type' for name, definition in schema.items() if name != 'Point')
+    # Every required name must exist: Gemini rejects a schema that requires an undeclared property.
+    assert all(set(definition['required']) <= set(definition['properties']) for definition in schema.values())
     assert schema['Scroll']['properties']['direction']['description'] == (
         'Which way the content moves into view: `down` shows what is below.'
     )

@@ -43,7 +43,8 @@ _Keys: TypeAlias = Annotated[tuple[str, ...], Field(max_length=8)]
 
 def _require_type(schema: dict[str, Any]) -> None:
     # `type` has a default so Python callers can omit it, but a model must always send it: it picks the action.
-    schema['required'] = ['type', *(name for name in schema.get('required', []) if name != 'type')]
+    if 'type' in schema.get('properties', {}):
+        schema['required'] = ['type', *(name for name in schema.get('required', []) if name != 'type')]
 
 
 _CONFIG = ConfigDict(use_attribute_docstrings=True, json_schema_extra=_require_type)
