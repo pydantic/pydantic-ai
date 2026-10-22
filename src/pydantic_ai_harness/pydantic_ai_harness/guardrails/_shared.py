@@ -8,15 +8,20 @@ record the non-`allow` outcomes as spans.
 
 from __future__ import annotations
 
+import functools
 import inspect
+import re
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Literal, assert_never, get_origin
+from types import UnionType
+from typing import Annotated, Any, Literal, Union, assert_never, get_args, get_origin
 
 from typing_extensions import TypeIs
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 
 class _Unset:
@@ -157,11 +162,16 @@ def takes_ctx(func: Callable[..., object]) -> bool:
 
     Detected from the positional parameters: a guard always takes the guarded
     value, so a second required positional parameter means it also wants the
-    run context, whether or not it is annotated. Keyword-only parameters are
-    the guard's own options and never count; a second positional parameter
-    with a default counts only when the first parameter is annotated as
-    `RunContext`. A callable whose signature cannot be introspected is treated
-    as taking the value only.
+    run context, whether or not it is annotated, as does a `*args` parameter
+    alongside another parameter.
+    Keyword-only parameters are the guard's own options and never count. A
+    second positional parameter with a default is read from the first
+    parameter's annotation: `RunContext` (also in a union or `Annotated`)
+    means the run context, and any other type means the guarded value. A first
+    parameter with no annotation, `Any`, `object`, or a type that cannot be
+    resolved still gets the run context, as it always has, with a
+    `HarnessDeprecationWarning`. A callable whose signature cannot be
+    introspected is treated as taking the value only.
     """
     try:
         parameters = inspect.signature(func).parameters.values()
@@ -173,23 +183,65 @@ def takes_ctx(func: Callable[..., object]) -> bool:
         if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     ]
     if len(positional) < 2:
-        return False
-    return positional[1].default is inspect.Parameter.empty or _annotated_as_run_context(positional[0])
+        has_args = any(parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
+        return has_args and len(parameters) > 1
+    if positional[1].default is inspect.Parameter.empty:
+        return True
+    annotation = _resolve(func, positional[0].annotation)
+    either = annotation is inspect.Parameter.empty or annotation is Any or annotation is object
+    if either or (isinstance(annotation, str) and not _names_run_context(annotation)):
+        warnings.warn(
+            f'Guard {_guard_name(func)} has a second positional parameter with a default and a first parameter '
+            'that is unannotated, `Any`, `object` or unresolvable, so it is passed the RunContext first, as before. '
+            "Annotate the first parameter, with `RunContext[...]` or with the guarded value's type: a future "
+            'release will pass the guarded value to it.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
+        return True
+    return _is_run_context(annotation)
 
 
-def _annotated_as_run_context(parameter: inspect.Parameter) -> bool:
-    """Whether `parameter` is annotated `RunContext`, read without resolving the annotation.
+def _resolve(func: Callable[..., object], annotation: object) -> object:
+    """A string annotation (under `from __future__ import annotations`) evaluated in `func`'s module.
 
-    A string annotation (under `from __future__ import annotations`) is matched by name rather
-    than evaluated: resolving it fails when a type it mentions is imported only for type checking,
-    and that would turn a guard which worked into an error.
+    Only this one annotation is evaluated, so a type elsewhere in the signature that is imported only
+    for type checking does not stop it resolving. When it cannot be evaluated itself, the string is
+    kept rather than turning a working guard into an error.
     """
-    annotation = parameter.annotation
+    if not isinstance(annotation, str):
+        return annotation
+    target = inspect.unwrap(func.func if isinstance(func, functools.partial) else func)
+    # A callable instance's annotations come from its class's `__call__`.
+    namespace = getattr(target, '__globals__', None) or getattr(type(target).__call__, '__globals__', {})
+    try:
+        return eval(annotation, namespace)  # same as `typing.get_type_hints`
+    except Exception:
+        return annotation
+
+
+def _is_run_context(annotation: object) -> bool:
+    """Whether a type annotation is `RunContext`, a subscripted `RunContext`, or one in a union or `Annotated`.
+
+    A string annotation that could not be resolved is matched by name.
+    """
     if isinstance(annotation, str):
-        # Also `'pydantic_ai.RunContext[Deps]'`, and a quoted annotation under postponed evaluation.
-        name = annotation.strip().strip('\'"').split('[', 1)[0].strip()
-        return name.rsplit('.', 1)[-1] == 'RunContext'
-    return annotation is RunContext or get_origin(annotation) is RunContext
+        return _names_run_context(annotation)
+    if annotation is RunContext:
+        return True
+    origin = get_origin(annotation)
+    if origin is RunContext:
+        return True
+    if origin is Annotated:
+        return _is_run_context(get_args(annotation)[0])
+    if origin is Union or origin is UnionType:
+        return any(_is_run_context(arg) for arg in get_args(annotation) if arg is not type(None))
+    return False
+
+
+def _names_run_context(annotation: str) -> bool:
+    """Whether a string annotation names `RunContext`, qualified or not, as in `'RunContext[D] | None'`."""
+    return re.search(r'(?<!\w)RunContext\b', annotation) is not None
 
 
 async def evaluate(
@@ -203,18 +255,22 @@ async def evaluate(
         outcome = await outcome
     if isinstance(outcome, GuardrailResult):
         return outcome
-    if isinstance(outcome, bool):
-        return GuardrailResult.allow() if outcome else GuardrailResult.block()
-    # Refused rather than read for truthiness: a classifier label such as `'unsafe'`, or a
-    # verdict object of the wrong type, is truthy and would let the value through.
-    raise UserError(
-        f'A guard must return True, False, or a GuardrailResult; {_guard_name(guard)} returned {type(outcome).__name__}. '
-        'Wrap a comparison on a NumPy or tensor score in bool().'
-    )
+    if not isinstance(outcome, bool):
+        # Still read for truthiness, as before, but flagged: a classifier label such as `'unsafe'`
+        # is truthy and lets the value through.
+        warnings.warn(
+            f'A guard should return True, False, or a GuardrailResult; {_guard_name(guard)} returned '
+            f"{type(outcome).__name__}, which is read for truthiness, so a truthy label such as 'unsafe' "
+            'allows the value. A future release will raise UserError instead. Return bool(...) or a '
+            'GuardrailResult.',
+            HarnessDeprecationWarning,
+            stacklevel=2,
+        )
+    return GuardrailResult.allow() if outcome else GuardrailResult.block()
 
 
 def _guard_name(guard: GuardCallable) -> str:
-    """A guard's name for an error message, without its `repr`, which can show bound arguments such as keys."""
+    """A guard's name for a message, without its `repr`, which can show bound arguments such as keys."""
     return getattr(guard, '__qualname__', type(guard).__name__)
 
 

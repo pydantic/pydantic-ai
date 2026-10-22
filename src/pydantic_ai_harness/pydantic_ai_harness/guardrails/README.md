@@ -29,7 +29,7 @@ Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -
 
 ## Usage
 
-A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value raises `UserError`, so a classifier label such as `'unsafe'` is not read as `True`; wrap a comparison on a NumPy or tensor score in `bool()`.
+A guard returns a bare `bool` (`True` = allow, `False` = block) for the simple case, or a `GuardrailResult` for the richer outcomes. Any other return value is read for truthiness, as in earlier releases, and emits a `HarnessDeprecationWarning`: a classifier label such as `'unsafe'` is truthy and lets the value through, and a future release will raise `UserError` instead. Return `bool(...)`, for example around a comparison on a NumPy or tensor score.
 
 ```python
 from pydantic_ai import Agent
@@ -449,7 +449,7 @@ Normal tool dispatch starts after the model request, which the guard holds until
 
 ## Accessing run context
 
-A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required, or when the first one is annotated `RunContext`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
+A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required. So does a `*args` parameter alongside another parameter. When the second parameter has a default, the first parameter's annotation decides: `RunContext` (also in a union or `Annotated`) means the run context, and any other type means the guarded value. A first parameter with no annotation, `Any`, `object`, or a type that cannot be resolved still gets `RunContext`, as in earlier releases, with a `HarnessDeprecationWarning`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
 
 ```python
 from pydantic_ai import RunContext
