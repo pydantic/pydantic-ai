@@ -359,7 +359,7 @@ Tag names are lowercase snake_case. `register_tag` raises a [`UserError`][pydant
 `register_tag` is the low-level primitive: an API that declares a tag for you is expected to call it when its class or module is defined, which is just as import-time and deterministic.
 
 !!! warning "Register tags before the first request"
-    A tag registered after requests have been sent changes how later requests escape text. Framing is applied each time a request is built, so earlier history that contains the new tag goes out with different bytes than before, and misses the provider's [prompt cache](caching.md).
+    A tag registered after requests have been sent changes how later requests escape text. Framing is applied each time a request is built, so earlier history that contains the new tag goes out with different bytes than before, and misses the provider's [prompt cache](caching.md). `register_tag` emits a `UserWarning` when it adds a tag after text has already been escaped.
 
 Like Pydantic AI's own framing, a tag tells the model where content came from; it doesn't prove it. See [the trust boundary](../message-history.md#trust-boundary-for-client-supplied-history).
 
