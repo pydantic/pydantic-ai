@@ -475,10 +475,12 @@ class SystemOneServer:
 
     needle: str
     bodies: list[dict[str, object]] = field(default_factory=list[dict[str, object]])
+    timeouts: list[object] = field(default_factory=list[object])
 
     def __call__(self, request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         self.bodies.append(body)
+        self.timeouts.append(request.extensions.get('timeout'))
         p = 0.9 if self.needle in body['state'] else 0.1
         answers = {name: {'type': 'noul', 'noul': p} for name in body['questions']}
         usage = {'billing_units': len(answers), 'input_tokens': 42, 'output_tokens': 0}
@@ -500,7 +502,8 @@ async def test_system_one_judge_answers_relevance_as_probabilities(
         monkeypatch.setattr(system_one_provider, 'create_async_httpx2_client', server.client)
         judge_model: Model | str = 'system-one:clm-latest'
     else:
-        judge_model = SystemOneModel('clm-latest', provider=SystemOneProvider(http_client=server.client()))
+        provider = SystemOneProvider(http_client=server.client())
+        judge_model = SystemOneModel('clm-latest', provider=provider, settings={'timeout': 120})
     agent = Agent(
         _calls_smart_file_search(), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=judge_model)]
     )
@@ -512,6 +515,8 @@ async def test_system_one_judge_answers_relevance_as_probabilities(
     [match] = content.matches
     assert (match.file_path, match.symbol, match.score) == ('auth.py', 'reject_expired', 0.81)  # 0.9 * 0.9
     assert len(server.bodies) == content.coverage.evaluated
+    # A judge given by name is bounded at 30 seconds; an instance keeps its own `settings`.
+    assert {timeout['read'] for timeout in server.timeouts if isinstance(timeout, dict)} == {30 if by_name else 120}
     body = next(body for body in server.bodies if 'reject_expired' in str(body['state']))
     assert body == snapshot(
         {
@@ -635,6 +640,20 @@ async def test_judge_runs_are_not_traced_and_the_search_span_is(
     if include_content:
         expected['smart_file_search.query'] = 'where is the expired flag set'
     assert searched == expected
+
+
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_search_span_leaves_failures_to_the_tool_span(capfire: CaptureLogfire, tmp_path: Path) -> None:
+    """A failure's message can carry the arguments, so only the content-aware tool span records it."""
+    agent = Agent(
+        _calls_smart_file_search(directory='..'),
+        capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FakeJev('x'))],
+    )
+    agent.instrument = InstrumentationSettings(include_content=False)
+    await agent.run('find it')
+    [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'smart file search']
+    assert 'events' not in span
+    assert 'outside the working directory' not in str(span)
 
 
 @pytest.mark.parametrize(('cache_index', 'chunked'), [(True, 1), (False, 2)])

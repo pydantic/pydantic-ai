@@ -123,6 +123,9 @@ To install TypeSafe's SDK:
 pip/uv-add "pydantic-ai-slim[typesafe]"
 ```
 
+A judge given by name times out each request after 30 seconds; a model instance keeps its own `settings`, so set
+`settings={'timeout': ...}` on it for a slower judge, such as a local one.
+
 Any language model works as well, since the two ratings are ordinary structured output. As one search makes
 up to `candidates` judge requests, prefer a small, fast model to the run's own when you are not using a
 decision model. The judge's token usage is not counted in the run's usage or checked against its usage
