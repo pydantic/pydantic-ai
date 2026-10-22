@@ -911,7 +911,12 @@ class _ToolPair:
 
 
 def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
-    """Return matched tool-call / tool-return pairs in return-appearance order."""
+    """Return matched tool-call / tool-return pairs in return-appearance order.
+
+    A retried return (`outcome='retried'`) isn't a result: it tells the model to make the call again. It
+    is left out, so it is never cleared before the model sees the correction, doesn't count toward
+    `ClearToolResults.keep_pairs`, and doesn't supersede an earlier successful read.
+    """
     calls: dict[str, ToolCallPart] = {}
     for msg in messages:
         if isinstance(msg, ModelResponse):
@@ -924,7 +929,7 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[_ToolPair]:
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
-                if isinstance(part, ToolReturnPart) and part.tool_call_id in calls:
+                if isinstance(part, ToolReturnPart) and part.outcome != 'retried' and part.tool_call_id in calls:
                     call = calls[part.tool_call_id]
                     pairs.append(_ToolPair(part.tool_call_id, call.tool_name, call, order))
                     order += 1
