@@ -352,8 +352,8 @@ class SqliteMediaStore:
     On a caller-owned connection, `put` commits its insert when the caller
     had no transaction open, and otherwise leaves the commit to the caller
     (a Python 3.12+ `autocommit=False` connection always has one open).
-    Creating the table on the store's first call commits the connection
-    regardless, as `SqliteStepStore` does.
+    Creating the table on the store's first call commits nothing either: inside
+    a caller transaction, the table lands when the caller commits.
 
     There is no `key_strategy=` parameter: SqliteMediaStore is
     content-addressed and the digest IS the primary key -- any user-chosen
@@ -390,8 +390,11 @@ class SqliteMediaStore:
             'size_bytes INTEGER NOT NULL, '
             'metadata TEXT)'
         )
-        conn.commit()
-        self._schema_ready = True
+        # Never commit here: on a caller-owned connection that would commit the
+        # caller's own pending work. Inside a caller transaction the table lands
+        # only if the caller commits, so check for it again on the next call.
+        if not conn.in_transaction:
+            self._schema_ready = True
 
     def _open(self) -> sqlite3.Connection:
         if self._connection is not None:
