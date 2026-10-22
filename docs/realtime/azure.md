@@ -172,7 +172,9 @@ with the other resource's endpoint or key.
 `AZURE_OPENAI_ENDPOINT` holds a bare resource endpoint and `OPENAI_API_VERSION` is unset, constructing
 it raises a [`UserError`][pydantic_ai.exceptions.UserError] asking for an `api_version`. Pass
 `azure_endpoint` in its `/openai/v1` form (or set `OPENAI_API_VERSION`) alongside the Voice Live
-values in that case. With no Azure OpenAI configuration at all, the Voice Live values are enough.
+values in that case, together with `api_key` / `AZURE_OPENAI_API_KEY`: once any Azure OpenAI value is
+set, the Voice Live key no longer stands in for it. With no Azure OpenAI configuration at all, the
+Voice Live values are enough.
 
 ```python
 from pydantic_ai import Agent
@@ -243,7 +245,7 @@ settings = AzureRealtimeModelSettings(
 
 ### Voices
 
-Cascade models (including `phi4-mm-realtime`) speak only through Azure text-to-speech voices: they reject
+Cascade models (and `phi4-mm-realtime`) speak only through Azure text-to-speech voices: they reject
 `openai_voice` with `Only Azure voice is supported`, which fails the session as it starts. Choose their
 voice with
 [`azure_voice_live_voice`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_voice],
