@@ -104,7 +104,7 @@ browser's call stays up, and billed, until the browser hangs up. To end the call
 call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] instead (it works from a
 [tool](tools.md#ending-the-session-from-a-tool) too), or
 [`hang_up(answer.session)`][pydantic_ai.agent.AgentRealtime.hang_up] on `agent.realtime(model)` when
-no sideband is attached. OpenAI supports this for both gpt-realtime and GPT-Live; Azure OpenAI doesn't yet.
+no sideband is attached. OpenAI supports this for both gpt-realtime and GPT-Live, and so does Azure OpenAI.
 
 The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the full FastAPI and
 browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfilter`) lives on the

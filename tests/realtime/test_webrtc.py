@@ -1019,18 +1019,11 @@ async def test_hang_up_on_a_websocket_session_closes_it() -> None:
     assert model.hung_up == []
 
 
-async def test_hang_up_is_refused_where_the_provider_cannot_end_a_call() -> None:
-    call = WebRTCSession(provider_name='openai', session_id='rtc_x')
+async def test_hang_up_is_refused_for_a_call_another_provider_negotiated() -> None:
     with pytest.raises(UserError, match='negotiated by provider'):
         await OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(_unused_handler)).hang_up(
             WebRTCSession(provider_name='azure', session_id='rtc_x')
         )
-    azure = AzureRealtimeModel(
-        'gpt-realtime',
-        provider=AzureProvider(azure_endpoint='https://example.openai.azure.com', api_version='v', api_key='k'),
-    )
-    with pytest.raises(UserError, match='Azure OpenAI WebRTC call from the server is not supported'):
-        await azure.hang_up(call)
 
 
 @pytest.mark.parametrize(
@@ -1055,6 +1048,75 @@ async def test_hang_up_of_a_call_that_already_ended_is_not_an_error(live: bool, 
         else OpenAIRealtimeModel('gpt-realtime', provider=provider)
     )
     await model.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_gone'))
+
+
+@pytest.mark.parametrize(
+    'endpoint,api_version',
+    [
+        ('https://example.openai.azure.com/openai/v1', None),
+        ('https://example.openai.azure.com', '2025-04-01-preview'),
+    ],
+    ids=['v1', 'api-version'],
+)
+async def test_azure_hangs_up_on_its_v1_calls_endpoint(endpoint: str, api_version: str | None) -> None:
+    """Azure OpenAI ends a call on its `/openai/v1` API, as it relays offers, whatever `api_version` is set.
+
+    Its classic `/openai/realtime/calls/{id}/hangup?api-version=...` path, where the SDK client would go, is a 404.
+    """
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200)
+
+    provider = AzureProvider(
+        azure_endpoint=endpoint,
+        api_version=api_version,
+        api_key='k',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    await AzureRealtimeModel('gpt-realtime', provider=provider).hang_up(
+        WebRTCSession(provider_name='azure', session_id='rtc_x')
+    )
+    assert [(request.method, str(request.url), request.headers.get('api-key')) for request in requests] == [
+        ('POST', 'https://example.openai.azure.com/openai/v1/realtime/calls/rtc_x/hangup', 'k')
+    ]
+
+
+@pytest.mark.parametrize(
+    'status,body,ended',
+    [
+        (
+            404,
+            {'error': {'message': 'No session found', 'type': 'invalid_request_error', 'code': 'call_id_not_found'}},
+            True,
+        ),
+        (404, {'error': {'code': '404', 'message': 'Resource not found'}}, False),
+        (404, None, False),
+        (500, {'error': {'message': 'boom'}}, False),
+    ],
+    ids=['ended', 'other-404', 'not-json', 'server-error'],
+)
+async def test_azure_hang_up_of_a_call_that_already_ended_is_not_an_error(
+    status: int, body: dict[str, Any] | None, ended: bool
+) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status, json=body) if body is not None else httpx2.Response(status, text='Not Found')
+
+    provider = AzureProvider(
+        azure_endpoint='https://example.openai.azure.com/openai/v1',
+        api_key='k',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    hang_up = AzureRealtimeModel('gpt-realtime', provider=provider).hang_up(
+        WebRTCSession(provider_name='azure', session_id='rtc_gone')
+    )
+    if ended:
+        await hang_up
+    else:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await hang_up
+        assert exc_info.value.status_code == status
 
 
 async def test_any_other_not_found_hang_up_is_an_error() -> None:

@@ -90,10 +90,8 @@ Azure OpenAI supports the same browser WebRTC flow as OpenAI — the audio flows
 while your backend runs a control-plane **sideband**. See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)
 for the topology, and use
 [`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] /
-[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] as on OpenAI.
-One difference: ending the call from the server isn't supported yet, so
-[`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] raises
-[`UserError`][pydantic_ai.exceptions.UserError] and the call ends when the browser hangs up.
+[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] as on OpenAI,
+and end the call from the server with [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up].
 `answer_webrtc_offer` relays the offer with `webrtcfilter=on`, which limits the events forwarded to the
 browser to a safe subset so the session instructions stay on the server's control connection. With
 `create_client_secret`, the browser posts its offer to Azure itself, so add `webrtcfilter=on` to the

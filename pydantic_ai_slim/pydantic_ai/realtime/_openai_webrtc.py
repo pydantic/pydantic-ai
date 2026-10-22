@@ -139,6 +139,26 @@ async def mint_client_secret(
     )
 
 
+async def hang_up_call(
+    *, http_client: AsyncHTTPClient, hangup_url: str, headers: dict[str, str], model_name: str
+) -> None:
+    """`POST .../realtime/calls/{call_id}/hangup` to end a call; one the provider no longer knows is already over.
+
+    For a provider whose SDK client can't reach the hangup endpoint (Azure OpenAI's `/openai/v1` API, whatever
+    `api_version` the client is configured with); OpenAI goes through the SDK.
+    """
+    response = await http_client.post(hangup_url, headers=headers, timeout=HANG_UP_TIMEOUT)
+    if response.status_code == 404:
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        error = data.get('error') if _utils.is_str_dict(data) else None
+        if _utils.is_str_dict(error) and error.get('code') == 'call_id_not_found':
+            return
+    _raise_for_status(response, model_name)
+
+
 def _webrtc_answer_from_response(
     response: httpx.Response | httpx2.Response, provider_name: str, model_name: str
 ) -> WebRTCAnswer:
