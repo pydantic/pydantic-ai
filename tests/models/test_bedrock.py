@@ -86,10 +86,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..cassette_utils import (
-    request_json,
-    single_request_body,
-)
+from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, legacy_retry_prompt_part, try_import
 from .conftest import stream_bedrock_converse_mock
 

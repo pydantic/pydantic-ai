@@ -137,7 +137,8 @@ The output mode is chosen on the run's first request and kept for the rest of th
 setting that changes from step to step doesn't add or remove the output tool between requests and
 [invalidate the prompt cache](../capabilities/caching.md#what-invalidates-a-cache). A Claude run that starts with tool
 output keeps it once thinking turns on, with the output tool offered under `toolChoice={'auto': {}}`. OpenAI GPT-5.6
-and GPT-6 accept a forced tool choice while they think, so they keep forced tool output. The other models don't
+and GPT-6 accept output tools while they think, so they keep tool output (offered without a forced `toolChoice`, as
+for these models without thinking). The other models don't
 accept output tools alongside thinking, so there a request that thinks switches to
 [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 
