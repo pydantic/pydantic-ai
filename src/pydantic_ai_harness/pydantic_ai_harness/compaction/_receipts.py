@@ -18,7 +18,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai.messages import TextContent, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 _RECEIPT_MARKER = '[History before this point'
@@ -110,6 +110,11 @@ def is_receipt_part(part: object) -> bool:
         and not isinstance(part.content, str)
         and any(isinstance(item, TextContent) and item.metadata == _RECEIPT_METADATA for item in part.content)
     )
+
+
+def is_receipt_message(message: ModelMessage) -> bool:
+    """Return True if *message* is a request made up entirely of receipt parts."""
+    return isinstance(message, ModelRequest) and bool(message.parts) and all(is_receipt_part(p) for p in message.parts)
 
 
 # ---------------------------------------------------------------------------
