@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import inspect
+import sys
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
@@ -1148,6 +1149,25 @@ def _keep_default_output_mode(
 # runs the whole chain inside one durable unit.
 
 
+@asynccontextmanager
+async def _serving_scope(request_context: ModelRequestContext) -> AsyncGenerator[None]:
+    """Enter the model a capability wrapped the request's model in for the request, if any.
+
+    Its `__aexit__` return value is discarded, so it can't suppress the request's error.
+    """
+    if (wrapper := request_context._serving_wrapper) is None:  # pyright: ignore[reportPrivateUsage]
+        yield
+        return
+    await wrapper.__aenter__()
+    try:
+        yield
+    except BaseException:
+        await wrapper.__aexit__(*sys.exc_info())
+        raise
+    else:
+        await wrapper.__aexit__(None, None, None)
+
+
 def _split_resume_seed(
     messages: Sequence[_messages.ModelMessage], model: models.Model
 ) -> tuple[list[_messages.ModelMessage], _messages.ModelResponse | None]:
@@ -1591,12 +1611,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `AgentStream` and the model-request hooks wrap it once. The step is counted in
             # `ctx.state.usage.requests` when its response is committed, not here.
             try:
-                async with model_request_stream(
-                    req_ctx.model,
-                    request_context=req_ctx,
-                    run_context=run_context,
-                    return_pending=ctx.deps.output_schema.allows_pending_model_response,
-                ) as sr:
+                async with (
+                    _serving_scope(req_ctx),
+                    model_request_stream(
+                        req_ctx.model,
+                        request_context=req_ctx,
+                        run_context=run_context,
+                        return_pending=ctx.deps.output_schema.allows_pending_model_response,
+                    ) as sr,
+                ):
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                     agent_stream_holder.append(agent_stream)
@@ -1877,13 +1900,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             capture_model_request_span_context(req_ctx)
             try:
-                response = await model_request(
-                    req_ctx.model,
-                    request_context=req_ctx,
-                    run_context=run_context,
-                    on_progress=on_progress,
-                    return_pending=ctx.deps.output_schema.allows_pending_model_response,
-                )
+                async with _serving_scope(req_ctx):
+                    response = await model_request(
+                        req_ctx.model,
+                        request_context=req_ctx,
+                        run_context=run_context,
+                        on_progress=on_progress,
+                        return_pending=ctx.deps.output_schema.allows_pending_model_response,
+                    )
                 _handler_response = response
                 _handler_usage_recorded = True
                 self._record_response_usage(ctx, response, request_context=req_ctx)
@@ -2097,8 +2121,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # After the before-chain, so capability model wrappers apply to the model that serves the request, even one a
         # hook swapped in.
         root_capability = ctx.deps.root_capability
-        request_context.model = request_context.model._with_serving_wrapper(  # pyright: ignore[reportPrivateUsage]
-            lambda model: root_capability.get_wrapper_model(model) or model
+        wrappers: list[models.Model] = []
+
+        def wrap(model: models.Model) -> models.Model:
+            if (wrapper := root_capability.get_wrapper_model(model)) is None:
+                return model
+            wrappers.append(wrapper)
+            return wrapper
+
+        request_context.model = request_context.model._with_serving_wrapper(wrap)  # pyright: ignore[reportPrivateUsage]
+        # The wrapper is entered around each request it sends, like a model passed to the agent is around a run. One
+        # applied on this side of a durable unit only answers questions like `continuation_delay`, and the unit enters
+        # the one that sends the request.
+        request_context._serving_wrapper = next(  # pyright: ignore[reportPrivateUsage]
+            (wrapper for wrapper in wrappers if wrapper is request_context.model), None
         )
 
         model = request_context.model

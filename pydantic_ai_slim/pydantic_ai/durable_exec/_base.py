@@ -1027,7 +1027,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 serving_model = (
                     root_capability.get_wrapper_model(active_model) if serving and root_capability is not None else None
                 )
-                yield serving_model or active_model, ctx
+                if serving_model is None:
+                    yield active_model, ctx
+                    return
+                # Entered around the request it sends, as the core enters it outside durable execution.
+                async with managed_model_scope(serving_model, owned=True) as entered:
+                    yield entered, ctx
 
     @contextmanager
     def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:

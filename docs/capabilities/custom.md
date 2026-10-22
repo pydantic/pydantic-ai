@@ -458,6 +458,8 @@ Resolution results are cached by model ID and resolver tree for the duration of 
 
 Unlike [`get_wrapper_toolset`](#toolset-wrapping), which wraps the toolset once per run, `get_wrapper_model` is called for every model request, with the model that will send that request. That's the model chosen after [model selection](#selecting-the-model) and every [`before_model_request`](#model-request-hooks) hook have run: the agent's model, one passed to the run as `model=`, one a capability's `get_model` such as [`SelectModel`](select-model.md) selected, or one a hook swapped in, whatever the order of the capabilities. So a run that switches models partway through gets each request wrapped around the model serving it.
 
+The returned model is entered (`async with`) around each request it serves, and exited when the request is done or has failed, as a model passed to the agent is around a run. Set up per-request resources in its `__aenter__`, and keep long-lived ones on the capability.
+
 ```python {title="wrapper_model_example.py"}
 from dataclasses import dataclass
 from typing import Any

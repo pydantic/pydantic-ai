@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import pytest
+
 from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapperCapability
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -99,3 +104,84 @@ async def test_a_deferred_capability_does_not_wrap_the_model() -> None:
 
     await agent.run('Hello')
     assert calls == []
+
+
+class _ScopedModel(WrapperModel):
+    """Records being entered and exited, and whether it was entered when it served a request."""
+
+    def __init__(self, wrapped: Model, events: list[object]) -> None:
+        super().__init__(wrapped)
+        self.events = events
+        self.entered = False
+
+    async def __aenter__(self) -> _ScopedModel:
+        self.events.append('enter')
+        self.entered = True
+        return await super().__aenter__()
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        self.events.append('exit')
+        self.entered = False
+        return await super().__aexit__(*args)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.events.append(('request', self.entered))
+        return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        self.events.append(('stream', self.entered))
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
+        self.events.append(('streamed', self.entered))
+
+
+@dataclass
+class _Scoped(AbstractCapability[Any]):
+    events: list[object]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _ScopedModel(model, self.events)
+
+
+async def test_the_wrapper_is_entered_around_each_request_it_serves() -> None:
+    events: list[object] = []
+    agent = Agent(TestModel(), capabilities=[_Scoped(events)])
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Paris'
+
+    await agent.run('Where?')
+    assert events == ['enter', ('request', True), 'exit', 'enter', ('request', True), 'exit']
+
+
+async def test_the_wrapper_is_entered_around_each_streamed_request_it_serves() -> None:
+    events: list[object] = []
+    agent = Agent(TestModel(), capabilities=[_Scoped(events)])
+    async with agent.run_stream('Hello') as result:
+        await result.get_output()
+    assert events == ['enter', ('stream', True), ('streamed', True), 'exit']
+
+
+async def test_the_wrapper_is_exited_when_its_request_fails() -> None:
+    events: list[object] = []
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('Failed')
+
+    agent = Agent(FunctionModel(fail), capabilities=[_Scoped(events)])
+    with pytest.raises(ValueError, match='Failed'):
+        await agent.run('Hello')
+    assert events == ['enter', ('request', True), 'exit']

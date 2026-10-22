@@ -696,7 +696,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         meant to wrap the model each attempt is sent to, so falling back between models would wrap each of them; a
         [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is wrapped as a whole for now.
         Return a [`WrapperModel`][pydantic_ai.models.wrapper.WrapperModel] around `model` to change how requests
-        are sent, as [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] does.
+        are sent, as [`BatchModelRequests`][pydantic_ai.capabilities.BatchModelRequests] does. The returned model is
+        entered (`async with`) around each request it serves and exited after it, also when the request fails, so set
+        up per-request resources in its `__aenter__`; keep long-lived ones on the capability.
 
         When multiple capabilities provide wrappers, they follow middleware semantics: the first capability in the
         list wraps outermost, as with
