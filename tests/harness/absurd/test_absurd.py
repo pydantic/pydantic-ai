@@ -935,6 +935,38 @@ class TestClaim:
 
         assert list(await checkpoints(absurd, ctx.task_id)) == ['slow__model.request']
 
+    async def test_lost_claim_keeps_the_step_error_as_its_cause(
+        self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A tool failing as the lost claim cancels it doesn't hide the `CancelledTask` the SDK's worker
+        # handles, and the tool's error isn't dropped either.
+        monkeypatch.setattr(_HEARTBEAT_INTERVAL, _no_heartbeat_wait)
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            await absurd.cancel_task(task['id'])
+            try:
+                await anyio.sleep_forever()
+            except anyio.get_cancelled_exc_class():
+                raise RuntimeError('cleanup failed') from None
+            raise AssertionError('unreachable')  # pragma: no cover
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd) as ctx:
+            task['id'] = ctx.task_id
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(CancelledTask) as exc_info:
+                await agent.run('go')
+
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
+        assert str(exc_info.value.__cause__) == 'cleanup failed'
+
     async def test_lost_claim_and_a_step_base_exception_are_both_raised(
         self, absurd: AsyncAbsurd, monkeypatch: pytest.MonkeyPatch
     ) -> None:
