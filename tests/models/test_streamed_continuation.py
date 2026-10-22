@@ -29,7 +29,13 @@ from pydantic_ai._agent_graph import _interrupted_stream_response  # pyright: ig
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    SkipModelRequest,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -457,8 +463,9 @@ async def test_cost_limit_mid_continuation_cancels_job(
         else:
             await agent.run('go', usage_limits=limits)
 
-    assert model.cancelled[-1].provider_response_id == f'r{expected_calls}'
-    assert model.cancelled[-1].state == 'suspended'
+    # Cancelled exactly once: the streamed composite's own cancel leaves nothing for the graph to cancel again.
+    assert [response.provider_response_id for response in model.cancelled] == [f'r{expected_calls}']
+    assert model.cancelled[0].state == 'suspended'
     if stream:
         assert model.request_stream_calls == expected_calls
     else:
@@ -1591,6 +1598,45 @@ async def test_run_stream_downstream_error_interrupts_and_cancels_job() -> None:
     # The still-live background job was cancelled best-effort so it doesn't leak.
     assert len(model.cancelled) == 1
     assert model.cancelled[0].provider_response_id == 'job1'
+
+
+class _FailingContinuationModel(_ScriptedModel):
+    """A `_ScriptedModel` whose continuation request (every `request_stream` after the first) fails."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        if self.request_stream_calls:
+            raise ModelAPIError('scripted', 'continuation failed')
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as response:
+            yield response
+
+
+async def test_run_stream_continuation_error_cancels_job_once() -> None:
+    """A continuation request that fails mid-`run_stream` cancels the suspended job exactly once.
+
+    The streamed composite cancels the job itself when a later segment fails, so the response it then
+    reports must not look like a resumable detach, or the graph's interrupted-stream path cancels it again.
+    """
+    model = _FailingContinuationModel(
+        segments=[
+            _StreamSegment(texts=[], state='suspended', provider_response_id='job1', input_tokens=5, output_tokens=2)
+        ]
+    )
+
+    with capture_run_messages() as messages:
+        with pytest.raises(ModelAPIError, match='continuation failed'):
+            async with Agent(model).run_stream('go') as result:
+                await result.get_output()
+
+    assert [response.provider_response_id for response in model.cancelled] == ['job1']
+    assert isinstance(messages[-1], ModelResponse)
+    assert messages[-1].state == 'interrupted'  # non-resumable: the job is gone
 
 
 async def test_iter_node_stream_early_break_records_suspended() -> None:
