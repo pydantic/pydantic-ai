@@ -157,7 +157,8 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
     """
     name = _module_name(path)
     with _LOAD_LOCK:
-        previous = sys.modules.get(name)
+        # The entry itself, not `.get()`, so an entry holding `None` is put back too.
+        previous = {name: sys.modules[name]} if name in sys.modules else None
         try:
             module = _load_module(path, name)
             cls = _find_capability_class(module)
@@ -171,7 +172,7 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
             if previous is None:
                 sys.modules.pop(name, None)
             else:
-                sys.modules[name] = previous
+                sys.modules.update(previous)
             if isinstance(exc, (CapabilityValidationError, KeyboardInterrupt)):
                 raise
             raise CapabilityValidationError(f'{type(exc).__name__}: {exc}') from exc

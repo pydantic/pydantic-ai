@@ -355,6 +355,20 @@ class UsesModels(AbstractCapability):
             validate_capability_file(broken)
         assert str(broken.resolve()) not in {getattr(module, '__file__', None) for module in sys.modules.values()}
 
+    def test_failed_load_restores_an_entry_holding_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        path = _write(tmp_path, 'm', VALID_CODE)
+        validate_capability_file(path)
+        [name] = [
+            name for name, module in sys.modules.items() if getattr(module, '__file__', None) == str(path.resolve())
+        ]
+        modules: dict[str, object] = vars(sys)['modules']
+        monkeypatch.setitem(modules, name, None)
+        path.write_text('raise RuntimeError("boom")\n', encoding='utf-8')
+        with pytest.raises(CapabilityValidationError, match='boom'):
+            validate_capability_file(path)
+        assert name in sys.modules
+        assert modules[name] is None
+
     def test_concurrent_loads_of_one_file_run_one_at_a_time(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
