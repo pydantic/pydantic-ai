@@ -22,7 +22,7 @@ from typing import Any, cast
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.messages import ModelResponse, SpeechPart
+from pydantic_ai.messages import ModelResponse, SpeechPart, ToolCallPart, ToolReturnPart
 
 from ...conftest import try_import
 
@@ -306,11 +306,10 @@ def async_gemini() -> GeminiSimulation:
     return GeminiSimulation(behavior=GeminiBehavior(async_tool_calls=True))
 
 
-@known('8760')
-def test_known_gemini_async_filler_recorded_after_the_result() -> None:
+def test_gemini_async_filler_recorded_before_the_result() -> None:
     """S0: the model narrates after the call and finishes; the result then cuts in, and the model answers.
 
-    Expected: `[call, filler] {return} [answer]`. Recorded: `[call] {return} [filler] [answer]`.
+    Recorded `[call, filler] {return} [answer]`, as it was said.
     """
 
     def scenario(sim: GeminiSimulation) -> None:
@@ -320,11 +319,10 @@ def test_known_gemini_async_filler_recorded_after_the_result() -> None:
         sim.finish()
         sim.settle()
 
-    reproduce('8760', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
-@known('8760')
-def test_known_gemini_async_result_cuts_into_speech() -> None:
+def test_gemini_async_result_cuts_into_speech() -> None:
     """S2: the result arrives while the model is still narrating; what it said before belongs to the call."""
 
     def scenario(sim: GeminiSimulation) -> None:
@@ -334,7 +332,7 @@ def test_known_gemini_async_result_cuts_into_speech() -> None:
         sim.finish_tool()
         sim.settle()
 
-    reproduce('8760', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
 def test_turn_heard_before_a_cancelled_reply_ended_is_filed_after_it() -> None:
@@ -458,18 +456,57 @@ def test_extended_thinking_parallel_calls_are_answered_once() -> None:
     run_clean(GeminiSimulation(behavior=GeminiBehavior(stalls_in_progress=True)), scenario)
 
 
-@known('8760')
-def test_known_gemini_async_second_call_in_the_same_turn() -> None:
+def test_gemini_async_second_call_in_the_same_turn() -> None:
+    """The model makes a second asynchronous call in the turn of the first: both are in the one response."""
+
     def scenario(sim: GeminiSimulation) -> None:
         sim.send_text()
         sim.call_tools(deliver=False)
         sim.call_tools()
 
-    reproduce('8760', async_gemini(), scenario)
+    run_clean(async_gemini(), scenario)
 
 
-@known('SIM-18')
-def test_known_live_reply_split_by_a_delegated_round() -> None:
+def _live_history(sim: LiveSimulation) -> list[list[str]]:
+    """Each recorded message's parts: what was said, and the tool calls and returns, by call id."""
+    session = sim.session
+    assert session is not None
+    return [
+        [
+            part.transcript or ''
+            if isinstance(part, SpeechPart)
+            else f'{part.part_kind} {part.tool_call_id}'
+            if isinstance(part, ToolCallPart | ToolReturnPart)
+            else part.part_kind
+            for part in message.parts
+        ]
+        for message in session.all_messages()
+    ]
+
+
+def test_live_reply_goes_on_across_a_delegated_round() -> None:
+    """SIM-18: Live goes on speaking while the backend waits for its tool's result ("Okay, checking ... now.", seen
+    live): what it says is the reply that called the tool, ahead of the result, and only the answer follows it."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.advance_time(0.1)
+        sim.finish_tool()
+        sim.speak()
+        sim.settle()
+        history.extend(_live_history(sim))
+
+    history: list[list[str]] = []
+    run_clean(LiveSimulation(), scenario)
+    assert history == snapshot([['r1w1', 'tool-call call_1', ' r1w2'], ['tool-return call_1'], ['r2w1']])
+
+
+def test_live_continuation_call_is_a_response_of_its_own() -> None:
+    """SIM-18: a call the backend makes in a continuation, with the results it was continued with, follows them."""
+
     def scenario(sim: LiveSimulation) -> None:
         sim.speak(deliver=False)
         sim.delegate(deliver=False)
@@ -479,13 +516,41 @@ def test_known_live_reply_split_by_a_delegated_round() -> None:
         sim.finish_tool()
         sim.backend_call(deliver=False)
         sim.settle()
+        history.extend(_live_history(sim))
 
-    reproduce('SIM-18', LiveSimulation(), scenario)
+    history: list[list[str]] = []
+    run_clean(LiveSimulation(), scenario)
+    assert history == snapshot(
+        [['r1w1', 'tool-call call_1'], ['tool-return call_1'], ['tool-call call_2'], ['tool-return call_2'], ['r3w1']]
+    )
 
 
-@known('SIM-18')
-def test_known_live_late_delegated_call_lands_in_the_next_reply() -> None:
-    """The delegation calls another tool after the model started speaking a new reply: that reply gets the call."""
+def test_live_delegation_settling_while_another_is_owed_ends_the_reply() -> None:
+    """A delegation that settles while another one's tool results are still owed ends the reply that called the tools.
+
+    What Live says next is the settled delegation's outcome, a reply of its own, ahead of the other one's answer.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak()
+        sim.delegate()
+        sim.backend_call()
+        sim.backend_finish()
+        sim.delegate()
+        sim.backend_finish()
+        sim.speak()
+        sim.advance_time(0.1)
+        sim.finish_tool()
+        sim.settle()
+        history.extend(_live_history(sim))
+
+    history: list[list[str]] = []
+    run_clean(LiveSimulation(), scenario)
+    assert history == snapshot([['r1w1', 'tool-call call_1'], ['tool-return call_1'], ['r2w1'], ['r3w1']])
+
+
+def test_live_speech_before_a_continuation_call_stays_in_the_reply() -> None:
+    """SIM-18: what Live says after the round, before the backend calls again, is the reply that called the tools."""
 
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate()
@@ -496,8 +561,13 @@ def test_known_live_late_delegated_call_lands_in_the_next_reply() -> None:
         sim.speak()
         sim.backend_call()
         sim.settle()
+        history.extend(_live_history(sim))
 
-    reproduce('SIM-18', LiveSimulation(), scenario)
+    history: list[list[str]] = []
+    run_clean(LiveSimulation(), scenario)
+    assert history == snapshot(
+        [['tool-call call_1', 'r1w1'], ['tool-return call_1'], ['tool-call call_2'], ['tool-return call_2'], ['r3w1']]
+    )
 
 
 def test_gemini_cut_off_unstarted_turn_leaves_the_wait_to_the_reply() -> None:
@@ -947,20 +1017,42 @@ def test_hand_commit_of_nothing_raced_by_a_vad_stop_is_no_turn(dialect: Dialect,
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect, transcription=False)), scenario)
 
 
-@known('SIM-41')
-def test_known_xai_reopening_a_turn_after_its_own_stop() -> None:
-    """Recorded live (`xai_race_then_speech` probe): xAI hears the user stop, they speak again before it commits the
-    turn, and it reports `speech_started` for the same item, then stops and commits it once."""
+@pytest.mark.parametrize('transcription', [False, True])
+@pytest.mark.parametrize('reopens', [1, 2])
+def test_xai_reopening_a_turn_after_its_own_stop(transcription: bool, reopens: int) -> None:
+    """SIM-41, recorded live (October 2026): xAI hears the user stop and starts its reply, they speak again before it
+    commits the turn, and it reports `speech_started` for the same item and drops that reply without a
+    `response.done`. It then stops, starts another reply, and commits the turn once. The turn is recorded once,
+    each dropped reply ends cancelled, and the reply that follows is recorded (also with the frames of two re-opens
+    read together)."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_audio()
         sim.speech_start()
+        for _ in range(reopens):
+            sim.speech_stop(commit=False, deliver=reopens == 1)
+            sim.send_audio()
+            sim.speech_start(deliver=reopens == 1)
+        sim.speech_stop(commit=False)
+        sim.settle()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=transcription)), scenario)
+
+
+def test_xai_reopening_a_turn_it_started_no_reply_for() -> None:
+    """A reply asked for while the user spoke is under way when xAI hears them stop, so it starts none of its own
+    then: the turn it re-opens has no reply to drop."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.send_text()
         sim.speech_stop(commit=False)
         sim.send_audio()
-        # The same item starts again: the lifecycle starts the turn it already placed a second time.
         sim.speech_start()
+        sim.settle()
 
-    reproduce('SIM-41', OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai', transcription=False)), scenario)
 
 
 def test_xai_commits_a_stopped_turn_nobody_reopens() -> None:
@@ -1203,19 +1295,50 @@ def test_request_sent_after_a_tool_raised_is_answered_xai() -> None:
     run_clean(OpenAISimulation(openai=OpenAIOptions(transcription=False, dialect='xai')), scenario)
 
 
-@known('SIM-43')
-def test_known_live_failed_call_leaves_its_round_owed() -> None:
-    """A delegated round of three calls, one of which raises: the other two results ask for a reply that never comes."""
+def test_live_call_that_raises_is_answered_with_its_failure() -> None:
+    """A delegated round of three calls, one of which raises while the backend response that asked is still running.
+
+    The backend resumes only from every output of its round, and Live can't cancel the delegation, so the failure
+    history records goes out as the call's output: the round continues, and a reply asked for afterwards is answered
+    and ends. (SIM-43: each result asked for a reply of its own that never came, and the delegation suspended the
+    turn clock for good.)
+    """
 
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate(deliver=False)
         sim.backend_call(deliver=False)
         sim.backend_call(deliver=False)
         sim.backend_call()
-        sim.finish_tool(outcome='error')
+        failed = sim.finish_tool(outcome='error')
+        sim.settle()
+        assert sim.server.truth.tool_calls[failed].output_received
+        sim.send_text()
+        sim.wait_for_reply()
         sim.settle()
 
-    reproduce('SIM-43', LiveSimulation(), scenario)
+    sim = LiveSimulation()
+    run_clean(sim, scenario)
+    # The round's results continued the delegation: the backend answered twice.
+    assert len(sim.server.truth.usage_read) == 2
+
+
+def test_live_call_that_raises_after_its_siblings_answered_is_answered_with_its_failure() -> None:
+    """The backend response has ended and the other results are out, waited for, when the last call raises (SIM-43)."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate(deliver=False)
+        sim.backend_call(count=3)
+        sim.backend_finish()
+        sim.finish_tool()
+        sim.finish_tool()
+        sim.wait_for_reply()
+        sim.finish_tool(outcome='error')
+        sim.settle()
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
 
 
 @known('SIM-37')
@@ -2419,8 +2542,8 @@ def test_baseline_gemini_async_typed_turn_during_the_held_round() -> None:
 def test_scenario_gemini_async_parallel_calls() -> None:
     """Two async calls in one message, with speech before, between, and after their results.
 
-    Accepted on #8760: speech between the two results goes after the second (each result must directly follow
-    its call), but what was said before the first result belongs to the calling response.
+    Speech between the two results goes after the second (each result must directly follow its call), but what was
+    said before the first result belongs to the calling response.
     """
 
     def scenario(sim: GeminiSimulation) -> None:
@@ -2430,7 +2553,20 @@ def test_scenario_gemini_async_parallel_calls() -> None:
         sim.finish_tool()
         sim.speak()
 
-    run_tolerant(async_gemini(), scenario)
+    run_accepting(async_gemini(), scenario, '8760-accepted-between-results')
+
+
+def test_scenario_gemini_async_call_in_flight_at_the_result_is_accepted() -> None:
+    """A second call the model made before the first's result went out, but which the session hadn't read yet, is
+    recorded in a response of its own: the same accepted limitation as speech in flight."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_audio()
+        sim.user_speaks(deliver=False)
+        sim.call_tools()
+        sim.call_tools(deliver=False)
+
+    run_accepting(async_gemini(), scenario, '8760-accepted')
 
 
 def test_scenario_openai_tool_retries_exhausted() -> None:
@@ -2507,8 +2643,22 @@ def test_scenario_gemini_tool_result_sent_on_a_dropped_connection() -> None:
 
 
 @known('8763c #3')
-def test_known_live_delegation_ends_the_wait_on_a_tool_round() -> None:
-    """A delegation the model starts on its own ends a wait owed the tool round's answer."""
+def test_known_live_text_sent_while_an_unread_reply_speaks() -> None:
+    """Text sent while a reply the client hasn't read yet is under way: that reply is taken for the text's own."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.speak(deliver=False)
+        sim.send_text(respond=True)
+        sim.settle()
+
+    reproduce('8763c #3', LiveSimulation(), scenario)
+
+
+def test_live_delegation_during_a_tool_round_joins_the_reply() -> None:
+    """A delegation the model starts while a delegated tool round is owed its answer is the reply's (8763c #3, once).
+
+    The reply that called the tools goes on until the round's answer, so the wait for that answer isn't ended by it.
+    """
 
     def scenario(sim: LiveSimulation) -> None:
         sim.delegate(deliver=False)
@@ -2520,7 +2670,7 @@ def test_known_live_delegation_ends_the_wait_on_a_tool_round() -> None:
         sim.delegate(deliver=False)
         sim.settle()
 
-    reproduce('8763c #3', LiveSimulation(), scenario)
+    run_clean(LiveSimulation(), scenario)
 
 
 def test_scenario_a_provider_reply_before_our_item_is_added_is_not_ours() -> None:

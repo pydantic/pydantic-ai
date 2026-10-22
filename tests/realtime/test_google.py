@@ -43,7 +43,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -83,7 +84,7 @@ from pydantic_ai.realtime.lifecycle import AnswersRevised
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
@@ -1362,6 +1363,48 @@ async def test_send_tool_result_async_scheduling(
     )
 
 
+@pytest.mark.parametrize(
+    ('async_tool_calls', 'supports_scheduling', 'talks_through'),
+    [
+        (False, False, False),
+        (False, True, False),
+        # `gemini-3.8-live-extended-thinking`: asynchronous, but it ends what it says before the call and answers
+        # after the result, so its call ends its response as a blocking one does.
+        (True, False, False),
+        # The native-audio models and `gemini-3.8-live`, which keep talking in the turn that made the call.
+        (True, True, True),
+    ],
+)
+def test_map_tool_call_that_the_model_talks_through(
+    async_tool_calls: bool, supports_scheduling: bool, talks_through: bool
+) -> None:
+    """An asynchronous call the model keeps talking past is flagged so, and promises no usage to close its response.
+
+    A unit test: the recorded extended-thinking exchange (`test_extended_thinking_async_tool_round`) records the same
+    history either way, as nothing is said between its call and its result.
+    """
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()),
+        profile=GoogleRealtimeModelProfile(google_supports_async_tool_call_scheduling=supports_scheduling),
+        async_tool_calls=async_tool_calls,
+    )
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+    call = ToolCall(
+        tool_call_id='c1',
+        tool_name='get_weather',
+        args='{}',
+        response_usage_follows=not talks_through,
+        response_continues=talks_through,
+    )
+    assert events == ([call] if talks_through else [call, SessionUsage(usage=RequestUsage())])
+
+
 def _register_call(conn: GoogleRealtimeConnection, tool_call_id: str = 'c1', name: str = 'inspect') -> None:
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(
@@ -2196,8 +2239,16 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     tool_call_id='call-1',
                 ),
                 ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
-                RetryPromptPart(tool_name='weather', content='invalid city', tool_call_id='call-1'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                # The shape the framework emits for that same failure, seeded beside the legacy one
+                # so the two are held to the same text.
+                ToolReturnPart(tool_name='weather', content='invalid city', tool_call_id='call-1', outcome='retried'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    retry=RetryInfo(cause='validation_error'),
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -2238,8 +2289,32 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '</tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
-                    {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
-                    {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+"""
+                    },
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+"""
+                    },
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+"""
+                    },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
                     {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
                     {'text': 'spoken question'},
@@ -2311,7 +2386,9 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='get_weather', content='Hailing', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='get_weather', content='City is required', tool_call_id='call-2'),
+                ToolReturnPart(
+                    tool_name='get_weather', content='City is required', tool_call_id='call-2', outcome='retried'
+                ),
                 ToolReturnPart(
                     tool_name='get_weather', content='Service down', tool_call_id='call-3', outcome='failed'
                 ),
@@ -2350,7 +2427,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
                         'function_response': {
                             'id': 'call-2',
                             'name': 'get_weather',
-                            'response': {'error': 'City is required\n\nFix the errors and try again.'},
+                            'response': {'error': 'City is required'},
                         }
                     },
                     {

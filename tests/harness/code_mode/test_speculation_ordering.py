@@ -149,7 +149,7 @@ async def test_retry_does_not_adopt_a_launch_that_predates_a_native_write() -> N
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code' and part.outcome == 'success'
     ]
     assert returns == ['after']
     # The retry launched `read` afresh after the write and adopted that; the stale launch was evicted.

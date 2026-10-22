@@ -22,6 +22,7 @@ from ... import ExternalToolset, ToolDefinition
 from ..._mcp_apps import get_mcp_app_tool_result
 from ..._utils import is_str_dict
 from ...messages import (
+    ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -37,7 +38,8 @@ from ...messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -51,6 +53,8 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     narrow_message_parts,
 )
 from ...output import OutputDataT
@@ -110,11 +114,14 @@ try:
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
+        parse_encrypted_retry_feedback,
         parse_encrypted_tool_kind,
+        parse_encrypted_tool_retry,
         rehydrate_tool_return_content,
+        retry_feedback_encrypted_value_kwargs,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
-        warn_tool_kind_not_persisted,
+        warn_encrypted_value_not_persisted,
     )
 except ImportError as e:
     raise ImportError(
@@ -412,17 +419,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
         The payload is validated against the same Pydantic model whose JSON schema is
         advertised on `Interrupt.response_schema`, and the mapping is **deny-by-default**:
-        approval requires a payload that validates with `approved=True`. Any other shape
-        is treated as a denial so a malformed or hostile client cannot accidentally
-        execute a tool that requires human approval.
+        approval requires a payload that validates with `approved=True`, so a malformed
+        client response cannot accidentally execute a tool that requires human approval.
+        (Approval guards against the *model* acting without human sign-off; it is not an
+        authorization boundary against the client — see
+        [Trust model for client-submitted messages](../../ui/overview.md#trust-model-for-client-submitted-messages).)
 
-        - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
-        - `payload.approved is True` with a valid `payload.editedArgs` dict → `ToolApproved(override_args=...)`
-        - `payload.approved is True` without edits → `ToolApproved()`
-        - Anything else (`False`, missing, `null`, non-bool `approved`, non-dict payload,
-          a non-dict `editedArgs`, or a non-string `reason`) → `ToolDenied(payload.reason)`
-          if `reason` is a non-empty string on a payload that validated, else `ToolDenied()`
-          (which carries the default `"The tool call was denied."` message).
+        The full mapping, including which payloads raise instead of denying, is documented under
+        [Tool approval (interrupts)](../../ui/ag-ui.md#tool-approval-interrupts).
+
+        Raises `UserError` for a payload that fails validation, and for a `ResumeEntry.interrupt_id`
+        that carries no recognizable prefix. Both are resolved inside the run stream (see
+        [`run_stream_native`][pydantic_ai.ui.UIAdapter.run_stream_native]), so they reach the client
+        as a `RunErrorEvent` rather than escaping the streaming response.
 
         Returns `None` when `resume` is missing or empty, or when the installed
         ag-ui-protocol predates the interrupt lifecycle.
@@ -449,8 +458,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         for msg in messages:
             checkpoint = builder.checkpoint()
             match msg:
-                case UserMessage(content=content):
-                    if isinstance(content, str):
+                case UserMessage() as user_msg:
+                    # A user message only reloads as harness retry feedback when it carries the
+                    # `encrypted_value` marker this adapter dumped it with; one a person wrote has no
+                    # such claim and stays a `UserPromptPart`. See `retry_feedback_from_payload`.
+                    user_feedback = (
+                        parse_encrypted_retry_feedback(user_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    content = user_msg.content
+                    if user_feedback is not None:
+                        builder.add(user_feedback)
+                    elif isinstance(content, str):
                         builder.add(UserPromptPart(content=content))
                     else:
                         user_prompt_content: list[UserContent] = []
@@ -500,8 +518,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             )
                             builder.add(UserPromptPart(content=content_to_add))
 
-                case SystemMessage(content=content) | DeveloperMessage(content=content):
-                    builder.add(SystemPromptPart(content=content))
+                case SystemMessage() | DeveloperMessage() as system_msg:
+                    # A system message only reloads as harness retry feedback when it carries the
+                    # `encrypted_value` marker this adapter dumped it with; one the client wrote has
+                    # no such claim and stays a plain `SystemPromptPart`, so it can never gain
+                    # harness provenance. See `retry_feedback_from_payload`.
+                    feedback = (
+                        parse_encrypted_retry_feedback(system_msg.encrypted_value) if use_encrypted_value else None
+                    )
+                    builder.add(feedback if feedback is not None else SystemPromptPart(content=system_msg.content))
 
                 case AssistantMessage(content=content, tool_calls=tool_calls_list):
                     if content:
@@ -562,12 +587,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         parse_encrypted_tool_kind(tool_msg.encrypted_value) if use_encrypted_value else None
                     )
                     tool_kind = encrypted_tool_kind or tool_kinds.get(tool_call_id)
-                    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
+                    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
                     )
+                    retry = None
                     if encrypted_outcome is not None:
                         outcome = encrypted_outcome
+                        if outcome == 'retried':
+                            retry = parse_encrypted_tool_retry(tool_msg.encrypted_value)
                     elif tool_msg.error is not None:
                         outcome = 'failed'
 
@@ -596,6 +624,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                                 tool_call_id=tool_call_id,
                                 tool_kind=tool_kind,
                                 outcome=outcome,
+                                retry=retry,
                             )
                         )
 
@@ -785,17 +814,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 flush_user_content()
                 # Tool-return files ride inline in `ToolMessage.content` (see `dump_tool_return_content`).
                 # A non-success outcome rides the `encrypted_value` carrier alongside `tool_kind`,
-                # since a `ToolMessage` has no outcome slot.
+                # since a `ToolMessage` has no outcome slot. `error` is the return's own content, so a
+                # retry's feedback reaches the frontend as the feedback itself, without the
+                # instruction framing a `RetryPromptPart` renders
+                # (https://github.com/pydantic/pydantic-ai/pull/4869).
                 result.append(
                     ToolMessage(
                         id=_new_message_id(),
                         content=dump_tool_return_content(part.content),
                         tool_call_id=part.tool_call_id,
                         error=part.model_response_str(wrap_if_error=False)
-                        if part.outcome in ('failed', 'denied')
+                        if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied'
                         else None,
                         **tool_kind_encrypted_value_kwargs(
-                            part.tool_kind, outcome=part.outcome, supported=use_encrypted_value
+                            part.tool_kind, outcome=part.outcome, retry=part.retry, supported=use_encrypted_value
                         ),
                     )
                 )
@@ -819,20 +851,50 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         },
                     )
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name:
-                    flush_user_content()
+            # TODO(v3): remove `RetryPromptPart`
+            elif isinstance(part, RetryPromptPart | RetryFeedbackPart):  # pyright: ignore[reportDeprecated]
+                # Harness feedback dumps in the voice the model is shown it in, not as text a person
+                # appears to have written (https://github.com/pydantic/pydantic-ai/issues/6404), and
+                # carries the part itself so the reload can rebuild it. Flushing first keeps it in
+                # the position it was authored in, instead of joining the standing prompt at the head
+                # of the request; `VercelAIAdapter` keeps the authored order the same way.
+                flush_user_content()
+                translated = (
+                    _translate_legacy_retry_part(part)
+                    if isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    else part
+                )
+                if isinstance(translated, ToolReturnPart):
                     result.append(
                         ToolMessage(
                             id=_new_message_id(),
-                            content=part.model_response(),
-                            tool_call_id=part.tool_call_id,
-                            error=part.model_response(),
+                            content=dump_tool_return_content(translated.content),
+                            tool_call_id=translated.tool_call_id,
+                            error=translated.model_response_str(wrap_if_error=False),
+                            **tool_kind_encrypted_value_kwargs(
+                                translated.tool_kind,
+                                outcome=translated.outcome,
+                                retry=translated.retry,
+                                supported=use_encrypted_value,
+                            ),
+                        )
+                    )
+                elif _retry_feedback_speaks_for_the_harness(translated):
+                    result.append(
+                        SystemMessage(
+                            id=_new_message_id(),
+                            content=translated.model_response(),
+                            **retry_feedback_encrypted_value_kwargs(translated, supported=use_encrypted_value),
                         )
                     )
                 else:
-                    flush_user_content()
-                    user_content.append(TextInputContent(type='text', text=part.model_response()))
+                    result.append(
+                        UserMessage(
+                            id=_new_message_id(),
+                            content=translated.model_response(),
+                            **retry_feedback_encrypted_value_kwargs(translated, supported=use_encrypted_value),
+                        )
+                    )
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 pass  # Realtime audio parts are not rendered in AG-UI
             else:
@@ -927,7 +989,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=dump_tool_return_content(builtin_return.content),
                             tool_call_id=prefixed_id,
                             error=builtin_return.model_response_str(wrap_if_error=False)
-                            if builtin_return.outcome in ('failed', 'denied')
+                            if builtin_return.outcome in ERROR_OUTCOMES or builtin_return.outcome == 'denied'
                             else None,
                             **tool_kind_encrypted_value_kwargs(
                                 builtin_return.tool_kind, outcome=builtin_return.outcome, supported=use_encrypted_value
@@ -1014,11 +1076,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           plain `ToolReturnPart` / `NativeToolReturnPart`: only successful returns are promoted to typed parts.
         - A non-`'success'` `outcome` on a (native) tool return survives via the `encrypted_value`
           carrier from 0.1.11 (`ToolMessage` has no outcome slot). Below that, `'failed'` survives
-          via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
-          `'success'`.
-        - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
-        - Each `UserPromptPart` (and each `RetryPromptPart` without a tool name) is dumped as its own
-          `UserMessage`, so a request's prompts reload as the same separate parts rather than merged into one.
+          via `ToolMessage.error`, `'denied'` and `'retried'` reload as `'failed'`, and
+          `'interrupted'` reloads as `'success'`.
+        - `RetryFeedbackPart` dumps as a message in the voice the model is shown it in — a
+          `UserMessage` for a `'validation_error'` or `'model_retry'`, a `SystemMessage` for
+          `'no_output'` feedback in the framework's own words — with the part
+          itself in that message's `encrypted_value`; it reloads as a `RetryFeedbackPart` only from
+          there, so a message the client wrote stays a plain prompt part. Below 0.1.11 the carrier
+          doesn't exist, so it reloads as that plain part holding the rendered text, and the dump
+          warns.
+        - `RetryPromptPart` is dumped as the part it always meant, so a tool-bound one becomes a
+          `ToolMessage` and reloads as a `ToolReturnPart` with `outcome='retried'`, and a tool-less
+          one takes the `RetryFeedbackPart` path above.
+        - Each `UserPromptPart` is dumped as its own `UserMessage`, so a request's prompts reload as the
+          same separate parts rather than merged into one.
         - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
           part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
           instead. Provider adapters emit compaction parts outside call/return pairs, so this only
@@ -1051,12 +1122,23 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         result: list[Message] = []
 
         if parse_ag_ui_version(ag_ui_version) < ENCRYPTED_VALUE_VERSION and any(
-            isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
-            and part.tool_kind is not None
+            isinstance(part, RetryFeedbackPart)
+            # TODO(v3): remove `RetryPromptPart`. A tool-less one is translated into the feedback
+            # part it always meant and rides the same marker channel, so it is lost below the floor
+            # the same way. A tool-bound one becomes a `tool_kind`-less return, which falls into the
+            # outcome gap described below.
+            or (isinstance(part, RetryPromptPart) and part.tool_name is None)  # pyright: ignore[reportDeprecated]
+            or (
+                isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
+                # A non-`'success'` `outcome` on a `tool_kind`-less return also degrades below the
+                # floor and also goes unwarned. That gap predates this part and stays as it was —
+                # arming the warning for it would start warning users who never hit retry feedback.
+                and part.tool_kind is not None
+            )
             for msg in messages
             for part in msg.parts
         ):
-            warn_tool_kind_not_persisted(ag_ui_version)
+            warn_encrypted_value_not_persisted(ag_ui_version)
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
