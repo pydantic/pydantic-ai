@@ -26,7 +26,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import SmartFileSearch
 
 agent = Agent(
-    'openai:gpt-6-luna',
+    'openai:gpt-6-astra',
     capabilities=[LocalWorkspace('.'), SmartFileSearch(model='system-one:clm-latest')],
 )
 ```
