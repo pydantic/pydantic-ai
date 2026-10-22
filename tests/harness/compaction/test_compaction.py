@@ -5193,7 +5193,7 @@ class TestHarnessData:
         ]
         # Neither `keep_user_messages` nor first-user-message preservation carries the report forward.
         assert not any(is_task_report(part) for part in user_parts)
-        assert any(part.content == 'look it up' for part in user_parts)
+        assert any(_part_text(part) == 'look it up' for part in user_parts)
 
     async def test_background_result_with_a_file_is_data_as_a_whole(self) -> None:
         """A result whose tagged text is followed by a file and more text is still one piece of harness data."""
