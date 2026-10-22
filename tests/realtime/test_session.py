@@ -11791,7 +11791,7 @@ async def test_wait_for_reply_waits_for_the_answer_to_a_failed_tool() -> None:
                         turn_completes += 1
             except ValueError as e:
                 errors.append(e)
-            else:  # pragma: no cover (cancelled while iterating)
+            else:  # pragma: lax no cover (ends with the session, unless cancelled first)
                 return
 
     async with session:
