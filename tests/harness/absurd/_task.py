@@ -102,6 +102,13 @@ async def checkpoints(absurd: AsyncAbsurd, task_id: str) -> dict[str, JsonValue]
 
 async def claim_expires_at(absurd: AsyncAbsurd, task_id: str) -> datetime:
     """When the task's running run's claim expires."""
+    expires_at = await claim_expiry(absurd, task_id)
+    assert expires_at is not None
+    return expires_at
+
+
+async def claim_expiry(absurd: AsyncAbsurd, task_id: str) -> datetime | None:
+    """The task's running run's claim expiry, or `None` for a claim that never expires."""
     cursor = await _conn(absurd).execute(
         sql.SQL('SELECT claim_expires_at FROM absurd.{} WHERE task_id = %s AND state = %s').format(
             sql.Identifier(f'r_{_queue(absurd)}')

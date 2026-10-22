@@ -56,7 +56,7 @@ from pydantic_ai_harness.absurd._operation_backend import (
 )
 
 from ...conftest import try_import
-from ._task import checkpoints, claim_expires_at, reenter_running_task, running_task_context
+from ._task import checkpoints, claim_expires_at, claim_expiry, reenter_running_task, running_task_context
 
 with try_import() as logfire_installed:
     from logfire.testing import CaptureLogfire
@@ -886,6 +886,8 @@ class TestClaim:
             result = await agent.run('go')
 
         assert result.output == 'done'
+        # The claim really has no expiry, so skipping heartbeats can't let it lapse mid-step.
+        assert await claim_expiry(absurd, ctx.task_id) is None
         assert list(await checkpoints(absurd, ctx.task_id)) == snapshot(
             ['slow__model.request', 'slow__function_toolset__tools.call_tool:slow', 'slow__model.request#2']
         )
