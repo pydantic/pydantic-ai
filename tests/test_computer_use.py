@@ -235,36 +235,42 @@ async def test_require_approval_lets_looking_through_and_defers_acting() -> None
     assert provider.actions == []
 
 
-async def test_only_the_newest_screenshots_are_sent_and_history_keeps_them_all() -> None:
-    last_request: list[str] = []
+async def test_old_screenshots_are_dropped_in_batches_and_history_keeps_them_all() -> None:
+    requests: list[list[str]] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
         # What each tool return carries in this request: an image, or the note that replaced it.
-        last_request[:] = [
-            'image' if any(isinstance(item, BinaryContent) for item in part.content_items()) else 'note'
-            for part in returns
-        ]
+        requests.append(
+            [
+                'image' if any(isinstance(item, BinaryContent) for item in part.content_items()) else 'note'
+                for part in returns
+            ]
+        )
         if not returns:
             return ModelResponse(parts=[ToolCallPart('photo', {})])
-        if len(returns) < 5:
+        if len(returns) < 29:
             return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(
-        FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=2)]
+        FunctionModel(respond),
+        capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=2, settle_seconds=0)],
     )
 
     @agent.tool_plain
     def photo() -> BinaryImage:
         return SCREENSHOT
 
-    result = await agent.run('Take a photo, then look four times.')
+    result = await agent.run('Take a photo, then look 28 times.')
 
-    # Another tool's image stays; of the four screenshots, only the newest two are sent.
-    assert last_request == ['image', 'note', 'note', 'image', 'image']
+    # Up to 26 screenshots everything is sent, so each request extends the last one and stays cached.
+    assert requests[27] == ['image'] * 27
+    # At 27 the oldest 25 become notes at once; another tool's image is left alone.
+    assert requests[28] == ['image'] + ['note'] * 25 + ['image'] * 2
+    assert requests[29] == ['image'] + ['note'] * 25 + ['image'] * 3
     computer_returns = [part for part in _returns(result.all_messages()) if part.tool_name == 'computer']
-    assert [part.content_items()[1] for part in computer_returns] == [SCREENSHOT] * 4
+    assert all(part.content_items()[1] == SCREENSHOT for part in computer_returns)
 
 
 async def test_unknown_fields_are_ignored_and_a_batch_is_capped() -> None:

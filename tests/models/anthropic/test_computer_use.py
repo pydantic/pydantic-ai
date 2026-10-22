@@ -273,7 +273,7 @@ def test_the_toolset_goes_to_the_claude_api_and_google_cloud_only() -> None:
         provider = AnthropicProvider(api_key='x') if client is None else AnthropicProvider(anthropic_client=client)
         model = AnthropicModel('claude-sonnet-5-5', provider=provider)
         native[name] = model._native_computer_tool(params) is not None  # pyright: ignore[reportPrivateUsage]
-    assert native == {'direct': True, 'vertex': True, 'bedrock': False, 'mantle': False, 'foundry': False}
+    assert native == {'direct': True, 'vertex': False, 'bedrock': False, 'mantle': False, 'foundry': False}
 
 
 async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(allow_model_requests: None) -> None:
