@@ -214,8 +214,18 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
-        # One display: the later configuration replaces the earlier one whole, and keeps the tool bound to it.
-        return capabilities[-1]
+        """One display: the later configuration wins, but a restriction either states survives.
+
+        Approval is required if any asks for it, and the fewest kept screenshots apply. `replace` rebuilds the tool,
+        so it runs with the combined settings.
+        """
+        combined = cast(list[ComputerUse[AgentDepsT]], list(capabilities))
+        kept = [c.keep_screenshots for c in combined if c.keep_screenshots is not None]
+        return replace(
+            combined[-1],
+            require_approval=any(c.require_approval for c in combined),
+            keep_screenshots=min(kept) if kept else None,
+        )
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         def instructions(ctx: RunContext[AgentDepsT]) -> str:
