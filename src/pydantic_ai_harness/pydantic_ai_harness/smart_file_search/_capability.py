@@ -7,7 +7,12 @@ from dataclasses import KW_ONLY, dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.smart_file_search._toolset import SmartFileSearchToolset, validate_settings
+from pydantic_ai_harness.smart_file_search._toolset import (
+    DEFAULT_CONCURRENCY,
+    DEFAULT_THRESHOLD,
+    SmartFileSearchToolset,
+    validate_settings,
+)
 
 
 @dataclass
@@ -59,14 +64,14 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
-    threshold: float = 0.5
+    threshold: float = DEFAULT_THRESHOLD
     """Relevance a snippet needs to be returned, from 0 to 1.
 
     A snippet's relevance is the product of two judgments: that it acts on what
     the query names, and that it performs the action the query describes.
     """
 
-    concurrency: int = 8
+    concurrency: int = DEFAULT_CONCURRENCY
     """How many snippets are judged at once."""
 
     cache_index: bool = False

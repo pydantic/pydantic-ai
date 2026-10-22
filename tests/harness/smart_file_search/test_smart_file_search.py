@@ -414,6 +414,7 @@ def reject_expired(session):
             await agent.run('hi')
 
     def test_toolset_validates_its_settings(self) -> None:
+        SmartFileSearchToolset[None](model=FakeJev('x'))  # the capability's defaults
         with pytest.raises(ValueError, match='concurrency'):
             SmartFileSearchToolset[None](model=FakeJev('x'), threshold=0.5, concurrency=0)
         with pytest.raises(ValueError, match='threshold'):
