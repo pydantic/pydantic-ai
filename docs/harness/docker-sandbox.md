@@ -171,7 +171,7 @@ async def main():
 
 Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFILE`: Debian with a window manager, a terminal (`xterm`) and Firefox. Later runs reuse the image. The display is 1280x800 and starts when the agent first uses it. The agent keeps the container's shell and files too, so `Coder` and `ComputerUse` can work in the same container.
 
-A custom `image` needs Xvfb, `xdotool` and `scrot`, plus whatever applications the agent should use; `DESKTOP_DOCKERFILE` is a starting point for one.
+A custom `image` needs Xvfb, `xdotool`, `scrot` and `setsid`, plus whatever applications the agent should use, and gets `fluxbox` as its window manager if it has it; `DESKTOP_DOCKERFILE` is a starting point for one.
 
 Under [durable execution](../durable_execution/overview.md), build the image before the first run, so the build doesn't count against a workspace operation's timeout, and pass it as `image`:
 
@@ -225,7 +225,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM s
 
 | Option | What it does |
 | --- | --- |
-| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref. |
+| `image` | Image for a new container, such as `'python:3.13-slim'`. Default: `None`, which only attaches to and removes containers by ref, or with `desktop=True` builds the desktop image. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`; `None` uses the image's own (`WORKDIR`, or `/`). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the container except Docker's proxy settings, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
 | `allow_internet_access` | Whether a new container gets outbound network access, through Docker's default bridge. Default: `True`; `False` runs it with `--network none`. |

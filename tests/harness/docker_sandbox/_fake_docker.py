@@ -155,6 +155,10 @@ exec sleep 2
 Also keeps a host's real Xvfb from starting.
 """
 
+_FAKE_FLUXBOX = """#!/bin/sh
+"""
+"""Stands in for the window manager, so a host's real one never starts; whether one runs is up to `fluxbox.pid`."""
+
 _FAKE_SETSID = """#!/bin/sh
 exec "$@"
 """
@@ -214,6 +218,20 @@ class FakeDocker:
             (self.bin_dir / 'xvfb-fails').touch()
 
     @property
+    def window_manager_pid(self) -> str | None:
+        """What the one container's `fluxbox.pid` holds, or `None` without one."""
+        (pidfile,) = (self.bin_dir / 'containers').glob('*.tmp/fluxbox.pid') or [None]
+        return pidfile.read_text().strip() if pidfile is not None else None
+
+    @window_manager_pid.setter
+    def window_manager_pid(self, pid: str | None) -> None:
+        for run_dir in (self.bin_dir / 'containers').glob('*.tmp'):
+            if pid is None:
+                (run_dir / 'fluxbox.pid').unlink(missing_ok=True)
+            else:
+                (run_dir / 'fluxbox.pid').write_text(f'{pid}\n')
+
+    @property
     def xvfb_starts(self) -> int:
         path = self.bin_dir / 'xvfb-starts'
         return len(path.read_text().splitlines()) if path.exists() else 0
@@ -233,7 +251,7 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     (bin_dir / 'podman').chmod(0o755)
     (bin_dir / 'xdotool').write_text(_FAKE_XDOTOOL)
     (bin_dir / 'xdotool').chmod(0o755)
-    for name, script in [('Xvfb', _FAKE_XVFB), ('setsid', _FAKE_SETSID)]:
+    for name, script in [('Xvfb', _FAKE_XVFB), ('fluxbox', _FAKE_FLUXBOX), ('setsid', _FAKE_SETSID)]:
         (bin_dir / name).write_text(script)
         (bin_dir / name).chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')

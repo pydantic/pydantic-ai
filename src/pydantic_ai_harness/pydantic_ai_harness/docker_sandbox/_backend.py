@@ -233,13 +233,15 @@ _START_DESKTOP = (
     'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
     'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
     f"echo 'the X server did not start:' >&2; tail -n 5 {_PID_DIR}/xvfb.log >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done; '
-    'setsid fluxbox >/dev/null 2>&1 & '
-    'fi; xdotool getdisplaygeometry'
+    'sleep 0.1; i=$((i+1)); done; fi; '
+    f'if ! kill -0 "$(cat {_PID_DIR}/fluxbox.pid 2>/dev/null)" 2>/dev/null; then '
+    f'setsid fluxbox >/dev/null 2>&1 & echo $! > {_PID_DIR}/fluxbox.pid; fi; '
+    'xdotool getdisplaygeometry'
 )
-"""Starts a 1280x800 X display with a window manager unless one is running, then reports its size.
+"""Starts a 1280x800 X display and a window manager, each unless it is running, then reports the display's size.
 
-It gives up as soon as the X server exits, or after 10 seconds.
+It gives up as soon as the X server exits, or after 10 seconds. The window manager is checked on its own, so a start
+interrupted between the two still gets one next time.
 """
 
 
