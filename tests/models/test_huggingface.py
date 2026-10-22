@@ -21,6 +21,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelConnectionError,
+    ModelMessage,
     ModelOverloadedError,
     ModelRequest,
     ModelResponse,
@@ -1055,29 +1056,30 @@ async def test_unsupported_media_types(allow_model_requests: None, content_item:
         await agent.run(['hello', content_item])
 
 
-async def test_unsupported_media_type_in_tool_return_is_not_silently_dropped(allow_model_requests: None):
+def test_unsupported_media_type_in_tool_return_is_replaced_by_a_note():
+    """A document a tool returned is not silently dropped: the request names it in the tool result instead.
+
+    Without an extension the URL says nothing of its media type, so the note leaves it out.
+    """
     model = HuggingFaceModel(
         'Qwen/Qwen2.5-VL-72B-Instruct',
         provider=HuggingFaceProvider(api_key='x'),
     )
-    agent = Agent(model)
-
-    messages = [
+    document = DocumentUrl(url='url', identifier='report')
+    messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get_file', args={}, tool_call_id='call_1')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_file',
-                    content=['here', DocumentUrl(url='url')],
-                    tool_call_id='call_1',
-                )
-            ]
-        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_file', content=['here', document], tool_call_id='call_1')]),
     ]
 
-    with pytest.raises(NotImplementedError, match='DocumentUrl is not supported for Hugging Face'):
-        await agent.run('continue', message_history=messages)
+    prepared = model.prepare_messages(messages)
+
+    tool_return = prepared[-1].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.content == snapshot(['here', 'File report was not sent: this model cannot read documents.'])
+    stored = messages[-1].parts[0]
+    assert isinstance(stored, ToolReturnPart)
+    assert stored.content == ['here', document]
 
 
 async def test_image_tool_return_is_forwarded_as_user_message():

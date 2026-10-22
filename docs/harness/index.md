@@ -165,7 +165,7 @@ Tools from third-party services, most through the service's own hosted MCP serve
 | [Notion](notion.md) | Harness | Search and change Notion workspace content. |
 | [Slack](slack.md) | Harness | Give an agent Slack messages, channels, and canvas tools. |
 | [Day AI](day-ai.md) | Harness | Search and update CRM records and meeting context through [Day AI](https://day.ai)'s hosted MCP server |
-| [Grain](grain.md) | Harness | Search meetings, transcripts, and notes through [Grain](https://grain.com)'s hosted MCP server |
+| [Grain](grain.md) | Harness | Search and read meetings, transcripts, and notes, and create clips and tag meetings, through [Grain](https://grain.com)'s hosted MCP server |
 | [Pylon](pylon.md) | Harness | Work with support issues, accounts, and contacts through [Pylon](https://www.usepylon.com)'s hosted MCP server |
 | [StackOne](stackone.md) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [PostHog](posthog.md) | Harness | Query product analytics and manage feature flags, experiments, and dashboards through [PostHog](https://posthog.com)'s hosted MCP server |

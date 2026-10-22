@@ -41,6 +41,14 @@ from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._file_input import (
+    KNOWN_DOCUMENT_MEDIA_TYPES,
+    FileInputKind,
+    SendableFile,
+    unsupported_file_input,
+    unsupported_file_note,
+)
+from .._framing import SYSTEM_TAG, neutralize_tags, wrap
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
@@ -69,6 +77,7 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryImage,
     CompactionPart,
+    DocumentMediaType,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -108,7 +117,6 @@ from ..messages import (
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
-    _wrap_in_tag,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -622,6 +630,17 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     default), the standing prompt travels in a per-request channel rebuilt from those items, so the
     trim has to re-insert them or it is silently dropped from every subsequent request. See
     `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
+    _unsupported_file_inputs: ClassVar[frozenset[FileInputKind]] = frozenset()
+    """Kinds of file this adapter's message mapping cannot send, whatever the model.
+
+    `profile` turns the matching file-input flags off after every other layer, the user's included,
+    so the profile never claims a file the mapping would refuse.
+    """
+    _supported_document_media_types: ClassVar[frozenset[DocumentMediaType] | None] = None
+    """The document media types this adapter's message mapping can send, or `None` for all of them.
+
+    Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    """
     _renders_retry_feedback: ClassVar[bool] = False
     """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
 
@@ -1194,12 +1213,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         and moves the current request's ones to the end of the last request.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`, and converts
+        the profile's `supports_inline_system_prompts` is `False`, converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume, and puts the tool results in each request in the
-        order of the calls they answer, so the request bytes (and the provider's prompt cache)
-        don't depend on the order a history happened to store them in. When the profile sets
-        `tool_call_id_length`, tool call IDs that don't fit it are replaced with stable hashes that do.
+        `TextPart`s that any model can consume, replaces each file a tool returned that the
+        profile's file-input flags say the model can't read with a note naming it, and puts the
+        tool results in each request in the order of the calls they answer, so the request bytes
+        (and the provider's prompt cache) don't depend on the order a history happened to store
+        them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
+        replaced with stable hashes that do.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -1228,6 +1249,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # Translated before every later step — the tool-availability announcement and the `<system>`
         # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
         messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
+        messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -1236,6 +1258,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
             messages = _drop_superseded_request_scoped_prompts(messages)
+        else:
+            messages = _drop_request_scoped_prompts_no_user_message_clears(messages)
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -1420,7 +1444,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         After resolution we compute the intersection of the profile's `supported_native_tools`
         and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
-        is the single source of truth for what's actually usable.
+        is the single source of truth for what's actually usable. The file-input flags are narrowed the
+        same way, to the kinds of file the model class's message mapping can send.
         """
         # Step 1+2: provider default merged with base default
         provider_profile: ModelProfile = {}
@@ -1460,6 +1485,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         effective_tools = profile_supported & model_supported
         if effective_tools != profile_supported:
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
+
+        # Step 6: file input the model class's message mapping can't send, whatever the profile says
+        unsupported = self._unsupported_file_inputs
+        document_media_types = self._supported_document_media_types
+        if unsupported or document_media_types is not None:
+            supported_document_media_types = resolved.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
+            if document_media_types is not None:
+                supported_document_media_types &= document_media_types
+            resolved = merge_profile(
+                resolved,
+                ModelProfile(
+                    supports_image_input=resolved.get('supports_image_input', True) and 'image' not in unsupported,
+                    supports_document_input=resolved.get('supports_document_input', True)
+                    and 'document' not in unsupported,
+                    supported_document_media_types=supported_document_media_types,
+                    supports_audio_file_input=resolved.get('supports_audio_file_input', True)
+                    and 'audio' not in unsupported,
+                    supports_video_input=resolved.get('supports_video_input', True) and 'video' not in unsupported,
+                ),
+            )
 
         return resolved
 
@@ -2864,16 +2909,6 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-def _wrap_in_system_tags(content: str) -> str:
-    """Tag text as the harness speaking, for a channel with no system role of its own.
-
-    A closing `</system>` inside `content` is neutralized as it is wrapped, so the statement can't be
-    ended early by text that reached here from a model — through a validation error's `loc` or `msg`,
-    or through an MCP-chosen tool name in a tool-availability announcement.
-    """
-    return _wrap_in_tag(content, tag='system')
-
-
 _REQUEST_SCOPED_TAIL_KEY = 'request_scoped_tail'
 """Key in a prepared request's `__pydantic_ai__` metadata: how many of its trailing parts render request-scoped prompts."""
 
@@ -2898,6 +2933,57 @@ def _drop_superseded_request_scoped_prompts(messages: list[ModelMessage]) -> lis
         else:
             kept_messages.append(message)
     return [*kept_messages, *messages[start:]]
+
+
+def _drop_request_scoped_prompts_no_user_message_clears(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Leave out the superseded request-scoped prompts a model that clears them itself never gets to clear.
+
+    Such a model clears a request-scoped `SystemPromptPart` at the next user message. When the request
+    after the one that held it reaches the model in the system voice alone, such as a `'no_output'`
+    retry, no user message follows it before that request is sent, so the model would see it next to the
+    retried step's own. It's left out of every later request too, so the bytes of the history don't
+    depend on how far the conversation has got: whether it goes is settled by the request right after
+    it, which never changes.
+
+    Returns the original list when nothing changed.
+    """
+    start = _current_request_start(messages)
+    dropped: set[int] = set()
+    for index in range(start):
+        message = messages[index]
+        if not (isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)):
+            continue
+        following = index + 1
+        while following < len(messages) and isinstance(messages[following], ModelResponse):
+            following += 1
+        next_request_parts: list[ModelRequestPart] = []
+        while following < len(messages) and isinstance(next_request := messages[following], ModelRequest):
+            next_request_parts.extend(next_request.parts)
+            following += 1
+        if not any(_reaches_the_model_as_a_user_message(part) for part in next_request_parts):
+            dropped.add(index)
+    if not dropped:
+        return messages
+    kept_messages: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if index in dropped:
+            assert isinstance(message, ModelRequest)
+            if parts := [part for part in message.parts if not _is_request_scoped(part)]:
+                kept_messages.append(replace(message, parts=parts))
+        else:
+            kept_messages.append(message)
+    return kept_messages
+
+
+def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
+    """Whether a request part reaches the model in the user role, the message a request-scoped prompt clears at.
+
+    Everything but the parts that render in the system voice: system prompts, instruction records, tool
+    reveals, and the retry feedback that speaks for the harness.
+    """
+    if isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart | ToolAvailabilityDeltaPart):
+        return False
+    return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
 
 
 def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -3007,6 +3093,9 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
+    A closing `</system>` inside a part's content is neutralized as it is wrapped, so text that reached
+    the instruction from elsewhere (a tool name, a validation error) can't end the block early.
+
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
     in the first request". The caller counts them on the history as authored and passes
@@ -3029,7 +3118,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=_wrap_in_system_tags(part.content), timestamp=part.timestamp)
+                UserPromptPart(content=wrap(SYSTEM_TAG, part.content), timestamp=part.timestamp)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)
@@ -3040,6 +3129,49 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Replace each file a tool returned that the profile says the model can't read with a note naming it.
+
+    The model asked for what a tool returns; the user didn't choose to send it, so a file the model
+    can't take shouldn't end the run the way it would if the adapter were handed it. A file in a user
+    prompt is left for the adapter to refuse, since the user chose to send it. Only the outgoing copy
+    changes: the file stays on the `ToolReturnPart` in history, so the same history sent to a model that
+    reads that kind of file carries it as before.
+
+    Returns the original list when nothing changed.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [
+                _without_unsupported_files(part, profile) if isinstance(part, ToolReturnPart) else part
+                for part in message.parts
+            ]
+            if any(new is not old for new, old in zip(parts, message.parts)):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _without_unsupported_files(part: ToolReturnPart, profile: ModelProfile) -> ToolReturnPart:
+    if not part.files:
+        return part
+    items = part.content_items()
+    new_items = [_note_if_unsupported(item, profile) for item in items]
+    if all(new is old for new, old in zip(new_items, items)):
+        return part
+    return replace(part, content=new_items if isinstance(part.content, list) else new_items[0])
+
+
+def _note_if_unsupported(item: object, profile: ModelProfile) -> object:
+    if not isinstance(item, SendableFile):
+        return item
+    unsupported = unsupported_file_input(item, profile)
+    return item if unsupported is None else unsupported_file_note(item, unsupported)
 
 
 def _render_append_blocks(params: ModelRequestParameters) -> ModelRequestParameters:
@@ -3382,7 +3514,7 @@ def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool)
         if not _retry_feedback_speaks_for_the_harness(part):
             return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
         if in_standing_run:
-            return UserPromptPart(content=_wrap_in_system_tags(part.model_response()), timestamp=part.timestamp)
+            return UserPromptPart(content=wrap(SYSTEM_TAG, part.model_response()), timestamp=part.timestamp)
         return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
 
     first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -3578,14 +3710,19 @@ def _announce_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 replacement_parts.append(part)
                 continue
-            # A delta that adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
+            # A delta that adds nothing has nothing to announce, so it drops out entirely. A name can come
+            # from a remote MCP server, so one that carries a framing tag (which could end the `<system>`
+            # wrap on a fallback model, or open a frame of its own) isn't named. Its content gains nothing
+            # otherwise: the model sees the same name in the request's tool definitions. The tool itself
+            # still goes on the wire; it just isn't announced.
+            added = [
+                name
+                for name in part.tools_added
+                if (deferred_tool_names is None or name in deferred_tool_names) and neutralize_tags(name) == name
+            ]
             if added:
-                replacement_parts.append(
-                    SystemPromptPart(
-                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=', '.join(f'`{name}`' for name in added))
-                    )
-                )
+                names = ', '.join(f'`{name}`' for name in added)
+                replacement_parts.append(SystemPromptPart(content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=names)))
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
         if replacement_parts:
