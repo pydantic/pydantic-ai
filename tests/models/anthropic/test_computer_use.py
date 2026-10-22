@@ -456,6 +456,42 @@ async def test_a_responses_member_calls_are_one_call_streamed_or_not(allow_model
     assert [part.tool_call_id for part in starts] == ['toolu_1']
 
 
+async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_model_requests: None) -> None:
+    events = _stream(_tool_use('toolu_1', 'type', {'text': 'hello'}))
+    (delta,) = [event for event in events if isinstance(event, BetaRawContentBlockDeltaEvent)]
+    delta.delta = BetaInputJSONDelta(type='input_json_delta', partial_json='{"text": "hel')
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(events))
+    )
+    params = ModelRequestParameters(function_tools=[COMPUTER], allow_text_output=True)
+    async with model.request_stream([ModelRequest.user_text_prompt('Go.')], None, params) as stream:
+        async for _ in stream:
+            pass
+
+    # The half-typed text is dropped, so the tool refuses the empty `type` instead of typing `hel`.
+    (call,) = [part for part in stream.get().parts if isinstance(part, ToolCallPart)]
+    assert call.args_as_dict() == {'actions': [{'type': 'type', 'text': ''}]}
+
+
+async def test_a_screenshot_left_out_of_the_request_is_explained(allow_model_requests: None) -> None:
+    look = _tool_use('toolu_1', 'screenshot', {})
+    client = MockAnthropic.create_mock(
+        [_turn(look), _turn(look.model_copy(update={'id': 'toolu_2'})), _turn(BetaTextBlock(text='done', type='text'))]
+    )
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
+    await Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=1)]).run('Go.')
+
+    *_, last = get_mock_chat_completion_kwargs(client)
+    older, newest = [
+        m['content'][0]
+        for m in last['messages']
+        if m['role'] == 'user' and m['content'][0].get('type') == 'tool_result'
+    ]
+    assert [block['type'] for block in older['content']] == ['text']
+    assert older['content'][0]['text'].endswith('the latest screenshot shows the current screen.]')
+    assert [block['type'] for block in newest['content']] == ['text', 'image']
+
+
 async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
@@ -482,7 +518,7 @@ async def test_a_result_without_its_metadata_reads_as_every_call_having_run() ->
 
     assert [(r['tool_use_id'], r.get('is_error'), r.get('content')) for r in results] == [
         ('toolu_1', False, [{'text': 'OK', 'type': 'text'}]),
-        ('toolu_2', False, [{'text': 'OK', 'type': 'text'}]),
+        ('toolu_2', False, [{'text': 'Ran 2 actions.', 'type': 'text'}]),
     ]
 
 

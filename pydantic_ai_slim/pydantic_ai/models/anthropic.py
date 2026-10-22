@@ -3368,7 +3368,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         The calls before the failed one get `OK`, the failed one its error, and the rest the exact text Anthropic
         asks for, all but the `OK`s as errors. The screenshot goes on the last call that ran, since an error result
-        may only hold text; when none ran the screen is unchanged and it is left out. A failed or denied result
+        may only hold text; when none ran the screen is unchanged and it is left out. A result whose screenshot was left
+        out of this request gives that call its text instead of `OK`. A failed or denied result
         doesn't record which calls ran, so every call gets its text, which says.
         """
 
@@ -3396,9 +3397,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ]
         results: list[beta_tool_result_block_param.BetaToolResultBlockParam] = []
         for index, block in enumerate(blocks):
-            if index < performed:
-                extra = cast(list[beta_tool_result_block_param.Content], screenshot) if index == performed - 1 else []
-                results.append(result(block, 'OK', False, extra))
+            if index < performed - 1:
+                results.append(result(block, 'OK', False, []))
+            elif index == performed - 1:
+                # The last that ran carries the screenshot, or the text saying why it was left out of this request.
+                text = 'OK' if screenshot else ' '.join(item for item in part.content_items() if isinstance(item, str))
+                results.append(result(block, text, False, cast(list[beta_tool_result_block_param.Content], screenshot)))
             elif index == performed and error is not None:
                 results.append(result(block, error, True, []))
             else:
@@ -4044,7 +4048,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if _is_computer_member(current_block, computer_def):
                         block = _computer_block(current_block)
                         if computer_input:
-                            block['input'] = pydantic_core.from_json(''.join(computer_input))
+                            # A member cut off mid-input (`max_tokens`) keeps what parsed, and validation refuses what's missing.
+                            block['input'] = pydantic_core.from_json(''.join(computer_input), allow_partial=True)
                         computer_group.append(block)
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
