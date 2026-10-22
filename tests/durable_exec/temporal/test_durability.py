@@ -44,7 +44,6 @@ from pydantic_ai import (
     RunUsage,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -65,6 +64,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instrumentation,
     NativeTool,
+    PrepareTools,
     ProcessEventStream,
     ResolveModelId,
     SelectModel,
@@ -2279,7 +2279,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 
     The model streams inside the request-stream activity — the capability's handler sees the model
     events with `activity.in_activity()` true — and the workflow-side `StreamedRunResult` is fed by
-    the events the activity captured off the live stream, so it stays deterministic across replays.
+    the activity's final response, one event per part, so it stays deterministic across replays.
     The single text delta is not a durability artifact: `run_stream()` consumes events up to the
     `FinalResultEvent` before yielding, so `stream_text(delta=True)` returns the same one chunk for
     this model outside a workflow.
@@ -2356,9 +2356,6 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'ToolAvailabilityDeltaEvent',
             'PartStartEvent',
             'FinalResultEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
             'PartEndEvent',
             'AgentRunResultEvent',
         ]
@@ -2421,14 +2418,19 @@ _process_durable_agent = Agent(
 @workflow.defn
 class ProcessStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
+    async def run(self, prompt: str) -> tuple[str, list[bool], list[str], list[str]]:
         result = await _process_durable_agent.run(prompt)
-        text_chunks = [
-            event.delta.content_delta
+        model_event_kinds = [
+            type(event).__name__
             for event in _process_events_collected
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+            if isinstance(event, (PartStartEvent, PartDeltaEvent))
         ]
-        return result.output, _process_model_events_in_activity, text_chunks
+        text_parts = [
+            event.part.content
+            for event in _process_events_collected
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return result.output, _process_model_events_in_activity, text_parts, model_event_kinds
 
 
 def test_durability_tool_metadata_disables_activity():
@@ -2601,7 +2603,7 @@ async def test_durability_mcp_instructions_use_operation_activity_summary(monkey
 
 
 async def test_durability_process_event_stream_fires_workflow_side(client: Client):
-    """ProcessEventStream sees the real captured events replayed in the workflow."""
+    """ProcessEventStream sees the activity's final response replayed in the workflow, each part complete."""
     _process_events_collected.clear()
     _process_model_events_in_activity.clear()
     async with Worker(
@@ -2610,7 +2612,7 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         workflows=[ProcessStreamDurableAgentWorkflow],
         plugins=[AgentPlugin(_process_durable_agent)],
     ):
-        output, model_events_in_activity, text_chunks = await client.execute_workflow(
+        output, model_events_in_activity, text_parts, model_event_kinds = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,
             args=['Hello'],
             id=ProcessStreamDurableAgentWorkflow.__name__,
@@ -2620,7 +2622,8 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert model_events_in_activity
         assert not any(model_events_in_activity)
 
-    assert text_chunks == ['ed ', 'response']
+    assert text_parts == ['Streamed response']
+    assert model_event_kinds == ['PartStartEvent']
 
 
 # --- Capability events emitted workflow-side reach the handler activity ---
@@ -5375,8 +5378,8 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
     """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    `ProcessEventStream` receives each captured segment in workflow code, and the
-    final response merges both segments' text with usage summed once.
+    `ProcessEventStream` receives each segment's final response in workflow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(
         segments=[
@@ -5413,9 +5416,7 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 2
     assert _scheduled_activity_count(history) == 2
 
@@ -5458,12 +5459,7 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
-    assert indices == snapshot(
-        [
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
-        ]
-    )
+    assert indices == snapshot([('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 1
 
 
@@ -6148,3 +6144,81 @@ async def test_durability_decide_span_in_activity(
     # Without content an answer keeps its numbers, which a yes/no's answer is all of.
     assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
     assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content
+
+
+# --- Mid-run tool population changes (https://github.com/pydantic/pydantic-ai/issues/7251) ---
+
+
+def _population_change_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call `unlock`, then `later` once it is advertised, then finish."""
+    returned = {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    if 'unlock' not in returned:
+        return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
+    if 'later' not in returned and any(tool.name == 'later' for tool in info.function_tools):
+        return ModelResponse(parts=[ToolCallPart('later', {}, tool_call_id='c2')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+async def _admit_later_from_step_two(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    # Workflow-side and derived from the run step, so replay resolves the same population.
+    return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
+
+
+def _unlock() -> str:
+    return 'unlocked'
+
+
+def _later() -> str:
+    return 'later ran'
+
+
+population_change_agent = Agent(
+    FunctionModel(_population_change_model_fn),
+    name='durability_population_change',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class PopulationChangeWorkflow:
+    @workflow.run
+    async def run(self) -> list[list[str]]:
+        result = await population_change_agent.run('go')
+        return [
+            part.tools_added
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+
+
+async def test_population_change_delta_is_recorded_once_and_replays(client: Client):
+    """A mid-run newcomer is recorded once in the workflow, and replaying the workflow history reproduces it exactly.
+
+    The diff runs in workflow code, so a replay re-derives the same baseline from the same steps and
+    writes the same delta: any divergence would surface as a non-determinism `replay_failure`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PopulationChangeWorkflow],
+        plugins=[AgentPlugin(population_change_agent)],
+    ):
+        handle = await client.start_workflow(
+            PopulationChangeWorkflow.run,
+            id=f'{PopulationChangeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        deltas = await handle.result()
+        history = await handle.fetch_history()
+
+    assert deltas == [['later']]
+    replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None

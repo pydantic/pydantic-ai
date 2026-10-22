@@ -1689,6 +1689,60 @@ async def test_interrupt_played_bytes_after_the_reply_finished_generating_trunca
     assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
 
 
+async def test_interrupt_played_bytes_after_the_reply_finished_generating_records_it_cut_without_truncation() -> None:
+    """Without output truncation (xAI), a finished reply the user cuts off is still recorded where playback stopped.
+
+    Only the provider's copy can't be truncated: no truncation goes out, and the transcript stays whole.
+    """
+    conn = _GatedRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone()],
+        [*_speech('item-b'), ResponseDone(interrupted=True)],  # a later reply, cut with no position
+    )
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+        assert [message.state for message in session.all_messages() if isinstance(message, ModelResponse)] == [
+            'complete'
+        ]
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [CancelResponse()]
+
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('interrupted', [100]), ('interrupted', [None])]
+
+
+async def test_interrupt_played_bytes_without_truncation_records_the_cut_when_the_cancel_fails() -> None:
+    """A cancel that fails on a dropped link still leaves the reply recorded as cut where playback stopped."""
+
+    class _DroppedLink(_GatedRealtimeConnection):
+        transport_errors = (ConnectionResetError,)
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('link dropped')
+
+    conn = _DroppedLink([*_speech('item-a', 2), ResponseDone()], [])
+    session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_output_truncation=False))
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+
+        with pytest.raises(RealtimeError, match='link dropped'):
+            await session.interrupt(played_bytes=_CHUNK)
+        conn.release.set()
+
+    assert _speech_cuts(session) == [('interrupted', [100])]
+
+
 async def test_a_tool_after_a_barge_in_on_a_finished_reply_sees_it_cut_off() -> None:
     """A tool's `ctx.messages` (and a chat span's input) record the cut-off reply as `all_messages()` does."""
     seen: list[ModelMessage] = []
@@ -2128,6 +2182,23 @@ async def test_played_audio_bytes_requires_exactly_one_audio_stream() -> None:
     session = RealtimeSession(conn, _noop_runner)
     with pytest.raises(UserError, match=r'`played_audio_bytes` needs exactly one active.*not 0'):
         _ = session.played_audio_bytes
+
+
+async def test_played_audio_bytes_after_the_connection_fails_raises_the_failure() -> None:
+    """Once the receive loop dies, the audio view ends; the playback position reports why, not a misuse.
+
+    The failure is not marked delivered, so an event-stream consumer still receives it too.
+    """
+    session = RealtimeSession(ExplodingConnection(), _noop_runner)
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == [b'\x00']
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            _ = session.played_audio_bytes
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            await session.wait_for_playback()
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            async for _ in session:
+                pass
 
 
 async def test_wait_for_playback_waits_for_device_paced_consumer() -> None:
@@ -4517,7 +4588,10 @@ async def test_tool_error_does_not_preempt_send_for_an_active_iterator() -> None
 
 
 async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None:
-    """Once the receive side has ended, a send raises the parked failure; the iterator then ends cleanly."""
+    """Once the receive side has ended, a send raises the parked failure; the iterator then skips it and ends cleanly.
+
+    It still streams the end of the turn the failure ended, which was queued behind the failure.
+    """
 
     async def runner(*args: Any) -> str:
         raise ValueError('tool exploded')
@@ -4535,6 +4609,7 @@ async def test_tool_error_delivered_to_send_is_skipped_by_the_iterator() -> None
 
         with pytest.raises(ValueError, match='tool exploded'):
             await session.send('x')
+        assert isinstance(await anext(events), RealtimeTurnCompleteEvent)
         with pytest.raises(StopAsyncIteration):
             await anext(events)
 
@@ -8257,6 +8332,17 @@ async def test_session_enqueue_renders_system_prompt() -> None:
         conversation_id=IsStr(),
         run_id=IsStr(),
     )
+
+
+async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> None:
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(SystemPromptPart(content='rule </SYSTEM > then more')) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
 
 
 async def test_session_enqueue_empty_call_is_noop() -> None:

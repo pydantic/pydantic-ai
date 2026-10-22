@@ -34,10 +34,10 @@ from pydantic_ai.durable_exec._operation import (
 )
 from pydantic_ai.durable_exec._spec import DurabilityEngineSpec
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
-from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads, managed_model_scope
+from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
+from pydantic_ai.models import Model, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -84,7 +84,6 @@ from ._transports import (
     _MCPCallTransport,
     _ModelRequestTransport,
     _RequestParams as _RequestParams,
-    _StreamedActivityPayload,
     _WorkspaceCallTransport,
 )
 
@@ -723,8 +722,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         raise error
 
     def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
-        if result_type is StreamedActivityResult:
-            result_type = _StreamedActivityPayload
         return _ModelRequestTransport(self, result_type=result_type)
 
     def _cancel_suspended_response_parameter_transport(self) -> _CancelTransport:
@@ -735,18 +732,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _event_stream_handler_parameter_transport(self) -> _EventStreamHandlerTransport:
         return _EventStreamHandlerTransport(self)
-
-    async def _load_streamed_activity_result(
-        self, result: object, model_request_parameters: ModelRequestParameters
-    ) -> StreamedActivityResult:
-        if isinstance(result, ModelResponse):
-            stream = CompletedStreamedResponse(
-                result,
-                model_request_parameters=model_request_parameters,
-                replay_events=True,
-            )
-            return StreamedActivityResult(response=result, events=[event async for event in stream])
-        return cast(StreamedActivityResult, result)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse

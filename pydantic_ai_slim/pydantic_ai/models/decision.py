@@ -202,6 +202,12 @@ class DecisionRequest:
     Only image media types are supported. Backends that do not support images must reject a nonempty tuple,
     including when `decide` is called directly.
     """
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The conversation `state` was built from, for a backend that takes a conversation natively.
+
+    Empty when `decide` is called directly with only a `state`. Its images are the ones in `images`, resolved and in
+    the same order: the order they appear in, message by message and part by part.
+    """
 
 
 @dataclass(kw_only=True)
@@ -534,7 +540,7 @@ class DecisionModel(Model[InterfaceClient]):
 
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
+        """The model profile: text output off, inline system prompts on, and file input as the class takes it.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
@@ -543,9 +549,22 @@ class DecisionModel(Model[InterfaceClient]):
         It also judges a system prompt rather than asking it, so a system prompt partway through the conversation
         stays a `system` entry: without inline system prompts, the shared request preparation would fold it into
         the user text, where it would be judged as the request.
+
+        Images are read only when the class sets
+        [`supports_image_input`][pydantic_ai.models.decision.DecisionModel.supports_image_input], and documents,
+        audio and video never are, so [`FileUnderstanding`][pydantic_ai.capabilities.FileUnderstanding] describes
+        those files instead of letting them be refused, and a tool's file is otherwise replaced by a note.
         """
         return merge_profile(
-            super().profile, ModelProfile(supports_text_output=False, supports_inline_system_prompts=True)
+            super().profile,
+            ModelProfile(
+                supports_text_output=False,
+                supports_inline_system_prompts=True,
+                supports_image_input=self.supports_image_input,
+                supports_document_input=False,
+                supports_audio_file_input=False,
+                supports_video_input=False,
+            ),
         )
 
     @abstractmethod
@@ -557,7 +576,8 @@ class DecisionModel(Model[InterfaceClient]):
         question in `request.questions` needs an answer of the matching kind under the same name.
         Image-capable backends serialize `request.images` as evidence alongside `request.state`; other
         backends must reject a nonempty tuple, including when this method is called directly. Backend request
-        limits also apply to direct calls.
+        limits also apply to direct calls. A backend that takes a conversation natively sends `request.messages`
+        when there are any, in place of `request.state`.
 
         Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a
@@ -700,7 +720,7 @@ class DecisionModel(Model[InterfaceClient]):
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
             state, image_inputs = self._map_decision_input(messages, turn=done)
-            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings)
+            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings, messages)
             async with self._decide(request, settings, fields=True) as (
                 response,
                 span,
@@ -715,7 +735,7 @@ class DecisionModel(Model[InterfaceClient]):
         speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
         questions = speculation.questions()
         questions.update(route_questions)
-        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings)
+        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings, messages)
 
         # A picked route whose fields are asked in a second request, past the size cutoff: the route, its label and
         # its questions.
@@ -809,6 +829,7 @@ class DecisionModel(Model[InterfaceClient]):
         image_inputs: list[BinaryContent | ImageUrl],
         questions: dict[str, DecisionQuestion],
         model_settings: DecisionModelSettings,
+        messages: list[ModelMessage],
     ) -> DecisionRequest:
         """Validate a complete request before resolving its image URLs."""
         self._check_request_limits(image_count=len(image_inputs), question_count=len(questions))
@@ -824,7 +845,7 @@ class DecisionModel(Model[InterfaceClient]):
                 if not image.is_image:
                     raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
                 images.append(image)
-        return DecisionRequest(state=state, questions=questions, images=tuple(images))
+        return DecisionRequest(state=state, questions=questions, images=tuple(images), messages=messages)
 
     async def _fill(
         self,
@@ -880,7 +901,7 @@ class DecisionModel(Model[InterfaceClient]):
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
         state, image_inputs = self._map_decision_input(messages, turn=turn)
-        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings)
+        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings, messages)
         response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
@@ -1024,7 +1045,8 @@ def _decide_span_attributes(
         attributes['pydantic_ai.decision.route_questions'] = safe_to_json(route_questions).decode()
         json_attributes.append('pydantic_ai.decision.route_questions')
     if include_content:
-        # The state is text or JSON, as it is on the wire, and only JSON is declared as such.
+        # The state is text or JSON, as a backend that sends it puts it on the wire, and only JSON is declared as such.
+        # A backend that sends `request.messages` instead puts the conversation the model request span records.
         if isinstance(request.state, str):
             attributes['pydantic_ai.decision.state'] = request.state
         else:

@@ -246,8 +246,7 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
     """Guard a model-request activity's response against Temporal's payload size limit."""
     with payload_size_errors(
         f'The response from model {model_name!r} is too large for Temporal',
-        'A generated image is the usual cause, so ask the model for a smaller one through the model '
-        'settings; a streamed segment can also overflow on its buffered events alone.',
+        'A generated image is the usual cause, so ask the model for a smaller one through the model settings.',
     ):
         yield
 

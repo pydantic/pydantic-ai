@@ -330,11 +330,18 @@ The mapping the adapter applies (matching the AG-UI Python SDK field names):
 | `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
 | `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
 | `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
-| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`, validated against `Interrupt.response_schema`; a payload that fails validation denies, including when the offending field is not `approved` itself — a wrongly-typed `editedArgs` or `reason` denies even alongside `approved=True`, while omitting either optional field or sending it as `null` is accepted |
+| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`, validated against `Interrupt.response_schema`; omitting either optional field or sending it as `null` is accepted |
 | `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
 | `payload.editedArgs`    | [`ToolApproved.override_args`][pydantic_ai.tools.ToolApproved.override_args] (fully replaces the proposed args) |
-| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`. `approved` is required, so a payload that omits it denies on validation and its `reason` is not used — send `approved: false` explicitly to have your `reason` reach the model |
+| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`                                      |
 | `status="cancelled"`    | [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message="Cancelled by user."` regardless of payload          |
+| A payload that fails validation, or an `interruptId` that maps to no call the agent proposed | A `RUN_ERROR` event that ends the run — see below                         |
+
+A payload that doesn't validate against the advertised `Interrupt.response_schema` is a protocol error, not an outcome the user chose, so the run ends with a `RUN_ERROR` event naming the offending interrupt. This is the spec's prescribed outcome once an agent validates against `responseSchema` ("Agents should handle missing or invalid resume payloads via `RunError`, not silent failures"), and it means a client-side serialization bug — a double-encoded `editedArgs`, a stringly-typed `approved` — is reported rather than looking to the user like the tool was denied. `approved` is required, so a payload that omits it is invalid too: send `approved: false` explicitly to deny, and to have your `reason` reach the model. One invalid entry fails the whole run, so no sibling approval in the same `resume[]` is applied. An `interruptId` without the `int-` prefix the adapter assigned can't be mapped back to a tool call id at all, so it ends the run the same way. A prefixed id that matches no tool call the agent proposed ends the run the same way, since the agent rejects a result for a call it never made.
+
+A validation failure stops the run before the agent resumes, so it never results in the tool running. Note that this is a guard against a *malformed* response, not an authorization boundary against the client — see [Trust model for client-submitted messages](overview.md#trust-model-for-client-submitted-messages).
+
+This whole mapping applies to the `resume[]` the client sends. If you follow the trust-model advice and pass your own `deferred_tool_results` to the run method instead, the client's `resume[]` is ignored entirely — including a malformed one, which is then neither validated nor reported.
 
 The agent must include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in its `output_type` so the run can pause cleanly instead of erroring on the proposed call:
 
@@ -520,7 +527,7 @@ AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`]
 
 Some of what Pydantic AI keeps in message history isn't a chat message, so the adapter sends it to the frontend as an [activity message](https://docs.ag-ui.com/concepts/messages) with a reserved `activityType`, streamed as an `ACTIVITY_SNAPSHOT` (`ag-ui-protocol` 0.1.19 or later) or included in [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] output:
 
-- `pydantic_ai_tool_availability_delta`, streamed and dumped: a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], which records deferred tools that became available, for example through [`ToolReturn(tools=[...])`](../tools-advanced.md#advanced-tool-returns).
+- `pydantic_ai_tool_availability_delta`, streamed and dumped: a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], which records tools that became available, for example deferred tools revealed through [`ToolReturn(tools=[...])`](../tools-advanced.md#advanced-tool-returns) or tools that [appeared mid-run](../tools-advanced.md#mid-run-tool-additions).
 - `pydantic_ai_compaction`, streamed and dumped: a [`CompactionPart`][pydantic_ai.messages.CompactionPart]; see [Compaction](#compaction).
 - `pydantic_ai_enqueued_messages`, streamed: messages [injected mid-run](#enqueued-messages). `dump_messages` gives them as ordinary messages.
 - `pydantic_ai_file` and `pydantic_ai_uploaded_file`, dumped under [`preserve_file_data`](#preserving-files-across-round-trips): files.
@@ -529,7 +536,7 @@ Some of what Pydantic AI keeps in message history isn't a chat message, so the a
 
 So when the frontend holds the message history through `@ag-ui/client`, these records are missing from the history the next run loads:
 
-- Tools a `ToolAvailabilityDeltaPart` made available are hidden from the model again.
+- Deferred tools a `ToolAvailabilityDeltaPart` made available are hidden from the model again, and tools that appeared mid-run are sent in `tools[]` instead.
 - The model's request includes everything before a compaction again, without the compaction item.
 - Enqueued messages, such as a background task's result, are no longer in the history.
 - Files kept with `preserve_file_data` are dropped.

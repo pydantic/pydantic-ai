@@ -149,7 +149,7 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 
 - **Anthropic `tool_addition_mode='by_reference'`** references the revealed name in a `tool_addition` block. A capability-only run pre-advertises the definition with `defer_loading=True`; a mixed run with a search surface withholds it, then appends the deferred definition in the same request as the reveal.
 - **OpenAI Responses `tool_addition_mode='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
-- **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
+- **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. A remote MCP server chooses its own tool names, so a tool whose name contains a framing tag such as `</system>` is still sent but not named in the announcement. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
 
 Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the wire entirely while a search surface is present, so search remains fully native — server-executed where the model supports it — and no query can surface a tool whose capability has not loaded.
 
@@ -165,6 +165,7 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | Function tools with provider-native reveal-item support (`tool_addition_mode='by_reference'` or `'with_definitions'`) | **Stable on Anthropic and OpenAI Responses** — deferred Anthropic entries are outside its cache key, and OpenAI Responses appends `additional_tools` without changing `tools[]`. |
 | Function tools without provider-native reveal-item support (`tool_addition_mode=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
+| Function tools that appear without a load (a capability's dynamic toolset or MCP server adding a tool mid-run) | **Stable on first-party OpenAI Responses and on Anthropic models with tool search**, with one exception: some of those Anthropic models add a one-time preamble when a run's first deferred tool is a newcomer, which moves the prefix on that request. Elsewhere the tool is added to `tools[]`. The change is recorded as an availability delta; see [Tools that appear mid-run](../tools-advanced.md#mid-run-tool-additions). |
 
 When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
 

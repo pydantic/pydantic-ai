@@ -32,6 +32,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextPart,
@@ -64,7 +66,7 @@ if TYPE_CHECKING:
 
 with try_import() as anthropic_available:
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry, omit as OMIT
-    from anthropic.types.beta import BetaMessageParam, BetaTextBlock, BetaUsage
+    from anthropic.types.beta import BetaMessageParam, BetaTextBlock, BetaToolUseBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.profiles.anthropic import AnthropicModelProfile
@@ -402,6 +404,52 @@ async def test_native_support_sends_every_reminder():
             'Reminder: be terse. This is request 3.',
         ],
     ]
+
+
+async def test_native_support_leaves_out_a_reminder_no_user_message_clears():
+    """A `no_output` retry adds only system-voice feedback, so nothing would clear the previous reminder.
+
+    A model that clears request-scoped prompts does so at the next user message, and the retry request has
+    none, so the previous step's reminder is left out of it, and of every later request so the history's
+    bytes stay append-only. One followed by a user message, here a tool result, is still sent for the API
+    to clear. https://github.com/pydantic/pydantic-ai/issues/10935; the append-only property test pins the
+    same case as `retry:no-output-retry+request-scoped`.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[TextPart('')])
+        if len(seen) == 2:
+            return ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    profile = ModelProfile(supports_inline_system_prompts=True, supports_request_scoped_system_prompts=True)
+    agent = weather_agent(FunctionModel(respond, profile=profile))
+
+    await agent.run(PROMPT)
+
+    assert [request_scoped_texts(messages) for messages in seen] == [
+        ['Reminder: be terse. This is request 1.'],
+        ['Reminder: be terse. This is request 2.'],
+        ['Reminder: be terse. This is request 2.', 'Reminder: be terse. This is request 3.'],
+    ]
+    retry_request = seen[1][-1]
+    assert isinstance(retry_request, ModelRequest)
+    assert [type(part).__name__ for part in retry_request.parts] == ['SystemPromptPart', 'SystemPromptPart']
+
+    # A request left with nothing but the reminder is left out with it.
+    model = FunctionModel(respond, profile=profile)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=PROMPT)]),
+        ModelRequest(parts=[SystemPromptPart('Reminder 1.', scope='request')]),
+        ModelResponse(parts=[TextPart('')]),
+        ModelRequest(parts=[RetryFeedbackPart(content='Please return text.', retry=RetryInfo(cause='no_output'))]),
+    ]
+    prepared = model.prepare_messages(history, ModelRequestParameters())
+    assert [type(message).__name__ for message in prepared] == ['ModelRequest', 'ModelResponse', 'ModelRequest']
+    assert request_scoped_texts(prepared) == []
 
 
 async def test_reminder_enqueued_from_before_model_request_matches_two_writes():
@@ -897,6 +945,69 @@ async def test_openrouter_message_cache_control_goes_before_the_request_scoped_p
         ]
     )
     assert only_reminder['messages'] == snapshot([{'role': 'user', 'content': '<system>Reminder.</system>'}])
+
+
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+async def test_anthropic_no_output_retry_leaves_out_the_reminder_nothing_clears(allow_model_requests: None):
+    """On the wire: the reminder a `no_output` retry would leave visible is absent from that request and the next.
+
+    The retry request holds only system-voice entries, so no user message would clear the first reminder
+    there; the reminder sent with the retry is followed by a tool result, so it still goes out with
+    `clear_at` for the API to clear. https://github.com/pydantic/pydantic-ai/issues/10935
+    """
+    usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_client = MockAnthropic.create_mock(
+        [
+            completion_message([BetaTextBlock(text='', type='text')], usage),
+            completion_message(
+                [BetaToolUseBlock(id='call_1', input={'city': 'Paris'}, name='get_weather', type='tool_use')], usage
+            ),
+            completion_message([BetaTextBlock(text='Done.', type='text')], usage),
+        ]
+    )
+    model = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = weather_agent(model)
+
+    await agent.run(PROMPT)
+
+    bodies = get_mock_chat_completion_kwargs(mock_client)
+    assert [
+        [(message['role'], message.get('clear_at'), message['content']) for message in body['messages'][1:]]
+        for body in bodies
+    ] == snapshot(
+        [
+            [('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 1.', 'type': 'text'}])],
+            [
+                ('system', None, [{'text': 'Please return text or call a tool.', 'type': 'text'}]),
+                ('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 2.', 'type': 'text'}]),
+            ],
+            [
+                ('system', None, [{'text': 'Please return text or call a tool.', 'type': 'text'}]),
+                ('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 2.', 'type': 'text'}]),
+                (
+                    'assistant',
+                    None,
+                    [{'id': 'call_1', 'type': 'tool_use', 'name': 'get_weather', 'input': {'city': 'Paris'}}],
+                ),
+                (
+                    'user',
+                    None,
+                    [
+                        {
+                            'tool_use_id': 'call_1',
+                            'type': 'tool_result',
+                            'content': [{'text': 'Paris: 18C, cloudy', 'type': 'text'}],
+                            'is_error': False,
+                        }
+                    ],
+                ),
+                ('system', 'next_user_message', [{'text': 'Reminder: be terse. This is request 3.', 'type': 'text'}]),
+            ],
+        ]
+    )
+    # The first reminder was the first request's tail, after its breakpoint, so leaving it out moves nothing
+    # cached; from the retry request on, the conversation only grows.
+    assert_append_only(bodies[1:])
 
 
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')

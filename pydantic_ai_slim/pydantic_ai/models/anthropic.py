@@ -15,6 +15,7 @@ from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
+from .._context_size import mark_context_input_tokens, marked_context_input_tokens
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
 from .._thinking_part import render_replayed_thinking
@@ -106,6 +107,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     ToolVisibility,
+    _declare_lone_newcomers,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_suffix_start,  # pyright: ignore[reportPrivateUsage]
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
@@ -143,19 +145,31 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
+def _native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
+    """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
+
+    An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
+    `search_tools` function tool, which `function_tools` already carries.
+    """
+    if isinstance(tool, MCPServerTool):
+        return False
+    return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
+
+
 def _revealed_deferred_tool_order(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> list[str]:
     """Order revealed non-corpus deferred entries at the tail by their first reveal in history.
 
     Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
+    A mid-run newcomer (`introduced_tool_names`) is declared deferred for the same reason and joins them.
     """
     tool_defs = model_request_parameters.tool_defs
     return [
         name
         for name in discovered_tool_names_in_order(messages)
         if name in tool_defs
-        and tool_defs[name].defer_loading
+        and (tool_defs[name].defer_loading or name in model_request_parameters.introduced_tool_names)
         and tool_defs[name].with_native is None
         and model_request_parameters.visibility_of(name) == 'deferred'
     ]
@@ -339,12 +353,12 @@ _THINKING_BINDING_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicBedrockMantle,
     AsyncAnthropicFoundry,
 )
-# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) doesn't support the `bm25` tool-search
-# variant — it 400s with `BM25 tool search is not supported on Bedrock. Use tool_search_tool_regex instead.`
-# — so we default to `regex` there. The other transports (Vertex, Foundry, and the Messages-API-based
-# `AsyncAnthropicBedrockMantle`) expose the full Messages API, including both tool-search variants, so they
-# keep the `bm25` default.
-_BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock,)
+# The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) accepts the `bm25` tool-search variant wherever it
+# accepts `regex`, but an unset strategy resolves to `regex` there: it was the only variant Bedrock accepted,
+# and resolving to `bm25` would change the search algorithm for every request that doesn't set one. For the same
+# reason, recorded `bm25` calls replay as `regex` there unless the request asks for `bm25`. The other transports
+# (Vertex, Foundry, and the Messages-API-based `AsyncAnthropicBedrockMantle`) default to `bm25`.
+_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS = (AsyncAnthropicBedrock,)
 # Anthropic web-tool availability is client/platform-specific:
 # * `AsyncAnthropicBedrock` is the legacy Amazon Bedrock InvokeModel client, where web search/fetch
 #   are unavailable.
@@ -1050,6 +1064,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     # has to re-insert them.
     compaction_requires_encrypted_content = False
     compaction_retains_standing_prompt = False
+    # The Messages API has no audio or video block, and its document block takes a PDF or plain text.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
+    _supported_document_media_types = frozenset({'application/pdf', 'text/plain'})
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -1222,16 +1239,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         response = await self._messages_create(messages, False, model_settings, model_request_parameters)
         response = check_json_response(self.model_name, response)
         if isinstance(response, BetaMessage):
-            return self._process_response(response, model_request_parameters, model_settings)
-        # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport error
-        # that breaks the stream off, both while it opens and while it's read.
-        async with response.source:
-            streamed_response = await self._process_streamed_response(
-                response, model_request_parameters, model_settings
-            )
-            async for _ in streamed_response:
-                pass
-        return streamed_response.get()
+            model_response = self._process_response(response, model_request_parameters, model_settings)
+        else:
+            # The request was streamed behind the scenes, see `_messages_create`. `_map_api_errors` maps a transport
+            # error that breaks the stream off, both while it opens and while it's read.
+            async with response.source:
+                streamed_response = await self._process_streamed_response(
+                    response, model_request_parameters, model_settings
+                )
+                async for _ in streamed_response:
+                    pass
+            model_response = streamed_response.get()
+        _mark_continuation_context_input_tokens(messages, model_response)
+        return model_response
 
     async def count_tokens(
         self,
@@ -1267,7 +1287,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
         async with response.source:
-            yield await self._process_streamed_response(response, model_request_parameters, model_settings)
+            streamed_response = await self._process_streamed_response(
+                response, model_request_parameters, model_settings
+            )
+            yield streamed_response
+            _mark_continuation_context_input_tokens(messages, streamed_response)
 
     def _request_thinks(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1405,6 +1429,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         A non-streaming request is streamed anyway when the SDK requires it for its `max_tokens`, so its response
         can be a stream too.
         """
+        model_request_parameters = self._declare_newcomers_left_alone(model_settings, model_request_parameters)
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
         revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
@@ -1637,8 +1662,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
         # and must not add the beta either.
         function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
+        declared_tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
         if self.tool_addition_mode == 'by_reference' and any(
-            name in model_request_parameters.declared_tool_defs
+            name in declared_tool_defs
             and name in function_tool_defs
             and model_request_parameters.visibility_of(name) != 'visible'
             for message in messages
@@ -1801,7 +1827,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
         # definition would 400.
         map_parameters = replace(
-            model_request_parameters,
+            self._declare_newcomers_left_alone(model_settings, model_request_parameters),
             native_tools=[tool for tool in model_request_parameters.native_tools if not isinstance(tool, AdvisorTool)],
         )
 
@@ -2017,7 +2043,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             provider_details = provider_details or {}
             provider_details['cache_diagnostics'] = response.diagnostics.model_dump(mode='json')
 
-        return ModelResponse(
+        model_response = ModelResponse(
             parts=items,
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self._model_name),
             model_name=response.model,
@@ -2028,6 +2054,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             state='suspended' if response.stop_reason == 'pause_turn' else 'complete',
             provider_details=provider_details,
         )
+        if (last_pass_input_tokens := _last_pass_input_tokens(response.usage)) is not None:
+            mark_context_input_tokens(model_response, last_pass_input_tokens)
+        return model_response
 
     def _get_enabled_server_tool_names(
         self, model_request_parameters: ModelRequestParameters, model_settings: AnthropicModelSettings
@@ -2104,15 +2133,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _resolve_tool_search_strategy(self, strategy: Literal['bm25', 'regex'] | None) -> Literal['bm25', 'regex']:
         """Resolve which native tool-search variant to send.
 
-        `bm25` is the default, except on clients that don't support it (the legacy Bedrock
-        InvokeModel API), where `regex` is the default and an explicit `bm25` is rejected.
+        An explicit strategy is sent as given. An unset one resolves to `bm25`, except on the legacy
+        Bedrock InvokeModel API, where it resolves to `regex`.
         """
-        if isinstance(self.client, _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS):
-            if strategy == 'bm25':
-                raise UserError(
-                    "ToolSearch(strategy='bm25') is not supported by the `AsyncAnthropicBedrock` client; "
-                    "use ToolSearch(strategy='regex') instead, or leave the strategy unset to use the default."
-                )
+        if strategy is None and isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS):
             return 'regex'
         return strategy or 'bm25'
 
@@ -2246,16 +2270,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
         return tools, mcp_servers, beta_features
 
-    def _prepare_tools_and_tool_choice(
+    def _tool_choice_declarations(
         self,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
-        """Determine which tools to send and the API tool_choice value.
-
-        Returns:
-            A tuple of (filtered_tools, tool_choice).
-        """
+    ) -> tuple[dict[str, ToolDefinition], BetaToolChoiceParam]:
+        """The tool definitions to declare, after any `tool_choice` restriction, and the API `tool_choice` value."""
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -2286,7 +2306,38 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 tool_choice = {'type': 'auto'} if tool_choice_mode == 'auto' or not supports else {'type': 'any'}
         else:
             assert_never(resolved_tool_choice)
+        return tool_defs, tool_choice
 
+    def _declare_newcomers_left_alone(
+        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelRequestParameters:
+        """Declare mid-run newcomers plainly when `tool_choice` leaves no other plainly declared tool.
+
+        Resolution keeps a newcomer deferred while another tool is plainly declared, but a `tool_choice`
+        restriction can filter that tool out of the request, leaving only deferred declarations, which
+        Anthropic rejects. Applied before the tools and messages are mapped, so the newcomer's reveal
+        blocks are dropped along with its `defer_loading` flag.
+        """
+        tool_defs, _ = self._tool_choice_declarations(model_settings, model_request_parameters)
+        return _declare_lone_newcomers(
+            model_request_parameters,
+            tool_defs.keys(),
+            wire_native_tools=[
+                tool for tool in model_request_parameters.native_tools if _native_tool_is_a_tools_entry(tool)
+            ],
+        )
+
+    def _prepare_tools_and_tool_choice(
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[BetaToolUnionParam], BetaToolChoiceParam | None]:
+        """Determine which tools to send and the API tool_choice value.
+
+        Returns:
+            A tuple of (filtered_tools, tool_choice).
+        """
+        tool_defs, tool_choice = self._tool_choice_declarations(model_settings, model_request_parameters)
         if not tool_defs:
             return [], None
 
@@ -2360,6 +2411,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
         # verbatim (no pairing logic needed).
         advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
+        bm25_requested = any(
+            isinstance(t, ToolSearchTool) and t.strategy == 'bm25' for t in model_request_parameters.native_tools
+        )
         # Filter `tool_reference` entries during replay against the tools the current turn
         # will actually send: Anthropic rejects references to tools not in the wire `tools`
         # list (e.g. an MCP that failed to register this turn). The previously-discovered
@@ -2370,7 +2424,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
         # names from it — so this changes no current behavior. It keeps the filter honest against the
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
-        declared_tool_names = set(model_request_parameters.declared_tool_defs)
+        # Read after the `tool_choice` restriction, which leaves tools out of the request: a reveal naming
+        # one of those would be just as unknown as one naming a tool that's gone.
+        declared_tool_names = set(self._tool_choice_declarations(model_settings, model_request_parameters)[0])
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
         # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
@@ -2689,13 +2745,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             elif response_part.tool_name == ToolSearchTool.kind:
                                 # Round-trip the native variant (bm25/regex) so we don't
                                 # silently rewrite the algorithm. `_map_server_tool_use_block`
-                                # stashes it in `provider_details['strategy']`. Clients that don't
-                                # support `bm25` (legacy Bedrock InvokeModel) always replay as `regex`.
+                                # stashes it in `provider_details['strategy']`. On the legacy Bedrock
+                                # InvokeModel API, `bm25` calls replay as `regex` unless this request
+                                # asks for `bm25` (see `_REGEX_DEFAULT_TOOL_SEARCH_CLIENTS`).
                                 details = response_part.provider_details or {}
                                 strategy: Literal['bm25', 'regex'] = (
                                     'regex'
                                     if details.get('strategy') == 'regex'
-                                    or isinstance(self.client, _BM25_TOOL_SEARCH_UNSUPPORTED_CLIENTS)
+                                    or (
+                                        isinstance(self.client, _REGEX_DEFAULT_TOOL_SEARCH_CLIENTS)
+                                        and not bm25_requested
+                                    )
                                     else 'bm25'
                                 )
                                 native_name = (
@@ -3548,6 +3608,43 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     return details
 
 
+def _last_pass_input_tokens(response_usage: BetaUsage | BetaMessageDeltaUsage) -> int | None:
+    """The input tokens of a response's last sampling pass, cache included, or `None` when the passes aren't reported.
+
+    A server-side tool loop samples the model once per tool round, and the top-level usage sums the passes: what they
+    cost, but more than any pass's context. A beta that returns `iterations` (such as `compact-2026-01-12`) reports
+    each pass, and the last `message` one (`fallback_message` when a fallback model served the turn) measures the
+    context; a `compaction` entry measures the compaction, not the context. See `BetaUsage.iterations`.
+
+    A single-pass response gets a value too, though its sum is already its context: each `pause_turn` segment needs a
+    stamp of its own, as the continuation merges the segments' metadata shallowly.
+    """
+    for iteration in reversed(response_usage.iterations or []):
+        if iteration.type in ('message', 'fallback_message'):
+            return iteration.input_tokens + iteration.cache_read_input_tokens + iteration.cache_creation_input_tokens
+    return None
+
+
+def _mark_continuation_context_input_tokens(
+    messages: list[ModelMessage], response: ModelResponse | StreamedResponse
+) -> None:
+    """Give a `pause_turn` continuation segment that didn't report its passes the context size of its own usage.
+
+    Otherwise the continuation's shallow metadata merge would keep an earlier segment's last pass as the context of
+    the merged response. A continuation resends the same betas, so every segment is expected to report `iterations`
+    if the first did; this guards against one that doesn't. A turn that never reported them keeps its summed usage as
+    the context.
+    """
+    previous = messages[-1] if messages else None
+    if (
+        isinstance(previous, ModelResponse)
+        and previous.state == 'suspended'
+        and marked_context_input_tokens(previous) is not None
+        and marked_context_input_tokens(response) is None
+    ):
+        mark_context_input_tokens(response, response.usage.input_tokens)
+
+
 def _map_usage(
     message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent,
     provider: str,
@@ -3842,6 +3939,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     self._usage = _map_usage(
                         event, self._provider_name, self._provider_url, self._model_name, self._usage
                     )
+                    if (last_pass_input_tokens := _last_pass_input_tokens(event.usage)) is not None:
+                        mark_context_input_tokens(self, last_pass_input_tokens)
                     if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                         self.provider_details = self.provider_details or {}
                         self.provider_details['finish_reason'] = raw_finish_reason

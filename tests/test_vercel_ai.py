@@ -17,6 +17,7 @@ from pydantic_ai import Agent, CancellationToken, RunCancelled, RunTimedOut, Too
 from pydantic_ai._deferred_capabilities import (
     parse_loaded_capabilities,
 )
+from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -92,6 +93,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import UsageLimits
 
@@ -155,8 +157,12 @@ with try_import() as starlette_import_successful:
     )
 
 with try_import() as openai_import_successful:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from openai.types.chat import ChatCompletionMessage
+
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -6681,6 +6687,44 @@ async def test_adapter_dump_messages_with_retry():
     )
 
 
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+@pytest.mark.parametrize('structured', [True, False], ids=['validation-errors', 'message'])
+async def test_retried_tool_return_content_survives_dump_and_load(allow_model_requests: None, structured: bool):
+    """A retry's validation errors reach the provider as the same structure after a round-trip.
+
+    `error_text` can only hold the rendered string, so the list rides the call's provider metadata;
+    without it a provider with no native error channel would go from `{"error": [...]}` to
+    `{"error": "[...]"}`. A plain `ModelRetry` message is already exactly what `error_text` holds.
+    """
+
+    class Count(BaseModel):
+        count: int
+
+    with pytest.raises(ValidationError) as exc_info:
+        Count.model_validate({'count': 'lots'})
+    error: ValidationError | ModelRetry = exc_info.value if structured else ModelRetry('count must be a number')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='how many?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='count', args={'count': 'lots'}, tool_call_id='c1')]),
+        ModelRequest(parts=[build_retried_tool_return(error, tool_name='count', tool_call_id='c1')]),
+    ]
+
+    reloaded = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+    retried = message_part(reloaded, ToolReturnPart, message_index=2)
+    assert (retried.outcome, retried.content) == (
+        'retried',
+        message_part(messages, ToolReturnPart, message_index=2).content,
+    )
+
+    async def payload(history: list[ModelMessage]) -> Any:
+        mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+        await model.request(model.prepare_messages(history), None, ModelRequestParameters())
+        return get_mock_chat_completion_kwargs(mock_client)[0]['messages'][-1]
+
+    assert await payload(reloaded) == await payload(messages)
+
+
 async def test_retried_tool_return_cause_survives_dump_and_load():
     """A retried return's `cause` rides the call's provider metadata with its outcome, and a forged one degrades."""
     messages: list[ModelMessage] = [
@@ -11917,6 +11961,66 @@ async def test_tool_availability_delta_round_trips_through_client_rebuilt_stream
 
     assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])
     assert deltas(loaded) == deltas(server_history)
+
+
+async def test_mid_run_tool_delta_round_trips_through_client_rebuilt_stream() -> None:
+    """A tool that joins mid-run keeps its delta when the client rebuilds history from the event stream.
+
+    Without the delta, the next run over that history would take the tool for one it started with and
+    declare it in `tools`, moving the cached prefix, instead of keeping it on the tool-addition channel.
+    """
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        returned = [part.tool_name for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)]
+        if not returned:
+            yield {0: DeltaToolCall(name='unlock', json_args='{}', tool_call_id='c1')}
+        elif returned == ['unlock']:
+            yield {0: DeltaToolCall(name='later', json_args='{}', tool_call_id='c2')}
+        else:
+            yield 'done'
+
+    toolset = FunctionToolset[Any]()
+
+    @toolset.tool_plain
+    def unlock() -> str:
+        toolset.add_function(lambda: 'later ran', name='later')
+        return 'unlocked'
+
+    agent = Agent(FunctionModel(stream_function=stream_function), toolsets=[toolset])
+    user_message = UIMessage(id='user-1', role='user', parts=[TextUIPart(text='go')])
+    adapter = VercelAIAdapter(agent, SubmitMessage(id='chat-1', messages=[user_message]))
+    server_history: list[ModelMessage] = []
+    chunks = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(on_complete=lambda result: server_history.extend(result.all_messages()))
+        )
+        if '[DONE]' not in encoded
+    ]
+    loaded = VercelAIAdapter.load_messages([user_message, _reduce_assistant_message(chunks, 'assistant-1')])
+
+    def deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
+        return [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+
+    assert deltas(loaded) == snapshot([ToolAvailabilityDeltaPart(tools_added=['later'])])
+    assert deltas(loaded) == deltas(server_history)
+
+    seen: list[ModelRequestParameters] = []
+
+    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters)
+        return ModelResponse(parts=[TextPart('again')])
+
+    next_model = FunctionModel(record, profile={'tool_addition_mode': 'with_definitions'})
+    await agent.run('again', message_history=loaded, model=next_model)
+
+    assert [params.tool_visibility for params in seen] == [{'unlock': 'visible', 'later': 'via_history'}]
 
 
 def _reduce_assistant_message(chunks: list[dict[str, Any]], message_id: str) -> UIMessage:
