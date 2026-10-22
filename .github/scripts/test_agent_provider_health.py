@@ -1733,8 +1733,9 @@ def test_agent_start_recheck_blocks_a_stale_ready_gate_and_replaces_its_decision
             'name': 'agent',
             'conclusion': 'failure',
             'steps': [
-                {'name': 'Recheck Z.AI provider health at agent start', 'conclusion': 'success'},
-                {'name': 'Stop before inference on a blocked provider-health decision', 'conclusion': 'failure'},
+                {'name': health.AGENT_START_HEALTH_STEPS[0], 'conclusion': 'success'},
+                {'name': health.AGENT_START_HEALTH_STEPS[1], 'conclusion': 'success'},
+                {'name': health.AGENT_START_HEALTH_STEPS[2], 'conclusion': 'failure'},
                 {'name': 'Execute Claude Code CLI', 'conclusion': 'skipped'},
             ],
         }
@@ -2365,11 +2366,7 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
                 ],
                 None,
             )
-            for name in (
-                'Recheck Z.AI provider health at agent start',
-                'Replace health decision for the incident monitor',
-                'Stop before inference on a blocked provider-health decision',
-            )
+            for name in health.AGENT_START_HEALTH_STEPS
         ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),

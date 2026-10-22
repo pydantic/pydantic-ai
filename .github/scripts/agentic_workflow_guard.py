@@ -67,6 +67,7 @@ from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 import yaml
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 
 WORKFLOWS_DIR = Path('.github/workflows')
 AGENTIC_GLOB = 'pydantic-ai-*.md'
@@ -1117,19 +1118,29 @@ def check_provider_health_agent_start(workflows_dir: Path = WORKFLOWS_DIR) -> li
             None,
         )
         stop_condition = f"steps.{steps[recheck].get('id')}.outputs.ready != 'true'" if recheck is not None else None
-        stops = recheck is not None and any(
-            _normalized_condition(str(step.get('if', ''))) == _normalized_condition(str(stop_condition))
+        after_recheck = steps[recheck + 1 : execution] if recheck is not None else []
+        recheck_name, replace_name, stop_name = AGENT_START_HEALTH_STEPS
+        # The monitor recognizes these steps by name, so a renamed step reads as a setup failure.
+        named = (
+            recheck is not None
+            and steps[recheck].get('name') == recheck_name
+            and any(step.get('name') == replace_name for step in after_recheck)
+        )
+        stops = any(
+            step.get('name') == stop_name
+            and _normalized_condition(str(step.get('if', ''))) == _normalized_condition(str(stop_condition))
             and str(step.get('run', '')).rstrip().endswith('exit 1')
             and not step.get('continue-on-error')
-            for step in steps[recheck + 1 : execution]
+            for step in after_recheck
         )
-        if recheck is None or gate_env is None or steps[recheck].get('env') != gate_env or not stops:
+        if recheck is None or gate_env is None or steps[recheck].get('env') != gate_env or not named or not stops:
             violations.append(
                 Violation(
                     str(lock),
                     'provider-health-agent-start',
                     'The agent job must rerun the default-branch provider-health check with the gate environment '
-                    'before engine execution, then fail before inference unless it reports ready.',
+                    'before engine execution, then fail before inference unless it reports ready. The steps must '
+                    'keep the names in `agent_provider_health.AGENT_START_HEALTH_STEPS`.',
                 )
             )
     return violations

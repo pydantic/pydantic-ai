@@ -18,6 +18,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 import agentic_workflow_guard
+from agent_provider_health import AGENT_START_HEALTH_STEPS
 from agentic_workflow_guard import (
     Violation,
     changed_files,
@@ -1565,17 +1566,22 @@ _SHIPPED_AGENT_STEPS: list[dict[str, object]] = [
 
 
 def _agent_start_steps(
-    *, run: str = _RECHECK_RUN, env: dict[str, str] = _GATE_ENV, stop_continues: bool = False
+    *,
+    run: str = _RECHECK_RUN,
+    env: dict[str, str] = _GATE_ENV,
+    stop_continues: bool = False,
+    stop_name: str = AGENT_START_HEALTH_STEPS[2],
 ) -> list[dict[str, object]]:
     stop: dict[str, object] = {
-        'name': 'Stop before inference on a blocked provider-health decision',
+        'name': stop_name,
         'if': "steps.agent_start_health.outputs.ready != 'true'",
         'run': 'echo "::error::blocked"\nexit 1\n',
     }
     if stop_continues:
         stop['continue-on-error'] = True
     return [
-        {'name': 'Recheck Z.AI provider health at agent start', 'id': 'agent_start_health', 'env': env, 'run': run},
+        {'name': AGENT_START_HEALTH_STEPS[0], 'id': 'agent_start_health', 'env': env, 'run': run},
+        {'name': AGENT_START_HEALTH_STEPS[1], 'uses': 'actions/upload-artifact', 'continue-on-error': True},
         stop,
     ]
 
@@ -1646,7 +1652,14 @@ def test_provider_health_agent_start_catches_the_queued_ci_review_defect(tmp_pat
             id='env-differs-from-gate',
         ),
         pytest.param([*_agent_start_steps(stop_continues=True), *_SHIPPED_AGENT_STEPS], id='stop-continues'),
-        pytest.param([_agent_start_steps()[0], *_SHIPPED_AGENT_STEPS], id='no-stop'),
+        pytest.param([*_agent_start_steps()[:2], *_SHIPPED_AGENT_STEPS], id='no-stop'),
+        pytest.param(
+            [
+                *_agent_start_steps(stop_name='Stop before inference when provider health is blocked'),
+                *_SHIPPED_AGENT_STEPS,
+            ],
+            id='renamed-stop-step',
+        ),
     ],
 )
 def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inference(
