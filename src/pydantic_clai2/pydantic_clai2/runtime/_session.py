@@ -101,14 +101,16 @@ class SessionStepStore(SqliteStepStore):
         await _unless_locked('tool effect', super().record_tool_effect(record))
 
 
-async def _unless_locked(record: str, write: Awaitable[None]) -> None:
+async def _unless_locked(
+    kind: Literal['run', 'step event', 'step checkpoint', 'tool effect'], write: Awaitable[None]
+) -> None:
     try:
         await write
     except sqlite3.OperationalError as error:
         if error.sqlite_errorcode & 0xFF not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
             raise
         # Below `WARNING`, so mid-turn `logging` does not fall back to printing it over the live display.
-        logging.getLogger(__name__).info('Skipped saving a %s: %s', record, error)
+        logging.getLogger(__name__).info('Skipped saving a %s: %s', kind, error)
 
 
 def step_store(conversations: SqliteConversationStore) -> SessionStepStore:
