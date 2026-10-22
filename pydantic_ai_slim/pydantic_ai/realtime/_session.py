@@ -116,6 +116,7 @@ from ._instrumentation import (
 from ._lifecycle import LifecycleEvent, ResponseStarted, StaleEvent
 from ._retained_audio import RetainedAudioBudget
 from ._utils import (
+    SystemPromptText,
     seed_pcm_audio,
 )
 from .codec import (
@@ -515,19 +516,23 @@ def _pending_message_text(pending: PendingMessage) -> str:
         'be delivered over the live input channel.'
     )
     texts: list[str] = []
+    from_user = False
     for message in pending.messages:
         if not isinstance(message, ModelRequest):
             raise error
         for part in message.parts:
             if isinstance(part, UserPromptPart) and (text := _user_prompt_text(part)) is not None:
                 texts.append(text)
+                # User-channel text, including content a capability added such as a task report: never system voice.
+                from_user = True
             elif isinstance(part, SystemPromptPart):
                 texts.append(wrap(SYSTEM_TAG, part.content))
             else:
                 raise error
     if not texts:
         raise error
-    return '\n\n'.join(texts)
+    text = '\n\n'.join(texts)
+    return text if from_user else SystemPromptText(text)
 
 
 def _pending_message_record(pending: PendingMessage) -> list[ModelRequestPart] | None:
@@ -1617,7 +1622,8 @@ class RealtimeSession:
         self, content: str, *, respond: bool, parts: list[ModelRequestPart] | None = None
     ) -> ModelRequest:
         """Send *content* as a text turn, recording *parts* for it when given, else one `UserPromptPart`."""
-        request = self._new_request(parts if parts is not None else [UserPromptPart(content=content)])
+        # (History records plain text, not what marks it for the connection.)
+        request = self._new_request(parts if parts is not None else [UserPromptPart(content=str(content))])
         await self._send_frame(content if respond else TextContext(content), request=request)
         return request
 
