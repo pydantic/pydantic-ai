@@ -115,7 +115,9 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
   take longer than the worker's `claim_timeout`. If the claim can't be extended, because the task was
   cancelled or this attempt already failed (for example, its claim expired and the task was retried),
   the step is cancelled and the Absurd SDK's error propagates. A worker with `claim_timeout=0` holds
-  claims that never expire, so its steps don't extend them.
+  claims that never expire, so its steps don't extend them. Nothing then checks mid-step that the task
+  is still owned: a step of a cancelled task runs to its end, and the cancellation surfaces when its
+  result is checkpointed.
 - Inside a task, an `MCPToolset` keeps one session for the whole run. The first step that runs and
   needs the server connects to it, so a failed connection fails that step and the task's retry
   connects again.

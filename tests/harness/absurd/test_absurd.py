@@ -898,6 +898,33 @@ class TestClaim:
             assert (await agent.run('go')).output == 'done'
             assert await claim_expiry(absurd, ctx.task_id) is None
 
+    async def test_claim_without_expiry_sees_cancellation_at_the_next_checkpoint(self, absurd: AsyncAbsurd) -> None:
+        # Without heartbeats nothing checks mid-step that the task is still owned: a cancelled task's
+        # step runs to its end, and the cancellation surfaces when its result is checkpointed.
+        toolset = FunctionToolset(id='tools')
+        task: dict[str, str] = {}
+        finished: list[str] = []
+
+        @toolset.tool_plain
+        async def slow() -> str:
+            await absurd.cancel_task(task['id'])
+            finished.append('slow')
+            return 'done slowly'
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('slow')),
+            name='slow',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+        async with running_task_context(absurd, claim_timeout=0) as ctx:
+            task['id'] = ctx.task_id
+            with pytest.raises(CancelledTask):
+                await agent.run('go')
+
+        assert finished == ['slow']
+        assert list(await checkpoints(absurd, ctx.task_id)) == ['slow__model.request']
+
     async def test_step_extends_the_claim_before_its_body_runs(self, absurd: AsyncAbsurd) -> None:
         # `begin_step` leaves the claim as it was, so a step that starts late in the claim window
         # extends it first instead of waiting a heartbeat interval for its first heartbeat.
