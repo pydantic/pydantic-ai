@@ -10,6 +10,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import IO, Any
 
@@ -1184,7 +1185,7 @@ async def test_a_leader_stop_reaches_a_command_that_left_its_group(fake_e2b: Fak
 
 
 @pytest.mark.skipif(not os.path.exists('/proc/self/stat'), reason='identifies processes through Linux `/proc`')
-async def test_timeout_stops_a_command_whose_name_holds_a_newline(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     # Linux names a process after its executable, and a file name may hold a newline, which a
     # line-wise read of `/proc/PID/stat` would cut short.
     fake_e2b.host_root = tmp_path
@@ -1195,11 +1196,23 @@ async def test_timeout_stops_a_command_whose_name_holds_a_newline(fake_e2b: Fake
     pid_file = tmp_path / 'pid'
     backend = await started()
     try:
-        with anyio.fail_after(5):
-            with pytest.raises(WorkspaceTimeoutError):
-                await backend.run(
-                    f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))} 20', shell=True, timeout=0.5
+        with anyio.fail_after(10):
+            async with anyio.create_task_group() as group:
+                group.start_soon(
+                    partial(
+                        backend.run,
+                        f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))} 30',
+                        shell=True,
+                    )
                 )
+                # Stop it only once it carries the name, so the stop reads that name.
+                while (
+                    not pid_file.exists()
+                    or not pid_file.read_text()
+                    or (Path(f'/proc/{pid_file.read_text().strip()}/comm').read_bytes() != b'odd\nname\n')
+                ):
+                    await anyio.sleep(0.01)
+                group.cancel_scope.cancel()
             await _exited(int(pid_file.read_text()))
     finally:
         for handle in fake_e2b.sandboxes[0].commands.handles:
