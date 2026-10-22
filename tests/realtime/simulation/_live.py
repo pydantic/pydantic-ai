@@ -171,7 +171,7 @@ class LiveServer:
             delegation = next((d for d in self.delegations.values() if d.backend is None and d.outputs), None)
             if delegation is not None:
                 self._start_backend(delegation)
-            elif self.typed:
+            elif self.typed:  # pragma: no branch
                 texts, self.typed = self.typed, []
                 if self.running_delegation() is not None:
                     # Live runs it once the backend response under way ends (seen live).
