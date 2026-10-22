@@ -1080,6 +1080,7 @@ class TestExternalizeRestoreWalker:
             pytest.param('aGVsbG8gd29ybGQ=\n', id='trailing-newline'),
             pytest.param('ab-_ab+/', id='mixed-alphabets'),
             pytest.param('QR==', id='non-canonical-padding-bits'),
+            pytest.param('é', id='non-ascii'),
         ],
     )
     async def test_binary_shaped_dict_without_canonical_base64_stays_inline(self, tmp_path: Path, data: str) -> None:
@@ -1336,6 +1337,27 @@ class TestS3MediaStoreWithMockTransport:
         signed = request.headers['authorization'].split('SignedHeaders=')[1].split(',')[0]
         assert 'x-amz-meta-origin' in signed
         assert 'x-amz-meta-tenant' in signed
+
+    async def test_put_sends_metadata_keys_lowercased(self) -> None:
+        """A mixed-case metadata key is sent, and so read back, lowercased."""
+        captured: list[Request] = []
+
+        async def handler(request: Request) -> Response:
+            captured.append(request)
+            return Response(200)
+
+        async with AsyncClient(transport=MockTransport(handler)) as client:
+            store = S3MediaStore(
+                bucket='b',
+                endpoint='https://example.com',
+                region='auto',
+                access_key_id='k',
+                secret_access_key='s',
+                client=client,
+            )
+            await store.put(b'mixed-case', context=MediaContext(metadata={'Tenant': 'acme'}))
+        meta_names = [name for name, _ in captured[0].headers.raw if name.startswith(b'x-amz-meta-')]
+        assert meta_names == [b'x-amz-meta-tenant']
 
     async def test_put_rejects_invalid_metadata_key(self) -> None:
         async def handler(request: Request) -> Response:  # pragma: no cover

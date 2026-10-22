@@ -86,7 +86,7 @@ Close the returned pool during application shutdown. The store does not manage i
 
 A `KeyStrategy` controls the on-store layout for `DiskMediaStore` and `S3MediaStore` (`SqliteMediaStore`, `MongoMediaStore`, and `PostgresMediaStore` key on the digest itself, so they take `table=` / `collection=` instead), and a `PublicUrlResolver` (or `make_static_public_url`) turns a stored URI into a public URL when the store is served over HTTP. `DiskMediaStore` rejects a URI that is not `media+sha256://<hex>` before calling the strategy.
 
-`get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores and raises `FileNotFoundError` for a blob that was never stored. On `DiskMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
+`get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores (S3 lowercases keys) and raises `FileNotFoundError` for a blob that was never stored. On `DiskMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
 
 ## Walker helpers
 

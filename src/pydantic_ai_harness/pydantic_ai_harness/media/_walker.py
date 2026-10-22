@@ -133,7 +133,8 @@ def _decode_base64(data: str) -> tuple[bytes, bytes | None] | None:
     altchars = b'-_' if urlsafe else None
     try:
         return base64.b64decode(data, altchars=altchars, validate=True), altchars
-    except binascii.Error:
+    except (binascii.Error, ValueError):
+        # `ValueError` is what `b64decode` raises for a non-ASCII string.
         return None
 
 

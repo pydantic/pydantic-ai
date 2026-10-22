@@ -174,6 +174,8 @@ class MediaStore(Protocol):
     `SqliteMediaStore`, `PostgresMediaStore`, and `MongoMediaStore`. On
     `DiskMediaStore` a later `put` that passes metadata replaces it; on
     `S3MediaStore` every `put` replaces it, and one without metadata clears it.
+    On those two, that holds for puts that resolve to the same key, which a
+    custom `key_strategy` may not.
 
     `public_url(uri)` returns a URL the model can fetch directly, or `None`
     if the store can't or hasn't been configured to produce one. The forthcoming
