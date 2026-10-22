@@ -101,16 +101,19 @@ async def dispatch_event_stream(
 ) -> AsyncIterator[_messages.AgentStreamEvent]:
     """Dispatch events at their stream positions and deduplicate immediately dispatched events."""
     capability = ctx.root_capability
-    async for event in stream:
-        event_id = id(event)
-        if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
-            settled = pending.pop(0)
-            if not pending:
-                del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
-            await settled.wait()
-        elif capability is not None and capability.listens_to(event):
-            await capability.on_event(ctx, event=event)
-        yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
+    try:
+        async for event in stream:
+            event_id = id(event)
+            if pending := ctx._pending_immediate_dispatches.get(event_id):  # pyright: ignore[reportPrivateUsage]
+                settled = pending.pop(0)
+                if not pending:
+                    del ctx._pending_immediate_dispatches[event_id]  # pyright: ignore[reportPrivateUsage]
+                await settled.wait()
+            elif capability is not None and capability.listens_to(event):
+                await capability.on_event(ctx, event=event)
+            yield ctx._event_stream_replacements.pop(event_id, event)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        await _utils.aclose_if_supported(stream)
 
 
 def no_workspace() -> Workspace:
