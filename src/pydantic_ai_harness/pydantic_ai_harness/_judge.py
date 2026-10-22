@@ -48,7 +48,9 @@ _CHARS_PER_TOKEN = 4
 # (https://github.com/pydantic/pydantic-ai/pull/10547), adding `tool_call` and `conversation` to its tags.
 # Until then this matches its semantics (only the `<` of a closing tag is escaped), and also matches
 # backslashes before the slash, since the arguments are JSON, where `\/` is a standard escape for `/`.
-_CLOSING_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*\\*/\s*(?:tool_call|conversation)(?=[\s/>]|$))', re.IGNORECASE)
+# For the same reason a tag name followed by `"` or `\` counts as cut off: in JSON that is the end of
+# the string or the start of an escape such as `\n`, either of which a reader may take as the tag's end.
+_CLOSING_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*\\*/\s*(?:tool_call|conversation)(?=[\s/>"\\]|$))', re.IGNORECASE)
 
 _CONFIDENCE_ADAPTER = TypeAdapter(dict[str, float])
 
@@ -85,11 +87,13 @@ def tool_call_prompt(
     tool_call = f'<tool_call>\n{_neutralize_closing_tags(payload)}\n</tool_call>'
     if not include_conversation:
         return tool_call
-    transcript = _render_transcript(messages)
+    # Neutralize before clamping, so escaping can't push the transcript past its window. A cut that
+    # lands inside an escaped `&lt;` leaves no `<` behind, so it can't make a closing tag either.
+    transcript = _neutralize_closing_tags(_render_transcript(messages))
     max_chars = conversation_window * _CHARS_PER_TOKEN
     if len(transcript) > max_chars:
         transcript = transcript[-max_chars:]
-    return f'<conversation>\n{_neutralize_closing_tags(transcript)}\n</conversation>\n\n{tool_call}'
+    return f'<conversation>\n{transcript}\n</conversation>\n\n{tool_call}'
 
 
 def _neutralize_closing_tags(text: str) -> str:
