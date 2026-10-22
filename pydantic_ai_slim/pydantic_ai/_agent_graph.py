@@ -1804,6 +1804,16 @@ async def _after_streamed_model_request(
         ) from retry
 
 
+async def _cancel_rejected_job(model: models.Model, outcome: Exception | _messages.ModelResponse) -> None:
+    """Cancel the provider-side job of a response a hook rejected while it was still suspended.
+
+    Nothing continues a rejected response, so its job would otherwise keep running, and billing, while the
+    request moves on, as `FallbackModel` cancels a pinned continuation it rejects.
+    """
+    if isinstance(outcome, _messages.ModelResponse) and outcome.state == 'suspended':
+        await cancel_suspended_job(model, outcome)
+
+
 async def _outside_attempts(awaitable: Awaitable[T]) -> T:
     """Await the once-per-step model request hooks, where a `RetryModelRequest` has no attempt to retry.
 
@@ -2385,9 +2395,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
         except exceptions.RetryModelRequest:
             failed.record(request_context, outcome, start)
+            await _cancel_rejected_job(request_context.model, outcome)
             raise
         except exceptions.FallbackExceptionGroup as unrecovered:
             failed.record_exhausted(request_context, outcome, start, unrecovered)
+            await _cancel_rejected_job(request_context.model, outcome)
             self._raise_usage_limit_exceeded(ctx, unrecovered)
             raise
 

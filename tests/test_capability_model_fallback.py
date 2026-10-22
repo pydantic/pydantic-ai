@@ -1647,3 +1647,30 @@ async def test_a_failed_batch_moves_on_down_the_chain_across_resumed_runs():
     ] == ['test:primary', 'test:second', 'test:third']
     # Every model got one batch: none was submitted to again after its result failed.
     assert (len(primary.created), len(second.created), len(third.created)) == (1, 1, 1)
+
+
+async def test_a_rejected_pending_response_has_its_job_cancelled():
+    """A response a handler rejects while the provider is still working on it has its job cancelled, as under
+    `FallbackModel`, rather than left running while the request moves on."""
+    primary = SlowBatchTestModel(pending_checks=100, model_name='primary')
+    backup = SlowBatchTestModel(model_name='backup')
+    judged: list[str] = []
+
+    def reject_the_first(response: ModelResponse) -> bool:
+        judged.append(response.state)
+        return len(judged) == 1
+
+    agent = Agent(
+        primary,
+        output_type=[str, PendingModelResponse],
+        capabilities=[ModelFallback(backup, fallback_on=reject_the_first), BatchModelRequests(**FAST_BATCH_SETTINGS)],
+    )
+    result = await agent.run('Hello')
+
+    assert isinstance(result.output, PendingModelResponse)
+    assert judged == ['suspended', 'suspended']
+    assert primary.canceled == [batch.id for batch in primary.created]
+    assert (len(primary.created), len(backup.created), backup.canceled) == (1, 1, [])
+    assert [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []] == [
+        ('primary', 'rejected')
+    ]
