@@ -247,6 +247,10 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             return self
         async with self._enter_lock:
             if self._entered_count == 0:
+                if self._container is not None:
+                    # The last exit failed to stop it; stop it now rather than start another on its port.
+                    await self._container.__aexit__(None, None, None)
+                    self._container = None
                 container = LocalStackContainer(
                     image=self._image,
                     host_port=host_port,
@@ -273,9 +277,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             async with self._enter_lock:
                 self._entered_count -= 1
                 if self._entered_count == 0 and self._container is not None:
-                    container = self._container
+                    await self._container.__aexit__(*args)
                     self._container = None
-                    await container.__aexit__(*args)
 
     def _normalize_command(self, command: str) -> list[str]:
         """Split the command into tokens, dropping a redundant leading `aws`.
