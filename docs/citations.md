@@ -148,7 +148,7 @@ text:
   [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids]).
 
 An Anthropic or Bedrock document citation is only sent back while the cited document is still in the message history
-and the cited text still matches it. Everything else, including all citations from a different provider, is sent as
+and the cited text still matches it, and an OpenAI URL citation only while its range still covers the link to its URL. Everything else, including all citations from a different provider, is sent as
 plain text. Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the text.
 
 !!! warning "The model may not see the source"
