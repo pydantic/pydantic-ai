@@ -3,10 +3,12 @@
 Every sharded test job stores the durations of the tests it ran (`pytest --store-durations
 --clean-durations`) and uploads them as an artifact named `<prefix><shard>`.
 
-- `fetch`, run once per workflow run by `test-durations-baseline`, merges those artifacts from the
-  newest `main` run for each prefix that had uploaded all its shards when this run was created, so
-  the split follows the suite as it is now instead of a committed file that drifts. Every shard then reads that one file, so
-  they all agree on the split even when the API fails (the file is then empty).
+- `fetch`, run by `test-durations-baseline` when it finds no cached baseline, merges those artifacts
+  from the newest `main` run for each prefix that had uploaded all its shards when this run was
+  created, so the split follows the suite as it is now instead of a committed file that drifts.
+  Every shard then reads that one file, so they all agree on the split even when the API fails (the
+  file is then empty). It reports the number of failed prefixes as the `errors` step output, so a
+  `main` run caches only a baseline that no failure emptied.
 - `select` assigns whole test modules to shards by those durations (by source size without them) and
   prints the `--ignore` options that leave pytest only this shard's modules.
 - `report` compares a shard's measured durations with the baseline and lists, in the job summary, new
@@ -20,12 +22,14 @@ import heapq
 import io
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -41,9 +45,31 @@ SLOWDOWN_MIN_SECONDS = 1.0
 REPORT_ROW_LIMIT = 30
 
 
-def gh_api(path: str) -> bytes:
-    """Call the GitHub REST API through the `gh` CLI, which authenticates with `GH_TOKEN`."""
-    return subprocess.run(['gh', 'api', path], check=True, capture_output=True).stdout
+def gh_api(path: str, *, show_rate_limit: bool = False) -> bytes:
+    """Call the GitHub REST API through the `gh` CLI, which authenticates with `GH_TOKEN`.
+
+    `show_rate_limit` also prints the response's `x-ratelimit-*` headers: which budget the call drew
+    from, and how much of it is left.
+    """
+    response = subprocess.run(
+        ['gh', 'api', *(['--include'] if show_rate_limit else []), path], check=True, capture_output=True
+    ).stdout
+    if not show_rate_limit:
+        return response
+    head, body = re.split(rb'\r?\n\r?\n', response, maxsplit=1)
+    headers = {
+        name.strip().lower(): value.strip()
+        for name, _, value in (line.partition(':') for line in head.decode().splitlines())
+    }
+    reset = headers.get('x-ratelimit-reset', '')
+    if reset.isdigit():
+        reset = datetime.fromtimestamp(int(reset), UTC).isoformat()
+    print(
+        'REST rate limit:',
+        *(f'{name}={headers.get(f"x-ratelimit-{name}")}' for name in ('resource', 'limit', 'remaining', 'used')),
+        f'reset={reset}',
+    )
+    return body
 
 
 @dataclass
@@ -59,7 +85,8 @@ class CachedApi:
             raise self.failures[path]
         if path not in self.responses:
             try:
-                self.responses[path] = gh_api(path)
+                # The first response also shows which rate-limit budget the token draws from.
+                self.responses[path] = gh_api(path, show_rate_limit=not self.responses)
             except (OSError, subprocess.CalledProcessError) as exc:
                 self.failures[path] = exc
                 raise
@@ -247,6 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         if not len(args.prefix) == len(args.shards) == len(args.output):
             parser.error('each --prefix needs one --shards and one --output')
         api = CachedApi()
+        errors = 0
 
         # Balancing is an optimization: never fail the run over it. An empty baseline splits by size.
         for prefix, shards, output in zip(args.prefix, args.shards, args.output):
@@ -256,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
                 this_run = json.loads(api(f'repos/{repo}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'))
                 found = fetch(repo, prefix, shards, before=this_run['created_at'], api=api)
             except (KeyError, OSError, subprocess.CalledProcessError, ValueError, zipfile.BadZipFile) as exc:
+                errors += 1
                 print(f'::warning::Could not fetch `{prefix}*` test durations, splitting by module size: {exc!r}')
             else:
                 if found is None:
@@ -264,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
                     run_id, durations = found
                     print(f'Fetched `{prefix}*` durations of {len(durations)} tests from run {run_id}.')
             output.write_text(json.dumps(durations, sort_keys=True), encoding='utf-8')
+        if output_path := os.environ.get('GITHUB_OUTPUT'):
+            with open(output_path, 'a', encoding='utf-8') as f:
+                f.write(f'errors={errors}\n')
         return 0
 
     if args.command == 'select':

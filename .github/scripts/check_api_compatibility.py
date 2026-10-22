@@ -16,7 +16,12 @@ PACKAGES = {
     'pydantic_graph': 'pydantic_graph',
     'pydantic_evals': 'pydantic_evals',
     'clai': 'clai',
+    'pydantic_ai_harness': 'src/pydantic_ai_harness',
+    'pydantic_clai2': 'src/pydantic_clai2',
 }
+# Run from its own tool environment: `griffe` 1.x, which `prefect` accepts, installs over `griffelib`'s `griffe`
+# module, and `griffecli` crashes against it. A bump can reword findings, which changes their fingerprints.
+GRIFFECLI_VERSION = '2.3.0'
 _FINDING_RE = re.compile(r'^(?P<path>.*):(?P<line>\d+): (?P<message>.*)$')
 
 
@@ -106,8 +111,10 @@ def load_waivers(path: Path) -> dict[tuple[str, str], Waiver]:
 def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
     result = subprocess.run(
         [
-            sys.executable,
-            '-m',
+            'uvx',
+            '--quiet',
+            '--from',
+            f'griffecli=={GRIFFECLI_VERSION}',
             'griffecli',
             'check',
             package,
@@ -123,11 +130,17 @@ def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         capture_output=True,
         text=True,
     )
-    if result.returncode not in {0, 1}:
+    # `griffecli` prints findings to stderr and exits 1 when there are any, but an uncaught exception also exits 1.
+    # Accept only output that parses and agrees with the exit code, so a crash can never read as a clean check.
+    try:
+        findings = parse_findings(package, result.stderr)
+    except ValueError:
+        findings = None
+    if findings is None or result.returncode != (1 if findings else 0):
         sys.stderr.write(result.stdout)
         sys.stderr.write(result.stderr)
-        raise SystemExit(result.returncode)
-    return parse_findings(package, result.stdout)
+        raise SystemExit(f'griffecli check {package} failed with exit code {result.returncode}')
+    return findings
 
 
 def parse_findings(package: str, output: str) -> list[Finding]:

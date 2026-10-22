@@ -155,8 +155,9 @@ Gemini normally pauses generation while a function tool is outstanding. On the n
 [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
 let it keep speaking and answering: tools are then declared `NON_BLOCKING`, and their results are
 returned with `INTERRUPT` scheduling, so each cuts into whatever the model is saying when it arrives.
-This is best for slow tools; a fast result can interrupt speech that barely started and leave an empty
-interrupted turn in history.
+This is best for slow tools, since a fast result can cut off speech that barely started. What the model
+says while the tool runs is recorded with the call, ahead of its result: see
+[Transcription and history edge cases](history.md#transcription-and-history-edge-cases).
 
 The other Live models accept a `NON_BLOCKING` declaration and then wait for the result anyway, so
 they ignore the setting, and `gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every
