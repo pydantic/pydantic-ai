@@ -1914,6 +1914,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 response = await self._recover_model_request_error(
                     ctx, run_context, req_ctx, e, committed_attempts=failed_attempts.attempts
                 )
+            except BaseException:
+                # The run was cancelled or timed out, but the segments of a continued response were billed.
+                if _handler_response is not None:
+                    _handler_usage_recorded = True
+                    self._record_response_usage(
+                        ctx, _handler_response, request_context=req_ctx, committed_attempts=failed_attempts.attempts
+                    )
+                raise
             _handler_response = response
             capture_model_response_span_context(req_ctx, response)
             return await ctx.deps.root_capability.after_model_request(
