@@ -838,12 +838,11 @@ class TestSpawnFailures:
     ) -> None:
         # The toolset's own launcher crosses the limit (here, any argument over 1000 characters), so any
         # command would fail: the application has to fix it, and the model must not be sent into retries.
-        spawn = anyio.open_process
 
-        async def refuse_long_arguments(command: str | Sequence[str], **kwargs: Any) -> anyio.abc.Process:
-            if any(len(part) > 1000 for part in ([command] if isinstance(command, str) else command)):
-                raise OSError(errno.E2BIG, 'Argument list too long')
-            return await spawn(command, **kwargs)
+        async def refuse_long_arguments(command: Sequence[str], **kwargs: Any) -> NoReturn:
+            # The launch and the probe that follows it both carry the launcher script.
+            assert any(len(part) > 1000 for part in command)
+            raise OSError(errno.E2BIG, 'Argument list too long')
 
         monkeypatch.setattr(anyio, 'open_process', refuse_long_arguments)
         with pytest.raises(OSError, match='Argument list too long'):
@@ -1751,11 +1750,11 @@ class _NeverReady(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if not isinstance(command, str) and command[:2] == ['sh', '-c']:  # the launcher is the `sh -c` script
-            script = command[2].replace(': > "$dir/launch.ready"\n', '')
-            if self.launcher_alive:
-                script = script.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
-            command = [*command[:2], script, *command[3:]]
+        assert not isinstance(command, str)  # the launch and the signals, each `sh -c <script> ...`
+        script = command[2].replace(': > "$dir/launch.ready"\n', '')
+        if self.launcher_alive:
+            script = script.replace('"$limit" $$ <', f'"$limit" {os.getpid()} <')
+        command = [*command[:2], script, *command[3:]]
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
