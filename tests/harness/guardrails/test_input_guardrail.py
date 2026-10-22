@@ -1454,6 +1454,14 @@ class TestTakesCtx:
         with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
             assert takes_ctx(guard) is True
 
+    @pytest.mark.parametrize('annotation', [Any, object])
+    def test_a_first_parameter_that_fits_either_keeps_the_context_with_a_warning(self, annotation: object):
+        def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
+
+        guard.__annotations__['ctx'] = annotation
+        with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
+            assert takes_ctx(guard) is True
+
     def test_a_guard_taking_args_receives_the_context(self):
         """A wrapper written without `functools.wraps` passes `(ctx, value)` on, as it always has."""
 
@@ -1461,8 +1469,11 @@ class TestTakesCtx:
 
         def with_rest(ctx: object, *rest: object) -> bool: ...  # pragma: no cover
 
+        def only_args(*values: object) -> bool: ...  # pragma: no cover
+
         assert takes_ctx(wrapper) is True
         assert takes_ctx(with_rest) is True
+        assert takes_ctx(only_args) is False
 
     def test_only_the_first_annotation_is_resolved(self):
         """A later annotation that cannot be resolved does not stop the first one reading as the value."""
