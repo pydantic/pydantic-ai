@@ -139,17 +139,33 @@ provider's and can change with the provider's API.
 
 [Stored message history](message-history.md#storing-and-loading-messages-to-json) keeps
 [`TextPart.citations`][pydantic_ai.messages.TextPart.citations] and the provider data in `provider_details['citations']`.
-When you send that history to the provider that produced the citations, its own citation data is sent back with the
-text:
+When you send that history to the provider that produced the citations, Pydantic AI sends the provider's own citation
+data back with the text, so the model still knows which of its earlier statements came from which source:
 
-- **Anthropic**: web search citations, and citations of plain-text documents with `citations=True`.
-- **Amazon Bedrock**: citations of plain-text documents, with `citations=True` on Anthropic models.
-- **OpenAI Responses**: URL and file citations, when item IDs are sent (see
-  [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids]).
+| Provider | Citations sent back | Only when |
+| --- | --- | --- |
+| Anthropic | Web search citations, and citations of plain-text documents | Documents need `citations=True` |
+| Amazon Bedrock | Citations of plain-text documents | `citations=True`, on Anthropic models |
+| OpenAI Responses | URL and file citations | Item IDs are sent; see [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
 
-An Anthropic or Bedrock document citation is only sent back while the cited document is still in the message history
-and the cited text still matches it, and an OpenAI URL citation only while its range still covers the link to its URL. Everything else, including all citations from a different provider, is sent as
-plain text. Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the text.
+Other providers' APIs can't receive citations, so their answers are sent as plain text, as are citations from a
+different provider. Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the
+text.
+
+Before sending a citation back, Pydantic AI checks it against the request. A citation that no longer fits is left out,
+and its text is still sent:
+
+- Anthropic and Bedrock refer to a document by its position among the documents in the request, including documents in
+  tool results and, for Anthropic, pages fetched by Web Fetch. Leaving out earlier messages, as a
+  [history processor](message-history.md#processing-message-history) or [compaction](capabilities/compaction.md) can,
+  moves the documents after them. So a document citation is sent with the position of the document that holds its
+  cited text at the cited characters. If no document does, or several do, it's left out.
+- An OpenAI URL citation covers the link the model wrote into its answer. It's left out if that range no longer
+  contains the link, for example because the text was edited.
+- Bedrock requires a title on each citation. A citation without one, as in history edited after Bedrock sent it, is
+  sent with the name of the document it cites.
+
+The same history is sent the same way on every turn, so this doesn't affect prompt caching.
 
 !!! warning "The model may not see the source"
     A follow-up such as "Tell me more about source [1]" may reach a model that sees the `[1]` marker but not its URL
