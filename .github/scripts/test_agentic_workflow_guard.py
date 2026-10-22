@@ -1723,17 +1723,51 @@ on:
   workflow_dispatch:
     inputs:
       recover_issue: {type: number, required: true}
-concurrency:
-  group: provider-health
-  cancel-in-progress: false
 jobs:
-  monitor:
+  triage:
     if: >-
       github.repository == 'pydantic/pydantic-ai' &&
-      (github.event_name != 'workflow_run' ||
-       github.event.workflow_run.event != 'pull_request' ||
+      github.event_name == 'workflow_run' &&
+      (github.event.workflow_run.event != 'pull_request' ||
        (github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.actor.login != 'dependabot[bot]'))
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      reconcile: ${{ steps.triage.outputs.reconcile }}
+    steps:
+      - uses: actions/checkout@sha
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/agent_provider_health.py
+      - if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@sha
+        with:
+          name: agent
+          run-id: ${{ github.event.workflow_run.id }}
+      - if: github.event_name == 'workflow_run'
+        id: triage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 .github/scripts/agent_provider_health.py triage
+          --run-id "$RUN_ID"
+          --run-attempt "$RUN_ATTEMPT"
+          --health-artifact provider-health/provider-health.json
+          --agent-artifact agent
+  monitor:
+    needs: triage
+    if: >-
+      !cancelled() &&
+      github.repository == 'pydantic/pydantic-ai' &&
+      (github.event_name != 'workflow_run' || needs.triage.outputs.reconcile == 'true')
+    concurrency:
+      group: provider-health
+      cancel-in-progress: false
     env:
       PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
@@ -1875,8 +1909,8 @@ jobs:
         # The ungated monitor that opened #9753 on a fork run.
         (
             "if: >-\n      github.repository == 'pydantic/pydantic-ai' &&\n"
-            "      (github.event_name != 'workflow_run' ||\n"
-            "       github.event.workflow_run.event != 'pull_request' ||\n"
+            "      github.event_name == 'workflow_run' &&\n"
+            "      (github.event.workflow_run.event != 'pull_request' ||\n"
             '       (github.event.workflow_run.head_repository.full_name == github.repository &&\n'
             "        github.event.workflow_run.actor.login != 'dependabot[bot]'))",
             "if: github.repository == 'pydantic/pydantic-ai'",
@@ -1902,6 +1936,55 @@ def test_provider_health_monitor_rejects_credentialless_runs(tmp_path: Path, gat
     _write(monitor, trusted_config.replace(gate, weakened_gate, 1))
     assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
         'provider-health-monitor-credential-gate'
+    ]
+
+
+def test_provider_health_monitor_serializes_only_triaged_incident_work(tmp_path: Path):
+    """A monitor that queues every completion must not pass CI policy checks."""
+    workflows = tmp_path / '.github' / 'workflows'
+    for source in WORKFLOWS_DIR.glob('pydantic-ai-*.md'):
+        _write(workflows / source.name, source.read_text(encoding='utf-8'))
+    trusted_config = (WORKFLOWS_DIR / 'agent-provider-health.yml').read_text(encoding='utf-8')
+    monitor = _write(workflows / 'agent-provider-health.yml', trusted_config)
+    assert check_provider_health_monitor(workflows) == []
+
+    job_group = (
+        '    concurrency:\n'
+        '      group: agent-provider-health-reconciliation\n'
+        '      cancel-in-progress: false\n'
+        '      queue: max\n'
+    )
+    assert job_group in trusted_config
+    # The workflow-level queue that cancelled new runs once 100 were pending, e.g. run 39816847357.
+    _write(
+        monitor,
+        trusted_config.replace(job_group, '', 1).replace(
+            'permissions: {}\n',
+            'permissions: {}\n\nconcurrency:\n  group: agent-provider-health-reconciliation\n'
+            '  cancel-in-progress: false\n  queue: max\n',
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-concurrency',
+        'provider-health-monitor-queue',
+    ]
+
+    triage_handoff = "needs.triage.outputs.reconcile == 'true'"
+    assert triage_handoff in trusted_config
+    _write(monitor, trusted_config.replace(triage_handoff, 'true', 1))
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-triage'
+    ]
+
+    triage_permissions = '      contents: read\n    outputs:\n'
+    assert triage_permissions in trusted_config
+    _write(
+        monitor,
+        trusted_config.replace(triage_permissions, '      contents: read\n      issues: write\n    outputs:\n', 1),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-permissions'
     ]
 
 
