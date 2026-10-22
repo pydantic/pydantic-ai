@@ -102,7 +102,7 @@ class LiveServer:
         """Text taken up while a reply goes on: that reply answers it if it says anything more, as Live speaks to text
         in the reply under way (seen live), and the next reply otherwise."""
         self.typed: list[str] = []
-        """Typed text queued for the backend, which the next `response.create` runs it on."""
+        """Typed text (or an image) queued for the backend, which the next `response.create` runs it on."""
         self.queued_texts: list[tuple[list[str], str | None]] = []
         """Text turns whose `response.create` came while a backend response ran: Live runs each once that one ends."""
         self.delegations: dict[str, _Delegation] = {}
@@ -156,9 +156,15 @@ class LiveServer:
         elif kind == 'response.item.create':
             item = frame.get('item', {})
             if item.get('type') == 'message':
-                text = item['content'][0]['text']
-                self.truth.add_input(text, 'text', solicits=True)
-                self.typed.append(text)
+                part = item['content'][0]
+                if part['type'] == 'input_image':
+                    # `send(image, respond=True)`: the image is for the backend, and its `response.create` follows.
+                    key = part['image_url'].rsplit(',', 1)[-1][-12:]
+                    self.truth.add_input(key, 'image')
+                else:
+                    key = part['text']
+                    self.truth.add_input(key, 'text', solicits=True)
+                self.typed.append(key)
             elif item.get('type') == 'function_call_output':  # pragma: no branch
                 call_id = item['call_id']
                 self.truth.tool_calls[call_id].output_received = True
@@ -168,7 +174,11 @@ class LiveServer:
                         delegation.pending_calls.discard(call_id)
                         delegation.outputs.append(call_id)
         elif kind == 'response.create':
-            delegation = next((d for d in self.delegations.values() if d.backend is None and d.outputs), None)
+            # A continuation, once every result of the round is in; a typed turn's request otherwise.
+            delegation = next(
+                (d for d in self.delegations.values() if d.backend is None and d.outputs and not d.pending_calls),
+                None,
+            )
             if delegation is not None:
                 self._start_backend(delegation)
             elif self.typed:  # pragma: no branch

@@ -1690,6 +1690,34 @@ def test_live_text_sent_as_a_delegation_starts_is_answered_by_its_reply() -> Non
     run_clean(LiveSimulation(), scenario)
 
 
+def test_live_text_sent_while_a_tool_round_is_half_answered_gets_a_delegation_of_its_own() -> None:
+    """A typed turn's `response.create` while the round's other result is still out runs the backend on the text.
+
+    It doesn't continue the round: the backend resumes only from every result of it.
+    """
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.delegate()
+        sim.backend_call(count=2)
+        sim.backend_finish()
+        sim.finish_tool()
+        sim.send_text()
+        sim.wait_for_reply()
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
+
+
+def test_live_image_sent_for_a_response_is_answered_by_its_delegation() -> None:
+    """`send(image, respond=True)` queues the image for the backend, and its `response.create` has Live run it."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_image(respond=True)
+        sim.settle()
+
+    run_clean(LiveSimulation(), scenario)
+
+
 def test_live_text_sent_while_a_reply_goes_on_is_answered_by_it() -> None:
     """Text placed on the timeline mid-reply is answered by that reply, which goes on to speak to it (seen live)."""
 
