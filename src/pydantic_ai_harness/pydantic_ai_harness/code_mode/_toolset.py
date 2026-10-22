@@ -1027,6 +1027,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             else:
                 native_tools[name] = tool
 
+        # Hidden execution candidates must not displace the tools already in the catalog.
+        # Stable ordering preserves the existing first-wins rule within each disclosure group.
+        sandboxed_tools = dict(
+            sorted(sandboxed_tools.items(), key=lambda item: not ctx.is_tool_available(item[1].tool_def))
+        )
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
         visible_defs = {
             name: tool_def

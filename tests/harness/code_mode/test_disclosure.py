@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -93,3 +94,50 @@ async def test_hidden_tool_runs_without_appearing_in_catalog(
     assert asyncio.all_tasks() - tasks_before == set()
     assert result.usage.tool_calls == 2
     assert not any(isinstance(part, ToolAvailabilityDeltaPart) for msg in result.all_messages() for part in msg.parts)
+
+
+@pytest.mark.parametrize('dynamic_catalog', [False, True])
+@pytest.mark.parametrize('hidden_first', [False, True])
+async def test_disclosed_tool_wins_sandbox_name_collision(dynamic_catalog: bool, hidden_first: bool):
+    calls: list[str] = []
+    catalogs: list[str] = []
+
+    async def hidden() -> str:
+        calls.append('hidden')
+        return 'hidden result'
+
+    async def visible() -> str:
+        calls.append('visible')
+        return 'visible result'
+
+    def reveal() -> ToolReturn:
+        return ToolReturn('Ready', tools=['get_weather'])
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = [part for msg in messages for part in msg.parts if isinstance(part, ToolReturnPart)]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart('reveal', {})])
+        run_code = next(tool for tool in info.function_tools if tool.name == 'run_code')
+        catalogs.append((info.instructions or '') if dynamic_catalog else (run_code.description or ''))
+        if returns[-1].tool_name == 'reveal':
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await get_weather()'})])
+        assert returns[-1].outcome == 'success', returns[-1].content
+        return ModelResponse(parts=[TextPart(str(returns[-1].content))])
+
+    tools = [
+        Tool(hidden, name='get-weather', description='Hidden weather implementation.', defer_loading=True),
+        Tool(visible, name='get_weather', description='Visible weather implementation.', defer_loading=True),
+    ]
+    if not hidden_first:
+        tools.reverse()
+    agent = Agent(
+        FunctionModel(model),
+        tools=[*tools, Tool(reveal)],
+        capabilities=[ToolSearch(), CodeMode(tools=['get-weather', 'get_weather'], dynamic_catalog=dynamic_catalog)],
+    )
+    with pytest.warns(UserWarning, match='collides'):
+        result = await agent.run('Reveal weather and run saved code')
+    assert calls == ['visible']
+    assert 'visible result' in result.output
+    assert all('Visible weather implementation.' in catalog for catalog in catalogs)
+    assert all('Hidden weather implementation.' not in catalog for catalog in catalogs)
