@@ -16,6 +16,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, T
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode
+from pydantic_ai_harness._monty_exec import MontyRunState
 
 
 def _parts(messages: list[ModelMessage], part_type: type[Any]) -> list[Any]:
@@ -128,6 +129,7 @@ def test_repr_hides_sandbox_url() -> None:
 
     assert 'sandbox.example.com' not in repr(capability)
     assert 'sandbox.example.com' not in repr(toolset)
+    assert 'sandbox.example.com' not in repr(MontyRunState(monty_sandbox_url=capability.monty_sandbox_url))
 
 
 @pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')

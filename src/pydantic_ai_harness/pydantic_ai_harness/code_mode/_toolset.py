@@ -303,6 +303,11 @@ class CodeModeResourceLimits(TypedDict, total=False):
     """
 
 
+def _is_integer(value: object) -> TypeIs[int]:
+    """Whether `value` is an `int`; `bool` subclasses `int` but is never a limit."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
     """Merge caller overrides onto the `run_code` backstop."""
     if limits == 'unlimited':
@@ -314,16 +319,23 @@ def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited
                 f'Unknown `resource_limits` key(s): {sorted(unknown)}. '
                 f'Valid keys are {sorted(CodeModeResourceLimits.__annotations__)}.'
             )
-    max_duration_secs = 30 if limits is None else limits.get('max_duration_secs', 30)
-    max_memory = 256 * 1024 * 1024 if limits is None else limits.get('max_memory', 256 * 1024 * 1024)
-    max_suspensions = 1000 if limits is None else limits.get('max_suspensions', 1000)
-    # Monty stores each limit as an unsigned 64-bit value; anything outside that range fails every snippet.
-    if not 1 <= max_suspensions < 2**64:
-        raise UserError('`max_suspensions` must be at least 1 and below 2**64')
-    if not 0 < max_duration_secs < 2.0**64:
+    # Read as `object` so values from untyped code are checked rather than trusted.
+    max_duration_secs: object = 30 if limits is None else limits.get('max_duration_secs', 30)
+    max_memory: object = 256 * 1024 * 1024 if limits is None else limits.get('max_memory', 256 * 1024 * 1024)
+    max_suspensions: object = 1000 if limits is None else limits.get('max_suspensions', 1000)
+    # Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
+    # every snippet. An explicit `None` for memory or duration keeps reaching Monty, which reads it as no limit.
+    if not (_is_integer(max_suspensions) and 1 <= max_suspensions < 2**64):
+        raise UserError('`max_suspensions` must be an integer of at least 1 and below 2**64')
+    if not (
+        max_duration_secs is None
+        or (
+            (_is_integer(max_duration_secs) or isinstance(max_duration_secs, float)) and 0 < max_duration_secs < 2.0**64
+        )
+    ):
         raise UserError('`max_duration_secs` must be a positive number of seconds below 2**64')
-    if not 0 < max_memory < 2**64:
-        raise UserError('`max_memory` must be a positive number of bytes below 2**64')
+    if not (max_memory is None or (_is_integer(max_memory) and 0 < max_memory < 2**64)):
+        raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')
     return {
         'max_feed_duration_secs': max_duration_secs,
         'max_memory': max_memory,
