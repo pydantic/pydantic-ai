@@ -646,7 +646,9 @@ class Simulation(ABC):
 
         try:
             self.loop.run_until_complete(handoff())
-        except Exception as e:  # pragma: lax no cover (only when a standard run rejects the history)
+        # Only when a standard run rejects the history, which fails the scenario. `lax`: Python 3.11's tracer has
+        # recorded stray arcs onto this line in CI, with other arcs past the end of `_loop.py` in the same data.
+        except Exception as e:  # pragma: lax no cover
             self.checker.report('history.handoff', [(f'a standard run rejected the history: {e!r}', {})])
 
     # --- views for the invariants -------------------------------------------------------------------
