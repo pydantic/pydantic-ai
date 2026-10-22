@@ -4,13 +4,12 @@ import inspect
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
 
 from pydantic_ai import (
     Agent,
@@ -84,7 +83,6 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -297,6 +295,7 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     assert resolve(tool, 'configured') == {'base': 1}
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_mcp_tool_config_dispatches_durable_and_inline_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
@@ -1318,7 +1317,7 @@ async def test_dynamic_args_validator_runs_in_declarative_unit_and_preserves_sch
         str(part.content)
         for message in rejected.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart)
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ] == ['forbidden path']
     recorded_names = [name for name, _, _ in durability.calls]
     assert 'validation__dynamic_toolset__files.validate_args' in recorded_names
@@ -1371,11 +1370,14 @@ async def test_tool_body_validation_error_preserves_detailed_retry() -> None:
 
     assert result.output == 'done'
     assert len(model_messages) == 2
-    retry = next(part for message in model_messages[1] for part in message.parts if isinstance(part, RetryPromptPart))
+    returns: list[ToolReturnPart[Any]] = [
+        part for message in model_messages[1] for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    retry = next(part for part in returns if part.outcome == 'retried')
     assert retry.content == [
         {
             'type': 'int_parsing',
-            'loc': (),
+            'loc': [],
             'msg': 'Input should be a valid integer, unable to parse string as an integer',
             'input': invalid_input,
         }
@@ -1439,9 +1441,17 @@ async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
         nonlocal retries
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             return ModelResponse(parts=[TextPart('done')])
-        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             retries += 1
             return ModelResponse(parts=[ToolCallPart('double', {'x': 5})])
         return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-a-number'})])

@@ -10,17 +10,20 @@ import hashlib
 import secrets
 import webbrowser
 from collections.abc import Callable
+from functools import partial
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import anyio
 import httpx
 from anyio import fail_after
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
-
-from . import theme
-from .auth import ReadLine, read_line
+from pydantic_clai2.auth import ReadLine
+from pydantic_clai2.ui.browser import open_browser
+from pydantic_clai2.ui.prompt import line_input
+from pydantic_clai2.ui.rendering import theme
 
 
 class KeyResponse(BaseModel):
@@ -52,14 +55,14 @@ class OpenRouterAuth:
         self,
         *,
         console: Console,
-        read_line: ReadLine = read_line,
-        open_browser: Callable[[str], bool] = webbrowser.open,
+        read_line: ReadLine | None = None,
+        open_browser: Callable[[str], bool] = open_browser,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 300,
     ) -> None:
-        """Inject terminal and HTTP boundaries without opening a listener yet."""
+        """Inject terminal and HTTP boundaries without opening a listener yet; `read_line` defaults to `console`'s."""
         self.console = console
-        self.read_line = read_line
+        self.read_line = read_line or partial(line_input.read_line, console=console, hidden=True)
         self.open_browser = open_browser
         self.transport = transport
         self.timeout = timeout
@@ -100,7 +103,7 @@ class OpenRouterAuth:
                     )
                     self.console.print(url, markup=False, highlight=False)
                     try:
-                        opened = await asyncio.to_thread(self.open_browser, url)
+                        opened = await anyio.to_thread.run_sync(self.open_browser, url, abandon_on_cancel=True)
                     except webbrowser.Error:
                         opened = False
                     if not opened:
@@ -110,7 +113,7 @@ class OpenRouterAuth:
                     received = code.result() if code in done else paste.result()
                     return await self.exchange(code=received, verifier=verifier)
         except TimeoutError:
-            raise UserError('OpenRouter login timed out. Connect again through /add_model > openrouter.') from None
+            raise UserError('OpenRouter login timed out. Connect again through /model add > openrouter.') from None
         finally:
             code.cancel()
             tasks: list[asyncio.Task[None] | asyncio.Task[str]] = [*handlers]
@@ -124,14 +127,12 @@ class OpenRouterAuth:
             await asyncio.gather(code, return_exceptions=True)
 
     async def _paste(self) -> str:
-        try:
-            while not (
-                text := (await self.read_line('Finish in the browser, or paste its callback URL or code: ')).strip()
-            ):
-                pass
-        except (EOFError, KeyboardInterrupt):
-            raise UserError('OpenRouter login cancelled.') from None
-        return authorization_code(text=text)
+        while True:
+            text = await self.read_line('Finish in the browser, or paste its callback URL or code: ')
+            if text is None:
+                raise UserError('OpenRouter login cancelled.')
+            if text := text.strip():
+                return authorization_code(text=text)
 
     async def _callback(
         self, *, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, code: asyncio.Future[str]
@@ -181,5 +182,5 @@ class OpenRouterAuth:
                 return KeyResponse.model_validate_json(response.content).key
             except (httpx.HTTPError, ValidationError):
                 raise UserError(
-                    'OpenRouter key exchange failed. Connect again through /add_model > openrouter.'
+                    'OpenRouter key exchange failed. Connect again through /model add > openrouter.'
                 ) from None

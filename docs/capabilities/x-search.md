@@ -13,8 +13,8 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import XSearch
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
-    capabilities=[XSearch(fallback_subagent_model='xai:grok-4.3')],
+    '{{ anthropic:medium }}',
+    capabilities=[XSearch(fallback_subagent_model='{{ xai:medium }}')],
 )
 ```
 

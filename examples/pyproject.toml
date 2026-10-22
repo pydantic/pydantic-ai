@@ -28,7 +28,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -44,7 +43,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
@@ -63,9 +62,18 @@ dependencies = [
     # support (#6661) so the workspace lock can fork onto SDK v2 for the `mcp-tasks` extra.
     "mcp[cli]>=1.28.1",
     "modal>=1.0.4",
-    "duckdb>=1.4.2",
-    "datasets>=4.0.0",
+    # duckdb has no cp315 wheels, and a source build outlasts the CI timeout, so the 3.15 all-extras install
+    # skips it. The examples don't support 3.15 until then (no classifier, no 3.15 `test-examples` cell).
+    # `datasets` is only used by the same example (`data_analyst.py`), and on 3.15 it would pull pyarrow and
+    # xxhash bumps into the lock for nothing, so it's skipped there too.
+    # Markers removable once duckdb ships cp315 wheels (tracked in #9455): https://pypi.org/project/duckdb/#files
+    "duckdb>=1.4.2; python_version < '3.15'",
+    "datasets>=4.0.0; python_version < '3.15'",
     "pandas>=2.3.3",
+    # Needed by the interactive cancel_and_resume example. Declaring it here also pulls prompt_toolkit
+    # into the lowest-versions test env, which un-skips the CLI tests; 3.0.29 is the first release whose
+    # `create_pipe_input()` is a context manager (as those tests use it), so pin the floor there.
+    "prompt-toolkit>=3.0.29",
     "twelvelabs>=1.2.8",
     "listentome>=0.1.0",
     # On Python 3.14, the locked numpy 2.2.6 has no cp314 wheel and would be

@@ -9,7 +9,7 @@ import uuid
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -41,13 +41,15 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     RunUsage,
     TextPart,
     TextPartDelta,
+    Tool,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -58,6 +60,7 @@ from pydantic_ai.capabilities import (
     Capability,
     ImageGeneration,
     ProcessHistory,
+    durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.exceptions import (
@@ -70,22 +73,27 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.images import ImageGenerator, TestImageGenerationModel
+from pydantic_ai.messages import InstructionBaselinePart, InstructionDeltaPart, ModelMessagesTypeAdapter
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
+    WebRTCSession,
 )
-from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import DynamicToolset, PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import (
@@ -100,9 +108,11 @@ from pydantic_ai.workspaces import (
 from ..._inline_snapshot import snapshot
 from ...continuation_utils import ScriptedContinuationModel, scripted_response
 from ...model_lifecycle_utils import LifecycleTrackingModel
+from ...realtime_connections import InferredConnection
 from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
+from ...wrapped_retry_toolsets import call_probe_once, snapshot_probe_toolset
 
 try:
     from temporalio import activity, workflow
@@ -325,7 +335,7 @@ class AnyioScopeActivityCancellationWorkflow:
 
         try:
             await asyncio.wait_for(run_in_task_group(), timeout=0.1)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -359,7 +369,7 @@ class WaitForNonStreamingAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             result = await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'clean-timeout'
         return f'unexpected-success:{result.output}'  # pragma: no cover
 
@@ -433,7 +443,7 @@ class WaitForAgentTimeoutWorkflow:
     async def run(self) -> str:
         try:
             await asyncio.wait_for(_wait_for_timeout_agent.run('go slowly'), timeout=0.5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return 'timed out cleanly'
         return 'completed'  # pragma: no cover
 
@@ -455,10 +465,6 @@ async def test_wait_for_agent_timeout_in_workflow_does_not_livelock(client: Clie
     assert result == 'timed out cleanly'
 
 
-@pytest.mark.skipif(
-    sys.version_info < (3, 11),
-    reason='the cancellation backstop needs `Task.cancelling()` (Python 3.11+); on 3.10 the absorbed cancel legitimately completes',
-)
 async def test_temporal_cancellation_backstop_survives_absorbed_activity_cancel(client: Client) -> None:
     """A cancelled workflow cannot complete after its streaming model activity absorbs cancellation."""
     global _cancellation_activity_cancel_absorbed, _cancellation_activity_started
@@ -540,6 +546,12 @@ async def test_temporal_agent_rejects_cancellation_token() -> None:
     that cannot cross the durable execution boundary."""
     with pytest.raises(UserError, match='cannot cross the durable execution boundary'):
         await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
+
+
+async def test_temporal_agent_rejects_timeout() -> None:
+    """The deprecated wrapper agent has no replay-safe clock, so it points to `TemporalDurability` instead."""
+    with pytest.raises(UserError, match='`timeout` is not supported by the deprecated `TemporalAgent`'):
+        await _legacy_migration_agent.run('hello', timeout=1)
 
 
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
@@ -713,6 +725,7 @@ async def test_temporal_durability_accepts_legacy_cancel_activity_payload() -> N
     assert failing_events == ['enter', 'cancel:failing', 'exit:RuntimeError']
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_complex_agent_run_in_workflow(
     allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
 ):
@@ -746,7 +759,7 @@ async def test_complex_agent_run_in_workflow(
     basic_spans_by_id = {
         span['context']['span_id']: BasicSpan(
             parent_id=span['parent']['span_id'] if span['parent'] else None,
-            content=attributes.get('event') or attributes['logfire.msg'],
+            content=attributes.get('event') or attributes.get('logfire.msg') or span['name'],
         )
         for span in spans
         if (attributes := span.get('attributes'))
@@ -872,7 +885,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -900,7 +913,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -981,7 +994,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -1154,7 +1167,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -1904,12 +1917,14 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
             await realtime.answer_webrtc_offer('v=0')
         with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
             await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
-class _FakeRealtimeConnection(RealtimeConnection):
-    async def send(self, content: Any) -> None: ...  # pragma: no cover
+class _FakeRealtimeConnection(InferredConnection):
+    async def send_input(self, content: Any) -> None: ...  # pragma: no cover
 
-    async def __aiter__(self) -> AsyncIterator[Any]:
+    async def codec_events(self) -> AsyncIterator[Any]:
         return
         yield  # pragma: no cover
 
@@ -2492,11 +2507,13 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Did you mean Mexico City?',
                             tool_name='get_weather_in_city',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -3208,7 +3225,8 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     A `DynamicCapability` re-resolves the capability's toolset activity-side, so its prepare
     function runs against a rehydrated context that deliberately left the live model behind. The
     native-vs-direct routing the notice describes was already decided in the workflow process, so
-    the read has to degrade to "say nothing" rather than raise out of `get_tools`.
+    the read has to degrade to "say nothing" rather than raise out of `get_tools`, while the tool
+    still carries the `unless_native` stamp that lets a native-capable model drop it.
     """
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
     reconstructed = deserialize_run_context(
@@ -3225,9 +3243,151 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     toolset = capability.get_toolset()
     assert isinstance(toolset, PreparedToolset)
 
-    prepared = toolset.prepare_func(reconstructed, [])
+    tool_def = ToolDefinition(name='generate_image')
+    prepared = toolset.prepare_func(reconstructed, [tool_def])
     assert inspect.isawaitable(prepared)
-    assert await prepared == []
+    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+
+
+@pytest.mark.parametrize(
+    ('default', 'selection', 'capability', 'notice'),
+    [
+        pytest.param(
+            'no_native',
+            'native',
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high'),
+            None,
+            id='selected-native-applies-quality',
+        ),
+        pytest.param(
+            'no_native',
+            'native',
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
+            r"supersedes the direct generator on 'native'",
+            id='selected-native-drops-dimensions',
+        ),
+        *(
+            pytest.param(
+                default,
+                selection,
+                capability,
+                None,
+                id=f'{default}-default-{selection or "unselected"}-{setting}',
+            )
+            for default, selection in (('no_native', 'fallback'), ('fallback', 'fallback'), ('fallback', None))
+            for setting, capability in (
+                ('quality', ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high')),
+                (
+                    'dimensions',
+                    ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
+                ),
+            )
+        ),
+    ],
+)
+async def test_image_generation_prepare_function_reads_the_model_temporal_selected(
+    default: Literal['no_native', 'fallback'],
+    selection: Literal['native', 'fallback'] | None,
+    capability: ImageGeneration[None],
+    notice: str | None,
+):
+    """`ImageGeneration`'s per-request notice reads the model `using_model()` selected, not the default.
+
+    `TemporalModel` prepares a request against its current model's profile, and `wrapped` is only
+    the default, so the notice reads the `TemporalModel`'s own profile to match that routing. A
+    current `FallbackModel` has no profile, and nothing public says which model is current or which
+    of its members runs -- a registered selection can share the default's `model_id` -- so the notice
+    says nothing rather than reading `wrapped` in its place, whether that `FallbackModel` was
+    selected or is the default. `using_model()` is reachable from public code only inside a
+    `TemporalAgent` workflow, so this drives the prepare function directly rather than a VCR run.
+    """
+    no_native = TestModel(model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset()))
+    native = TestModel(
+        model_name='native', profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}))
+    )
+    temporal_model = TemporalModel(
+        no_native if default == 'no_native' else FallbackModel(no_native),
+        activity_name_prefix='image_generation_selected_model',
+        activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
+        deps_type=type(None),
+        models={'native': native, 'fallback': FallbackModel(native)},
+    )
+    ctx = RunContext(deps=None, model=temporal_model, usage=RunUsage(), run_id='run-123')
+    tool_def = ToolDefinition(name='generate_image')
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+
+    with temporal_model.using_model(selection):
+        if notice is None:
+            # `filterwarnings = ['error']` turns an unexpected notice into the failure.
+            prepared = toolset.prepare_func(ctx, [tool_def])
+        else:
+            with pytest.warns(UserWarning, match=notice):
+                prepared = toolset.prepare_func(ctx, [tool_def])
+    assert inspect.isawaitable(prepared)
+    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+
+
+def _image_generation_tools_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    native = [tool.kind for tool in info.model_request_parameters.native_tools]
+    function = [tool.name for tool in info.function_tools]
+    return ModelResponse(parts=[TextPart(f'native={native} function={function}')])
+
+
+fallback_image_generation_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        FallbackModel(
+            FunctionModel(
+                _image_generation_tools_fn,
+                model_name='no_native',
+                profile=ModelProfile(supported_native_tools=frozenset()),
+            ),
+            FunctionModel(
+                _image_generation_tools_fn,
+                model_name='native',
+                profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+            ),
+        ),
+        name='fallback_image_generation_agent',
+        capabilities=[
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high', id='fallback_images')
+        ],
+    ),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class FallbackImageGenerationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await fallback_image_generation_temporal_agent.run('Generate an image')).output
+
+
+async def test_image_generation_notice_says_nothing_for_a_temporal_agent_fallback_model(client: Client):
+    """Under `TemporalAgent`, the notice meets a `TemporalModel` over a `FallbackModel` and says nothing.
+
+    In workflow code the run context carries the `TemporalModel`, whose profile is its current
+    model's, and a current `FallbackModel` has none. Nothing public says which model `using_model()`
+    made current, so the notice says nothing rather than read the members of a `FallbackModel` that
+    may not be the one running, even though `no_native` drops `quality`. Under
+    `filterwarnings = ['error']` a crash reading that profile, or a warning naming a member, fails
+    the workflow task, which Temporal retries until the `execution_timeout` fails the test. The
+    output pins that `no_native` answered with the direct generator and without the native tool.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackImageGenerationWorkflow],
+        plugins=[AgentPlugin(fallback_image_generation_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            FallbackImageGenerationWorkflow.run,
+            id=FallbackImageGenerationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot("native=[] function=['generate_image']")
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
@@ -3240,8 +3400,42 @@ class LegacyFieldsRunContext(TemporalRunContext[Any]):
             'usage': ctx.usage,
             'usage_limits': ctx.usage_limits,
             'discovered_tool_names': ctx.discovered_tool_names,
+            # `FunctionToolset.get_tools` reads these, so a dynamic toolset needs them inside an activity.
+            'retries': ctx.retries,
+            'max_retries': ctx.max_retries,
             'custom': 'from-subclass',
         }
+
+
+_LOOKUP_KIND = ToolKind('test_temporal_run_context', 'lookup')
+
+
+def _lookup(query: str) -> str:
+    # Only listed, never called.
+    return query  # pragma: no cover
+
+
+async def test_temporal_run_context_carries_tool_names_by_kind():
+    """`tool_name_for_kind` answers inside an activity from the snapshot taken at dispatch.
+
+    The tool manager can't cross the activity boundary, so without the snapshot a tool result built
+    in the activity couldn't name another tool by kind; the name carries the prefix it was offered under.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    toolset = PrefixedToolset(FunctionToolset([Tool(_lookup, tool_kind=_LOOKUP_KIND)]), prefix='ws')
+    ctx.tool_manager = await ToolManager(toolset=toolset).for_run_step(ctx)
+    params = CallToolParams(
+        name='tool',
+        tool_args={},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        tool_def=None,
+    )
+    payloads = await pydantic_data_converter.encode([params])
+    (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
+    reconstructed = TemporalRunContext.deserialize_run_context(decoded.serialized_run_context, deps=None)
+
+    assert reconstructed.tool_name_for_kind(_LOOKUP_KIND) == 'ws__lookup'
+    assert reconstructed.tool_name_for_kind('test_temporal_run_context.missing') is None
 
 
 async def test_temporal_run_context_subclass_with_its_own_field_set():
@@ -3274,6 +3468,8 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # Nor a kind snapshot, so the base method answers, and without a tool manager it has nothing to name.
+    assert reconstructed.tool_name_for_kind(_LOOKUP_KIND) is None
     # No capability snapshot in this subclass's field set, so the property falls back to the base
     # one, which reads the registry — and that is guarded, so it raises rather than quietly
     # reporting no capabilities are active.
@@ -3288,6 +3484,121 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
             getattr(reconstructed, name)
+    # `dataclasses.replace` rebuilds from the fields the payload carried, plus the ones it is given. The dispatch
+    # snapshots join them only when carried, so this subclass's copies keep their own field set.
+    copied = replace(reconstructed, tool_name='tool', retry=0, max_retries=1)
+    assert sorted(field.name for field in fields(copied)) == snapshot(
+        [
+            '_anchored_evidence',
+            '_durable_operations',
+            '_run_capabilities_by_id',
+            '_run_held_toolsets',
+            '_tool_name_path',
+            'agent',
+            'deadline',
+            'deps',
+            'discovered_tool_names',
+            'max_retries',
+            'pending_messages',
+            'realtime_session',
+            'retries',
+            'retry',
+            'root_capability',
+            'run_id',
+            'tool_manager',
+            'tool_name',
+            'usage',
+            'usage_limits',
+            'workspace',
+        ]
+    )
+
+
+def test_replace_keeps_dispatch_snapshots():
+    """`dataclasses.replace` on a reconstructed context keeps the snapshots serialized at dispatch.
+
+    Core copies the context with `replace` inside activities, for a tool's `prepare`, a name-changing wrapper's
+    `call_tool` and the `enqueue()` guard. The snapshots are not `RunContext` fields, so they survive only because
+    the reconstructed context adds them to the field set `replace` rebuilds from. The real-run tests read
+    `available_tool_names` and `active_capability_ids`; this one also covers the on-demand set behind
+    `is_tool_available`, which none of them reach.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), discovered_tool_names={'searched_tool'})
+    reconstructed = TemporalRunContext.deserialize_run_context(TemporalRunContext.serialize_run_context(ctx), deps=None)
+
+    copied = replace(reconstructed, tool_name='tool')
+
+    deferred = ToolDefinition(name='deferred', defer_loading=True, capability_id='deferred')
+    assert (
+        copied.available_tool_names,
+        copied.active_capability_ids,
+        copied.is_tool_available(deferred),
+    ) == snapshot(({'searched_tool'}, set(), False))
+
+
+_custom_context_reads: list[tuple[str, str, str, list[str]]] = []
+
+
+def _record_custom_context_read(site: str, ctx: RunContext[None]) -> None:
+    _custom_context_reads.append(
+        (activity.info().activity_type.rsplit('__', 1)[-1], site, type(ctx).__name__, sorted(ctx.available_tool_names))
+    )
+
+
+_custom_context_agent = Agent(
+    FunctionModel(call_probe_once),
+    name='custom_context_dynamic',
+    deps_type=type(None),
+    toolsets=[DynamicToolset[None](snapshot_probe_toolset(_record_custom_context_read), id='dynamic').prefixed('demo')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, run_context_type=LegacyFieldsRunContext)],
+)
+
+
+@workflow.defn
+class CustomContextDynamicToolsetWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _custom_context_agent.run('Probe.')).output
+
+
+async def test_custom_run_context_type_runs_a_dynamic_toolset(client: Client):
+    """A `run_context_type` that leaves out `tool_name` and `retry` still runs a dynamic toolset.
+
+    Every context copy made inside an activity sets fields this subclass's payload doesn't carry, which
+    `dataclasses.replace` accepts and a field-preserving copy would reject.
+    """
+    _custom_context_reads.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CustomContextDynamicToolsetWorkflow],
+        plugins=[AgentPlugin(_custom_context_agent)],
+    ):
+        output = await client.execute_workflow(
+            CustomContextDynamicToolsetWorkflow.run,
+            id=CustomContextDynamicToolsetWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert (output, _custom_context_reads) == snapshot(
+        (
+            'Done.',
+            [
+                ('get_tools', 'factory', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'prepare', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'instructions', 'LegacyFieldsRunContext', []),
+                ('validate_args', 'factory', 'LegacyFieldsRunContext', []),
+                ('validate_args', 'prepare', 'LegacyFieldsRunContext', []),
+                ('validate_args', 'validator', 'LegacyFieldsRunContext', []),
+                ('call_tool', 'factory', 'LegacyFieldsRunContext', []),
+                ('call_tool', 'prepare', 'LegacyFieldsRunContext', []),
+                ('call_tool', 'body', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'factory', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'prepare', 'LegacyFieldsRunContext', []),
+                ('get_tools', 'instructions', 'LegacyFieldsRunContext', []),
+            ],
+        )
+    )
 
 
 def _run_context_fields_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3802,6 +4113,56 @@ async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> 
     assert _enqueue_handler_boundaries == {'model', 'agent'}
 
 
+_snapshot_handler_reads: set[tuple[str, tuple[str, ...], int]] = set()
+
+
+async def _snapshot_reading_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        boundary = 'model' if isinstance(event, (PartStartEvent, PartDeltaEvent)) else 'agent'
+        _snapshot_handler_reads.add((boundary, tuple(sorted(ctx.available_tool_names)), len(ctx.active_capability_ids)))
+
+
+_snapshot_handler_agent = Agent(
+    TestModel(),
+    name='temporal_handler_snapshots',
+    tools=[_durability_handler_tool],
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_snapshot_reading_handler)
+    ],
+)
+
+
+@workflow.defn
+class SnapshotReadingHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _snapshot_handler_agent.run('run')).output
+
+
+async def test_temporal_event_stream_handler_reads_dispatch_snapshots(client: Client) -> None:
+    """An event stream handler inside an activity answers from the snapshots serialized at dispatch.
+
+    The model and event-stream-handler activities hand the handler a copy of the context with `enqueue()` guarded,
+    so that copy has to keep `available_tool_names` and `active_capability_ids`.
+    """
+    _snapshot_handler_reads.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SnapshotReadingHandlerWorkflow],
+        plugins=[AgentPlugin(_snapshot_handler_agent)],
+    ):
+        await client.execute_workflow(
+            SnapshotReadingHandlerWorkflow.run,
+            id=SnapshotReadingHandlerWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert sorted(_snapshot_handler_reads) == snapshot(
+        [('agent', ('_durability_handler_tool',), 3), ('model', ('_durability_handler_tool',), 3)]
+    )
+
+
 async def test_temporal_tool_rejects_enqueue(client: Client) -> None:
     _enqueue_guard_tool_queue[:] = ['later']
     async with Worker(
@@ -4192,3 +4553,76 @@ async def test_delegate_agent_usage_is_not_merged_back_from_activity(client: Cli
 
     in_process_result = await usage_delegation_agent.run('delegate please')
     assert in_process_result.usage == snapshot(RunUsage(requests=3, input_tokens=110, output_tokens=12, tool_calls=1))
+
+
+_instruction_values: list[str | None] = []
+_instruction_reads: list[str | None] = []
+
+
+class RecordedInstructions(Capability[None]):
+    def __init__(self) -> None:
+        super().__init__(id='recorded_instructions')
+        self.instructions(name='state', on_change='append')(self.read_state)
+
+    @durable_operation('read_state')
+    async def read_state(self, ctx: RunContext[None]) -> str | None:
+        assert activity.in_activity()
+        value = _instruction_values.pop(0)
+        _instruction_reads.append(value)
+        return value
+
+
+_instruction_update_agent = Agent(
+    TestModel(custom_output_text='ok'),
+    deps_type=type(None),
+    name='instruction_updates',
+    capabilities=[RecordedInstructions(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InstructionUpdatesWorkflow:
+    @workflow.run
+    async def run(self) -> list[ModelMessage]:
+        messages: list[ModelMessage] = []
+        for _ in range(6):
+            result = await _instruction_update_agent.run('Continue.', message_history=messages)
+            messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+        # Executed again on replay, so changed history shape cannot hide behind a cached model result.
+        assert [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, InstructionDeltaPart)
+        ] == ['B', 'A', None, 'C']
+        assert {message.instructions for message in messages if isinstance(message, ModelRequest)} == {'A'}
+        return messages
+
+
+async def test_instruction_updates_use_recorded_values_on_temporal_replay(client: Client) -> None:
+    _instruction_values[:] = ['A', 'B', 'B', 'A', None, 'C']
+    _instruction_reads.clear()
+    workflow_id = f'instruction-updates-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InstructionUpdatesWorkflow],
+        plugins=[AgentPlugin(_instruction_update_agent)],
+    ):
+        messages = await client.execute_workflow(
+            InstructionUpdatesWorkflow.run,
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _instruction_reads == ['A', 'B', 'B', 'A', None, 'C']
+    assert _instruction_values == []
+    assert isinstance(messages[0], ModelRequest)
+    assert any(isinstance(part, InstructionBaselinePart) for part in messages[0].parts)
+    await Replayer(
+        workflows=[InstructionUpdatesWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+    assert _instruction_reads == ['A', 'B', 'B', 'A', None, 'C']

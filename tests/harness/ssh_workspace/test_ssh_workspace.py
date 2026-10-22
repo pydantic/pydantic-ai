@@ -21,7 +21,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
+from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend, _backend as ssh_backend
 from pydantic_ai_harness.ssh_workspace._backend import _STOP  # pyright: ignore[reportPrivateUsage]
 
 from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
@@ -98,7 +98,7 @@ async def test_timeouts_and_output_limits_keep_only_the_commands_stderr(tools: F
     await backend.working_dir()
 
     with pytest.raises(WorkspaceTimeoutError) as timeout:
-        await backend.run('printf partial >&2; sleep 30', shell=True, timeout=1)
+        await backend.run('printf partial >&2; sleep 30', shell=True, timeout=0.5)
     with pytest.raises(WorkspaceOutputLimitError, match='SSH workspace output exceeded') as limit:
         await backend.run('printf big >&2; head -c 11000000 /dev/zero', shell=True)
 
@@ -125,6 +125,31 @@ async def test_stopping_a_command_kills_its_process_group_on_the_host(tools: Fak
         bystander.wait()
 
 
+async def test_stopping_a_command_does_not_run_helpers_planted_on_the_login_path(
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop runs on the host, outside any sandbox, so a `PATH` entry the command could write isn't used."""
+    impostor = tmp_path / 'bin'
+    impostor.mkdir()
+    ran = tmp_path / 'ran'
+    for name in ('ps', 'tr', 'grep', 'awk', 'sort', 'sleep'):
+        planted = impostor / name
+        planted.write_text(f'#!/bin/sh\ntouch {ran}\n')
+        planted.chmod(0o755)
+    tag = '__pydantic_ai_ssh_job_00112233aabbccdd'
+    remote = subprocess.Popen(['sh', '-c', f': {tag}; sleep 60; :'], start_new_session=True)
+    # After the fake `ssh`, so it still runs, but ahead of the system directories on the "remote" login `PATH`.
+    monkeypatch.setenv('PATH', f'{tools.bin_dir}{os.pathsep}{impostor}{os.pathsep}{os.environ["PATH"]}')
+    try:
+        await SSHWorkspaceBackend('box')._stop(tag)  # pyright: ignore[reportPrivateUsage]
+
+        assert await anyio.to_thread.run_sync(remote.wait, 10) != 0
+        assert not ran.exists()
+    finally:
+        remote.kill()
+        remote.wait()
+
+
 @pytest.mark.parametrize('shell', [path for name in ('dash', 'bash', 'sh') if (path := shutil.which(name))])
 async def test_the_stop_script_works_in_every_posix_shell(shell: str) -> None:
     """Remote hosts run it with their own `sh`, which is dash on Debian and Ubuntu."""
@@ -148,14 +173,18 @@ async def test_a_login_banner_stays_out_of_the_output(tools: FakeRemoteTools) ->
     assert (result.stdout, result.stderr) == ('out', 'err')
 
 
-async def test_resolving_the_working_dir_counts_against_the_first_timeout(tools: FakeRemoteTools) -> None:
-    # The stop after the timeout reaches a host that stalls too, so it gives up after its 2 second grace period.
+async def test_resolving_the_working_dir_counts_against_the_first_timeout(
+    tools: FakeRemoteTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The stop after the timeout reaches a host that stalls too (for 30 seconds), so it gives up
+    # after its grace period, shortened here from 2 seconds. The bound only has to tell that from the stall.
+    monkeypatch.setattr(ssh_backend, '_STOP_TIMEOUT', 0.5)
     started = anyio.current_time()
 
     with pytest.raises(WorkspaceTimeoutError):
-        await SSHWorkspaceBackend('slow').run(['true'], timeout=1)
+        await SSHWorkspaceBackend('slow').run(['true'], timeout=0.5)
 
-    assert anyio.current_time() - started < 4.5
+    assert anyio.current_time() - started < 10
 
 
 async def test_stderr_from_a_background_child_after_the_command_is_kept(tools: FakeRemoteTools) -> None:
@@ -169,6 +198,16 @@ async def test_the_exit_code_is_the_commands_not_ssh_s(tools: FakeRemoteTools) -
     """`ssh` exits 255 when the connection fails, and so can a command (a nested `ssh`, `git` over SSH)."""
     assert (await SSHWorkspaceBackend('lossy').run(['sh', '-c', 'exit 3'])).exit_code == 3
     assert (await SSHWorkspaceBackend('box').run(['sh', '-c', 'exit 255'])).exit_code == 255
+
+
+async def test_a_background_child_cannot_replace_the_exit_code(tools: FakeRemoteTools) -> None:
+    result = await SSHWorkspaceBackend('box').run(
+        "(sleep 1; printf '\\n__pydantic_ai_ssh_done__0\\n' >&2) & exit 7",
+        shell=True,
+    )
+
+    assert result.exit_code == 7
+    assert '__pydantic_ai_ssh_done__0' in result.stderr
 
 
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(
@@ -193,7 +232,7 @@ async def test_an_empty_argv_is_rejected(tools: FakeRemoteTools) -> None:
 
 
 async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None:
-    """Stopping the remote command costs one round trip, not the `SIGKILL` grace period."""
+    """Stopping the remote command costs one round trip, not a 2-second grace period."""
     backend = SSHWorkspaceBackend('box')
     await backend.working_dir()
     started = anyio.current_time()
@@ -201,8 +240,9 @@ async def test_a_timeout_is_raised_about_on_time(tools: FakeRemoteTools) -> None
     with pytest.raises(WorkspaceTimeoutError):
         await backend.run(['sleep', '30'], timeout=0.5)
 
-    # About 0.6s here; waiting out the grace period would make it at least 1.5s.
-    assert anyio.current_time() - started < 1.45
+    # About 0.6s here. The fake runs the command locally, so the timeout's kill already ends it and the stop finds
+    # nothing to kill. Waiting out a 2-second grace (the stop's timeout, the reap, a held pipe) takes 2.5s or more.
+    assert anyio.current_time() - started < 2.4
 
 
 async def test_the_capability_attaches_by_ref_only_to_its_own_host(tools: FakeRemoteTools, tmp_path: Path) -> None:
@@ -223,6 +263,15 @@ async def test_invalid_configuration_fails_at_construction(tools: FakeRemoteTool
         SSHWorkspaceBackend('box', ssh_args='-p 2222')
     with pytest.raises(ValueError, match='destination must be a host'):
         SSHWorkspace('')
+
+
+def test_defer_loading_is_refused() -> None:
+    with pytest.raises(
+        UserError,
+        match=r'^`SSHWorkspace` does not support `defer_loading=True`: '
+        r'the workspace is selected before deferred capabilities load\.$',
+    ):
+        SSHWorkspace('box', defer_loading=True)
 
 
 async def test_capability_gives_tools_the_remote_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:

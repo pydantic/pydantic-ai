@@ -17,10 +17,13 @@ from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelServerError,
+    ModelTimeoutError,
     PartEndEvent,
     PartStartEvent,
     RunContext,
@@ -112,6 +115,20 @@ What can I help you with today?\
     assert response.provider_details['finish_reason'] == 'stop'
 
 
+async def test_openrouter_provider_quantization_and_sort(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """`nvfp4` and `exacto` are accepted by OpenRouter's provider routing and must type-check here too."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('z-ai/glm-5.3-flash', provider=provider)
+    settings = OpenRouterModelSettings(
+        max_tokens=300,
+        openrouter_provider={'quantizations': ['nvfp4'], 'sort': 'exacto'},
+    )
+    await model_request(model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings)
+    assert request_capture.body()['provider'] == {'quantizations': ['nvfp4'], 'sort': 'exacto'}
+
+
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
@@ -133,7 +150,7 @@ async def test_openrouter_stream_with_native_options(allow_model_requests: None,
         assert stream.provider_details is not None
         assert stream.provider_details == snapshot(
             {
-                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.timezone.utc),
+                'timestamp': datetime.datetime(2025, 11, 2, 6, 14, 57, tzinfo=datetime.UTC),
                 'finish_reason': 'completed',
                 'cost': 0.00333825,
                 'upstream_inference_cost': None,
@@ -238,7 +255,7 @@ async def test_openrouter_tool_calling(allow_model_requests: None, openrouter_ap
                 'type': 'function',
                 'function': {
                     'name': 'divide',
-                    'arguments': '{"numerator": 123, "denominator": 456, "on_inf": "infinity"}',
+                    'arguments': '{"numerator":123,"denominator":456,"on_inf":"infinity"}',
                 },
             }
         ]
@@ -630,9 +647,31 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
         {
             'downstream_provider': 'TestProvider',
             'finish_reason': 'stop',
-            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC),
         }
     )
+
+
+@pytest.mark.parametrize('native_finish_reason', ['end_turn', 'stop'])
+async def test_openrouter_missing_finish_reason_keeps_native_finish_reason(
+    openrouter_api_key: str, native_finish_reason: str
+) -> None:
+    """A missing finish reason is treated as `'stop'`, without hiding the downstream provider's own one."""
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key=openrouter_api_key))
+
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'test'},
+        finish_reason=None,
+        native_finish_reason=native_finish_reason,
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='TestProvider'
+    )
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    assert result.finish_reason == 'stop'
+    assert result.provider_details == {'downstream_provider': 'TestProvider', 'finish_reason': native_finish_reason}
 
 
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -841,7 +880,7 @@ async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None
 
     # With empty openrouter_details, we should still get the parent's provider_details (timestamp + finish_reason)
     assert result.provider_details == snapshot(
-        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)}
+        {'finish_reason': 'stop', 'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.UTC)}
     )
 
 
@@ -855,13 +894,13 @@ async def test_openrouter_google_nested_schema(allow_model_requests: None, openr
 
     provider = OpenRouterProvider(api_key=openrouter_api_key)
 
-    class LevelType(str, Enum):
+    class LevelType(str, Enum):  # noqa: UP042
         ground = 'ground'
         basement = 'basement'
         floor = 'floor'
         attic = 'attic'
 
-    class SpaceType(str, Enum):
+    class SpaceType(str, Enum):  # noqa: UP042
         entryway = 'entryway'
         living_room = 'living-room'
         kitchen = 'kitchen'
@@ -1072,7 +1111,6 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
                     allowed_domains=['pydantic.dev'],
                     blocked_domains=['example.com'],
                     max_uses=2,
-                    external_web_access=False,
                 )
             )
         ],
@@ -1164,6 +1202,22 @@ async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() 
 
     extra_body = cast(dict[str, Any], result.get('extra_body', {}))
     assert extra_body == {}
+
+
+@pytest.mark.parametrize('model_name', ['z-ai/glm-5.3', 'z-ai/glm-5.2'])
+def test_openrouter_glm_thinking_false(model_name: str) -> None:
+    """GLM schema quirks must not change OpenRouter's reasoning translation.
+
+    This inspects the prepared payload directly because cassette matching does not pin its body.
+    """
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(api_key='mock-api-key'))
+    settings = OpenRouterModelSettings(thinking=False)
+
+    prepared, params = model.prepare_request(settings, ModelRequestParameters())
+
+    assert params.thinking is False
+    assert prepared is not None
+    assert prepared.get('extra_body') == {'reasoning': {'effort': 'none'}}
 
 
 async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
@@ -1910,7 +1964,7 @@ def test_openrouter_nested_provider_response() -> None:
         {
             'downstream_provider': 'Google',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 
@@ -1950,7 +2004,7 @@ def test_openrouter_nested_provider_null_name() -> None:
         {
             'downstream_provider': 'unknown',
             'finish_reason': 'STOP',
-            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.timezone.utc),
+            'timestamp': datetime.datetime(2009, 2, 13, 23, 31, 30, tzinfo=datetime.UTC),
         }
     )
 
@@ -2205,13 +2259,14 @@ async def test_openrouter_stream_transport_error_raises_model_api_error(
     """
     error = await _run_openrouter_stream(_FailingSSEStream([_MID_STREAM_TEXT_CHUNK], exc))
 
-    assert type(error) is ModelAPIError
+    assert type(error) is (ModelTimeoutError if cause is APITimeoutError else ModelConnectionError)
     assert type(error.__cause__) is cause
 
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
 async def test_openrouter_stream_error_without_integer_code_raises_model_api_error(allow_model_requests: None) -> None:
-    """An in-stream error object whose `code` isn't an HTTP status surfaces as `ModelAPIError` with no status.
+    """An in-stream error object whose `code` isn't an HTTP status is classified like any OpenAI-compatible in-stream
+    error, so `server_error` gets the 500 it has before a stream opens.
 
     OpenRouter documents an integer `code`, so no recording carries this shape; a mock transport serves it to pin that
     an envelope that doesn't validate is mapped rather than escaping as a `ValidationError`.
@@ -2219,8 +2274,11 @@ async def test_openrouter_stream_error_without_integer_code_raises_model_api_err
     error_chunk = b'data: {"error":{"code":"server_error","message":"upstream failed"}}\n\n'
     error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
 
-    assert type(error) is ModelAPIError
-    assert error.message == 'upstream failed'
+    assert isinstance(error, ModelHTTPError)
+    assert isinstance(error, ModelServerError)
+    assert error.status_code == 500
+    assert error.in_stream is True
+    assert error.provider_error_code == 'server_error'
     assert isinstance(error.__cause__, APIError)
     assert error.__cause__.body == snapshot({'code': 'server_error', 'message': 'upstream failed'})
 
@@ -2246,10 +2304,6 @@ async def test_openrouter_null_choices_triggers_fallback(allow_model_requests: N
     """The point of `ModelAPIError`: a no-completion body now reaches `FallbackModel`.
 
     `fallback_on` defaults to `(ModelAPIError,)`, which a bare `ValidationError` never matched.
-
-    Non-streamed only, deliberately: `FallbackModel`'s window is `Model.request_stream`'s own
-    `__aenter__`, which returns before any chunk is validated, so the streamed twin raises instead of
-    falling back. That asymmetry is `FallbackModel`'s, not OpenRouter's, and the test below pins it.
     """
     mock_client = MockOpenAI.create_mock(_null_choices_completion())
     openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
@@ -2259,23 +2313,18 @@ async def test_openrouter_null_choices_triggers_fallback(allow_model_requests: N
     assert result.output == snapshot('fallback used')
 
 
-async def test_openrouter_null_choices_streaming_does_not_trigger_fallback(allow_model_requests: None) -> None:
-    """The streamed half of the same composition raises instead of falling back.
+async def test_openrouter_null_choices_streaming_triggers_fallback(allow_model_requests: None) -> None:
+    """The streamed twin of the test above also falls back.
 
-    `FallbackModel.request_stream` only guards `__aenter__`; once it has yielded, its own docstring says
-    mid-stream failures propagate. `OpenAIChatModel._process_streamed_response` peeks the raw SDK chunk,
-    so OpenRouter's validation runs later, during iteration — after the guard has closed. Pinned because
-    this PR's first attempt at the test above asserted the streamed path *does* fall back, and failed.
+    OpenRouter's validation only runs while the stream is iterated, but `FallbackModel` waits for a
+    candidate's first event before handing its stream over, so the error is still raised in time.
     """
     mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk()])
     openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
     agent = Agent(FallbackModel(openrouter_model, TestModel(custom_output_text='fallback used')))
 
-    with pytest.raises(ModelAPIError) as exc_info:
-        async with agent.run_stream('hello'):
-            pass
-
-    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    async with agent.run_stream('hello') as result:
+        assert await result.get_output() == snapshot('fallback used')
 
 
 def test_openrouter_error_with_metadata() -> None:

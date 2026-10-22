@@ -24,9 +24,21 @@ from exa_py.api import (
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import AbstractCapability, WebSearch
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
 
@@ -87,6 +99,35 @@ def _deep_response(
         auto_date=None,
         output=DeepSearchOutput(content=content, grounding=grounding),
     )
+
+
+class _NoDomainFiltersModel(FunctionModel):
+    """A model whose native web search ignores domain filters, as Gemini's does."""
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
+async def _tools_sent(
+    capability: AbstractCapability[object], *, native_web_search: bool, applies_domain_filters: bool = True
+) -> tuple[list[str], list[AbstractNativeTool]]:
+    """The function and native tools one request carries, on a model with or without native web search."""
+    sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(
+            (
+                [tool.name for tool in info.function_tools],
+                list(info.model_request_parameters.native_tools),
+            )
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[AbstractNativeTool]]()
+    model_class = FunctionModel if applies_domain_filters else _NoDomainFiltersModel
+    model = model_class(respond, profile=ModelProfile(supported_native_tools=supported))
+    await Agent(model, capabilities=[capability]).run('Search the web.')
+    return sent[0]
 
 
 @dataclass
@@ -278,6 +319,11 @@ class TestRecoverableErrors:
     async def test_auth_failure_propagates(self) -> None:
         client = _FakeExaClient(error=ValueError('Request failed with status code 401: invalid API key'))
         with pytest.raises(ValueError, match='status code 401'):
+            await _toolset(client).web_search('q')
+
+    async def test_payment_required_propagates(self) -> None:
+        client = _FakeExaClient(error=ValueError('Request failed with status code 402: payment required'))
+        with pytest.raises(ValueError, match='status code 402'):
             await _toolset(client).web_search('q')
 
     async def test_network_failure_becomes_model_retry(self) -> None:
@@ -496,18 +542,85 @@ class TestAgentSpec:
         schema = AgentSpec.model_json_schema_with_capabilities([ExaSearch])
         assert 'ExaSearch' in json.dumps(schema)
 
+    async def test_native_search_replaces_exa_search_where_supported(self) -> None:
+        tools, natives = await _tools_sent(ExaSearch(native=True, client=_FakeExaClient()), native_web_search=True)
+        assert tools == ['get_page']
+        assert natives == [WebSearchTool()]
+
+    async def test_exa_search_is_the_fallback_where_native_search_is_unsupported(self) -> None:
+        tools, natives = await _tools_sent(ExaSearch(native=True, client=_FakeExaClient()), native_web_search=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    async def test_exa_search_is_the_fallback_where_native_search_cannot_apply_the_domain_filters(self) -> None:
+        capability = ExaSearch[object](native=True, include_domains=['a.dev'], client=_FakeExaClient())
+        tools, natives = await _tools_sent(capability, native_web_search=True, applies_domain_filters=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    async def test_native_search_without_domain_filters_is_sent_where_it_cannot_apply_them(self) -> None:
+        capability = ExaSearch[object](native=True, client=_FakeExaClient())
+        tools, natives = await _tools_sent(capability, native_web_search=True, applies_domain_filters=False)
+        assert tools == ['get_page']
+        assert natives == [WebSearchTool()]
+
+    def test_native_search_gets_the_domain_filters(self) -> None:
+        capability = ExaSearch[None](native=True, include_domains=['a.dev'], client=_FakeExaClient())
+        assert capability.get_native_tools() == [WebSearchTool(allowed_domains=['a.dev'])]
+        capability = ExaSearch[None](native=True, exclude_domains=['b.dev'], client=_FakeExaClient())
+        assert capability.get_native_tools() == [WebSearchTool(blocked_domains=['b.dev'])]
+
+    async def test_without_native_exa_search_is_always_sent(self) -> None:
+        tools, natives = await _tools_sent(ExaSearch(client=_FakeExaClient()), native_web_search=True)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    async def test_web_search_tool_is_a_core_web_search_fallback(self) -> None:
+        client = _FakeExaClient(search_response=_response(_result('https://a.dev', title='A', highlights=['alpha'])))
+        exa = ExaSearch[object](num_results=3, client=client)
+
+        tools, _ = await _tools_sent(WebSearch[object](local=exa.web_search_tool()), native_web_search=True)
+        assert tools == []
+        tools, _ = await _tools_sent(WebSearch[object](local=exa.web_search_tool()), native_web_search=False)
+        assert tools == ['web_search']
+
+        def search_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'q'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(search_once, profile=ModelProfile(supported_native_tools=frozenset()))
+        result = await Agent(model, capabilities=[WebSearch[object](local=exa.web_search_tool())]).run('Search.')
+        returns = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert len(returns) == 1
+        assert returns[0].metadata['sources'] == [{'url': 'https://a.dev', 'title': 'A'}]
+        assert client.search_calls[0]['num_results'] == 3
+
     def test_from_spec_builds_capability(self) -> None:
         capability = ExaSearch[None].from_spec(
             num_results=3,
             text_summary=True,
             include_deep_search=True,
             include_domains=['a.dev'],
+            native=True,
         )
+        assert capability.native is True
         assert capability.num_results == 3
         assert capability.text_summary is True
         assert capability.include_deep_search is True
         assert capability.include_domains == ['a.dev']
         assert capability.client is None
+        assert capability.id == 'exa_search'
+
+    def test_from_spec_sets_a_distinct_id(self) -> None:
+        """A second instance next to `PrefixTools` needs its own `id`, so a spec has to be able to set one."""
+        assert ExaSearch[None].from_spec(include_domains=['a.dev'], id='a_search').id == 'a_search'
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')

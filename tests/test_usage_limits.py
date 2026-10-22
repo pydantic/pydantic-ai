@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -20,7 +20,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     TextPart,
     ToolCallPart,
@@ -105,8 +105,8 @@ async def test_streamed_text_limits() -> None:
             assert result.all_messages() == snapshot(
                 [
                     ModelRequest(
-                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
-                        timestamp=IsNow(tz=timezone.utc),
+                        parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),
@@ -120,7 +120,7 @@ async def test_streamed_text_limits() -> None:
                         ],
                         usage=RequestUsage(input_tokens=51),
                         model_name='test',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         provider_name='test',
                         run_id=IsStr(),
                         conversation_id=IsStr(),
@@ -130,11 +130,11 @@ async def test_streamed_text_limits() -> None:
                             ToolReturnPart(
                                 tool_name='ret_a',
                                 content='a-apple',
-                                timestamp=IsNow(tz=timezone.utc),
+                                timestamp=IsNow(tz=UTC),
                                 tool_call_id=IsStr(),
                             )
                         ],
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                         run_id=IsStr(),
                         conversation_id=IsStr(),
                     ),
@@ -574,8 +574,10 @@ def test_usage_pydantic_core_serialization_subclass():
         {
             'input_tokens': 0,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -1025,7 +1027,7 @@ async def test_failed_tool_calls_not_counted() -> None:
 
     result = await test_agent.run('test', usage_limits=UsageLimits(tool_calls_limit=1))
     assert call_count == 2
-    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
+    assert result.usage == snapshot(RunUsage(requests=3, input_tokens=168, output_tokens=29, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1049,11 +1051,13 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Temporary failure, please retry',
                         tool_name='flaky_tool',
                         tool_call_id='pyd_ai_tool_call_id__flaky_tool',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1062,7 +1066,7 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='flaky_tool', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=62, output_tokens=10),
+                usage=RequestUsage(input_tokens=58, output_tokens=10),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',
@@ -1084,7 +1088,7 @@ async def test_failed_tool_calls_not_counted() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"flaky_tool":"a-success"}')],
-                usage=RequestUsage(input_tokens=63, output_tokens=14),
+                usage=RequestUsage(input_tokens=59, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
                 provider_name='test',

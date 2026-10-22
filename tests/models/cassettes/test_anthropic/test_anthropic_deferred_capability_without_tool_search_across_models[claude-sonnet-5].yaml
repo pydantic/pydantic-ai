@@ -1,386 +1,438 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1057'
+      - "1145"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
-          type: text
-        role: user
-      model: claude-sonnet-5
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools. Load this capability before looking up refund policy.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First load the refunds capability. Then call lookup_refund_policy for
+              order-123. Return only the tool result.
+            type: text
+        model: claude-sonnet-5
+        stream: true
+        system:
+        - type: text
+          text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: lookup_refund_policy
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '643'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-fe3c86720331eec0ef935b9f2887a2cf-9ae0556a434cb276-01
+      - 00-07eacba7fa06a2bb860849b5f9d7ffa8-01872697230afb9c-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - caller:
-          type: direct
-        id: toolu_01SsSRvUNLFNQqU93u9sac4Y
-        input:
-          id: refunds
-        name: load_capability
-        type: tool_use
-      id: msg_011CdTfEqrBNbWoUF4LsKtdT
-      model: claude-sonnet-5
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 658
-        output_tokens: 50
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CfY3mrhAtn4TgddD6GQwi","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":703,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EpoCCpABCBIYAipAdn85iMaRVh8dELvE2t0ohDTIq7yHhgW82Rrp0bKLm/r1WkTS5VC/+k2an+6W2PtxT6K21C2x7RsJIyQATYGVDzIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAZbP79UGEgxOJ37fxdUz2dsFlMgaDOA2ut4fw3RCAjq4fiIw38cZltpLBu45AH4WcYm8kKMhMKhn+rBunsOHuUryGy71KsQWfiGBchLHx9MwX3fpKjdZn4Wfkyxy/004QIy8UAAary1bwIZn/JKVLAbuGQbG6wDG+ABM4kQaYY8KQE3FAsQ6tDvrMd0NGAE="}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01HQ6q7LKhyKgQGRZJCcLdJD","name":"load_capability","input":{},"caller":{"type":"direct"}}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"id\": "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"refund"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"s\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":703,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":65,"output_tokens_details":{"thinking_tokens":13}}               }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-09-29T16:30:14.250953+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '1730'
+      - "2206"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
-          type: text
-        role: user
-      - content:
-        - id: toolu_01SsSRvUNLFNQqU93u9sac4Y
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{}'
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First load the refunds capability. Then call lookup_refund_policy for
+              order-123. Return only the tool result.
             type: text
-          is_error: false
-          tool_use_id: toolu_01SsSRvUNLFNQqU93u9sac4Y
-          type: tool_result
-        role: user
-      - content:
-        - id: auto_load_0f10f8b659c3c105
-          input:
-            queries:
-            - refunds
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: lookup_refund_policy
-            type: tool_reference
-          is_error: false
-          tool_use_id: auto_load_0f10f8b659c3c105
-          type: tool_result
-        role: user
-      model: claude-sonnet-5
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools. Load this capability before looking up refund policy.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-    uri: https://api.anthropic.com/v1/messages?beta=true
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              EpoCCpABCBIYAipAdn85iMaRVh8dELvE2t0ohDTIq7yHhgW82Rrp0bKLm/r1WkTS5VC/+k2an+6W2PtxT6K21C2x7RsJIyQATYGVDzIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAZbP79UGEgxOJ37fxdUz2dsFlMgaDOA2ut4fw3RCAjq4fiIw38cZltpLBu45AH4WcYm8kKMhMKhn+rBunsOHuUryGy71KsQWfiGBchLHx9MwX3fpKjdZn4Wfkyxy/004QIy8UAAary1bwIZn/JKVLAbuGQbG6wDG+ABM4kQaYY8KQE3FAsQ6tDvrMd0NGAE=
+            type: thinking
+          - id: toolu_01HQ6q7LKhyKgQGRZJCcLdJD
+            type: tool_use
+            name: load_capability
+            input:
+              id: refunds
+        - role: user
+          content:
+          - tool_use_id: toolu_01HQ6q7LKhyKgQGRZJCcLdJD
+            type: tool_result
+            content:
+            - text: "{}"
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - id: pyd_ai_a60b44d7aec1ee74
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - lookup_refund_policy
+        - role: user
+          content:
+          - tool_use_id: pyd_ai_a60b44d7aec1ee74
+            type: tool_result
+            content:
+            - tool_name: lookup_refund_policy
+              type: tool_reference
+            is_error: false
+        model: claude-sonnet-5
+        stream: true
+        system:
+        - type: text
+          text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: lookup_refund_policy
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '656'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f5860c86e4d4fcb22c34356da0eb263f-a10887a442d32c5d-01
+      - 00-a8c3300688b6fb56fa12238caf0abf97-0d4c8150736c1946-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - caller:
-          type: direct
-        id: toolu_01K27zk9d3yZz7yoNVAkLBXB
-        input:
-          order_id: order-123
-        name: lookup_refund_policy
-        type: tool_use
-      id: msg_011CdTfEwkPA3BS62UpfJMZE
-      model: claude-sonnet-5
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 861
-        output_tokens: 57
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CfY3mz7tyejzr4RGm4j3P","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":926,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01EHoeM5z7c2jPr6fvpjuVaE","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"order-1"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"23\"}"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":926,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":57,"output_tokens_details":{"thinking_tokens":0}} }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-09-29T16:30:15.224566+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '2088'
+      - "2538"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.
-          type: text
-        role: user
-      - content:
-        - id: toolu_01SsSRvUNLFNQqU93u9sac4Y
-          input:
-            id: refunds
-          name: load_capability
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '{}'
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First load the refunds capability. Then call lookup_refund_policy for
+              order-123. Return only the tool result.
             type: text
-          is_error: false
-          tool_use_id: toolu_01SsSRvUNLFNQqU93u9sac4Y
-          type: tool_result
-        role: user
-      - content:
-        - id: auto_load_0f10f8b659c3c105
-          input:
-            queries:
-            - refunds
-          name: search_tools
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - tool_name: lookup_refund_policy
-            type: tool_reference
-          is_error: false
-          tool_use_id: auto_load_0f10f8b659c3c105
-          type: tool_result
-        role: user
-      - content:
-        - id: toolu_01K27zk9d3yZz7yoNVAkLBXB
-          input:
-            order_id: order-123
-          name: lookup_refund_policy
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: 'order-123: refund allowed'
-            type: text
-          is_error: false
-          tool_use_id: toolu_01K27zk9d3yZz7yoNVAkLBXB
-          type: tool_result
-        role: user
-      model: claude-sonnet-5
-      stream: false
-      system:
-      - text: |-
-          The following capabilities are deferred and can be loaded using the `load_capability` tool:
-          - refunds: Refund policy tools. Load this capability before looking up refund policy.
-        type: text
-      tool_choice:
-        type: auto
-      tools:
-      - description: Load a capability to access its full instructions and tools.
-        input_schema:
-          description: Typed arguments for a `load_capability` tool call.
-          properties:
-            id:
-              description: The id of the capability to load.
-              type: string
-          required:
-          - id
-          type: object
-        name: load_capability
-      - defer_loading: true
-        description: ''
-        input_schema:
-          additionalProperties: false
-          properties:
-            order_id:
-              type: string
-          required:
-          - order_id
-          type: object
-        name: lookup_refund_policy
-    uri: https://api.anthropic.com/v1/messages?beta=true
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              EpoCCpABCBIYAipAdn85iMaRVh8dELvE2t0ohDTIq7yHhgW82Rrp0bKLm/r1WkTS5VC/+k2an+6W2PtxT6K21C2x7RsJIyQATYGVDzIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAZbP79UGEgxOJ37fxdUz2dsFlMgaDOA2ut4fw3RCAjq4fiIw38cZltpLBu45AH4WcYm8kKMhMKhn+rBunsOHuUryGy71KsQWfiGBchLHx9MwX3fpKjdZn4Wfkyxy/004QIy8UAAary1bwIZn/JKVLAbuGQbG6wDG+ABM4kQaYY8KQE3FAsQ6tDvrMd0NGAE=
+            type: thinking
+          - id: toolu_01HQ6q7LKhyKgQGRZJCcLdJD
+            type: tool_use
+            name: load_capability
+            input:
+              id: refunds
+        - role: user
+          content:
+          - tool_use_id: toolu_01HQ6q7LKhyKgQGRZJCcLdJD
+            type: tool_result
+            content:
+            - text: "{}"
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - id: pyd_ai_a60b44d7aec1ee74
+            type: tool_use
+            name: search_tools
+            input:
+              queries:
+              - lookup_refund_policy
+        - role: user
+          content:
+          - tool_use_id: pyd_ai_a60b44d7aec1ee74
+            type: tool_result
+            content:
+            - tool_name: lookup_refund_policy
+              type: tool_reference
+            is_error: false
+        - role: assistant
+          content:
+          - id: toolu_01EHoeM5z7c2jPr6fvpjuVaE
+            type: tool_use
+            name: lookup_refund_policy
+            input:
+              order_id: order-123
+        - role: user
+          content:
+          - tool_use_id: toolu_01EHoeM5z7c2jPr6fvpjuVaE
+            type: tool_result
+            content:
+            - text: "order-123: refund allowed"
+              type: text
+            is_error: false
+        model: claude-sonnet-5
+        stream: true
+        system:
+        - type: text
+          text: |-
+            The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+            - refunds: Refund policy tools. Load this capability before looking up refund policy.
+        tool_choice:
+          type: auto
+        tools:
+        - name: load_capability
+          description: >-
+            Load a listed capability whenever it is plausibly relevant to the task. Loading
+            makes the capability instructions and any tools it provides available.
+          input_schema:
+            description: Typed arguments for a `load_capability` tool call.
+            properties:
+              id:
+                description: The id of the capability to load.
+                type: string
+            required:
+            - id
+            type: object
+        - name: lookup_refund_policy
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties:
+              order_id:
+                type: string
+            required:
+            - order_id
+            type: object
+          defer_loading: true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '551'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-755bae4ffb72b17c68f4b12f2fa1d0e5-9250181422643d71-01
+      - 00-9f94280cdf017dade43cf2c275fac282-a7a2e722f57720e4-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: 'order-123: refund allowed'
-        type: text
-      id: msg_011CdTfF2FkLEB3ngPPq6At9
-      model: claude-sonnet-5
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 932
-        output_tokens: 11
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CfY3n4KQq3ziKwAfbsrFW","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":997,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"order-123: refund allow"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ed"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":997,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":11,"output_tokens_details":{"thinking_tokens":0}}         }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-09-29T16:30:15.974815+00:00

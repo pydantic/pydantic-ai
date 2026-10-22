@@ -21,7 +21,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModel
 settings = OpenAIRealtimeModelSettings(
     turn_detection={'sensitivity': 'high', 'silence_duration_ms': 400}
 )
-model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
+model = OpenAIRealtimeModel('{{ openai:realtime.name }}', settings=settings)
 ```
 
 Use provider-specific settings only when the shared controls are insufficient:
@@ -96,7 +96,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 
 async def main():
-    realtime = agent.realtime('openai:gpt-realtime')
+    realtime = agent.realtime('{{ openai:realtime }}')
     async with realtime.session(handle_barge_in=True) as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
         ...  # stream the microphone and handle events; barge-in is handled for you
@@ -110,7 +110,7 @@ on ordinary user turns. A reply that has not reached its first audio chunk is st
 speaking over the model's thinking time works like speaking over its voice. Provider differences
 are absorbed: on a model without output truncation
 (xAI) the response is cancelled without a truncation point, and when the provider interrupts
-itself without reporting speech onset (Gemini) only the local flush is performed. The events still
+itself without reporting speech onset (Gemini, ElevenLabs Agents) only the local flush is performed. The events still
 reach your iterator, already handled — react to them for UI state or to flush your audio layer's
 own in-flight block, the one buffer the session cannot reach. The truncation point is the last
 chunk boundary the device reached, so it attributes at most one chunk less than was really heard,
@@ -121,8 +121,8 @@ As an alternative, handle barge-in yourself. The signals: providers whose profil
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
 (OpenAI, Azure OpenAI, and xAI) emit
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
-Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] when it
-interrupts model output instead. Read the flag rather than waiting on an event a provider never
+Gemini and ElevenLabs Agents emit [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent]
+when they interrupt model output instead. Read the flag rather than waiting on an event a provider never
 sends.
 
 While playback keeps the single device-paced iterator, staying in control of the trigger costs one
@@ -206,11 +206,22 @@ response state as interrupted. When this history is sent to a text model, Pydant
 interruption note to the prepared request without modifying stored history.
 
 Models generate audio several times faster than it plays, so the reply the user speaks over has
-usually finished generating already. History is append-only, so that reply keeps its full
-transcript and `complete` state. The barge-in still truncates the provider's copy where playback
-stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
-`handle_barge_in=True`), the session truncates the reply actually being played, and any reply
-generated after it, which the user never heard, at 0.
+usually finished generating already. With `played_bytes` (or `handle_barge_in=True`), on a model whose
+profile sets `supports_output_truncation`, the session still truncates the provider's copy of that reply
+where playback stopped. Any reply generated after it, which the user never heard, is truncated at 0. The
+model then doesn't take either as heard.
+
+History records each of those replies the same way as one cut off while it was being generated: as
+interrupted, with `interrupted_at_ms` on the speech part that was cut. A message you already have is never
+edited: a later snapshot holds an interrupted copy at the same position (see
+[History](history.md#transcription-and-history-edge-cases)). The transcript stays what the model
+generated, as most providers don't report which words were heard. ElevenLabs does, and with it the
+transcript becomes what was heard (see [ElevenLabs](elevenlabs.md#provider-specific-quirks)). The
+[readable interruption note](history.md#handing-off-to-a-text-agent) is what tells a later model where the
+listener stopped.
+
+With `played_ms`, the session can't tell which reply the position belongs to once it has finished, so a
+finished reply is neither truncated nor recorded as cut.
 
 ## Speaking first
 
@@ -235,7 +246,7 @@ async def play_audio(chunks: AsyncIterator[bytes]) -> None:
 
 
 async def main():
-    async with agent.realtime('openai:gpt-realtime').session() as session:
+    async with agent.realtime('{{ openai:realtime }}').session() as session:
         playback = asyncio.create_task(play_audio(session.stream_audio()))
         await session.send('Greet the visitor.')
         async for event in session:
@@ -264,9 +275,7 @@ Disable automatic detection with `turn_detection=False` on models whose profile 
 [`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio] to end the user turn, then
 [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]. The explicit
 `create_response()` call is needed because with turn detection off, committing the buffer only
-finalizes the user's input; nothing triggers a reply until you ask for one. xAI is the exception:
-it replies as soon as audio is committed, and currently drops a `create_response()` sent after that
-reply has finished, so `wait_for_reply()` doesn't return. Use
+finalizes the user's input; nothing triggers a reply until you ask for one. Use
 [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio] to discard uncommitted input.
 
 ```python
@@ -275,7 +284,7 @@ from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModel
 
 agent = Agent()
 model = OpenAIRealtimeModel(
-    'gpt-realtime', settings=OpenAIRealtimeModelSettings(turn_detection=False)
+    '{{ openai:realtime.name }}', settings=OpenAIRealtimeModelSettings(turn_detection=False)
 )
 
 
@@ -286,7 +295,7 @@ async def main():
         await session.create_response()
 ```
 
-Gemini does not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
+Gemini and ElevenLabs Agents do not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
 [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
 
 ## Checking what the model supports

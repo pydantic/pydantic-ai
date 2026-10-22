@@ -9,10 +9,13 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, assert_type
 
 import pytest
-from aws_durable_execution_sdk_python import durable_execution  # pyright: ignore[reportUnknownVariableType]
+from aws_durable_execution_sdk_python import (
+    DurableContext,
+    durable_execution,  # pyright: ignore[reportUnknownVariableType]
+)
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
 from aws_durable_execution_sdk_python.exceptions import ExecutionError
 from aws_durable_execution_sdk_python.retries import RetryPresets
@@ -148,6 +151,21 @@ class TestDurableAgentHandler:
         assert handler({'prompt': 'go'}, ctx) == 'done'
         assert ctx.step_names == ['a__model.request']
 
+    def test_keeps_the_handler_context_type(self) -> None:
+        """The documented handler annotates `context: DurableContext`, which a decorator typed for the
+        structural `DurableStepContext` alone would reject under a type checker."""
+
+        @durable_agent_handler
+        async def handler(event: dict[str, Any], context: DurableContext) -> str:
+            raise NotImplementedError
+
+        @durable_agent_handler(cancel_timeout=30)
+        async def parameterized(event: dict[str, Any], context: DurableContext) -> str:
+            raise NotImplementedError
+
+        assert_type(handler, Callable[[Any, DurableContext], str])
+        assert_type(parameterized, Callable[[Any, DurableContext], str])
+
     def test_parameterized_form_passes_cancel_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         received: list[float] = []
 
@@ -220,6 +238,44 @@ class TestCapabilityOperation:
         run_durable(lambda: agent.run('go'), context=first)
 
         assert first.step_names[0] == 'a__capability__contributor.record'
+        assert contributor.calls == 1
+
+        resumed = FakeDurableContext(journal=first.operations)
+        result = run_durable(lambda: agent.run('go'), context=resumed)
+
+        assert result.output == 'done'
+        assert resumed.invoked == []
+        assert contributor.calls == 1
+
+    def test_operation_called_from_a_tool_runs_inside_the_tool_step(self) -> None:
+        class Contributor(AbstractCapability[Any]):
+            id = 'contributor'
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            @durable_operation('fetch')
+            async def fetch(self, ctx: RunContext[Any]) -> str:
+                self.calls += 1
+                return 'fetched'
+
+            def get_toolset(self) -> FunctionToolset[Any]:
+                toolset = FunctionToolset[Any](id=self.id)
+
+                @toolset.tool
+                async def act(ctx: RunContext[Any]) -> str:
+                    return await self.fetch(ctx)
+
+                return toolset
+
+        contributor = Contributor()
+        agent = Agent(tool_then_text(), name='a', capabilities=[contributor, AWSLambdaDurability()])
+
+        first = FakeDurableContext()
+        result = run_durable(lambda: agent.run('go'), context=first)
+
+        assert result.output == 'done'
+        assert not [name for name in first.step_names if name is not None and '__capability__' in name]
         assert contributor.calls == 1
 
         resumed = FakeDurableContext(journal=first.operations)
@@ -485,6 +541,20 @@ class TestStepConfig:
         ctx = FakeDurableContext()
 
         with pytest.raises(UserError, match=r'expected a dict .* or `False`, got str'):
+            run_durable(lambda: agent.run('go'), context=ctx)
+
+    def test_non_string_per_tool_config_key_is_rejected(self) -> None:
+        """A pydantic `ValidationError` from a tool call is treated as invalid arguments and sent to
+        the model, so a malformed config must surface as a `UserError` instead."""
+        toolset = FunctionToolset[object](id='tools')
+        toolset.add_function(act, metadata={'aws_lambda': {1: 2}})
+
+        agent = Agent(tool_then_text(), name='a', toolsets=[toolset], capabilities=[AWSLambdaDurability()])
+        ctx = FakeDurableContext()
+
+        with pytest.raises(
+            UserError, match="Tool 'act' has invalid 'aws_lambda' metadata: step config keys must be strings"
+        ):
             run_durable(lambda: agent.run('go'), context=ctx)
 
 
@@ -786,18 +856,23 @@ class TestBridgeFailureModes:
         finally:
             shutdown(loop, owner=thread)
 
-    def test_a_cancelled_step_operation_does_not_hang_the_handler(self) -> None:
-        # `Task.exception()` raises for a cancelled task, so a naive done-callback would strand the
-        # handler thread inside `context.step(...)` until the function timed out.
+    def test_a_cancelled_step_operation_fails_the_step(self) -> None:
+        """`Task.exception()` raises for a cancelled task, so a naive done-callback would strand the
+        handler thread inside `context.step(...)` until the function timed out. The cancellation also
+        has to reach the SDK as an ordinary `Exception`: a `BaseException` skips its step failure
+        handling and crashes the invocation."""
+
         def act() -> str:
             raise asyncio.CancelledError('inner cancel')
 
         agent = build_agent(act)
         ctx = FakeDurableContext()
 
-        # The point of the assertion is that the call returns at all rather than wedging the thread.
-        with pytest.raises(BaseException):
+        step = 'a__function_toolset__<agent>.call_tool:act'
+        with pytest.raises(RuntimeError, match=re.escape(f'Durable step {step!r} was cancelled')):
             run_durable(lambda: agent.run('go'), context=ctx)
+
+        assert [op.name for op in ctx.failed] == [step]
 
     def test_sdk_control_flow_propagates_out_of_the_handler(self) -> None:
         """`SuspendExecution` and friends are `BaseException`s the SDK raises so user code cannot
@@ -951,7 +1026,10 @@ class TestBridgeFailureModes:
         with pytest.raises(Suspend):
             run_durable(run_with_slow_cleanup, context=SuspendingContext(), cancel_timeout=0.01)
 
-        assert cleanup_reached.is_set()
+        # The handler waits only `cancel_timeout` plus a short join before giving up, so on a loaded
+        # runner the abandoned run's `finally` may not have started yet. It must still run on the
+        # retired loop before that loop stops.
+        assert cleanup_reached.wait(timeout=5)
         # The handler returned while the abandoned run still holds `abandoned`, so the next
         # invocation must not be handed that loop.
         replacement = loops.get()

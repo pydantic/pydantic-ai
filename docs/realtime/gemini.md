@@ -155,8 +155,9 @@ Gemini normally pauses generation while a function tool is outstanding. On the n
 [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
 let it keep speaking and answering: tools are then declared `NON_BLOCKING`, and their results are
 returned with `INTERRUPT` scheduling, so each cuts into whatever the model is saying when it arrives.
-This is best for slow tools; a fast result can interrupt speech that barely started and leave an empty
-interrupted turn in history.
+This is best for slow tools, since a fast result can cut off speech that barely started. What the model
+says while the tool runs is recorded with the call, ahead of its result: see
+[Transcription and history edge cases](history.md#transcription-and-history-edge-cases).
 
 The other Live models accept a `NON_BLOCKING` declaration and then wait for the result anyway, so
 they ignore the setting, and `gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every
@@ -172,6 +173,9 @@ only native tool it supports — no Live model runs native code execution or URL
 those a [`local=` fallback](tools.md#native-tools) and the session runs the local tool instead:
 `CodeExecutionTool(local=...)`, or `WebFetch(native=False, local=True)`, which requires the
 `web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
+Google Search grounding takes no domain filters or usage limit, so a `WebSearch` with
+`allowed_domains`, `blocked_domains`, `max_uses`, or `external_web_access=False` set fails before the session connects (see
+[restricting parameters](../native-tools.md#restricting-parameters)).
 
 ### Specialist streaming models
 
@@ -232,12 +236,29 @@ drop cut off an exchange the resumed session no longer has (see
 
 ## Provider-specific quirks
 
-- A text turn sent while a reply is in flight is answered in order on Gemini 2.5. On Gemini 3.1 it
-  interrupts the active reply, emits `RealtimeResponseInterruptedEvent`, and records any partial
-  reply as interrupted before answering the text turn.
+- What happens to text (or a tool result) that reaches the model while it generates a reply depends on the model:
+  - The native-audio models finish the reply, and answer the text in a turn after it.
+  - `gemini-3.1-flash-live-preview`, `gemini-3.8-live`, and Vertex's `gemini-live-2.5-flash` cut the reply off: they
+    emit `RealtimeResponseInterruptedEvent`, the partial reply is recorded as interrupted, and the next turn answers
+    the text. `gemini-3.1-flash-live-preview` also cancels the tool calls the cut-off turn was waiting on, and makes
+    them again.
+
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] and
+  [`RealtimeTurnCompleteEvent`](events.md#the-turn-boundary) wait for the reply to the text. Where the text went out
+  just as a reply began, before the session saw it start, telling which reply answers the text takes the
+  `google_input_cuts_off_reply` profile flag: the cut-off reply then answers only what started it. It is on for
+  `gemini-3.1-flash-live-preview` and `gemini-3.8-live`, which report where in the audio the user started speaking,
+  telling a reply the user spoke over apart from one text cut off. It is off for Vertex's `gemini-live-2.5-flash`,
+  which reports no speech, and for the native-audio models, so there a wait for such text can end with the reply
+  already under way. For a model not covered (`gemini-3.8-live-extended-thinking`, say) that cuts its reply off
+  this way and reports speech, turn the flag on with `profile=`.
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
+- When Gemini says why it ended a turn, the response records it the way a
+  [`GoogleModel`][pydantic_ai.models.google.GoogleModel] response does: a malformed function call is
+  `finish_reason='error'`, refused input or unsafe output is `'content_filter'`, and the raw reason
+  (such as `MALFORMED_FUNCTION_CALL`) is kept in `provider_details['finish_reason']`.
 - `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
   but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
   recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,

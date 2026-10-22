@@ -22,7 +22,7 @@ Copilot authenticates with a bearer token. An OAuth user token — what `gh auth
 | --- | --- |
 | OAuth user token (`gho_`) | Works. |
 | Copilot API token (`tid=…`) | Works, for plans that issue one. |
-| Fine-grained PAT (`github_pat_`) with **Copilot Requests** | Listed by [GitHub's Copilot SDK docs](https://docs.github.com/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk), but rejected with `401 unauthorized` on the Individual plan we tested. |
+| Fine-grained PAT (`github_pat_`) with **Copilot Requests** | Listed by [GitHub's Copilot SDK docs](https://docs.github.com/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk), but rejected with `401 unauthorized` on the Individual plan we tested, under the default `vscode-chat` [integration id](#integration-id). |
 | Classic PAT (`ghp_`) | Not supported by GitHub. |
 
 ## Device login
@@ -128,13 +128,13 @@ Copilot's catalog varies by subscription and changes often, so Pydantic AI ships
 
 ```bash
 curl -H "Authorization: Bearer $GITHUB_COPILOT_API_KEY" \
-     -H "Copilot-Integration-Id: vscode-chat" \
+     -H "Copilot-Integration-Id: ${GITHUB_COPILOT_INTEGRATION_ID:-vscode-chat}" \
      https://api.githubcopilot.com/models
 ```
 
 Each entry's `supported_endpoints` says which API serves it; Pydantic AI needs `/chat/completions` in that list.
 
-The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request, so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
+The listing depends on the `Copilot-Integration-Id` header, which `GitHubCopilotProvider` sends on every request ([`vscode-chat` by default](#integration-id)), so an `Authorization`-only call returns fewer ids than the provider can actually reach — the Gemini ids, at the time of writing.
 
 Two `400` responses tell you why an id didn't work:
 
@@ -186,8 +186,28 @@ agent = Agent(model)
 ...
 ```
 
+## Integration id
+
+Every request carries a `Copilot-Integration-Id` header. Copilot attributes the traffic to it and ties its quota and model allowlist to it, so a different id can change which models the `/models` listing returns and which ones Copilot serves. It can also decide whether a credential is accepted: in our testing through the GitHub Agentic Workflows api-proxy, Copilot rejected a fine-grained PAT under `vscode-chat` with `400 Personal Access Tokens are not supported for this endpoint`, and accepted it under `agentic-workflows`. The provider sends `vscode-chat` by default. Pass `integration_id` to send another id, or set the `GITHUB_COPILOT_INTEGRATION_ID` environment variable, the name the [Copilot CLI reads](https://docs.github.com/en/copilot/how-tos/copilot-sdk/setup/multi-tenancy#integration-id); the argument takes precedence. GitHub Agentic Workflows, for example, identifies itself as `agentic-workflows`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.github_copilot import GitHubCopilotModel
+from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+
+model = GitHubCopilotModel(
+    'claude-haiku-4.5',
+    provider=GitHubCopilotProvider(
+        api_key='your-copilot-token',
+        integration_id='agentic-workflows',
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ## Not supported
 
 Copilot's Responses (`/responses`) and Messages (`/v1/messages`) APIs and realtime are not implemented. Neither are embeddings, but because `github-copilot` counts as an OpenAI-chat-compatible provider, `Embedder('github-copilot:...')` still builds an [`OpenAIEmbeddingModel`](../embeddings.md) rather than raising — it points at the gateway's `/embeddings`, which answers `400`. Cost and context-window data are also unavailable: [genai-prices](https://github.com/pydantic/genai-prices) gained a `github-copilot` entry in [genai-prices#683](https://github.com/pydantic/genai-prices/pull/683), but no published release carries it yet.
 
-Copilot's Claude ids inherit Anthropic's sampling restriction. On Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, Fable 5 and Mythos 5 — and on any id whose name starts with one of those — `temperature` and `top_p` are dropped from the request rather than forwarded, silently, exactly as they are when you reach the same models through the [Anthropic API](anthropic.md). Only those two keys go: `top_k` has no Chat Completions equivalent to drop, and a `temperature` you pass in `extra_body`, or any `openai_*` setting, is still sent. Every other id — `claude-haiku-4.5` among them — forwards both unchanged.
+Copilot's Claude ids inherit Anthropic's sampling restriction. On Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, Fable 5, Mythos 5, and Haiku 5.5 — and on any id whose name starts with one of those — `temperature` and `top_p` are dropped from the request rather than forwarded, silently, exactly as they are when you reach the same models through the [Anthropic API](anthropic.md). Only those two keys go: `top_k` has no Chat Completions equivalent to drop, and a `temperature` you pass in `extra_body`, or any `openai_*` setting, is still sent. Every other id — `claude-haiku-4.5` among them — forwards both unchanged.

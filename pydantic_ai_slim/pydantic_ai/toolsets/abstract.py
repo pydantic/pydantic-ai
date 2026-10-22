@@ -3,10 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, Self
 
 from pydantic_core import SchemaValidator
-from typing_extensions import Self
 
 from .._instructions import normalize_toolset_instruction_parts
 from .._run_context import AgentDepsT, RunContext
@@ -166,6 +165,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         Simple implementations can return a plain `str`; advanced implementations can return
         [`InstructionPart`][pydantic_ai.messages.InstructionPart] objects to indicate whether
         each instruction part is static or dynamic for caching purposes.
+
+        This is called before each model request. When the text can change during a
+        conversation, return an `InstructionPart` with `on_change='append'` from a toolset with an
+        [`id`][pydantic_ai.toolsets.AbstractToolset.id], so changes are appended to the history
+        instead of rewriting the cached instruction prefix. See
+        [appending instruction changes](../agent.md#appending-instruction-changes).
+        Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
         Args:
             ctx: The run context for this agent run.

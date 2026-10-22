@@ -6,7 +6,7 @@ Use these guides when building or reviewing `pydantic-ai-harness` changes.
 
 For any code change:
 
-1. `AGENTS.md`
+1. `src/pydantic_ai_harness/AGENTS.md`
 2. This file
 3. The guide below that matches the task
 4. The public Pydantic AI docs for the integration points you touch
@@ -26,7 +26,7 @@ For any code change:
   Component"
 - Deciding what a capability emits to OpenTelemetry, or documenting that it
   emits nothing: `capability-authoring.md` "Telemetry"
-- README, `docs/` pages, or capability READMEs: `docs-conventions.md`
+- `src/pydantic_ai_harness/README.md`, `docs/harness/` pages, or capability READMEs: `docs-conventions.md`
 - Review, pre-PR check, or final self-check: `review-checklist.md`
 - Commands/parsers, processes/containers, network endpoints, resource cleanup,
   output limits, or CI trust boundaries: `review-checklist.md` "Executable
@@ -39,12 +39,12 @@ For any code change:
 Use `pydantic_ai_harness.code_mode` as the current exemplar for capability
 shape:
 
-- public re-export from `pydantic_ai_harness/__init__.py`
-- package-level re-export from `pydantic_ai_harness/code_mode/__init__.py`
+- public re-export from `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py`
+- package-level re-export from `src/pydantic_ai_harness/pydantic_ai_harness/code_mode/__init__.py`
 - public capability class in `_capability.py`
 - implementation toolset in `_toolset.py`
 - capability README next to implementation
-- mirrored tests under `tests/code_mode/`
+- mirrored tests under `tests/harness/code_mode/`
 
 Do not copy `CodeMode` mechanically. Use it to understand package shape,
 testing depth, docs placement, and how a harness capability composes with

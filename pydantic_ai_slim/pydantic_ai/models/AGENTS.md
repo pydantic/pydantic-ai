@@ -5,7 +5,7 @@
 ## API Design
 
 <!-- rule:912 -->
-- Silently ignore unsupported generic tuning settings (`temperature`, sampling params, penalties, …) at runtime and document them in docstrings — a model that simply no-ops an unsupported knob keeps client code portable across models; failing noisily would break that portability (provider-namespaced settings like `google_*`/`openai_*` are governed by a separate rule below, not this one)
+- Silently ignore unsupported generic tuning settings (`temperature`, sampling params, penalties, …) at runtime and document them in docstrings — a model that simply no-ops an unsupported knob keeps client code portable across models; failing noisily would break that portability (provider-namespaced settings like `google_*`/`openai_*` are governed by a separate rule below, not this one). Declare every generic setting a model class ignores in its `unsupported_settings` (all but `request_timeout`, `thinking`, `cache` and `tool_choice`, which are resolved outside the adapter), never with an ad hoc warning: `Model.prepare_request` warns with `UnsupportedSettingWarning` for the ones that change what a request guarantees (`timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`), and stays silent for the tuning knobs
 <!-- rule:81 -->
 - Apply identical response processing to both `request()` and `request_stream()` — if `request()` calls `_process_response()`, `request_stream()` must apply it to each chunk — Ensures streaming and non-streaming code paths support the same message types (`ToolCallPart`, `NativeToolCallPart`, `TextPart`, etc.) with consistent behavior, preventing bugs where features work in one mode but fail in the other
 <!-- rule:598 -->
@@ -56,6 +56,13 @@ through `OpenAIResponsesModel`, so a profile key would be absent exactly where t
 most certain. Where in a request build the trim belongs stays adapter mechanics (OpenAI Responses
 resolves server-side state from the *untrimmed* history, so it keeps a separate trimmed view).
 
+An adapter whose message mapping refuses a kind of file (image, document, audio, video) declares it
+in `_unsupported_file_inputs`, and one that sends only some document media types declares those in
+`_supported_document_media_types`. `Model.profile` narrows the file-input flags to them after every
+other layer, which is what lets `Model.prepare_messages` replace a tool's file the adapter would refuse
+with a note instead of failing the run. A refusal that depends on the model rather than the API belongs
+in the profile instead (`supports_video_input` in `google_model_profile`).
+
 ### Third-party model fallback
 
 Custom `Model` subclasses that continue reading `tool_defs` degrade gracefully: all tools are fully
@@ -63,5 +70,9 @@ declared and availability deltas fall back to a system-text announcement. Deferr
 on that model. Reading `declared_tool_defs` and `visibility_of()` opts the adapter into withholding.
 
 <!-- /braindump -->
-- When a model forwards a generic `ModelSettings` field, add it to that field's `Supported by:` list in `pydantic_ai/settings.py`, and give a new `Model` class a case in `tests/models/test_model_settings_support.py` — that test probes each class's outgoing request and fails when a list and the wire disagree.
+- When a model forwards a generic `ModelSettings` field, add it to that field's `Supported by:` list in `pydantic_ai/settings.py` and leave it out of the class's `unsupported_settings`, and give a new `Model` class a case in `tests/models/test_model_settings_support.py` — that test probes each class's outgoing request and fails when a list, the declaration and the wire disagree.
 - Narrow a capability by client class, never by the client's `base_url`. Where the gateway serves a model it must behave exactly as the provider's canonical API does, and the Pydantic AI Gateway — like an ordinary corporate proxy — reaches that API through the provider's normal SDK client carrying a proxy base URL. A host test therefore splits those callers off from the transport they actually reach and silently degrades them, which is why no capability here is decided that way. Genuinely separate transports (`AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`, …) are distinct client classes and earn their own gates — that is the line `isinstance` already draws. Probe the gateway leg (`Model('<id>', provider='gateway')`) rather than reasoning about it; a model the gateway genuinely does not serve belongs in `UNSUPPORTED_GATEWAY_MODEL_NAMES`, not in a carve-out that leaves the id advertised and degraded.
+
+## `TestModel`
+
+Changes to the tool-call arguments and text `TestModel` generates are test scaffolding, not application behavior, so the "be scoped to the problem you are solving" and "leave behavior unchanged" requirements in the root `AGENTS.md` don't apply to them. A PR may change these values beyond the schema it was opened for, and may fold in fixes for other schemas `TestModel` crashes on or generates invalid data for, each fix with a test that fails on `main`. Arguments that are valid for their schema on `main` must stay valid, and a run must not newly crash: either is a regression. A changed value in a run that succeeds on `main` is a compatibility impact under [agent_docs/api-design.md](../../../agent_docs/api-design.md): add the `compatibility impact` label and a `[!WARNING]` section whose migration is updating snapshots, or pinning values with `custom_output_text`, `custom_output_args` or `FunctionModel`. Every other requirement still applies, and the exemption does not extend to `TestModel`'s parameters, its tool-call ids, how it estimates usage (usage that moves because the arguments or text changed is covered), its tool-calling flow (which tools it calls, on which request, and how it answers retry prompts), or `FunctionModel`.

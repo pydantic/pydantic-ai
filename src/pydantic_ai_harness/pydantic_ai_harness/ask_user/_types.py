@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Annotated, Protocol
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from typing_extensions import TypedDict
+
+from pydantic_ai.messages import ToolCallPart
+
+TOOL_NAME = 'ask_user_question'
 
 MAX_QUESTIONS = 10
 """Most questions one `ask_user_question` call may carry."""
@@ -20,9 +26,15 @@ MAX_QUESTION_LENGTH = 500
 
 
 def _printable(value: str, *, newlines: bool) -> str:
-    """Reject control characters: these strings are drawn on terminals, and an escape sequence is an attack."""
-    if not all(char.isprintable() or (newlines and char == '\n') for char in value):
-        raise ValueError('must not contain control characters')
+    """Reject control and format characters: these strings are drawn on terminals, and an escape sequence is an attack.
+
+    Space separators, such as the no-break and ideographic spaces, are ordinary text. Format characters, such as
+    zero-width spaces, joiners and bidirectional overrides, are not: they make two strings that differ look the same.
+    """
+    if not all(
+        char.isprintable() or unicodedata.category(char) == 'Zs' or (newlines and char == '\n') for char in value
+    ):
+        raise ValueError('must not contain control characters or invisible formatting')
     return value
 
 
@@ -88,7 +100,10 @@ class Question(BaseModel):
 
 
 def _require_unique(values: list[str], *, what: str) -> None:
-    folded = [value.casefold() for value in values]
+    # NFKC folds compatibility forms (full-width letters, ligatures), so look-alikes count as duplicates.
+    # It leaves the Ogham space mark (U+1680) alone, so every space separator is made a plain space first.
+    spaced = [''.join(' ' if unicodedata.category(char) == 'Zs' else char for char in value) for value in values]
+    folded = [unicodedata.normalize('NFKC', value).casefold() for value in spaced]
     if len(folded) != len(set(folded)):
         raise ValueError(f'{what} must be unique')
 
@@ -99,13 +114,42 @@ def require_unique_headers(questions: list[Question]) -> list[Question]:
     return questions
 
 
+Questions = Annotated[
+    list[Question],
+    Field(min_length=1, max_length=MAX_QUESTIONS),
+    AfterValidator(require_unique_headers),
+]
+"""The `questions` argument of `ask_user_question`."""
+
+
+class _ToolArguments(TypedDict):
+    questions: Questions
+
+
+_TOOL_ARGUMENTS = TypeAdapter(_ToolArguments)
+
+
 @dataclass(frozen=True, kw_only=True)
 class AskUserRequest:
     """One `ask_user_question` call, handed to the `Answerer` and carried by `AskUserRequestedEvent`."""
 
     questions: tuple[Question, ...]
     id: str = field(default_factory=lambda: uuid4().hex)
-    """Distinguishes concurrent or repeated calls; a UI matches its reply to it."""
+    """Distinguishes concurrent or repeated calls; a UI matches its reply to it.
+
+    A deferred request uses the tool call ID, so `from_tool_call` rebuilds the same request.
+    """
+
+    @classmethod
+    def from_tool_call(cls, call: ToolCallPart) -> AskUserRequest:
+        """Rebuild the request behind a deferred `ask_user_question` call, to put it to the user.
+
+        Raises `ValueError` when `call` is for another tool.
+        """
+        if call.tool_name != TOOL_NAME:
+            raise ValueError(f'expected an {TOOL_NAME!r} call, got {call.tool_name!r}')
+        arguments = _TOOL_ARGUMENTS.validate_python(call.args_as_dict())
+        return cls(questions=tuple(arguments['questions']), id=call.tool_call_id)
 
 
 @dataclass(frozen=True, kw_only=True)

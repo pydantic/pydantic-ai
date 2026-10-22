@@ -31,7 +31,7 @@ The second package installs the OpenAI provider the example uses. For another mo
 from pydantic_ai import Agent
 from pydantic_ai_harness import Pylon
 
-agent = Agent('openai:gpt-5.6-sol', capabilities=[Pylon()])
+agent = Agent('{{ openai:medium }}', capabilities=[Pylon()])
 result = agent.run_sync('Summarize my open Pylon issues')
 print(result.output)
 ```
@@ -69,7 +69,7 @@ def pylon_token(ctx: RunContext[Deps]) -> str | None:
     return ctx.deps.pylon_token
 
 
-agent = Agent('openai:gpt-5.6-sol', deps_type=Deps, capabilities=[Pylon(auth=pylon_token)])
+agent = Agent('{{ openai:medium }}', deps_type=Deps, capabilities=[Pylon(auth=pylon_token)])
 ```
 
 Each run connects as its own user, so concurrent runs never share an account.
@@ -80,7 +80,7 @@ With durable execution such as Temporal, read the token from the run's deps rath
 
 ## Tool selection and approval
 
-`read_only=True` gives the agent only the tools that Pylon's server labels as read-only, and leaves out all the others. If Pylon has not labeled its read tools, the agent gets no Pylon tools at all. The token's permissions still decide what the agent can reach.
+`read_only=True` gives the agent only the tools that Pylon's server labels as read-only, and leaves out all the others. If Pylon has not labeled its read tools, the agent gets no Pylon tools and emits an `MCPReadOnlyNoToolsWarning`. The token's permissions still decide what the agent can reach.
 
 To filter tools or require approval in your application, wrap the toolset with the existing [toolset wrappers](../toolsets.md). For example, this asks for approval before every tool call, which suits tools that create or update issues and accounts:
 
@@ -91,7 +91,7 @@ from pydantic_ai_harness import Pylon
 
 capability = Pylon()
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    '{{ openai:medium }}',
     toolsets=[capability.get_toolset().approval_required()],
     output_type=[str, DeferredToolRequests],
 )
@@ -119,7 +119,7 @@ pip/uv-add "pydantic-ai-slim[spec]"
 
 ```yaml
 # agent.yaml
-model: openai:gpt-5.6-sol
+model: {{ openai:medium }}
 capabilities:
   - Pylon: {}
 ```

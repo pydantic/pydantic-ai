@@ -1,0 +1,299 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.8-live
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Use take_photo when asked what is on the table, then answer in one
+            short sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Take a photo of the table.
+          name: take_photo
+          parameters:
+            properties: {}
+            type: OBJECT
+          behavior: BLOCKING
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.077
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.078
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What fruit is on the table?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.104
+  data:
+    sessionResumptionUpdate:
+      newHandle: b10a30c3-d63d-4dc8-87cb-eba340b5c0e4
+      resumable: true
+- kind: message
+  direction: received
+  at: 0.544
+  data: {}
+- kind: message
+  direction: received
+  at: 0.544
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.564
+  data: {}
+- kind: message
+  direction: received
+  at: 0.566
+  data:
+    toolCall:
+      functionCalls:
+      - name: take_photo
+        args: {}
+        id: fc_2688216988691728283
+- kind: message
+  direction: sent
+  at: 0.568
+  data:
+    toolResponse:
+      functionResponses:
+      - parts:
+        - inlineData:
+            mimeType: image/jpeg
+            data: _9j_4AAQSkZJRgABAQAAAQABAAD_2wBDAAMCAgICAgMC
+        id: fc_2688216988691728283
+        name: take_photo
+        response:
+          output: Photo taken.
+- kind: message
+  direction: received
+  at: 1.138
+  data: {}
+- kind: message
+  direction: received
+  at: 1.347
+  data: {}
+- kind: message
+  direction: received
+  at: 1.348
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: CwAKAAcACAAMAAgABwAHAAYACgAIAAkACQAJAAgABgAH
+        role: model
+      outputTranscription:
+        text: 'There is a sliced '
+- kind: message
+  direction: received
+  at: 1.367
+  data: {}
+- kind: message
+  direction: received
+  at: 1.382
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: GPzk+6b7dftC+xP77PrM+qr6lfqF+nj6ePp6+of6mvqv
+        role: model
+- kind: message
+  direction: received
+  at: 1.428
+  data: {}
+- kind: message
+  direction: received
+  at: 1.432
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 3wXcAC0EGwOTBBoAkgNNBdcAlAG9AtwCfAF4AVwD/P62
+        role: model
+- kind: message
+  direction: received
+  at: 1.48
+  data: {}
+- kind: message
+  direction: received
+  at: 1.491
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 7QM8BP70awkdAP/3lgXDAp34ugOzAa/7aAK+ACH+WwHl
+        role: model
+- kind: message
+  direction: received
+  at: 1.507
+  data: {}
+- kind: message
+  direction: received
+  at: 1.513
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 4uZZ5kPmYOYr5fbiXuLm4hzlsuig7Svxgu/F66jrK/AM
+        role: model
+- kind: message
+  direction: received
+  at: 1.611
+  data: {}
+- kind: message
+  direction: received
+  at: 1.625
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: rf8d9g0IXAWm9RsB3wVw/FT95gDY/+H+sv+sAJ7/YgGA
+        role: model
+      outputTranscription:
+        text: kiwi on the table.
+- kind: message
+  direction: received
+  at: 1.651
+  data: {}
+- kind: message
+  direction: received
+  at: 1.657
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: efFl8ifzqfNc9AL1uvaE+Kf5g/u7/DD+8f/lANkCwQRO
+        role: model
+- kind: message
+  direction: received
+  at: 1.706
+  data: {}
+- kind: message
+  direction: received
+  at: 1.715
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: qO0O7rDuS+8X8Obw2/ES8yn0U/V+9rv38/gy+ob7Vfyv
+        role: model
+- kind: message
+  direction: received
+  at: 1.765
+  data: {}
+- kind: message
+  direction: received
+  at: 1.775
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: DBv2FvISRA4GCwoKJwhEBLsBHACn/Dn6EPr199T14vTD
+        role: model
+- kind: message
+  direction: received
+  at: 1.794
+  data: {}
+- kind: message
+  direction: received
+  at: 1.8
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 2QHMAcUBlAGAAW8BGAHoALcAZAD7/+j/uf9x/zj/Ff/N
+        role: model
+- kind: message
+  direction: received
+  at: 1.849
+  data: {}
+- kind: message
+  direction: received
+  at: 1.85
+  data: {}
+- kind: message
+  direction: received
+  at: 1.855
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: CgALAAoADAAJAAoADAAPAA8ADwASABAAEAARABQADgAT
+        role: model
+- kind: message
+  direction: received
+  at: 1.855
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        role: model
+- kind: message
+  direction: received
+  at: 1.883
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 3.76
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 1354
+      responseTokenCount: 71
+      totalTokenCount: 1425
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 747
+      - modality: AUDIO
+        tokenCount: 444
+      - modality: IMAGE
+        tokenCount: 64
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 65
+      thoughtsTokenCount: 92

@@ -1,5 +1,5 @@
 ---
-description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, with native tools, background mode, conversations and compaction."
+description: "Use OpenAI GPT models with Pydantic AI via the Responses, Chat Completions or Decisions API, with native tools, background mode, conversations and compaction."
 ---
 
 # OpenAI
@@ -17,7 +17,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 !!! tip
-    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI.
+    You can also use your [ChatGPT/Codex subscription](openai-codex.md) instead of an API key: the `openai-codex:` prefix authenticates against the Codex backend with the same OAuth flow as the official Codex CLI. To let the users of your open-source or local app use their own ChatGPT plan, use [Sign in with ChatGPT](openai-chatgpt.md).
 
 ## Environment variable
 
@@ -32,7 +32,7 @@ The bare `'openai:'` prefix resolves to [`OpenAIResponsesModel`][pydantic_ai.mod
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai:gpt-6-sol')
+agent = Agent('{{ openai:medium }}')
 ...
 ```
 
@@ -40,7 +40,7 @@ agent = Agent('openai:gpt-6-sol')
     For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
-For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together.
+For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together. `gpt-6.1-sol` and `gpt-6-astra` don't accept `'none'`, so use the Responses API for function calling with them.
 
 Or initialise the model directly with just the model name:
 
@@ -48,7 +48,7 @@ Or initialise the model directly with just the model name:
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 
-model = OpenAIResponsesModel('gpt-6-sol')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```
@@ -65,7 +65,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -74,7 +74,7 @@ agent = Agent(model)
 
 `OpenAIProvider` also accepts a custom `AsyncOpenAI` client via the `openai_client` parameter, so you can customise the `organization`, `project`, `base_url` etc. as defined in the [OpenAI API docs](https://platform.openai.com/docs/api-reference).
 
-The client retries failed requests on its own, independently of the agent's retry budgets. It defaults to `max_retries=2`, so one model request can reach the network up to three times. It honors the `x-should-retry` response header; without that header, it retries status 408, 409, 429 or 5xx, plus timeouts and connection errors, but not other 4xx responses such as 400 or 401. Set `max_retries=0` to keep the retry policy in your transport alone. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
+The client retries failed requests on its own, independently of the agent's retry budgets. It defaults to `max_retries=2`, so one model request can reach the network up to three times. It honors the `x-should-retry` response header; without that header, it retries status 408, 409, 429 or 5xx, plus timeouts and connection errors, but not other 4xx responses such as 400 or 401. Set `max_retries=0` to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count for a model, agent or run without building the client yourself. See [Retry multiplication](../retries.md#retry-multiplication) for how the layers stack.
 
 ```python {title="custom_openai_client.py"}
 from openai import AsyncOpenAI
@@ -84,7 +84,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -106,7 +106,7 @@ client = AsyncAzureOpenAI(
 )
 
 model = OpenAIChatModel(
-    'gpt-5.2',
+    '{{ openai:medium.name }}',
     provider=OpenAIProvider(openai_client=client),
 )
 agent = Agent(model)
@@ -150,9 +150,9 @@ You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
-    temperature=0.2,
+    openai_reasoning_effort='low',
     service_tier='flex',
 )
 agent = Agent(model, model_settings=settings)
@@ -164,11 +164,27 @@ agent = Agent(model, model_settings=settings)
 OpenAI supports controlling the [service tier](https://platform.openai.com/docs/api-reference/responses/create#responses-create-service_tier) to trade off latency and cost.
 You can use the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field or the provider-specific [`openai_service_tier`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_service_tier] field. Both accept `'auto'`, `'default'`, `'flex'`, and `'priority'`, passed through unchanged. `openai_service_tier` takes precedence over the unified field when both are set.
 
-OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`.
+OpenAI may serve a request on a different tier than the one requested, for example when a `'priority'` request is downgraded. The tier that actually served the request is stored in `ModelResponse.provider_details['service_tier']`, and the request's cost is calculated at that tier's prices.
 
 ### Prompt caching
 
-GPT-5.6 and GPT-6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
+OpenAI [caches prompts implicitly](https://developers.openai.com/api/docs/guides/prompt-caching#how-caching-works) for all supported models: no setting or marker is needed, and cache hits are reported through the normalized usage fields like [`cache_read_tokens`][pydantic_ai.usage.RequestUsage.cache_read_tokens]. On GPT-5.6 and later, the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting (or the [`Caching`][pydantic_ai.capabilities.Caching] capability) also configures explicit caching: `cache=True` sends `openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}` and turns on [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions] (described below) so separate conversations share the cached instructions. `'30m'` is the only TTL OpenAI accepts, so any requested retention snaps to it. Setting `openai_prompt_cache_options` or `openai_cache_instructions` yourself takes precedence over the unified setting. See [Caching](../capabilities/caching.md) for the cost trade-off, Pydantic AI's prefix-stability guarantees and how to monitor cache efficiency.
+
+How long a cached prefix survives depends on the [retention policy](https://developers.openai.com/api/docs/guides/prompt-caching#cache-lifetime) in effect: `in_memory` typically keeps it for 5–10 minutes of inactivity, up to an hour, while `24h` can keep it for up to a day. On models before GPT-5.6, the unified setting adds nothing to the request, and the default retention follows your organization's data-retention configuration — `24h` without zero data retention, `in_memory` with it. [`openai_prompt_cache_retention`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_retention] sets it per request:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-5.5')
+settings = OpenAIResponsesModelSettings(openai_prompt_cache_retention='24h')
+agent = Agent(model, model_settings=settings)
+...
+```
+
+For GPT-5.6 and later, OpenAI deprecates `prompt_cache_retention` in favor of the `ttl` in [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], which sets a minimum lifetime rather than a maximum: a cached prefix remains eligible for reuse for 30 minutes after its most recent write or reuse, though OpenAI may retain it longer.
+
+GPT-5.6 and GPT-6 models support OpenAI's [implicit and explicit prompt cache breakpoints](https://developers.openai.com/api/docs/guides/prompt-caching#choose-a-caching-mode) with both the Responses and Chat Completions APIs. OpenAI creates an implicit breakpoint by default. To control the cacheable prefix precisely, insert [`CachePoint`][pydantic_ai.messages.CachePoint] after the user content block that should end the prefix:
 
 ```python {test="skip"}
 from pydantic_ai import Agent, CachePoint
@@ -187,9 +203,43 @@ result = agent.run_sync([
 ])
 ```
 
-Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. For GPT-5.6 and later models, set a stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to use OpenAI's more reliable matching for both implicit and explicit caching. Requests without a key may still receive automatic cache hits, but do not use the improved matching. Use different keys to partition unrelated workloads.
+A `CachePoint` that opens a user message marks the end of the previous message instead, such as the tool result before it, the same as on Anthropic and Bedrock. On the Responses API, assistant output can't carry a breakpoint, so it goes on the closest earlier input instead. One with no earlier content in the conversation raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
+To cache the instructions without the unified setting, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModelSettings
+
+settings = OpenAIResponsesModelSettings(
+    openai_prompt_cache_key='support-app:kb-v1',
+    openai_cache_instructions=True,
+)
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    instructions='Long-lived support policies...',
+    model_settings=settings,
+)
+
+result = agent.run_sync('Where is order 1234?')
+```
+
+The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix and don't invalidate it when they change. They do invalidate the cached conversation after them, so for instructions that change mid-conversation use [`on_change='append'`](../agent.md#appending-instruction-changes), and [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text). With no static instructions, it goes on the last [system prompt](../agent.md#system-prompts) instead, which is just as stable. Leave `openai_prompt_cache_options` on its default `mode='implicit'` so OpenAI also keeps caching the growing conversation.
+
+On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the instructions are sent as leading input messages instead. Because a stored response keeps its input and replays it to the request that continues it, this has some limits:
+
+- It only happens on requests that don't continue server-side state. When [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md), the setting leaves the instructions where they would otherwise go (normally the top-level field) and adds no breakpoint.
+- With `openai_previous_response_id='auto'`, that includes the first request, which has no response to continue yet. Otherwise its relocated instructions would be replayed next to every later request's own [instructions](../agent.md#instructions), which may belong to a different agent.
+- Don't continue a response created with `openai_cache_instructions` (which `cache=True` turns on) through `openai_previous_response_id` later on, since its stored input includes the instructions it was created with.
+- Requests that continue server-side state still get OpenAI's implicit breakpoint with the default `mode='implicit'`. What they give up is a breakpoint at the end of the instructions, which lets separate conversations share the cached instructions. Agent runs send the full message history by default, so this only affects runs that opt into server-side state.
+
+Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI writes only the last four, and the instruction breakpoint is the earliest one in a request, so it is the first to be dropped. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value.
+
+On GPT-5.6 and later, OpenAI routes requests to the cache automatically, so you don't need [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to get cache hits. Requests with different keys don't reuse each other's cached prefixes, so every new key pays the cache write again. Leave the key unset so all requests share a common prefix, or set one stable key per group you want cached separately, such as a customer. Don't set a new key per request or conversation. On earlier models, a stable key helps OpenAI send requests with the same prefix to the same cache; OpenAI suggests about 15 requests per minute per key.
 
 When OpenAI reports prompt cache writes, Pydantic AI exposes them as [`result.usage.cache_write_tokens`][pydantic_ai.usage.RunUsage.cache_write_tokens]. Cache reads are available as [`result.usage.cache_read_tokens`][pydantic_ai.usage.RunUsage.cache_read_tokens]. For GPT-5.6 and later model families, OpenAI bills cache writes at 1.25 times the uncached input token rate.
+
+To help explain cache misses, Pydantic AI requests OpenAI's [prompt cache diagnostics](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics) on GPT-5.6 and later models with the Responses API on the OpenAI API itself (not Azure, OpenRouter or other OpenAI-compatible providers): each request compares itself against the most recent OpenAI response in the message history, unless that response came from [message compaction](#message-compaction). The result is in the response's [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under the `'prompt_cache_diagnostics'` key, for example `{'type': 'cache_hit'}`, or `{'type': 'cache_miss', 'reason': 'model_changed', 'cache_missed_tokens': 4175, 'comparison_reusable_tokens': 4175}` when the prefix couldn't be reused. Diagnostics are free, don't affect caching, and work with `openai_store=False`. To leave them off, set [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics] to `False`.
 
 ### Moderation
 
@@ -199,7 +249,7 @@ Both the Responses and Chat Completions APIs can run [moderation](https://platfo
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(
     openai_moderation={'model': 'omni-moderation-latest'}
 )
@@ -282,7 +332,7 @@ model_settings = OpenAIResponsesModelSettings(
         )
     ],
 )
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model, model_settings=model_settings)
 
 result = agent.run_sync('Open a new browser tab')
@@ -296,11 +346,20 @@ The Responses API supports referencing earlier model responses in a new request 
 
 When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
 
+A response is only continued from while it and the messages before it are unchanged. Each response created with the setting records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response created without the setting has no recorded history, and is continued from as before.
+
+!!! warning "Redacting stored history"
+    The digest is a plain SHA-256 by default, so anyone holding the stored history can use it to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] to make it an HMAC.
+
+    Don't just clear `history_digest`: a response without one is trusted and continued from, while OpenAI still holds the unredacted copy. If you do strip it, also clear `provider_response_id` on the same responses, so nothing continues from them.
+
+Every model continuing the same conversations needs the same `history_digest_key`, including workers under [durable execution](../durable_execution/overview.md); a response recorded with a different key, or none, is resent rather than continued from. Computing the digest serializes the history on each request, which costs local work proportional to the conversation's length.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result1 = agent.run_sync('Tell me a joke.')
@@ -323,7 +382,7 @@ As an alternative to passing `message_history`, you can pass a concrete `provide
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
@@ -346,7 +405,7 @@ OpenAI's [Conversations API](https://platform.openai.com/docs/guides/conversatio
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -354,7 +413,7 @@ result = agent.run_sync('What did we discuss last time?', model_settings=model_s
 print(result.output)
 ```
 
-When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response.
+When a response belongs to a conversation, Pydantic AI stores the returned ID in `ModelResponse.provider_details['conversation_id']`. Setting `openai_conversation_id='auto'` uses the most recent same-provider conversation ID from the message history and sends only the new input items after that response. OpenAI keeps the conversation itself, so it can't be rewritten from the client: changes to the messages before that response, by a [history processor](../message-history.md#processing-message-history) or [compaction](../capabilities/compaction.md) for instance, don't reach the model. Unlike [`openai_previous_response_id`](#referencing-earlier-responses), which falls back to sending the full history, there is no conversation to fall back to without duplicating its items.
 
 When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conversation_id] values are available, `auto` only reuses an OpenAI conversation from the current Pydantic AI conversation; pass a concrete OpenAI conversation ID to reuse one explicitly:
 
@@ -362,7 +421,7 @@ When message-level [`conversation_id`][pydantic_ai.messages.ModelResponse.conver
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 agent = Agent(model=model)
 
 model_settings = OpenAIResponsesModelSettings(openai_conversation_id='conv_...')
@@ -390,7 +449,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction()],
 )
 ```
@@ -406,7 +465,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(token_threshold=100_000)],
 )
 ```
@@ -418,7 +477,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
-    'openai-responses:gpt-5.2',
+    'openai-responses:{{ openai:medium.name }}',
     capabilities=[OpenAICompaction(message_count_threshold=20)],
 )
 ```
@@ -472,7 +531,7 @@ For long-running requests, such as large reasoning or tool-heavy jobs that may e
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-5.2')
+model = OpenAIResponsesModel('{{ openai:medium.name }}')
 settings = OpenAIResponsesModelSettings(openai_background=True)
 agent = Agent(model, model_settings=settings)
 ...
@@ -492,7 +551,7 @@ If you need the [Chat Completions API](https://platform.openai.com/docs/api-refe
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('openai-chat:gpt-5.2')
+agent = Agent('openai-chat:{{ openai:medium.name }}')
 ...
 ```
 
@@ -500,12 +559,57 @@ agent = Agent('openai-chat:gpt-5.2')
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
 
-model = OpenAIChatModel('gpt-5.2')
+model = OpenAIChatModel('{{ openai:medium.name }}')
 agent = Agent(model)
 ...
 ```
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
+
+## Decisions API {#decisions-api}
+
+OpenAI's [Decisions API](https://developers.openai.com/api/docs/guides/decisions) runs a GPT model as a [decision model](decision.md): it answers typed questions about text or images, each with a probability or a distribution over the options, rather than writing text. [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page.
+
+It currently supports `gpt-6-luna`, which the Responses API also serves, so the `'openai-decisions:'` prefix is what picks it:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai-decisions:gpt-6-luna', output_type=bool, instructions='Is this request harmful?')
+result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
+print(result.output)
+#> True
+```
+
+It reads the same `OPENAI_API_KEY`. Its provider, [`OpenAIDecisionsProvider`][pydantic_ai.providers.openai_decisions.OpenAIDecisionsProvider], takes the same arguments as [`OpenAIProvider`](#configure-the-provider), including a [custom client](#custom-openai-client):
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
+from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
+
+model = OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key='your-api-key'))
+agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
+...
+```
+
+All the questions of a request go to the API in one call, and its usage is reported in tokens, as for the Responses API. OpenAI bills only input tokens on this API, with no cache-read or cache-write charges. The `cost` Pydantic AI reports comes from [genai-prices](https://github.com/pydantic/genai-prices)' prices for `gpt-6-luna`, which price cached input apart, so it can differ from the bill when the API reports cached tokens.
+
+OpenAI Decisions supports image input through [`BinaryContent`][pydantic_ai.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl]; `ImageUrl` images are downloaded and sent inline as data URLs. Images in user input and message history, including assistant file parts and tool or native-tool images, are included as state evidence, while instructions remain separate questions. See [image input](../input.md#image-input). Set `vendor_metadata={'detail': 'high'}` on an image to control its detail level; Decisions accepts `'low'`, `'high'`, `'auto'` and `'original'`. The metadata is preserved when image URLs are downloaded.
+
+`timeout`, `extra_headers` and `extra_body` are forwarded to the request, and the other generic settings, such as `temperature`, are ignored. [`OpenAIDecisionsModelSettings`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModelSettings] takes the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
+
+The main request limits are described in the [Decisions API reference](https://developers.openai.com/api/reference/resources/decisions/methods/create), and `OpenAIDecisionsModel` checks them before sending a request or downloading image URLs:
+
+- **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type. A question over the limit raises a [`UserError`][pydantic_ai.exceptions.UserError].
+- **10 levels in one rubric.** A field of eleven or more whole numbers from 0 becomes a [pick-one](decision.md#what-each-field-type-does) instead.
+- **200 questions in one request.** A `list` or `dict` of options counts one question per option, and with tools or a union of output types, every route's fields can go in the same request as the route question when they fit the question cap and the [size cutoff](decision.md#routes-which-thing-to-do). Otherwise the model picks the route first and fills it in a second request. An initial request whose fields alone exceed the cap raises a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before images are downloaded, so a [`FallbackModel`](overview.md#fallback-model) can take over. A selected route whose fields exceed the cap raises an [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute] before filling, so the fallback model can take over. API errors during an otherwise valid [fill](decision.md#routes-which-thing-to-do) still fail the run.
+- **128 images across one request.** Images in message history and tool results count toward the limit. An oversized request raises a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before images are downloaded, so a [`FallbackModel`](overview.md#fallback-model) can take over.
+
+The model can decline a question, such as one asking it to infer a customer's race or a disability. A declined question fails the run with a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError], even when the model answered the other questions, or when the question belongs to a route the model did not pick. A question declined while filling a route the model already picked fails the run with an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] that names the route.
+
+!!! note "Measure on your own data"
+    A threshold tuned on another decision model does not carry over to this one. Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.
 
 ## OpenAI-compatible Models
 

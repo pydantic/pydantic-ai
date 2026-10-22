@@ -80,7 +80,7 @@ Scoping is applied to the `RunRecord`s a `HistorySource` returns, so a custom so
 
 ### Migrating from the `scope='all'` default
 
-This default changed. Earlier releases defaulted to `scope='all'`, so one search ranked every run in the store; it now defaults to `conversation`. Nothing raises on upgrade -- a caller who relied on the old default keeps working and simply stops seeing other conversations -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per capability instance naming the change.
+This default changed. Earlier releases defaulted to `scope='all'`, so one search ranked every run in the store; it now defaults to `conversation`. Nothing raises on upgrade -- a caller who relied on the old default keeps working and simply stops seeing other conversations -- so leaving `scope` unset emits a `HarnessDeprecationWarning` once per capability instance naming the change. This transitional warning will be removed in the next breaking release; the conversation-scoped default will remain.
 
 Set the option explicitly to resolve it. Both values are supported and neither is deprecated:
 
@@ -111,6 +111,17 @@ warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
 | `tool_id` | `conversation-search` | Toolset id for the search tool. |
 
 Persisted instruction replacements and withdrawals are searchable as system text. Their displayed excerpts are limited to 200 characters; the search index retains the full text.
+
+## Two of them
+
+`ConversationSearch` declares the default `id` `'conversation_search'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `ConversationSearch`s on one agent that
+share it are one search stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. Merging them instead could widen the corpus one of them was given. The `id` is separate from `tool_id`, which names the toolset. To keep two, give each its own `id` and wrap them
+in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/), since both register `search_conversation_history`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
 
 ## Limitations
 

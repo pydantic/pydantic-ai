@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import sys
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -41,22 +40,10 @@ __all__ = (
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
-    'ignore_source_reads_left_open',
-    'skip_temporal_sandbox_on_314',
 )
 
-skip_temporal_sandbox_on_314 = pytest.mark.skipif(
-    sys.version_info >= (3, 14),
-    reason='temporalio sandbox is incompatible with Python 3.14 '
-    '(remove when https://github.com/temporalio/sdk-python/issues/1326 closes)',
-)
-"""Same gate as core's Temporal suite: the sandbox fails with late-import errors on 3.14."""
-
-# On 3.14 coverage reads a module's source while the test runs; when Temporal's workflow sandbox
-# interrupts that read, the file is left for the garbage collector to close. Only `.py` files match.
-ignore_source_reads_left_open = pytest.mark.filterwarnings(
-    "ignore:unclosed file <_io.BufferedReader name='[^']*\\.py'>:ResourceWarning"
-)
+# Temporal markers live in `tests/harness/_temporal.py`: modules defining workflows must not import
+# this file, because the workflow sandbox would re-import it along with `dirty_equals`.
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False

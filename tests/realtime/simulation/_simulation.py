@@ -33,9 +33,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, ParamSpec, TypeVar
-
-from typing_extensions import Self
+from typing import Any, Literal, ParamSpec, Self, TypeVar
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import BinaryImage, ModelMessage, ToolReturn
@@ -47,7 +45,6 @@ from . import _invariants
 from ._invariants import SimulatedToolError
 from ._loop import SimulatedLoop, SimulationStuck
 from ._truth import GroundTruth
-from ._wire import SendFault
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -192,7 +189,14 @@ class Simulation(ABC):
         self.operations: list[Operation] = []
         self.waiters: list[Waiter] = []
         self.events: list[RealtimeEvent] = []
-        self.consumer_error: BaseException | None = None
+        self.turn_completes: list[Waiter] = []
+        """Each `RealtimeTurnCompleteEvent` the session streamed, as a wait that returned as it was queued."""
+        self.consumer_errors: list[BaseException] = []
+        """What iterating the session raised, in order: a failure the session goes on receiving after, then the last."""
+        self.failures_parked_at: list[int] = []
+        """When the session parked each failure that ends the exchange in progress (a tool that raised, a usage limit a
+        tool's result would pass, a tool result that failed to send), on the shared clock: the moment the exchange
+        ended, which is before the failure is raised from `async for`."""
         self.close_error: BaseException | None = None
         self.close_requested: int | None = None
         self.closed = False
@@ -244,12 +248,6 @@ class Simulation(ABC):
         """What `usage.requests` should be, if not one per recorded response (a model reporting requests with usage)."""
         return None
 
-    @property
-    @abstractmethod
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        """`(frame, last frame read, fault)` for every send a fault failed."""
-        ...
-
     # --- lifecycle ------------------------------------------------------------------------------
 
     def start(self) -> Simulation:
@@ -275,6 +273,7 @@ class Simulation(ABC):
                 async with realtime.session(handle_barge_in=self.options.handle_barge_in) as session:
                     self.session = session
                     self.checker.attach(session)
+                    self._record_parked_failures(session)
                     self.observe_connection(session._connection)  # pyright: ignore[reportPrivateUsage]
                     self._view = session.stream_audio()
                     ready.set()
@@ -305,21 +304,51 @@ class Simulation(ABC):
 
         return agent
 
+    def _record_parked_failures(self, session: RealtimeSession) -> None:
+        park = session._park_error  # pyright: ignore[reportPrivateUsage]
+
+        def park_and_record(error: BaseException) -> None:
+            self.failures_parked_at.append(self._now())
+            park(error)
+
+        session._park_error = park_and_record  # pyright: ignore[reportPrivateUsage]
+
     async def _consume(self) -> None:
-        assert self.session is not None
+        """Iterate the session as an app that reports a failure and keeps listening does, until receiving ends.
+
+        A tool that raised, or a usage limit tripped by a tool's result, is raised from `async for` while the session
+        goes on receiving: iterating again picks the conversation up where it was.
+        """
+        session = self.session
+        assert session is not None
         try:
-            async for event in self.session:
-                self.events.append(event)
-        except BaseException as e:
-            self.consumer_error = e
+            while True:
+                try:
+                    async for event in session:
+                        self.events.append(event)
+                    return
+                except BaseException as e:
+                    self.consumer_errors.append(e)
+                    # Iterate again while the session is still reading the provider. (Once closed, iterating again
+                    # raises at once: stop rather than spin.)
+                    if (
+                        isinstance(e, asyncio.CancelledError)
+                        or session.closed
+                        or session._pump_finished  # pyright: ignore[reportPrivateUsage]
+                        or session._receive_ending  # pyright: ignore[reportPrivateUsage]
+                    ):
+                        return
         finally:
             self.receive_ended = True
+            self.receive_ended_at = self._now()
 
     receive_ended = False
     """Whether the session's event stream has ended: it reads nothing more from the provider.
 
-    Usually with `consumer_error` set, but not when a send was the first to be told why it ended.
+    Usually with `consumer_errors` set, but not when a send was the first to be told why it ended.
     """
+    receive_ended_at: int | None = None
+    """When the session's event stream ended, on the shared clock."""
 
     async def _play(self) -> None:
         assert self._player_wakeup is not None and self._view is not None

@@ -1,15 +1,22 @@
 """Scripted widget runners so menus can be driven without a terminal."""
 
+import time
 from collections.abc import Iterator
+from io import StringIO
 from pathlib import Path
 
+from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
-from pydantic_clai2.command_context import CommandContext
-from pydantic_clai2.field_menu import Runners
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.field_menu import Runners
+from pydantic_clai2.ui.menus.menu_worker import worker_stopping
+
+QUIET = Console(file=StringIO())
+"""A console for commands whose output a test does not read, such as the shell console `/model add` takes."""
 
 
 def make_context(tmp_path: Path) -> tuple[CommandContext, list[str]]:
@@ -18,7 +25,6 @@ def make_context(tmp_path: Path) -> tuple[CommandContext, list[str]]:
     context = CommandContext(
         settings=store.load(),
         store=store,
-        clear_history=lambda: None,
         apply_setting=lambda key, settings: applied.append(key),
     )
     return context, applied
@@ -30,6 +36,10 @@ def pick(value: object) -> MenuResult:
 
 def typed(text: str) -> TextInputResult:
     return TextInputResult(value=text)
+
+
+UNTIL_CLOSED = MenuResult(item=MenuItem('until closed'))
+"""A choice left open until its worker is told to stop, as a waiting screen is; it then reads as Esc."""
 
 
 class Script:
@@ -47,7 +57,12 @@ class Script:
 
     def run_choice(self, menu: Menu) -> MenuResult:
         self.opened.append('choice')
-        return next(self._choices)
+        result = next(self._choices)
+        if result is UNTIL_CLOSED:
+            while not worker_stopping():
+                time.sleep(0.01)
+            return MenuResult(cancelled=True)
+        return result
 
     def run_text(self, widget: TextInput) -> TextInputResult:
         self.opened.append('text')

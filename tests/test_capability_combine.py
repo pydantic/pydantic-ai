@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
+from types import MethodType
 from typing import Any, ClassVar, NamedTuple, TypeGuard, cast
 
 import pytest
@@ -24,6 +25,7 @@ from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
+    Caching,
     Capability,
     CapabilityOrdering,
     Hooks,
@@ -49,6 +51,8 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
+from pydantic_ai.common_tools.web_fetch import WebFetchLocalTool
+from pydantic_ai.common_tools.x_search import XSearchSubagentTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestContext
@@ -59,6 +63,7 @@ from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool,
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 
 @dataclass
@@ -84,6 +89,10 @@ class Combines:
 
 
 Policy = Anonymous | Combines
+
+
+def _check_caching(merged: Caching) -> None:
+    assert merged.retention == '1h', 'a scalar takes the later value'
 
 
 def _check_thinking(merged: Thinking) -> None:
@@ -147,6 +156,11 @@ def _check_thread_executor(merged: UseThreadExecutor) -> None:
 
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
+    'Caching': Combines(
+        'an agent has one caching configuration',
+        lambda: (Caching('5m'), Caching('1h')),
+        _check_caching,
+    ),
     'Thinking': Combines(
         'an agent has one thinking configuration',
         lambda: (Thinking(effort='low'), Thinking(effort='high')),
@@ -240,17 +254,8 @@ COMBINE_POLICY: dict[str, Policy] = {
 
 
 def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]]:
-    """Whether `obj` is a capability class, and not something that merely looks like one.
-
-    A module's namespace holds type aliases and parameterized generics beside its classes, and on
-    Python 3.10 some of those satisfy `inspect.isclass` while `issubclass` then raises on them.
-    """
-    if not isinstance(obj, type):
-        return False
-    try:
-        return issubclass(obj, AbstractCapability)
-    except TypeError:
-        return False
+    """Whether `obj` is a capability class, and not something that merely looks like one."""
+    return isinstance(obj, type) and issubclass(obj, AbstractCapability)
 
 
 def _shipped_capability_types() -> dict[str, type[AbstractCapability[Any]]]:
@@ -452,11 +457,14 @@ def test_merged_local_fallback_carries_the_merged_configuration() -> None:
         [WebFetch(local=True, allowed_domains=['a.com']), WebFetch(local=True, allowed_domains=['b.com'])]
     )
     assert isinstance(merged, WebFetch)
-    local = merged.local
-    assert isinstance(local, Tool)
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
     # The fallback is a bound method of the fetcher, which carries its own copy of the domain lists.
-    fetcher = cast('Any', local).function.__self__
-    assert fetcher.allowed_domains == ['a.com', 'b.com']
+    fetch = toolset.wrapped.tools['web_fetch'].function
+    assert isinstance(fetch, MethodType)
+    assert isinstance(fetch.__self__, WebFetchLocalTool)
+    assert fetch.__self__.allowed_domains == ['a.com', 'b.com']
 
 
 async def test_a_later_layer_wins_even_when_it_sorts_first() -> None:
@@ -863,10 +871,14 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
 
     assert isinstance(merged, XSearch)
     assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
-    local = merged.local
-    assert isinstance(local, Tool)
-    # The subagent tool is rebuilt from the merged field, so it carries its own copy of the model.
-    assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
+    # The subagent tool is derived from the merged field, so it carries its own copy of the model.
+    subagent_tool = toolset.wrapped.tools['x_search'].function
+    assert isinstance(subagent_tool, MethodType)
+    assert isinstance(subagent_tool.__self__, XSearchSubagentTool)
+    assert subagent_tool.__self__.model == 'xai:grok-4.3'
 
 
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
@@ -1156,7 +1168,7 @@ async def test_native_mcp_combine_rebuilds_the_provider_tool() -> None:
         [
             [
                 MCPServerTool(
-                    id='example.com-mcp',
+                    id='example.com',
                     url='https://example.com/mcp',
                     headers={'X-First': '1'},
                     allowed_tools=['search'],
@@ -1357,7 +1369,7 @@ async def test_two_capabilities_supplied_for_one_run_merge_like_two_on_the_agent
 
 
 def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
-    """A server's identity is its URL, so the capability is named by it too, not just its leaf.
+    """A server's identity is its URL's hostname, so the capability is named by it too, not just its leaf.
 
     `MCP` already derived a stable id for the `MCPToolset` it builds, while the capability itself
     stayed anonymous and fell back to a positional `mcp` / `mcp_2` -- which reorders when the
@@ -1366,7 +1378,7 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
     """
     capability = MCP[Any](url='https://mcp.example.com/sse')
 
-    assert capability.id == snapshot('mcp.example.com-sse')
+    assert capability.id == snapshot('mcp.example.com')
     assert cast('AbstractToolset[Any]', capability.get_toolset()).id == capability.id
 
     # An explicit `id=` still wins, and a client that carries its own connection has nothing to
@@ -1376,13 +1388,13 @@ def test_mcp_takes_the_same_derived_id_as_the_toolset_it_contributes() -> None:
 
 
 def test_a_deferred_mcp_capability_still_demands_an_id_of_its_own() -> None:
-    """A deferred capability's id is shown to the model, so it may not be derived from the URL.
+    """A deferred capability's id is shown to the model, so it isn't derived from the URL.
 
-    The `load_capability` catalog lists every deferred capability by `id` as a dynamic instruction,
-    and the derived id carries the URL's last path segment. Deriving one for a deferred `MCP` would
-    put a signed path -- or a token-in-path server's token -- in the prompt, where a model can be
-    talked into repeating it. Naming a durable operation is ours to do; naming something the model
-    reads is the user's, so this keeps raising exactly as it did before ids were derived at all.
+    The `load_capability` catalog lists every deferred capability by `id` as a dynamic instruction.
+    The derived id is only the URL's hostname, so even a signed or token-in-path URL like the one
+    below keeps its secret out of it, but what the model reads is still the user's to name. Naming
+    a durable operation is ours to do, so this keeps raising exactly as it did before ids were
+    derived at all.
     """
     assert MCP[Any](url='https://mcp.example.com/s/sk-live-secret', defer_loading=True).id is None
 

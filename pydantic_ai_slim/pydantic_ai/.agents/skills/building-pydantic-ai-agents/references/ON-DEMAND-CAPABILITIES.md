@@ -120,6 +120,7 @@ When `load_capability` succeeds:
 - the call is typed as a capability-load message part
 - the return may include resolved capability instructions and owned toolset instructions
 - the capability id appears in `ctx.active_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
+- only the first `load_capability` call for an id in a response loads it; later calls for that id in the same response get a retry prompt, the same way a load of an already-active capability does
 - tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 

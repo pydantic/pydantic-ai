@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import gc
 import io
+import json
 import random
 import re
 import wave
@@ -21,15 +22,18 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._json_schema import JsonSchema
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, PydanticAIDeprecationWarning, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryAudio,
     BinaryContent,
     BinaryImage,
     CachePoint,
     CompactionPart,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -39,7 +43,8 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SpeechPart,
     SystemPromptPart,
     TextContent,
@@ -75,10 +80,11 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     merge_realtime_profile,
 )
+from pydantic_ai.realtime.lifecycle import AnswersRevised
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
@@ -131,6 +137,16 @@ def _connect(
     )
 
 
+class _RecordingWebSocket:
+    """The session's raw socket, which a tool response carrying media is sent over directly."""
+
+    def __init__(self) -> None:
+        self.sent: list[Any] = []
+
+    async def send(self, message: str) -> None:
+        self.sent.append(json.loads(message))
+
+
 class _RecordingSession:
     """A fake `AsyncSession` that records sends and replays messages turn-by-turn.
 
@@ -146,6 +162,7 @@ class _RecordingSession:
         self.realtime: list[dict[str, Any]] = []
         self.tool_responses: list[Any] = []
         self.client_content: list[dict[str, Any]] = []
+        self._ws = _RecordingWebSocket()
 
     async def send_realtime_input(self, **kwargs: Any) -> None:
         self.realtime.append(kwargs)
@@ -167,6 +184,22 @@ class _RecordingSession:
 
 def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
     return GoogleRealtimeConnection(cast('AsyncSession', session))
+
+
+async def test_google_send_that_fails_answering_lost_tool_calls_takes_its_input_back() -> None:
+    """An input whose send fails while answering the calls a resumed session lost never went out."""
+
+    class _RefusesToolResponses(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            raise ConnectionClosed(None, None)
+
+    conn = _conn(_RefusesToolResponses())
+    conn._unanswered_lost_tool_calls = [('lookup', 'call-1')]  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(ConnectionClosed):
+        await conn.send('Hello')
+    # The typed turn asks for no reply any more: nothing about it is pending.
+    assert conn._lifecycle.take_pending() == []  # pyright: ignore[reportPrivateUsage]
+    assert conn._lifecycle._unanswered == []  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() -> None:
@@ -368,6 +401,18 @@ def test_schema_drops_false_any_of_member() -> None:
     assert schema.properties['value'].any_of == [genai_types.Schema(type=genai_types.Type.STRING)]  # type: ignore[index]
 
 
+@pytest.mark.parametrize('root', [False, True])
+@pytest.mark.parametrize('siblings', [{}, {'description': 'value'}, {'not': {'type': 'string'}}])
+def test_tool_def_rejects_false_definition(root: bool, siblings: JsonSchema) -> None:
+    """Reject before opening a socket: the Live schema subset would erase the false constraint."""
+    reference: JsonSchema = {'$ref': '#/$defs/X', **siblings}
+    schema: JsonSchema = reference if root else {'type': 'object', 'properties': {'x': reference}, 'required': ['x']}
+    schema['$defs'] = {'X': False}
+    tool = ToolDefinition(name='accept', parameters_json_schema=schema)
+    with pytest.raises(UserError, match='cannot represent a boolean `false` definition'):
+        rt_google._tool_def_to_genai(tool)  # pyright: ignore[reportPrivateUsage]
+
+
 def test_schema_handles_boolean_property_schemas() -> None:
     # JSON Schema allows a property's schema to be a boolean, which `Schema` can't express: `True`
     # accepts anything (the unconstrained schema) and `False` accepts nothing (the property is
@@ -498,6 +543,17 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
         async with agent.realtime(
             GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
             capabilities=[NativeTool(ImageGenerationTool())],
+        ).session():
+            pass  # pragma: no cover
+
+
+async def test_agent_realtime_session_rejects_web_search_domain_filters() -> None:
+    # Gemini Live's `google_search` takes no domain filters, so sending it would search the whole web.
+    agent: Agent[None, str] = Agent()
+    with pytest.raises(UserError, match=r'`WebSearchTool.allowed_domains` not supported by this model'):
+        async with agent.realtime(
+            GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
+            capabilities=[NativeTool(WebSearchTool(allowed_domains=['pydantic.dev']))],
         ).session():
             pass  # pragma: no cover
 
@@ -653,6 +709,7 @@ def test_ws_trace_context_does_not_duplicate_a_differently_cased_header() -> Non
     assert headers == {'Traceparent': 'preset'}
 
 
+@pytest.mark.usefixtures('young_gc')
 def test_ws_connect_lock_is_per_event_loop() -> None:
     # The lock is process-wide by intent (it guards a replacement of the `google.genai.live.ws_connect`
     # module global), but an `anyio.Lock` binds to the loop it is first used on, so one shared instance
@@ -857,6 +914,22 @@ def test_profile() -> None:
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'mime_types'),
+    [
+        ('gemini-2.5-flash-native-audio-latest', ()),  # guesses at media in a function response
+        ('gemini-3.1-flash-live-preview', ('image/png', 'image/jpeg', 'image/webp', 'text/plain')),
+        ('gemini-3.8-live', ('image/png', 'image/jpeg', 'image/webp', 'text/plain')),
+        ('models/gemini-3.8-live-extended-thinking', ('image/png', 'image/jpeg', 'image/webp', 'text/plain')),
+        ('gemini-live-2.5-flash', ()),  # not probed
+    ],
+)
+def test_profile_supported_mime_types_in_tool_returns(model_name: str, mime_types: tuple[str, ...]) -> None:
+    # Verified live by returning an image or a secret word from a tool and asking about it.
+    profile = GoogleRealtimeModel(model_name).profile
+    assert profile.get('google_supported_mime_types_in_tool_returns') == mime_types
+
+
+@pytest.mark.parametrize(
     ('model_name', 'seeds_function_parts'),
     [
         ('gemini-2.5-flash-native-audio-latest', False),  # rejects function parts in seeded turns
@@ -904,6 +977,21 @@ def test_profile_supports_seeding_audio(model_name: str, seeds_audio: bool) -> N
 def test_profile_text_turns_see_video_frames(model_name: str, sees_video_frames: bool) -> None:
     # Verified live: a typed question right after `send(image)` doesn't see the image on these models.
     assert GoogleRealtimeModel(model_name).profile.get('google_text_turns_see_video_frames') is sees_video_frames
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'cuts_off'),
+    [
+        ('gemini-2.5-flash-native-audio-preview-09-2025', False),
+        ('gemini-3.1-flash-live-preview', True),
+        ('gemini-3.8-live', True),
+        ('models/gemini-3.8-live-extended-thinking', False),  # not probed
+        ('gemini-live-2.5-flash', False),  # cuts a reply off, but doesn't say when speech did
+    ],
+)
+def test_profile_input_cuts_off_reply(model_name: str, cuts_off: bool) -> None:
+    # Verified live 2026-10-19/20: text sent mid-reply cuts the reply off, and speech that does is reported first.
+    assert GoogleRealtimeModel(model_name).profile.get('google_input_cuts_off_reply') is cuts_off
 
 
 # --- config ------------------------------------------------------------------
@@ -1275,6 +1363,48 @@ async def test_send_tool_result_async_scheduling(
     )
 
 
+@pytest.mark.parametrize(
+    ('async_tool_calls', 'supports_scheduling', 'talks_through'),
+    [
+        (False, False, False),
+        (False, True, False),
+        # `gemini-3.8-live-extended-thinking`: asynchronous, but it ends what it says before the call and answers
+        # after the result, so its call ends its response as a blocking one does.
+        (True, False, False),
+        # The native-audio models and `gemini-3.8-live`, which keep talking in the turn that made the call.
+        (True, True, True),
+    ],
+)
+def test_map_tool_call_that_the_model_talks_through(
+    async_tool_calls: bool, supports_scheduling: bool, talks_through: bool
+) -> None:
+    """An asynchronous call the model keeps talking past is flagged so, and promises no usage to close its response.
+
+    A unit test: the recorded extended-thinking exchange (`test_extended_thinking_async_tool_round`) records the same
+    history either way, as nothing is said between its call and its result.
+    """
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()),
+        profile=GoogleRealtimeModelProfile(google_supports_async_tool_call_scheduling=supports_scheduling),
+        async_tool_calls=async_tool_calls,
+    )
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            tool_call=genai_types.LiveServerToolCall(
+                function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+            )
+        )
+    )
+    call = ToolCall(
+        tool_call_id='c1',
+        tool_name='get_weather',
+        args='{}',
+        response_usage_follows=not talks_through,
+        response_continues=talks_through,
+    )
+    assert events == ([call] if talks_through else [call, SessionUsage(usage=RequestUsage())])
+
+
 def _register_call(conn: GoogleRealtimeConnection, tool_call_id: str = 'c1', name: str = 'inspect') -> None:
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(
@@ -1286,7 +1416,7 @@ def _register_call(conn: GoogleRealtimeConnection, tool_call_id: str = 'c1', nam
 
 
 async def test_send_tool_result_text_content_folds_into_output() -> None:
-    """`FunctionResponse.response` is JSON-only, so text attachments are folded into the output."""
+    """Text attachments are folded into the output of the function response's JSON `response`."""
     session = _RecordingSession()
     conn = _conn(session)
     _register_call(conn)
@@ -1301,14 +1431,15 @@ async def test_send_tool_result_text_content_folds_into_output() -> None:
 
 
 async def test_send_tool_result_binary_content_raises_with_nothing_sent() -> None:
-    """Media attached to a tool return raises with the tool result unsent — never a silent
-    placeholder. Gemini Live has no channel that delivers it correctly today (probed live; see
-    https://github.com/pydantic/pydantic-ai/issues/7362), so the loud error is the honest behavior,
+    """Media attached to a tool return raises with the tool result unsent on a model that can't carry it
+    (Gemini 2.5, which guesses at an image in `FunctionResponse.parts`) — never a silent placeholder,
     matching the never-silent rule the OpenAI-protocol codec applies to its unsupported media."""
     session = _RecordingSession()
     conn = _conn(session)
     _register_call(conn)
-    with pytest.raises(UserError, match='tool results are JSON-only, so `BinaryContent` content'):
+    with pytest.raises(
+        UserError, match=re.escape("carry only text, so `BinaryContent` content of type 'image/png' attached")
+    ):
         await conn.send(
             ToolResult(
                 tool_call_id='c1',
@@ -1318,6 +1449,141 @@ async def test_send_tool_result_binary_content_raises_with_nothing_sent() -> Non
         )
     assert session.tool_responses == []
     assert session.client_content == []
+    assert session._ws.sent == []  # pyright: ignore[reportPrivateUsage]
+
+
+def _conn_with_tool_result_media(session: _RecordingSession) -> GoogleRealtimeConnection:
+    return GoogleRealtimeConnection(
+        cast('AsyncSession', session),
+        profile=GoogleRealtimeModel('gemini-3.8-live').profile,
+    )
+
+
+async def test_send_tool_result_media_goes_in_function_response_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On a model that reads media in `FunctionResponse.parts` (Gemini 3.x), attached media is sent there.
+
+    Unit-level because the cassette truncates the bytes, so only this pins the base64 payloads. The
+    message goes over the session's socket rather than through `send_tool_response`, which can't encode
+    the bytes, so this also pins the JSON the SDK would have sent.
+    """
+
+    async def download_image(item: ImageUrl, data_format: str) -> Any:
+        assert (item.url, data_format) == ('https://example.com/chart.webp', 'bytes')
+        return {'data': b'webp', 'data_type': 'image/webp'}
+
+    monkeypatch.setattr(rt_google, 'download_item', download_image)
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    await conn.send(
+        ToolResult(
+            tool_call_id='c1',
+            output='done',
+            content=[
+                'a caption',
+                BinaryImage(data=b'png', media_type='image/png'),
+                ImageUrl(url='https://example.com/chart.webp'),
+                BinaryContent(data=b'notes', media_type='text/plain'),
+            ],
+        )
+    )
+    assert session.tool_responses == []
+    assert session._ws.sent == snapshot(  # pyright: ignore[reportPrivateUsage]
+        [
+            {
+                'toolResponse': {
+                    'functionResponses': [
+                        {
+                            'parts': [
+                                {'inlineData': {'data': 'cG5n', 'mimeType': 'image/png'}},
+                                {'inlineData': {'data': 'd2VicA==', 'mimeType': 'image/webp'}},
+                                {'inlineData': {'data': 'bm90ZXM=', 'mimeType': 'text/plain'}},
+                            ],
+                            'id': 'c1',
+                            'name': 'inspect',
+                            'response': {'output': 'done\n\na caption'},
+                        }
+                    ]
+                }
+            }
+        ]
+    )
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('item', 'message'),
+    [
+        (
+            BinaryContent(data=b'%PDF', media_type='application/pdf'),
+            'carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so '
+            "`BinaryContent` content of type 'application/pdf' attached to a tool return cannot be delivered",
+        ),
+        (AudioUrl(url='https://example.com/a.mp3'), 'so `AudioUrl` content attached to a tool return cannot'),
+    ],
+)
+async def test_send_tool_result_unsupported_media_raises_where_media_is_supported(
+    item: AudioUrl | BinaryContent, message: str
+) -> None:
+    # The 3.x models close the session on a PDF, so media outside the profile's types is refused, unsent.
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    with pytest.raises(UserError, match=re.escape(message)):
+        await conn.send(ToolResult(tool_call_id='c1', output='done', content=[item]))
+    assert session._ws.sent == [] and session.tool_responses == []  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_send_tool_result_image_url_is_not_downloaded_where_images_are_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError('downloaded an image the model cannot carry')  # pragma: no cover
+
+    monkeypatch.setattr(rt_google, 'download_item', download_image)
+    conn = _conn(_RecordingSession())
+    _register_call(conn)
+    with pytest.raises(UserError, match='carry only text, so `ImageUrl` content attached'):
+        await conn.send(
+            ToolResult(tool_call_id='c1', output='done', content=[ImageUrl(url='https://example.com/a.png')])
+        )
+
+
+async def test_send_tool_result_returned_file_goes_in_parts_without_provenance_tags() -> None:
+    # A tool that returns a file itself (rather than attaching it with `ToolReturn`) reaches the codec the
+    # way the session renders it for a user channel: a `See file` reference and the file framed in
+    # provenance tags. In the function response the file is the tool's by construction, so the tags,
+    # which would frame nothing, are dropped, as on a standard Gemini request.
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    image = BinaryImage(data=b'png', media_type='image/png', identifier='chart')
+    output, content = ToolReturnPart(
+        tool_name='inspect', content=image, tool_call_id='c1'
+    ).model_response_str_and_user_content()
+    await conn.send(ToolResult(tool_call_id='c1', output=output, content=content))
+    [message] = session._ws.sent  # pyright: ignore[reportPrivateUsage]
+    [function_response] = message['toolResponse']['functionResponses']
+    assert function_response['response'] == {'output': 'See file chart.'}
+    assert function_response['parts'] == [{'inlineData': {'data': 'cG5n', 'mimeType': 'image/png'}}]
+
+
+async def test_send_tool_result_media_download_failure_forgets_the_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An `ImageUrl` that can't be fetched leaves the result unsent, like a refused one, so the call is
+    # forgotten and a later drop doesn't count it as lost.
+    async def download_image(*args: Any, **kwargs: Any) -> Any:
+        raise httpx.ConnectError('unreachable')
+
+    monkeypatch.setattr(rt_google, 'download_item', download_image)
+    session = _RecordingSession()
+    conn = _conn_with_tool_result_media(session)
+    _register_call(conn)
+    with pytest.raises(httpx.ConnectError):
+        await conn.send(
+            ToolResult(tool_call_id='c1', output='done', content=[ImageUrl(url='https://example.com/a.png')])
+        )
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+    assert session._ws.sent == []  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_parallel_id_less_calls_do_not_collide() -> None:
@@ -1973,8 +2239,16 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     tool_call_id='call-1',
                 ),
                 ToolReturnPart(tool_name='plain', content='ok', tool_call_id='plain-call'),
-                RetryPromptPart(tool_name='weather', content='invalid city', tool_call_id='call-1'),
-                RetryPromptPart(content='answer in prose'),
+                legacy_retry_prompt_part(tool_name='weather', content='invalid city', tool_call_id='call-1'),
+                # The shape the framework emits for that same failure, seeded beside the legacy one
+                # so the two are held to the same text.
+                ToolReturnPart(tool_name='weather', content='invalid city', tool_call_id='call-1', outcome='retried'),
+                legacy_retry_prompt_part(content='answer in prose'),
+                RetryFeedbackPart(content='answer in prose', retry=RetryInfo(cause='model_retry')),
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an integer', 'input': 'lots'}],
+                    retry=RetryInfo(cause='validation_error'),
+                ),
                 UserPromptPart(
                     content=[
                         ImageUrl(url='https://example.com/a.png'),
@@ -2015,8 +2289,32 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
                     {'text': '</tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
-                    {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
-                    {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+"""
+                    },
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
+answer in prose
+</retry_feedback>\
+"""
+                    },
+                    {
+                        'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
+</validation_errors>\
+"""
+                    },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
                     {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
                     {'text': 'spoken question'},
@@ -2088,7 +2386,9 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='get_weather', content='Hailing', tool_call_id='call-1'),
-                RetryPromptPart(tool_name='get_weather', content='City is required', tool_call_id='call-2'),
+                ToolReturnPart(
+                    tool_name='get_weather', content='City is required', tool_call_id='call-2', outcome='retried'
+                ),
                 ToolReturnPart(
                     tool_name='get_weather', content='Service down', tool_call_id='call-3', outcome='failed'
                 ),
@@ -2127,7 +2427,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
                         'function_response': {
                             'id': 'call-2',
                             'name': 'get_weather',
-                            'response': {'error': 'City is required\n\nFix the errors and try again.'},
+                            'response': {'error': 'City is required'},
                         }
                     },
                     {
@@ -2277,6 +2577,23 @@ async def test_connect_seed_skips_compaction_parts() -> None:
         pass
     turns = session.client_content[0]['turns']
     assert [part.text for turn in turns for part in turn.parts] == ['the answer']
+
+
+async def test_connect_seed_marks_interrupted_speech() -> None:
+    """Interrupted assistant speech carries the same marker a text handoff gets, so the model doesn't take it as heard."""
+    session = _RecordingSession()
+    history = [
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='Sure, the morning flight', interrupted_at_ms=640)]
+        ),
+        ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='It leaves at')], state='interrupted'),
+    ]
+    async with _connect(_model(session), 'x', messages=history):
+        pass
+    turns = session.client_content[0]['turns']
+    assert [part.text for turn in turns for part in turn.parts] == snapshot(
+        ['Sure, the morning flight\n[Interrupted after 640 ms]', 'It leaves at\n[Interrupted]']
+    )
 
 
 async def test_connect_reconnect_auto_enables_session_resumption() -> None:
@@ -2599,13 +2916,14 @@ def _dialer(*sessions: _RecordingSession) -> tuple[Any, list[str | None]]:
     return dial, handles
 
 
-async def test_reconnect_resumes_then_gives_up() -> None:
+@pytest.mark.parametrize('base_delay', [0.0, -0.5])
+async def test_reconnect_resumes_then_gives_up(base_delay: float) -> None:
     # s1 drops at once; reconnect resumes into s2 (one turn, then drops); reconnect then runs out.
     s1 = _RecordingSession([])
     s2 = _RecordingSession([[_turn('back')]])
     dial, handles = _dialer(s2)
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 2, 'jitter': False}
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': base_delay, 'max_attempts': 2, 'jitter': False}
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
@@ -3186,10 +3504,10 @@ async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None
     async def record_sleep(delay: float) -> None:
         delays.append(delay)
 
-    # `reconnect_with_backoff` calls `random.random()` and `asyncio.sleep()` from these module
+    # `reconnect_with_backoff` calls `random.random()` and `anyio.sleep()` from these module
     # singletons, so patching them here controls the jitter factor and captures the resulting delay.
     monkeypatch.setattr(random, 'random', lambda: 0.4)
-    monkeypatch.setattr(asyncio, 'sleep', record_sleep)
+    monkeypatch.setattr(anyio, 'sleep', record_sleep)
 
     s1 = _RecordingSession([])
     dial, _ = _dialer(_RecordingSession([[_turn('hi')]]))
@@ -3701,6 +4019,67 @@ def test_turn_complete_reports_whether_more_is_expected(status: str | None, more
 
 
 @pytest.mark.parametrize(
+    ('reason', 'finish_reason'),
+    [
+        # Shared with a standard response's finish reason, so mapped by `GoogleModel`'s table.
+        ('MALFORMED_FUNCTION_CALL', 'error'),
+        ('BLOCKLIST', 'content_filter'),
+        # Live's own refusals of input or generated content.
+        ('PROHIBITED_INPUT_CONTENT', 'content_filter'),
+        ('GENERATED_AUDIO_SAFETY', 'content_filter'),
+        # No clear counterpart: no `finish_reason`, but the raw reason is kept.
+        ('NEED_MORE_INPUT', None),
+        ('RESPONSE_REJECTED', None),
+    ],
+)
+def test_turn_complete_reason_maps_to_finish_reason(reason: str, finish_reason: FinishReason | None) -> None:
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()))
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                turn_complete=True, turn_complete_reason=genai_types.TurnCompleteReason(reason)
+            )
+        )
+    )
+    assert events == [ResponseDone(finish_reason=finish_reason, provider_details={'finish_reason': reason})]
+
+
+async def test_turn_complete_reason_reaches_the_model_response() -> None:
+    # A turn Gemini ends on a malformed function call is recorded as an errored response, not a clean stop,
+    # so an app can tell it from a model that simply answered without calling the tool.
+    provider_session = _RecordingSession(
+        [
+            [
+                genai_types.LiveServerMessage(
+                    server_content=genai_types.LiveServerContent(
+                        output_transcription=genai_types.Transcription(text='Let me check.', finished=True)
+                    )
+                ),
+                genai_types.LiveServerMessage(
+                    server_content=genai_types.LiveServerContent(
+                        turn_complete=True,
+                        turn_complete_reason=genai_types.TurnCompleteReason.MALFORMED_FUNCTION_CALL,
+                    )
+                ),
+            ]
+        ]
+    )
+    session = RealtimeSession(
+        _conn(provider_session),
+        model=FakeRealtimeModel(_conn(provider_session), model_name='gemini-live', system='google'),
+        tool_manager=make_tool_manager(),
+    )
+    async with session:
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.finish_reason == 'error'
+    assert response.provider_details == {'finish_reason': 'MALFORMED_FUNCTION_CALL'}
+
+
+@pytest.mark.parametrize(
     ('model_name', 'expects_thinking', 'always_enabled'),
     [
         ('gemini-3.8-live', False, False),
@@ -4024,7 +4403,7 @@ async def test_tool_result_refused_for_its_content_is_forgotten() -> None:
     # later drop doesn't count it as lost.
     conn = _conn(_RecordingSession())
     conn._tool_calls['c1'] = ('get_weather', 'c1')  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(UserError, match='JSON-only'):
+    with pytest.raises(UserError, match='cannot be delivered'):
         await conn.send(
             ToolResult(tool_call_id='c1', output='chart', content=[BinaryContent(data=b'x', media_type='image/png')])
         )
@@ -4158,7 +4537,7 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
         with anyio.fail_after(5):
             await waiting
             await listening_again.wait()
-        assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
     assert [response.id for response in provider_session.tool_responses] == ['c1', 'c2']
     responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
@@ -4395,3 +4774,84 @@ def test_non_blocking_tool_results_are_answered_one_by_one(async_tool_calls: boo
     """A blocking tool-call frame is answered once; a non-blocking call's result may get its own answer."""
     conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()), async_tool_calls=async_tool_calls)
     assert conn._answers_tool_calls_per_response is not async_tool_calls  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ('start', 'offset', 'released'),
+    [
+        # The user started speaking before the second text went out: that text cut the reply off.
+        (True, '0.5s', True),
+        (True, '0s', True),
+        # ...or after both went out, over the reply: the speech did.
+        (True, '2.5s', False),
+        # With no offset to place it, the speech may have come after them.
+        (True, None, False),
+        (False, '2.5s', True),
+    ],
+)
+async def test_voice_activity_says_whether_speech_or_text_cut_a_reply_off(
+    start: bool, offset: str | None, released: bool
+) -> None:
+    """Gemini 3.x reports where in the audio the user started speaking: only text sent after that cut the reply off.
+
+    Driven through the connection rather than a recording: Gemini can't be made to place the speech before, between,
+    or after particular sends, or to leave the offset out, on demand.
+    """
+    activity = genai_types.VoiceActivity(
+        voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START
+        if start
+        else genai_types.VoiceActivityType.ACTIVITY_END,
+        audio_offset=offset,
+    )
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
+    )
+    second = b'\x00\x00' * 16000
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('Tell me a story.')
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('What is 2 plus 2?')
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    lifecycle = conn._lifecycle  # pyright: ignore[reportPrivateUsage]
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Once'))
+    )
+    lifecycle.frame_for(conn._map_message(message))  # pyright: ignore[reportPrivateUsage]
+    lifecycle.frame_for(conn._map_message(genai_types.LiveServerMessage(voice_activity=activity)))  # pyright: ignore[reportPrivateUsage]
+    cut = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(interrupted=True, turn_complete=True)
+    )
+    frame = lifecycle.frame_for(conn._map_message(cut))  # pyright: ignore[reportPrivateUsage]
+    assert any(isinstance(event, AnswersRevised) for event in frame) is released
+
+
+async def test_only_inputs_sent_after_the_user_spoke_are_released() -> None:
+    """Speech that started between two texts: the one sent before it stays answered by the cut-off reply.
+
+    (Driven through the connection for the reason above: the speech can't be placed between two sends on demand.)
+    """
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', _RecordingSession()), profile=GoogleRealtimeModelProfile(google_input_cuts_off_reply=True)
+    )
+    second = b'\x00\x00' * 16000
+    await conn.send('Tell me a story.')  # input 0, at 0 s
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('And another.')  # input 2, at 1 s
+    await conn.send(BinaryAudio(data=second, media_type='audio/pcm'))
+    await conn.send('What is 2 plus 2?')  # input 4, at 2 s
+    lifecycle = conn._lifecycle  # pyright: ignore[reportPrivateUsage]
+    message = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(output_transcription=genai_types.Transcription(text='Once'))
+    )
+    lifecycle.frame_for(conn._map_message(message))  # pyright: ignore[reportPrivateUsage]
+    activity = genai_types.VoiceActivity(
+        voice_activity_type=genai_types.VoiceActivityType.ACTIVITY_START, audio_offset='1.5s'
+    )
+    lifecycle.frame_for(conn._map_message(genai_types.LiveServerMessage(voice_activity=activity)))  # pyright: ignore[reportPrivateUsage]
+    cut = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(interrupted=True, turn_complete=True)
+    )
+    frame = lifecycle.frame_for(conn._map_message(cut))  # pyright: ignore[reportPrivateUsage]
+    assert [event for event in frame if isinstance(event, AnswersRevised)] == [
+        AnswersRevised(response_id='pydantic_ai_response_1', released=(4,))
+    ]

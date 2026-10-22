@@ -10,7 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, is_read_only
+from pydantic_ai_harness._mcp import credential, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset
@@ -91,7 +91,7 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
             if callable(self.auth)
             else self._connect(self.auth)
         )
-        return toolset.filtered(lambda _ctx, tool_def: is_read_only(tool_def)) if self.read_only else toolset
+        return read_only_toolset(toolset) if self.read_only else toolset
 
     def _derived_id(self) -> str:
         """This capability's `id`, falling back to the one the products name."""

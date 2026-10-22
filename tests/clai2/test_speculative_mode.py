@@ -14,8 +14,24 @@ import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.agent import AbstractAgent, WrapperAgent
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentCapability,
+    CombinedCapability,
+    DynamicCapability,
+    LocalWorkspace,
+)
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryFeedbackPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -28,18 +44,23 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.command_context import CommandContext
+from pydantic_ai_harness.guardrails import GuardrailResult, ToolGuardrail
+from pydantic_clai2 import Session, StreamRenderer
+from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
-from pydantic_clai2.eager_timing import EagerExecutionCompletedEvent
-from pydantic_clai2.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.speculation import Speculation, SpeculationCounters
-from pydantic_clai2.speculative_mode import (
+from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.session_runtime import create_shell
+from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
+from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
     SPECULATIVE_TOOLS,
     ShowSandboxCalls,
     SpeculativeExecution,
+    WorkspaceCodeMode,
     guidance,
     speculative_capabilities,
 )
@@ -56,7 +77,7 @@ def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) 
                 assert isinstance(part, ToolCallPart)
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
-    return FunctionModel(stream_function=stream)
+    return FunctionModel(respond, stream_function=stream)
 
 
 def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) -> Agent[None, str]:
@@ -73,9 +94,7 @@ def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) 
 
 def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    context = CommandContext(
-        settings=store.load(), store=store, clear_history=lambda: None, apply_setting=lambda key, settings: None
-    )
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
     switch = Speculation(context=context, console=Console(file=io.StringIO()))
     switch.toggle()
     assert [type(capability).__name__ for capability in switch.capabilities([])] == [
@@ -84,6 +103,91 @@ def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
         'SpeculativeExecution',
         'ShowSandboxCalls',
     ]
+
+
+@pytest.mark.parametrize(
+    ('code_mode', 'speculative', 'speculates'),
+    [(False, False, None), (True, False, False), (False, True, True), (True, True, True)],
+)
+def test_code_mode_and_speculation_switches(
+    tmp_path: Path, code_mode: bool, speculative: bool, speculates: bool | None
+) -> None:
+    """Code mode binds an eager sandbox; speculation adds early launches and turns code mode on for its runs."""
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('run.code_mode', code_mode)
+    store.set('run.speculative_code_mode', speculative)
+    context = CommandContext(settings=store.load(), store=store, apply_setting=lambda key, settings: None)
+    bound = Speculation(context=context, console=Console(file=io.StringIO())).capabilities([])
+    sandboxes = [capability for capability in bound if isinstance(capability, WorkspaceCodeMode)]
+    executions = [capability for capability in bound if isinstance(capability, SpeculativeExecution)]
+    assert [sandbox.speculate for sandbox in sandboxes] == (
+        [] if speculates is None else ['declared' if speculates else None]
+    )
+    assert [execution.speculate for execution in executions] == ([] if speculates is None else [speculates])
+
+
+async def test_eager_code_mode_runs_statements_without_speculating(tmp_path: Path) -> None:
+    (tmp_path / 'a.py').write_text('contents of a.py\n')
+    counters = SpeculationCounters()
+    instructions: list[str] = []
+    args = json.dumps({'code': 'text = await read_file(path="a.py")\ntext\n'})
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'done'
+            return
+        instructions.append(info.instructions or '')
+        yield {0: DeltaToolCall(name='run_code')}
+        for offset in range(0, len(args), 8):
+            yield {0: DeltaToolCall(json_args=args[offset : offset + 8])}
+            await anyio.sleep(0)
+
+    file_system = FileSystem()
+    sandbox = speculative_capabilities(counters, (file_system,), speculate=False)
+    agent = Agent(FunctionModel(stream_function=stream), capabilities=[file_system, *sandbox, LocalWorkspace(tmp_path)])
+    with anyio.fail_after(10):
+        result = await agent.run('go')
+    returns = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)]
+    assert any('contents of a.py' in str(part.content) for part in returns)
+    [prompt] = instructions
+    assert guidance('read-only', speculate=False).strip() in prompt
+    assert 'Speculative execution' not in prompt
+    assert (counters.hits, counters.misses, counters.wasted) == (0, 0, 0)
+
+
+async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: Path) -> None:
+    (tmp_path / 'note.txt').write_text('delegated workspace content')
+    prompts: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert guidance('read-only').strip() in (info.instructions or '')
+        if len(messages) == 1:
+            [request] = messages
+            assert isinstance(request, ModelRequest)
+            [part] = request.parts
+            assert isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            prompt = part.content
+            prompts.append(prompt)
+            code = (
+                'await delegate_task(agent_name="self", task="child task")'
+                if prompt == 'parent task'
+                else 'await read_file(path="note.txt")'
+            )
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert any('delegated workspace content' in str(part.content) for part in returns)
+        return ModelResponse(parts=[TextPart('delegated workspace content')])
+
+    coder = Coder[None](repo_context=False)
+    session = Session(
+        create_stock_agent(streamed(respond)),
+        deps=None,
+        workspace=tmp_path,
+        plugins=[coder, *speculative_capabilities(SpeculationCounters(), (coder,))],
+    )
+    assert (await session.prompt('parent task')).output == 'delegated workspace content'
+    assert prompts == ['parent task', 'child task']
 
 
 class TestFold:
@@ -252,6 +356,18 @@ seen
 """
 
 
+def allow(call: object) -> GuardrailResult:
+    return GuardrailResult.allow()  # pragma: no cover -- only inspected, never run.
+
+
+class OpaqueAgent(WrapperAgent[None, str]):
+    """A custom agent that does not expose its capability tree."""
+
+    @property
+    def root_capability(self) -> CombinedCapability[None]:
+        raise NotImplementedError
+
+
 def mount(granted: Sequence[AgentCapability[None]]) -> str | None:
     """The mount the sandbox gets beside `granted`, as its guidance describes it."""
     [speculative] = [
@@ -280,6 +396,57 @@ class TestWorkspaceMount:
     )
     def test_write_limits_mount_read_only(self, file_system: FileSystem[None]) -> None:
         assert mount([file_system]) == 'read-only'
+
+    @pytest.mark.parametrize(
+        ('guardrail', 'expected'),
+        [
+            (ToolGuardrail[None](guard=allow, tools=['grep']), 'read-write'),
+            (ToolGuardrail[None](hidden=['grep']), 'read-write'),
+            (ToolGuardrail[None](guard=allow, tools=['write_file', 'edit_file']), 'read-only'),
+            (ToolGuardrail[None](guard=allow, tools=['run_code']), 'read-only'),
+            (ToolGuardrail[None](hidden=['shell']), 'read-only'),
+            (ToolGuardrail[None](result_guard=allow, tools=['read_file']), None),
+            (ToolGuardrail[None](guard=allow), None),
+        ],
+        ids=['other_tool', 'other_hidden', 'writes', 'run_code', 'hidden_shell', 'reads', 'every_tool'],
+    )
+    def test_guardrails_limit_the_mount(self, guardrail: ToolGuardrail[None], expected: str | None) -> None:
+        """`pathlib` on a mount bypasses a guardrail as it bypasses `FileSystem`'s own checks."""
+        coder = Coder[None](unrestricted_filesystem=True, repo_context=False)
+        assert mount([coder, guardrail]) == expected
+
+    @pytest.mark.parametrize(
+        ('agent', 'expected'),
+        [
+            (Agent(TestModel(), deps_type=type(None)), 'read-write'),
+            (Agent(TestModel(), deps_type=type(None), capabilities=[ToolGuardrail(hidden=['shell'])]), 'read-only'),
+            # An agent that does not expose its capabilities may guard tools too, so it gets no mount.
+            (OpaqueAgent(Agent(TestModel(), deps_type=type(None))), None),
+        ],
+        ids=['unguarded', 'guarded', 'opaque'],
+    )
+    def test_shell_mount_follows_the_agents_own_guardrails(
+        self, tmp_path: Path, agent: AbstractAgent[None, str], expected: str | None
+    ) -> None:
+        """A supplied agent's `ToolGuardrail` limits the mount as a plugin's does."""
+        store = SettingsStore(tmp_path / 'config.db')
+        store.set('run.code_mode', True)
+        shell = create_shell(
+            agent,
+            deps=None,
+            plugins=[Coder[None](unrestricted_filesystem=True, repo_context=False)],
+            usage_limits=None,
+            console=Console(file=io.StringIO()),
+            settings=store.load(),
+            store=store,
+            builtin_plugins=(),
+            project=ProjectSettings(),
+            headless=True,
+        )
+        mounts = [
+            capability.mount for capability in shell.run_plugins() if isinstance(capability, SpeculativeExecution)
+        ]
+        assert mounts == [expected]
 
     def test_patterns_or_ambiguity_leave_nothing_mounted(self, tmp_path: Path) -> None:
         def dynamic(ctx: RunContext[None]) -> FileSystem[None]:
@@ -503,13 +670,7 @@ class TestSandboxCallDisplay:
         assert all(re.fullmatch(r'.+__\d+', call.tool_call_id) for call in started)
         # A missing file is a plain result, not a retry; failed speculative launches are
         # still claimed and shown, like cold failures.
-        assert [type(result).__name__ for result in finished] == [
-            'ToolReturnPart',
-            'ToolReturnPart',
-            'ToolReturnPart',
-            'RetryPromptPart',
-            'RetryPromptPart',
-        ]
+        assert [result.outcome for result in finished] == ['success', 'success', 'success', 'retried', 'retried']
         headers = [line for line in output.getvalue().splitlines() if line.startswith('\u25cf')]
         # Eager execution can announce `run_code` before its `code` argument has finished streaming.
         assert headers[0] in (
@@ -541,3 +702,55 @@ class TestSandboxCallDisplay:
         assert await show.wrap_tool_execute(context(), call=call, tool_def=tool_def, args={}, handler=late) == 'late'
         # Nothing was held, so the claim reports nothing; emitting would fail, as this context has no stream.
         await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id))
+
+
+async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:
+    instructions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.instructions is not None
+        instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('done')])
+
+    await fold_agent(streamed(respond), SpeculationCounters(), tmp_path).run('hi')
+    [instruction] = instructions
+    assert 'raw triple-quoted' in instruction
+    assert 'shell(command=' in instruction
+
+
+async def test_run_code_multiline_shell_command_keyword_raw_string_runs(tmp_path: Path) -> None:
+    code = "out = await shell(command=r'''echo one\necho \"it's fine\"\necho two''')\nout"
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+    coder = Coder(repo_context=False)
+    agent: Agent[None, str] = Agent(
+        streamed(respond),
+        capabilities=[
+            coder,
+            *speculative_capabilities(SpeculationCounters(), (coder,)),
+            LocalWorkspace(tmp_path),
+        ],
+    )
+    result = await agent.run('run the multiline shell command')
+    assert result.output == 'done'
+    messages = result.all_messages()
+    tool_returns = [
+        part
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    assert len(tool_returns) == 1
+    content = str(tool_returns[0].content)
+    assert 'one' in content
+    assert "it's fine" in content
+    assert 'two' in content
+    assert not any(
+        isinstance(part, RetryFeedbackPart) or isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+        for message in messages
+        for part in message.parts
+    )
