@@ -446,7 +446,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     from `load_capability` — without checking that the tool still exists or that its owner is
     loaded. Read by `is_tool_available` and the reveal builders, which apply those checks.
     Populated during run preparation from message history. Use `available_tool_names` for the full
-    set of currently-callable tools (always-visible plus these).
+    set of currently disclosed tools (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
 
@@ -603,9 +603,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         non-deferred capabilities (`defer_loading` not `True`) plus the deferred ones the model has
         loaded, so `active_capability_ids - loaded_capability_ids` is the auto/always-on subset.
 
-        Tools keep the word *available* because for them there is only one question — may the model
-        call this now? — and no catalog sense to collide with. So `is_tool_available` reads "revealed,
-        and its owning capability is active".
+        For tools, `is_tool_available` describes schema disclosure, while `is_tool_callable`
+        describes execution eligibility. Both respect capability activation.
 
         Two axes, deliberately not mixed. *Configuration* is set once by the author: a capability is
         either **deferred** (`defer_loading=True`) or **always-on**. *Runtime* is derived per step:
@@ -632,7 +631,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """`active_capability_ids`, widened by the anchored evidence for the response being dispatched.
 
         The single answer to "may this capability act on the call being dispatched right now?", and
-        it has to be single: `is_tool_available` authorizes the call from it, and the `prepare_tools`
+        it has to be single: `is_tool_callable` admits the call from it, and the `prepare_tools`
         dispatch gate decides from it whether the owning capability's filter runs over that tool. If
         only the first consulted the evidence, a tool authorized through a load the conservative
         window dropped would execute with its owner's `prepare_tools` never having run — the
@@ -680,7 +679,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @property
     def available_tool_names(self) -> set[str]:
-        """Names of function tools the model can call on the current turn.
+        """Names of function tools whose schemas are disclosed on the current turn.
 
         The visible subset of [`tools`][pydantic_ai.tools.RunContext.tools]: always-visible
         tools, tools revealed via [tool search](../tools-advanced.md#tool-search), and tools
@@ -697,7 +696,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
         return {name for name, tool_def in self.tools.items() if self.is_tool_available(tool_def)}
 
     def is_tool_available(self, tool: str | ToolDefinition) -> bool:
-        """Whether a function tool is currently available to the model.
+        """Whether a function tool's schema is currently disclosed to the model.
+
+        Disclosure is independent of execution eligibility: use
+        [`is_tool_callable`][pydantic_ai.tools.RunContext.is_tool_callable] to check the latter.
 
         Pass a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] when checking a definition
         held by a toolset, especially inside `get_tools`. This form evaluates the definition's
@@ -751,16 +753,50 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return capability_id in self._dispatch_active_capability_ids
         if tool_def.name not in self.discovered_tool_names | evidence.discovered_tool_names:
             return False
-        # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
-        # evidence and only answers the middle step, so it can name a tool whose capability was
-        # never loaded — a history no real run produces, and one that would skip the instructions
-        # written to be read first. Checking the owner here keeps this predicate in step with what
-        # `ToolManager` will run, so "available" means one thing everywhere it is asked.
+        # Discovery records schema disclosure, not capability activation. A stale reveal must
+        # not disclose tools whose owner is inactive.
         return capability_id is None or capability_id in self._dispatch_active_capability_ids
 
     @property
+    def callable_tool_names(self) -> set[str]:
+        """Names of prepared tools eligible for execution, including undisclosed tools.
+
+        Populated after tool preparation; empty when no prepared registry is available.
+        Eligibility still requires argument validation, tool hooks and any applicable approval.
+        """
+        return {name for name, tool_def in self.tools.items() if self.is_tool_callable(tool_def)}
+
+    def is_tool_callable(self, tool: str | ToolDefinition) -> bool:
+        """Whether a tool is eligible for execution, independently of schema disclosure.
+
+        A name must be present in the current prepared registry. Without that registry, the name
+        form uses `callable_tool_names` (a dispatch-time snapshot in Temporal activities).
+        An unknown name returns `False`.
+
+        A definition, useful inside a toolset's `get_tools`, checks only its owning capability's
+        activation. It does not establish membership in the prepared registry. Dispatch resolves
+        the tool in its own registry before applying this check.
+
+        Eligible tools still undergo argument validation, hooks and approval. Calling a deferred
+        tool does not disclose its schema or add it to `discovered_tool_names`.
+        """
+        if isinstance(tool, str):
+            if self.tool_manager is None or self.tool_manager.tools is None:
+                return tool in self.callable_tool_names
+            tool_def = self.tools.get(tool)
+            if tool_def is None:
+                return False
+        else:
+            tool_def = tool
+        return tool_def.capability_id is None or tool_def.capability_id in self._dispatch_active_capability_ids
+
+    @property
     def tools(self) -> dict[str, ToolDefinition]:
-        """All tool definitions present this turn, keyed by name (includes still-deferred ones). Index `available_tool_names` into this for the callable subset."""
+        """All prepared tool definitions, including undisclosed ones, keyed by name.
+
+        `available_tool_names` selects disclosed schemas; `callable_tool_names` selects tools
+        eligible for execution.
+        """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}

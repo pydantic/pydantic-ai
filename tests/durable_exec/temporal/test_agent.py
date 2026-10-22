@@ -3468,6 +3468,8 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    assert reconstructed.callable_tool_names == set()
+    assert not reconstructed.is_tool_callable('searched_tool')
     # Nor a kind snapshot, so the base method answers, and without a tool manager it has nothing to name.
     assert reconstructed.tool_name_for_kind(_LOOKUP_KIND) is None
     # No capability snapshot in this subclass's field set, so the property falls back to the base
@@ -4626,3 +4628,31 @@ async def test_instruction_updates_use_recorded_values_on_temporal_replay(client
         data_converter=pydantic_data_converter,
     ).replay_workflow(history)
     assert _instruction_reads == ['A', 'B', 'B', 'A', None, 'C']
+
+
+async def test_callable_snapshot_survives_activity_serialization_and_context_copy():
+    """The real Temporal converter carries undisclosed names independently of reveal history."""
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool_plain(defer_loading=True)
+    def hidden() -> str:
+        return 'hidden'
+
+    ctx.tool_manager = await ToolManager(toolset).for_run_step(ctx)
+    params = CallToolParams(
+        name='hidden',
+        tool_args={},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        tool_def=None,
+    )
+    payloads = await pydantic_data_converter.encode([params])
+    (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
+    reconstructed = TemporalRunContext.deserialize_run_context(decoded.serialized_run_context, deps=None)
+    for current in (reconstructed, replace(reconstructed, tool_name='hidden')):
+        assert current.tool_manager is None
+        assert current.callable_tool_names == {'hidden'}
+        assert current.is_tool_callable('hidden')
+        assert not current.is_tool_callable('missing')
+        assert not current.is_tool_available('hidden')
+        assert current.available_tool_names == set()

@@ -10,7 +10,7 @@ from render.workflows import TaskContext, Workflows
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import Hooks, ToolSearch
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -322,21 +322,33 @@ async def test_unregistered_model_instance_is_rejected_before_dispatch() -> None
     assert context.task_names == []
 
 
-async def test_worker_context_keeps_availability_validation_and_enqueue_guards() -> None:
+@pytest.mark.parametrize('hidden', [False, True])
+async def test_worker_context_keeps_availability_validation_and_enqueue_guards(hidden: bool) -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert ('inspect_context' in {tool.name for tool in info.function_tools}) is not hidden
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'inspect_context':
+                    return ModelResponse(parts=[TextPart(str(part.content))])
+        return ModelResponse(parts=[ToolCallPart('inspect_context', {})])
+
     runtime = RenderWorkflows[None](Workflows())
     agent = Agent[None, str](
-        TestModel(call_tools=['inspect_context']),
+        FunctionModel(model),
         name='worker-context-contract',
         deps_type=type(None),
         validation_context=lambda ctx: {'worker_run_id': ctx.run_id},
-        capabilities=[Hooks(id='visible'), runtime],
+        capabilities=[Hooks(id='visible'), ToolSearch(), runtime],
     )
 
-    @agent.tool
+    @agent.tool(defer_loading=hidden)
     def inspect_context(ctx: RunContext[None]) -> str:
-        assert ctx.available_tool_names == {'inspect_context'}
+        assert ctx.available_tool_names == ({'search_tools'} if hidden else {'inspect_context'})
+        assert ctx.callable_tool_names == ({'inspect_context', 'search_tools'} if hidden else {'inspect_context'})
+        assert ctx.is_tool_callable('inspect_context')
+        assert ctx.discovered_tool_names == set()
         assert 'visible' in ctx.active_capability_ids
-        assert ctx.is_tool_available('inspect_context')
+        assert ctx.is_tool_available('inspect_context') is not hidden
         assert ctx.validation_context == {'worker_run_id': ctx.run_id}
         with pytest.raises(UserError, match='not supported inside a durable task'):
             ctx.enqueue('cannot be transferred to the parent')

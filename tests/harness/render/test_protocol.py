@@ -445,7 +445,8 @@ async def test_worker_rejects_missing_dependencies() -> None:
 
 
 @pytest.mark.parametrize(
-    'missing', [None, 'usage', 'available_tool_names', 'active_capability_ids', '_deferred_capability_ids']
+    'missing',
+    [None, 'usage', 'available_tool_names', 'callable_tool_names', 'active_capability_ids', '_deferred_capability_ids'],
 )
 async def test_context_snapshots_and_missing_field_guards(missing: str | None) -> None:
     from pydantic_ai.tools import ToolDefinition
@@ -457,6 +458,10 @@ async def test_context_snapshots_and_missing_field_guards(missing: str | None) -
     async def inspect_context(ctx: RunContext[None]) -> str:
         if missing == 'available_tool_names':
             assert ctx.available_tool_names == set()
+        elif missing == 'callable_tool_names':
+            assert ctx.callable_tool_names == set()
+            assert not ctx.is_tool_callable('inspect_context')
+            assert ctx.is_tool_available('inspect_context')
         elif missing == 'active_capability_ids':
             with pytest.raises(UserError, match=r'capabilities.*not available'):
                 _ = ctx.active_capability_ids
@@ -464,6 +469,8 @@ async def test_context_snapshots_and_missing_field_guards(missing: str | None) -
             with pytest.raises(UserError, match=r'capabilities.*not available'):
                 ctx.is_tool_available(ToolDefinition(name='deferred', defer_loading=True, capability_id='deferred'))
         elif missing is None:
+            assert ctx.callable_tool_names == {'inspect_context'}
+            assert ctx.is_tool_callable('inspect_context')
             assert not ctx.is_tool_available(
                 ToolDefinition(name='deferred', defer_loading=True, capability_id='deferred')
             )
@@ -505,7 +512,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         'agent',  # reattached from the worker's agent on load
         'model',  # live Model instance; its id crosses as `_model_id` and resolves worker-side
         'tracer',  # live tracer; only whether it was enabled crosses, and the worker supplies its own
-        'tool_manager',  # live ToolManager; `available_tool_names` crosses as a snapshot instead
+        'tool_manager',  # live ToolManager; disclosure and callability cross as snapshots instead
         'capabilities',  # live capability objects; `active_capability_ids` crosses as a snapshot instead
         'root_capability',  # live capability chain, reattached from the worker's agent on load
         'pending_messages',  # live run queue; replaced by an `EnqueueGuard` on load

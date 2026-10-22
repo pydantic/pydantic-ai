@@ -248,6 +248,7 @@ async def test_prefixed_dynamic_tool_child_tasks_keep_context_snapshots() -> Non
     reads: list[tuple[str, list[str], int]] = []
 
     def record(site: str, ctx: RunContext[None]) -> None:
+        assert ctx.callable_tool_names == ctx.available_tool_names
         reads.append((site, sorted(ctx.available_tool_names), len(ctx.active_capability_ids)))
 
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))

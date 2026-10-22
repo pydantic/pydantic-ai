@@ -1,10 +1,4 @@
-"""Tests for the availability gate: a tool cannot be called unless it is available.
-
-A deferred tool must have been revealed, and a capability-owned tool's capability loaded,
-before a call is allowed. Split out of `test_capabilities.py`, which is at the 1 MB
-`check-added-large-files` cap (#7304); availability is one coherent subject, so it earns
-its own module rather than an arbitrary slice.
-"""
+"""Tool disclosure and execution eligibility, including capability activation and compaction."""
 
 from __future__ import annotations
 
@@ -231,7 +225,7 @@ async def test_capability_prepare_tools_governs_a_tool_the_wire_window_admits(
     # point — the filter has to follow whatever the gate authorizes from, not the narrower set.
     assert loaded_ids_seen[0] == snapshot([])
     assert [str(part.content) for part in _iter_refusals(result.all_messages())] == snapshot(
-        ["Unknown tool name: 'guarded_tool'. Available tools: 'load_capability'"]
+        ["Unknown tool name: 'guarded_tool'. Disclosed tools: 'load_capability'"]
     )
 
 
@@ -260,8 +254,9 @@ async def test_compaction_inside_serving_response_does_not_reset_tool_evidence()
     assert result.output == 'done'
 
 
-async def test_missing_provider_name_uses_agnostic_window():
-    """An unstamped `FunctionModel` response has `provider_name=None`, so the agnostic cut wins."""
+@pytest.mark.parametrize('provider_name', [None, 'anthropic'])
+async def test_compaction_hides_schema_without_revoking_callability(provider_name: str | None):
+    """Dropping disclosure evidence hides schemas but still permits known-name execution."""
     toolset = FunctionToolset[Any]()
     toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
     history = [
@@ -270,37 +265,17 @@ async def test_missing_provider_name_uses_agnostic_window():
     ]
 
     def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        for part in _iter_refusals(messages):
-            return make_text_response(str(part.content))
-        return ModelResponse(parts=[ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')])
+        assert 'hidden' not in {tool.name for tool in info.function_tools}
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+            if part.tool_name == 'hidden':
+                return make_text_response(str(part.content))
+        return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], provider_name)
 
     result = await Agent(FunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)
 
-    assert 'is not available yet' in result.output
-
-
-async def test_boundary_the_serving_provider_honored_still_hides_evidence():
-    """Anchoring makes the window exact, not permissive.
-
-    The counterpart to the cases above: when the serving provider is the one that emitted the
-    boundary and the payload it renders is there, the request really did start over, so the
-    pre-boundary reveal is gone from the model's view and the call has to be refused.
-    """
-    toolset = FunctionToolset[Any]()
-    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
-    history = [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
-        ModelResponse(parts=[CompactionPart(content='summary', provider_name='anthropic')], provider_name='anthropic'),
-    ]
-
-    def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        for part in _iter_refusals(messages):
-            return _provider_response([make_text_response(str(part.content)).parts[0]], 'anthropic')
-        return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], 'anthropic')
-
-    result = await Agent(FunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)
-
-    assert 'is not available yet' in result.output
+    assert result.output == 'ran'
+    assert not list(_iter_refusals(result.all_messages()))
+    assert not any(isinstance(part, ToolAvailabilityDeltaPart) for msg in result.new_messages() for part in msg.parts)
 
 
 def secret_op() -> str:
@@ -395,24 +370,6 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         result = await agent.run('hello')
 
         assert 'is not available yet' in result.output
-
-    async def test_available_capability_does_not_excuse_an_undiscovered_tool(self):
-        """An always-on capability's search-gated tool still has to be searched for.
-
-        The capability being available makes its tools eligible to be shown, not evidence that any
-        of them were — so availability must not short-circuit the discovery requirement.
-        """
-        toolset = FunctionToolset[Any]()
-        toolset.add_function(secret_op, name='secret_op', defer_loading=True)
-        eager = Capability[Any](id='eager', description='Always on.', toolsets=[toolset], defer_loading=False)
-
-        agent = Agent(FunctionModel(_call_secret_op), capabilities=[eager])
-
-        result = await agent.run('hello')
-
-        assert result.output == snapshot(
-            "BLOCKED: Tool 'secret_op' is not available yet: search for it first, then call it again once you've seen its schema."
-        )
 
     async def test_an_availability_refusal_leaves_room_to_act_on_it(self):
         """The refusal grants one attempt beyond the tool's budget, and no more.
@@ -538,7 +495,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         result = await agent.run('hello')
 
         assert result.output == snapshot(
-            "Unknown tool name: 'bogus_op'. Available tools: 'load_capability', 'untouched'"
+            "Unknown tool name: 'bogus_op'. Disclosed tools: 'load_capability', 'untouched'"
         )
 
 
@@ -550,10 +507,10 @@ async def test_unknown_tool_retry_omits_undiscovered_search_gated_tools():
 
     result = await agent.run('hello')
 
-    assert result.output == snapshot("Unknown tool name: 'bogus_op'. Available tools: 'search_tools'")
+    assert result.output == snapshot("Unknown tool name: 'bogus_op'. Disclosed tools: 'search_tools'")
 
 
-async def test_unknown_tool_retry_steers_to_search_when_nothing_is_callable_yet():
+async def test_unknown_tool_retry_steers_to_search_when_nothing_is_disclosed():
     """A native-only strategy emits no `search_tools`, so an undiscovered corpus leaves nothing callable.
 
     A bare 'No tools available.' would be false here — the corpus exists, it just has not been
@@ -566,7 +523,7 @@ async def test_unknown_tool_retry_steers_to_search_when_nothing_is_callable_yet(
     result = await agent.run('hello')
 
     assert result.output == snapshot(
-        "Unknown tool name: 'bogus_op'. No tools are available yet: search for the tools you need."
+        "Unknown tool name: 'bogus_op'. No tool schemas are disclosed yet: search for the tools you need."
     )
 
 

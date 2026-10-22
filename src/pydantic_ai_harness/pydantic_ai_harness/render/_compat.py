@@ -402,6 +402,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('loaded_capability_ids', list, _STR_SET_ADAPTER),
     ('discovered_tool_names', list, _STR_SET_ADAPTER),
     ('available_tool_names', list, _STR_SET_ADAPTER),
+    ('callable_tool_names', list, _STR_SET_ADAPTER),
     ('active_capability_ids', list, _STR_SET_ADAPTER),
     ('_deferred_capability_ids', list, _STR_SET_ADAPTER),
     ('_anchored_evidence', dict, TypeAdapter(AnchoredEvidence)),
@@ -468,6 +469,12 @@ class RenderRunContext(RunContext[AgentDepsT]):
         if (snapshot := self.__dict__.get('available_tool_names')) is not None:
             return snapshot
         return super().available_tool_names
+
+    @property
+    def callable_tool_names(self) -> set[str]:
+        if (snapshot := self.__dict__.get('callable_tool_names')) is not None:
+            return snapshot
+        return super().callable_tool_names
 
     @property
     def active_capability_ids(self) -> set[str]:
@@ -545,6 +552,7 @@ class RenderRunContext(RunContext[AgentDepsT]):
             'discovered_tool_names': ctx.discovered_tool_names,
             '_anchored_evidence': ctx._anchored_evidence,
             'available_tool_names': ctx.available_tool_names,
+            'callable_tool_names': ctx.callable_tool_names,
             'active_capability_ids': ctx.active_capability_ids,
             '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_active': ctx.capability_active,

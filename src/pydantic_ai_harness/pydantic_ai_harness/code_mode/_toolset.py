@@ -1008,10 +1008,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # drive protocol-level flows. Any other registered `tool_kind` is an ordinary tool.
             if tool.tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
                 native_tools[name] = tool
-            elif not ctx.is_tool_available(tool.tool_def):
-                # Use the run's public availability predicate so Tool Search and deferred
-                # capability reveals share the same wire-side semantics. Hidden tools stay native
-                # until revealed, then fall through to the checks below and become sandboxed.
+            elif not ctx.is_tool_callable(tool.tool_def):
                 native_tools[name] = tool
             elif tool.tool_def.unless_native:
                 # Keep the local fallback native so `Model.prepare_request` can drop it
@@ -1023,10 +1020,19 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 native_tools[name] = tool
             elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
                 sandboxed_tools[name] = tool
+                if not ctx.is_tool_available(tool.tool_def):
+                    # Keep undisclosed tools in the search corpus while allowing saved code
+                    # to call them by name. Only disclosure folds them out of the native list.
+                    native_tools[name] = tool
             else:
                 native_tools[name] = tool
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
+        visible_defs = {
+            name: tool_def
+            for name, tool_def in callable_defs.items()
+            if ctx.is_tool_available(sandboxed_tools[sanitized_to_original.get(name, name)].tool_def)
+        }
 
         if self.speculation is not None:
             self.speculation.stash_step(
@@ -1045,9 +1051,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         has_mount = self.mount is not None
         if self.dynamic_catalog:
             description = _base_description(has_os=has_os, has_mount=has_mount)
-            self._last_catalog = self._render_catalog(callable_defs)
+            self._last_catalog = self._render_catalog(visible_defs)
         else:
-            description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
+            description = self._build_description(visible_defs, has_os=has_os, has_mount=has_mount)
             self._last_catalog = ''
 
         if _RUN_CODE_TOOL_NAME in native_tools:

@@ -3733,7 +3733,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Disclosed tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
@@ -3850,7 +3850,7 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Disclosed tools: 'another_tool', 'deferred_tool', 'final_result', 'regular_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=datetime.UTC),
@@ -4903,7 +4903,7 @@ async def test_unknown_tool_call_events():
             ),
             FunctionToolResultEvent(
                 part=ToolReturnPart(
-                    content="Unknown tool name: 'unknown_tool'. Available tools: 'known_tool'",
+                    content="Unknown tool name: 'unknown_tool'. Disclosed tools: 'known_tool'",
                     tool_name='unknown_tool',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=datetime.UTC),

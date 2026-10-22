@@ -251,7 +251,16 @@ See [Superseding a tool by kind](https://pydantic.dev/docs/ai/tools-toolsets/too
 
 ## Tool Search and Tool-Level Deferred Loading
 
-Use tool-level deferred loading when the agent has many tools and the model should discover individual tools on demand via `search_tools`.
+Use tool-level deferred loading when the agent has many tools and the model should discover individual tool schemas on demand via `search_tools`.
+
+`defer_loading=True` controls schema disclosure only. Known names can execute before discovery,
+including direct model calls and `ToolManager.handle_call`. Use `ctx.is_tool_available` /
+`available_tool_names` for disclosure and `ctx.is_tool_callable` / `callable_tool_names` for execution
+eligibility. Name-based eligibility requires current prepared membership and an active owner;
+the definition form checks owner activation only. Validation, hooks, approval, wrappers, and usage
+accounting still apply. Calling a hidden tool does not reveal it or add discovery history. Remove a
+tool with `prepare` or filtering when it must not be callable; use approval or execution hooks for
+call-specific policy. Inactive deferred capabilities still block their tools until loaded.
 
 ```python
 from pydantic_ai import Agent

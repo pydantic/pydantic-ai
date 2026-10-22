@@ -75,7 +75,7 @@ Both weather lookups run in parallel and the conversions run inside Monty, all w
 
 ## Selective tool sandboxing
 
-By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools, undiscovered deferred tools, native fallbacks, and other code-execution tools remain native. Shell surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has to quote a shell command inside a generated Python string. `CapabilityCreation`'s `author_capability` stays native for the same reason: its argument is a complete Python module. Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like any other tool. The `tools` field is a Pydantic AI `ToolSelector`, so you can control which eligible tools go through the sandbox. Tools that match the selector become callables inside `run_code`; non-matching tools stay visible to the model as regular tool calls.
+By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools, tools owned by inactive capabilities, native fallbacks, and other code-execution tools remain native. Shell surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has to quote a shell command inside a generated Python string. `CapabilityCreation`'s `author_capability` stays native for the same reason: its argument is a complete Python module. Their non-command tools (`read_file`, `check_command`, and so on) are folded into `run_code` like any other tool. The `tools` field is a Pydantic AI `ToolSelector`, so you can control which eligible tools go through the sandbox. Tools that match the selector become callables inside `run_code`; non-matching tools stay visible to the model as regular tool calls.
 
 ```python
 from pydantic_ai_harness import CodeMode
@@ -127,9 +127,13 @@ Here `search` and `fetch` are removed from the model-facing tool list and become
 
 ## Tool Search interaction
 
-When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](../tools-advanced.md#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
+Tools marked `defer_loading=True` ([Tool Search](../tools-advanced.md#tool-search)) are callable inside `run_code` before discovery when they match the `tools` selector and their owning capability is active. Saved code can reuse a known tool name in a fresh run. `CodeMode` uses `RunContext.is_tool_callable` for execution candidates and `RunContext.is_tool_available` for the displayed catalog.
 
-That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
+Undisclosed tools stay in the native Tool Search corpus while also being callable in the sandbox. Their signatures and descriptions stay out of `run_code`'s description and dynamic catalog until revealed. Calling one does not discover it or emit an availability delta. The tool keeps its authored `defer_loading=True` throughout.
+
+Tools owned by an inactive deferred capability still require loading that capability first. Every sandbox call goes through the current tool manager's validation, hooks, approval, execution wrappers, and usage accounting. A saved name is not a saved permission.
+
+Discovery grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
 
 - Pass `dynamic_catalog=True` to keep `run_code`'s description static across discoveries. The catalog of sandboxed-tool signatures moves into the agent instructions (as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart]) and newly-discovered tools are announced via [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] instead of by rebuilding the description:
 
