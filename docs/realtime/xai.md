@@ -116,8 +116,8 @@ Without one, or once the policy's reconnects are used up, the session raises a
   discards the unheard audio, cancels the response, and records the reply in history as interrupted
   with `interrupted_at_ms` where playback stopped, as on OpenAI, including a reply that had finished
   generating before the user spoke over it. A plain `interrupt()` only cancels. Either way xAI keeps
-  everything generated up to the cancel, which can be more than the user heard: the model may take the
-  whole reply as heard, and the `SpeechPart` transcript stays whole.
+  everything generated up to the cancel, which can be more than the user heard, so the model may take
+  the whole reply as heard.
 - With turn detection on, xAI commits a spoken turn a few hundred milliseconds after it hears the user
   stop, and starts its reply in between. If the user carries on before the commit, xAI continues the same
   turn and drops that reply without ending it. So
