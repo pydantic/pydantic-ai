@@ -12,7 +12,7 @@ import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -22,6 +22,7 @@ from uuid import uuid4
 import anyio
 import anyio.abc
 from opentelemetry import propagate
+from opentelemetry.trace import Tracer
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent import AbstractAgent
@@ -31,6 +32,8 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.subagents._events import (
+    AgentCreatedEvent,
+    ParentMessage,
     TaskAnswerEvent,
     TaskBackgroundedEvent,
     TaskCancelledEvent,
@@ -61,6 +64,68 @@ RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
     'pydantic_ai_harness.subagents.run_owner', default=None
 )
 """The run ID and owner of the run that opened a `DelegationTasks` of its own, for its task-control `SubAgents`."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class TaskTelemetry:
+    """Records task control's own decisions as zero-duration spans on the delegating run's tracer.
+
+    Core's spans show the tool calls; these show what a listener or a limit decided about them. Text
+    that can quote a prompt, such as a veto reason, a question, or an answer, is attached only when the
+    run's instrumentation includes content.
+    """
+
+    tracer: Tracer
+    include_content: bool
+
+    @classmethod
+    def of(cls, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
+        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content)
+
+    def decision(
+        self,
+        name: str,
+        *,
+        agent_name: str | None,
+        task_id: str | None = None,
+        attributes: Mapping[str, str | float] | None = None,
+        content: Mapping[str, str] | None = None,
+    ) -> None:
+        """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
+        span = self.tracer.start_span(f'sub_agents {name}')
+        if span.is_recording():
+            if agent_name is not None:
+                span.set_attribute('sub_agents.agent_name', agent_name)
+            if task_id is not None:
+                span.set_attribute('sub_agents.task_id', task_id)
+            for key, value in (attributes or {}).items():
+                span.set_attribute(f'sub_agents.{key}', value)
+            if self.include_content:
+                for key, value in (content or {}).items():
+                    span.set_attribute(f'sub_agents.{key}', value)
+        span.end()
+
+    def vetoed(self, event: ParentMessage | AgentCreatedEvent) -> None:
+        """Record that a listener vetoed `event`."""
+        reason = {'veto_reason': event.veto_reason} if event.veto_reason is not None else None
+        if isinstance(event, AgentCreatedEvent):
+            # The model chose this name, so it is content.
+            content = {'agent_name': event.name, **(reason or {})}
+            self.decision('vetoed', agent_name=None, attributes={'event': event.kind}, content=content)
+        else:
+            self.decision(
+                'vetoed',
+                agent_name=event.agent_name,
+                task_id=event.task_id,
+                attributes={'event': event.kind},
+                content=reason,
+            )
+
+    def backgrounded(self, event: TaskBackgroundedEvent) -> None:
+        """Record that a task moved to the background, and why."""
+        self.decision(
+            'task backgrounded', agent_name=event.agent_name, task_id=event.task_id, attributes={'reason': event.reason}
+        )
 
 
 def run_owned(owner: DelegationTasks) -> bool:
@@ -210,10 +275,13 @@ class TaskLink(AbstractCapability[Any], ABC):
 class LocalTaskLink(TaskLink):
     """The link of a task running in the delegating run's process."""
 
-    def __init__(self, *, owner: DelegationTasks, record: DelegationTask, can_ask: bool) -> None:
+    def __init__(
+        self, *, owner: DelegationTasks, record: DelegationTask, can_ask: bool, telemetry: TaskTelemetry
+    ) -> None:
         super().__init__(can_ask=can_ask)
         self.owner = owner
         self.record = record
+        self.telemetry = telemetry
 
     def stopping(self) -> bool:
         return self.owner.stop_requested(self.record.id)
@@ -223,11 +291,13 @@ class LocalTaskLink(TaskLink):
         event = TaskQuestionEvent(
             task_id=record.id, agent_name=record.agent_name, question_id=question_id, question=question
         )
-        answer = await put_question(self.owner, record, event)
+        answer = await put_question(self.owner, record, event, self.telemetry)
         return answer.answer
 
 
-async def put_question(owner: DelegationTasks, record: DelegationTask, event: TaskQuestionEvent) -> TaskAnswerEvent:
+async def put_question(
+    owner: DelegationTasks, record: DelegationTask, event: TaskQuestionEvent, telemetry: TaskTelemetry
+) -> TaskAnswerEvent:
     """Get a task's question answered: by a listener of the delegating run, or else by its model."""
     event = await owner.publish(record, event)
     if event.answer is not None:
@@ -238,12 +308,19 @@ async def put_question(owner: DelegationTasks, record: DelegationTask, event: Ta
             ),
         )
         if not answer.vetoed:
+            telemetry.decision(
+                'question answered',
+                agent_name=record.agent_name,
+                task_id=record.id,
+                content={'question': event.question, 'answer': answer.answer},
+            )
             return answer
+        telemetry.vetoed(answer)
     if record.status == 'running' and not record.background:
         # The delegating model can only answer once the delegation tool call waiting for the task returns.
-        await owner.publish(
-            record, TaskBackgroundedEvent(task_id=record.id, agent_name=record.agent_name, reason='question')
-        )
+        backgrounded = TaskBackgroundedEvent(task_id=record.id, agent_name=record.agent_name, reason='question')
+        await owner.publish(record, backgrounded)
+        telemetry.backgrounded(backgrounded)
         owner.background(record.id)
     text = await owner.ask(record.id, question_id=event.question_id, question=event.question)
     return TaskAnswerEvent(task_id=record.id, agent_name=record.agent_name, question_id=event.question_id, answer=text)
@@ -257,13 +334,14 @@ async def run_remote(
     transport: SubAgentTransport,
     accept_timeout: float | None,
     usage: RunUsage | None,
+    telemetry: TaskTelemetry,
 ) -> str:
     """Send a task to the worker serving its agent, and relay what it sends back until it settles."""
     mailbox = f'task:{record.id}:parent'
     settled: TaskSettledEvent | None = None
     try:
         try:
-            settled = await _relay(owner, record, start, transport, mailbox, accept_timeout)
+            settled = await _relay(owner, record, start, transport, mailbox, accept_timeout, telemetry)
         except asyncio.CancelledError:
             forced = not owner.stop_requested(record.id)
             with anyio.move_on_after(5, shield=True):
@@ -276,6 +354,13 @@ async def run_remote(
             await owner.publish(record, TaskFailedEvent(task_id=record.id, agent_name=record.agent_name, error=error))
             raise
         if settled is None:
+            assert accept_timeout is not None, 'only a timeout ends the wait for a worker'
+            telemetry.decision(
+                'task not accepted',
+                agent_name=record.agent_name,
+                task_id=record.id,
+                attributes={'accept_timeout': accept_timeout},
+            )
             error = (
                 f'No worker picked up the task within {accept_timeout}s, so sub-agent {record.agent_name!r} '
                 'is unavailable. Do the task another way.'
@@ -290,6 +375,7 @@ async def run_remote(
             if settled is None:
                 # The task is ending without its worker's report, so stop it rather than leave it running there.
                 # This is teardown, not a decision listeners could veto.
+                telemetry.decision('remote task stopped', agent_name=record.agent_name, task_id=record.id)
                 try:
                     await transport.send(TaskForceCancelEvent(task_id=record.id, agent_name=record.agent_name))
                 except Exception:
@@ -307,6 +393,7 @@ async def _relay(
     transport: SubAgentTransport,
     mailbox: str,
     accept_timeout: float | None,
+    telemetry: TaskTelemetry,
 ) -> TaskSettledEvent | None:
     """Send the task, then pass on what its worker sends until its report, or `None` if no worker picks it up."""
     propagate.inject(start.trace_context)
@@ -319,7 +406,7 @@ async def _relay(
     async with task_group() as group:
         while not isinstance(message, TaskSettledEvent):
             if isinstance(message, TaskQuestionEvent):
-                group.start_soon(_answer_remote, owner, record, message, transport)
+                group.start_soon(_answer_remote, owner, record, message, transport, telemetry)
             elif isinstance(message, TaskProgressEvent):
                 await owner.publish(record, message, observe=False)
                 await owner.notify(record, message.event)
@@ -331,9 +418,13 @@ async def _relay(
 
 
 async def _answer_remote(
-    owner: DelegationTasks, record: DelegationTask, question: TaskQuestionEvent, transport: SubAgentTransport
+    owner: DelegationTasks,
+    record: DelegationTask,
+    question: TaskQuestionEvent,
+    transport: SubAgentTransport,
+    telemetry: TaskTelemetry,
 ) -> None:
-    await transport.send(await put_question(owner, record, question))
+    await transport.send(await put_question(owner, record, question, telemetry))
 
 
 async def _settle_remote(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Generic
 
@@ -19,7 +19,7 @@ from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group
+from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
     TaskCancelledEvent,
@@ -37,7 +37,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskStartedEvent,
 )
 from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER
-from pydantic_ai_harness.subagents._toolset import SubAgent, delegation_level
+from pydantic_ai_harness.subagents._toolset import delegation_level
 from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
 _STOP_REPORT_SECONDS = 5.0
@@ -135,12 +135,16 @@ class SubAgentWorker(Generic[AgentDepsT]):
     Run `serve` in the process that hosts the agents. The delegating agent's `SubAgents` lists them as
     `RemoteSubAgent`s with the same names, and reaches them through the same transport.
 
-    Of each `SubAgent`, the worker uses the agent and its name. The worker keeps the conversations of
-    tasks, up to `max_conversations`, so a delegating run can resume them.
+    The worker keeps the conversations of tasks, up to `max_conversations`, so a delegating run can
+    resume them.
     """
 
-    agents: Sequence[SubAgent[AgentDepsT]]
-    """The agents this worker serves."""
+    agents: Mapping[str, AbstractAgent[AgentDepsT, object]]
+    """The agents this worker serves, by the name delegating agents reach them by.
+
+    Run controls such as usage limits or timeouts belong to the agent, or to the delegating run's
+    `SubAgents`, which applies its own to the task.
+    """
 
     transport: SubAgentTransport
     """The transport the delegating agents send tasks over."""
@@ -160,18 +164,11 @@ class SubAgentWorker(Generic[AgentDepsT]):
     _histories: dict[str, list[ModelMessage]] = field(
         default_factory=dict[str, list[ModelMessage]], init=False, repr=False
     )
-    _by_name: dict[str, AbstractAgent[AgentDepsT, Any]] = field(
-        default_factory=dict[str, 'AbstractAgent[AgentDepsT, Any]'], init=False, repr=False
-    )
 
     def __post_init__(self) -> None:
-        for sub_agent in self.agents:
-            name = sub_agent.resolved_name
-            if name is None:
-                raise ValueError('Sub-agent has no name: give its `Agent` a `name`, or set `SubAgent(name=...)`.')
-            if name in self._by_name:
-                raise ValueError(f'Duplicate sub-agent name {name!r}.')
-            self._by_name[name] = sub_agent.agent
+        for name in self.agents:
+            if (problem := validate_agent_name(name)) is not None:
+                raise ValueError(problem)
         if self.retries < 0:
             raise ValueError(f'`retries` must be zero or more, got {self.retries}.')
         if self.max_conversations < 0:
@@ -180,10 +177,12 @@ class SubAgentWorker(Generic[AgentDepsT]):
     async def serve(self) -> None:
         """Receive and run tasks for every agent, until cancelled."""
         async with anyio.create_task_group() as group:
-            for name, agent in self._by_name.items():
+            for name, agent in self.agents.items():
                 group.start_soon(self._serve_agent, group, name, agent)
 
-    async def _serve_agent(self, group: anyio.abc.TaskGroup, name: str, agent: AbstractAgent[AgentDepsT, Any]) -> None:
+    async def _serve_agent(
+        self, group: anyio.abc.TaskGroup, name: str, agent: AbstractAgent[AgentDepsT, object]
+    ) -> None:
         while True:
             start = await self.transport.receive(f'agent:{name}')
             if isinstance(start, TaskRequestEvent):
@@ -193,7 +192,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     'Sub-agent worker for %r skipped a %r message, which does not start a task.', name, start.kind
                 )
 
-    async def _run(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent) -> None:
+    async def _run(self, agent: AbstractAgent[AgentDepsT, object], start: TaskRequestEvent) -> None:
         context_token = otel_context.attach(propagate.extract(start.trace_context))
         try:
             await self._run_task(agent, start)
@@ -216,7 +215,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
             while len(self._histories) > self.max_conversations:
                 del self._histories[next(iter(self._histories))]
 
-    async def _run_task(self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent) -> None:
+    async def _run_task(self, agent: AbstractAgent[AgentDepsT, object], start: TaskRequestEvent) -> None:
         link = (_ForwardingWorkerLink if start.forward_events else _WorkerLink)(start=start, transport=self.transport)
         settled: TaskSettledEvent | None = None
         try:
@@ -259,7 +258,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     _logger.exception('Could not release the mailbox of sub-agent task %s.', start.task_id)
 
     async def _attempts(
-        self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent, link: _WorkerLink
+        self, agent: AbstractAgent[AgentDepsT, object], start: TaskRequestEvent, link: _WorkerLink
     ) -> TaskSettledEvent:
         task_id, agent_name = start.task_id, start.agent_name
         history: list[ModelMessage] | None = None

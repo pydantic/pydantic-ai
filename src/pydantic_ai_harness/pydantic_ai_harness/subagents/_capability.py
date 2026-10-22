@@ -676,7 +676,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             return output
         owner = entry[1]
         # The run's own owner, so its top-level tasks are this run's.
-        await owner.wait_children(None)
+        if running := sum(record.parent_id is None and record.status == 'running' for record in owner.records.values()):
+            with ctx.tracer.start_as_current_span(
+                'sub_agents wait for tasks', attributes={'sub_agents.running_tasks': running}
+            ):
+                await owner.wait_children(None)
         owner.queue_reports(conversation_id=ctx.conversation_id or ctx.run_id or '', parent_id=None)
         return output
 
