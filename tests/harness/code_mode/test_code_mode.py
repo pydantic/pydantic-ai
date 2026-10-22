@@ -947,7 +947,7 @@ class TestCodeMode:
         wrapper = CodeModeToolset[object](
             wrapped=_build_function_toolset(add), resource_limits={'max_suspensions': limit}
         )
-        with pytest.raises(UserError, match='`max_suspensions` must be at least 1'):
+        with pytest.raises(UserError, match='`max_suspensions` must be an integer of at least 1'):
             await wrapper.__aenter__()
 
     async def test_duration_exhaustion_resets_the_session(self) -> None:
@@ -1373,9 +1373,11 @@ class TestCodeMode:
         assert toolset.resource_limits is None
 
     async def test_resource_limits_accept_overrides_and_unlimited(self) -> None:
-        """Both an explicit cap and `'unlimited'` reach the sandbox session."""
+        """An explicit cap, an explicit `None`, and `'unlimited'` all reach the sandbox session."""
         options: list[CodeModeResourceLimits | Literal['unlimited']] = [
             {'max_duration_secs': 5, 'max_memory': 64 * 1024 * 1024},
+            # An explicit `None` reaches Monty as no limit, as it did before limits were checked.
+            {'max_duration_secs': None, 'max_memory': None},  # pyright: ignore[reportAssignmentType]
             'unlimited',
         ]
         for limits in options:
@@ -1405,9 +1407,15 @@ class TestCodeMode:
             ({'max_duration_secs': -1}, '`max_duration_secs` must be a positive number of seconds below'),
             ({'max_duration_secs': float('nan')}, '`max_duration_secs` must be a positive number of seconds below'),
             ({'max_duration_secs': float('inf')}, '`max_duration_secs` must be a positive number of seconds below'),
-            ({'max_memory': 0}, '`max_memory` must be a positive number of bytes below'),
-            ({'max_memory': 2**64}, '`max_memory` must be a positive number of bytes below'),
-            ({'max_suspensions': 2**64}, '`max_suspensions` must be at least 1 and below'),
+            ({'max_memory': 0}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_memory': 2**64}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_suspensions': 2**64}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_suspensions': 10.0}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_suspensions': True}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_suspensions': None}, '`max_suspensions` must be an integer of at least 1 and below'),
+            ({'max_memory': 256.0}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_memory': True}, '`max_memory` must be a positive integer number of bytes below'),
+            ({'max_duration_secs': True}, '`max_duration_secs` must be a positive number of seconds below'),
         ],
     )
     async def test_out_of_range_resource_limits_are_rejected_on_enter(
