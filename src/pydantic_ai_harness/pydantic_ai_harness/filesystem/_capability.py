@@ -11,7 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
-from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness._workspace import require_workspace, supports_commands
 from pydantic_ai_harness.filesystem._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
@@ -174,7 +174,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str | None]:
-        """Tell the model which folders are mounted storage, and whether shell commands see them."""
+        """Tell the model which folders are mounted filesystems, and whether shell commands see them."""
         return _mount_instructions
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
@@ -206,10 +206,19 @@ class FileSystem(AbstractCapability[AgentDepsT]):
 
 def _mount_instructions(ctx: RunContext[Any]) -> str | None:
     workspace = ctx.workspace
+    # Without a shell there is nothing for a mount to be hidden from.
+    shell = supports_commands(workspace)
     lines = [
-        f'- `{mount.path}` ({"read-only" if mount.read_only or workspace.read_only else "read-write"}; '
-        f'{"shell commands see it too" if workspace.shell_can_see(mount) else "file tools only, shell commands do not see it"})'
+        f'- `{mount.path}` ({"read-only" if mount.read_only or workspace.read_only else "read-write"}'
+        + (
+            ''
+            if not shell
+            else '; shell commands see it too'
+            if mount.shell
+            else '; file tools only, shell commands do not see it'
+        )
+        + ')'
         + (f': {mount.description}' if mount.description else '')
         for mount in workspace.mounts
     ]
-    return '\n'.join(['Mounted storage in this workspace:', *lines]) if lines else None
+    return '\n'.join(['Mounted folders in this workspace:', *lines]) if lines else None

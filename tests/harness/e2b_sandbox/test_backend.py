@@ -40,7 +40,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.bucket import Bucket
+from pydantic_ai_harness.cloud_storage import S3Filesystem
 from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle  # pyright: ignore[reportPrivateUsage]
@@ -1139,12 +1139,15 @@ _KEYS: Any = {
 class TestMounts:
     def test_buckets_with_expiring_keys_can_be_mounted(self, fake_e2b: FakeE2B) -> None:
         backend = E2BSandboxBackend()
-        assert backend.can_mount(Mount('data', Bucket('s3://acme/data', credentials=_KEYS)))
-        assert not backend.can_mount(Mount('data', Bucket('s3://acme/data')))
+        backend.check_mount(Mount('data', S3Filesystem('s3://acme/data', credentials=_KEYS), shell=True))
+        with pytest.raises(MountError, match='finds its keys in the environment'):
+            backend.check_mount(Mount('data', S3Filesystem('s3://acme/data'), shell=True))
 
     async def test_the_mounter_runs_as_root_with_the_keys_on_stdin(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.responder = lambda command, timeout: ('{"recovered": []}\n', '', 0)
-        await E2BSandboxBackend().ensure_mounts([Mount('data', Bucket('s3://acme/data', credentials=_KEYS))], '/w')
+        await E2BSandboxBackend().ensure_mounts(
+            [Mount('data', S3Filesystem('s3://acme/data', credentials=_KEYS), shell=True)], '/w'
+        )
         commands = fake_e2b.sandboxes[0].commands
         (call,) = commands.calls
         (handle,) = commands.handles

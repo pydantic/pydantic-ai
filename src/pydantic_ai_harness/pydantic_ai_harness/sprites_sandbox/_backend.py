@@ -385,7 +385,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     caller-supplied Sprite must already have it. File writes go through the Sprite's filesystem
     API; the other file operations run as shell commands.
 
-    Shell commands see [mounted](https://pydantic.dev/docs/ai/harness/bucket/) buckets; the first mount installs
+    Shell commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `shell=True`; the first such mount installs
     `fuse3` and rclone in the Sprite if it lacks them.
     """
 
@@ -743,8 +743,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         await _check_sprite_deleted(sandbox, deadline=deadline.deadline)
         return result
 
-    def can_mount(self, mount: Mount) -> bool:
-        return _mounts.can_mount(mount)
+    def check_mount(self, mount: Mount) -> None:
+        _mounts.check_mount(mount)
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
         async with self._operation():

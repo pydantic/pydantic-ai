@@ -2,7 +2,7 @@
 
 The bucket is served from inside the sandbox by `rclone serve s3`, so the check needs no cloud bucket or keys: it
 proves what differs per sandbox (FUSE, running as root with stdin, the agent's user) and leaves the storage side to
-`integration_tests/bucket`.
+`integration_tests/cloud_storage`.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import anyio
 import pytest
 
 from pydantic_ai.workspaces import Mount, SupportsCommands, SupportsMounts, Workspace, WorkspaceBackend
-from pydantic_ai_harness.bucket import Bucket
+from pydantic_ai_harness.cloud_storage import S3Filesystem
 
 _SERVER = '/var/tmp/pydantic-ai-s3'
 """What `rclone serve s3` serves: each folder in it is a bucket."""
@@ -61,11 +61,9 @@ async def check_bucket_mounts(backend: MountingBackend) -> None:
         while (await backend.run(['python3', '-c', _LISTENING])).exit_code != 0:
             await anyio.sleep(0.5)
 
-    mount = Mount(
-        'data', Bucket('s3://live/data', endpoint='http://127.0.0.1:8333', region='us-east-1', credentials=_keys)
-    )
+    data = S3Filesystem('s3://live/data', endpoint='http://127.0.0.1:8333', region='us-east-1', credentials=_keys)
+    mount = Mount('data', data, shell=True)
     workspace = Workspace(backend, mounts=[mount])
-    assert workspace.shell_can_see(mount)
 
     await workspace.write_text('data/notes/a.md', 'from file tools')
     shell = await workspace.run(

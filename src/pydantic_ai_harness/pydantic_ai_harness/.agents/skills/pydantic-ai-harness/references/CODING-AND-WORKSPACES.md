@@ -392,17 +392,20 @@ Python up to 3.14.
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
 
-## Buckets as folders
+## Cloud storage
 
-`Mount(path, storage, *, read_only=False, description=None, shell=None)` (`pydantic_ai.workspaces`) shows storage
-as a folder; `LocalWorkspace` and every sandbox capability take `mounts=[...]`, or a function of the run context
-that returns them (one folder per customer from `deps`). `Bucket(url, *, credentials=None, endpoint=None,
-region=None)` (`pydantic_ai_harness.bucket`, extra `bucket`) is an S3, R2/MinIO (`endpoint=`), GCS or Azure bucket;
-`BucketWorkspace(bucket)` makes one the whole workspace.
+`S3Filesystem(url, *, credentials=None, endpoint=None, region=None)`, `GCSFilesystem(url, ...)` and
+`AzureFilesystem(url, *, account=None, ...)` (`pydantic_ai_harness.cloud_storage`, extra `cloud-storage`) are
+workspace backends with files and no shell. Pass one as `agent.run(..., workspace=s3)` to make the bucket the whole
+workspace. `Mount(path, filesystem, *, read_only=False, description=None, shell=False)` (`pydantic_ai.workspaces`)
+shows one as a folder; `LocalWorkspace` and every sandbox capability take `mounts=[...]`, or a function of the run
+context that returns them (one folder per customer from `deps`).
 
-- File tools always reach a mount; `FileSystem` tells the model which folders are mounts.
-- Commands see S3 and Azure mounts on E2B, Sprites, Modal (`runtime='vm'`) and Docker with FUSE in `docker_args`,
-  only when the keys expire (`expires_at`, or a function returning them); see the Bucket docs page.
+- File tools always reach a mount; `FileSystem` tells the model which folders are mounts and whether commands see them.
+- `shell=True` makes the sandbox mount it so commands see it too: S3 and Azure, on E2B, Sprites, Modal
+  (`runtime='vm'`) and Docker with FUSE in `docker_args`, with keys that expire (`expires_at`, or a function
+  returning them). Anything else is refused when the run starts, saying why; see the Cloud Storage docs page.
+- Durable runs rebuild the workspace from capabilities, so mount the bucket on a sandbox or `LocalWorkspace` there.
 
 ## Remote hosts and bubblewrap
 

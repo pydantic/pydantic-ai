@@ -32,7 +32,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.bucket import Bucket
+from pydantic_ai_harness.cloud_storage import S3Filesystem
 from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxBackend, _backend
 
 from .fake_modal import FakeImage, FakeModal, FileInfo
@@ -1260,18 +1260,19 @@ def _bucket_mount() -> Mount:
         'token': 't',
         'expires_at': datetime.now(UTC) + timedelta(hours=1),
     }
-    return Mount('data', Bucket('s3://acme/data', credentials=keys))
+    return Mount('data', S3Filesystem('s3://acme/data', credentials=keys), shell=True)
 
 
 async def test_only_the_vm_runtime_mounts_buckets(fake_modal: FakeModal) -> None:
     mount = _bucket_mount()
-    assert ModalSandboxBackend(runtime='vm').can_mount(mount)
-    assert not ModalSandboxBackend().can_mount(mount)
-    assert not ModalSandboxBackend(runtime='gvisor').can_mount(mount)
+    ModalSandboxBackend(runtime='vm').check_mount(mount)
+    for backend in (ModalSandboxBackend(), ModalSandboxBackend(runtime='gvisor')):
+        with pytest.raises(MountError, match="only with `runtime='vm'`"):
+            backend.check_mount(mount)
 
     await started(runtime='vm')
     assert fake_modal.create_kwargs[-1]['runtime'] == 'vm'
-    assert ModalSandbox(runtime='vm').backend(WorkspaceRef(provider='modal', id='sb-vm')).can_mount(mount)
+    ModalSandbox(runtime='vm').backend(WorkspaceRef(provider='modal', id='sb-vm')).check_mount(mount)
 
 
 async def test_mounting_sends_the_request_on_stdin_as_root(fake_modal: FakeModal) -> None:
@@ -1279,7 +1280,7 @@ async def test_mounting_sends_the_request_on_stdin_as_root(fake_modal: FakeModal
     backend = ModalSandboxBackend(runtime='vm')
     keys: Any = {'access_key_id': 'a', 'secret_access_key': 'secret', 'token': None}
     keys['expires_at'] = datetime.now(UTC) + timedelta(minutes=5)
-    await backend.ensure_mounts([Mount('data', Bucket('s3://acme/data', credentials=keys))], '/root')
+    await backend.ensure_mounts([Mount('data', S3Filesystem('s3://acme/data', credentials=keys), shell=True)], '/root')
 
     call = fake_modal.sandboxes[0].exec_calls[-1]
     # No user switch: Modal runs commands as the image's user, root on the default image.

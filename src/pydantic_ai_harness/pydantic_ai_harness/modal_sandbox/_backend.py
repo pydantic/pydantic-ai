@@ -37,6 +37,7 @@ from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
     Mount,
+    MountError,
     SupportsCommands,
     SupportsFilesystem,
     SupportsMounts,
@@ -234,7 +235,7 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             `/root` on the default image, otherwise the image's own working directory.
         env: Environment variables every command gets; a command's own `env` is layered on top.
 
-    Shell commands see [mounted](https://pydantic.dev/docs/ai/harness/bucket/) buckets when the sandbox runs with
+    Shell commands see a [mount](https://pydantic.dev/docs/ai/harness/cloud-storage/) with `shell=True` when the sandbox runs with
     `runtime='vm'`: Modal's default runtime refuses FUSE.
     """
 
@@ -765,9 +766,11 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             )
         return CommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
-    def can_mount(self, mount: Mount) -> bool:
+    def check_mount(self, mount: Mount) -> None:
         # Modal's default runtime (gVisor) refuses FUSE; its VM runtime allows it.
-        return self._runtime == 'vm' and _mounts.can_mount(mount)
+        if self._runtime != 'vm':
+            raise MountError("ModalSandbox can mount a filesystem for shell commands only with `runtime='vm'`.")
+        _mounts.check_mount(mount)
 
     async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
         await self.get_sandbox()

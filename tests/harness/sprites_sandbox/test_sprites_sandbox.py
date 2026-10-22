@@ -40,6 +40,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
     Mount,
+    MountError,
     SupportsCommands,
     Workspace,
     WorkspaceError,
@@ -48,11 +49,11 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness.bucket import Bucket
+from pydantic_ai_harness.cloud_storage import S3Filesystem
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend, _backend
 
-from ...workspace_fakes import MemoryStorage
+from ...workspace_fakes import MemoryFilesystem
 from .conftest import live_token
 from .fake_sprites import SpriteTransport
 
@@ -956,11 +957,12 @@ class TestSpritesSandbox:
             'token': 't',
             'expires_at': datetime.now(UTC) + timedelta(hours=1),
         }
-        mount = Mount('data', Bucket('s3://acme/data', credentials=keys))
+        mount = Mount('data', S3Filesystem('s3://acme/data', credentials=keys), shell=True)
         backend = SpritesSandboxBackend()
 
-        assert backend.can_mount(mount)
-        assert not backend.can_mount(Mount('data', MemoryStorage()))
+        backend.check_mount(mount)
+        with pytest.raises(MountError, match='MemoryFilesystem cannot be mounted'):
+            backend.check_mount(Mount('data', MemoryFilesystem(), shell=True))
         await backend.ensure_mounts([mount], '/work')
 
         args = (bin_dir / 'sudo.args').read_bytes().split(b'\0')[:-1]

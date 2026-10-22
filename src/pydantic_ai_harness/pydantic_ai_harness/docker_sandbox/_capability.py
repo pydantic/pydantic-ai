@@ -51,7 +51,7 @@ class DockerSandbox(AbstractCapability[AgentDepsT]):
     """Environment variables every command gets, also in an attached container; nothing is read from the host."""
 
     mounts: Mounts = ()
-    """Storage to show as folders in the sandbox, such as a [`Bucket`][pydantic_ai_harness.bucket.Bucket]; a function of the run can pick them per run."""
+    """Filesystems to show as folders in the sandbox, such as an [`S3Filesystem`][pydantic_ai_harness.cloud_storage.S3Filesystem]; a function of the run can pick them per run."""
 
     allow_internet_access: bool = True
     """Whether a new container gets outbound network access, through Docker's default bridge: the internet, but also this machine's local network and services. `False` runs it with `--network none`."""

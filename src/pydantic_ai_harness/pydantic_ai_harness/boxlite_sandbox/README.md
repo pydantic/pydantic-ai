@@ -246,7 +246,7 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 | `allowed_hosts` | With `allow_internet_access`, the only hostnames, IP addresses and CIDR ranges a new box can connect to. Default: `None`, any. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the box's own (`/` on Alpine). |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the box, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
-| `mounts` | Storage to show as folders, such as a [`Bucket`](https://pydantic.dev/docs/ai/harness/bucket/), or a function of the run that picks them, for example one folder per customer. Default: none. |
+| `mounts` | [Filesystems to show as folders](https://pydantic.dev/docs/ai/harness/cloud-storage/), such as an `S3Filesystem`, or a function of the run that picks them, for example one folder per customer. File tools reach them. Default: none. |
 | `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. Kept out of the capability's `repr`. |
 
 ## Platforms
