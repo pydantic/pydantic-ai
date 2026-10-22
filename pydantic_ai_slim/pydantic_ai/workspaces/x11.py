@@ -152,7 +152,8 @@ class X11Computer:
     """Controls an X display with `xdotool` and captures it with `scrot`, through a backend's commands.
 
     The X server must already be running: starting it is the environment's job (for example an image that runs
-    `Xvfb :1`). Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the environment. A backend with a desktop
+    `Xvfb :1`). Needs `xdotool`, `scrot`, `base64`, and `mktemp` in the environment. Text outside ASCII can lose
+    characters: `xdotool` types it by remapping keys on the fly. A backend with a desktop
     implements [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] by delegating to an instance:
 
     ```python {test="skip" lint="skip"}
@@ -185,12 +186,15 @@ class X11Computer:
         keysyms = [_keysym(key) for key in hold]
         keyup = ['keyup', *reversed(keysyms)] if keysyms else []
         try:
-            await self._run(['xdotool', *(['keydown', *keysyms] if keysyms else []), *args, *keyup])
+            result = await self._run(['xdotool', *(['keydown', *keysyms] if keysyms else []), *args, *keyup])
         except BaseException:
             if release or keyup:
                 with anyio.move_on_after(_RELEASE_TIMEOUT, shield=True), suppress(Exception):
                     await self._run(['xdotool', *release, *keyup])
             raise
+        # xdotool skips a key name the display doesn't know and still succeeds.
+        if 'No such key name' in result.stderr:
+            raise UnsupportedComputerActionError(f'X11Computer cannot press that key: {result.stderr.strip()}')
 
     async def display_size(self) -> tuple[int, int]:
         output = (await self._run(['xdotool', 'getdisplaygeometry'])).stdout.split()

@@ -218,7 +218,8 @@ async def test_a_pixel_model_is_told_to_use_pixels() -> None:
 async def test_require_approval_lets_looking_through_and_defers_acting() -> None:
     provider = InMemoryProvider()
     agent = Agent(
-        _scripted([{'type': 'screenshot'}], [{'type': 'click', 'x': 1, 'y': 1}]),
+        # A batch that looks and then acts is deferred whole.
+        _scripted([{'type': 'screenshot'}], [{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}]),
         capabilities=[provider.capability(), ComputerUse(require_approval=True, settle_seconds=0)],
         output_type=[str, DeferredToolRequests],
     )
@@ -226,7 +227,7 @@ async def test_require_approval_lets_looking_through_and_defers_acting() -> None
 
     assert isinstance(result.output, DeferredToolRequests)
     assert [call.args_as_dict() for call in result.output.approvals] == [
-        {'actions': [{'type': 'click', 'x': 1, 'y': 1}]}
+        {'actions': [{'type': 'screenshot'}, {'type': 'click', 'x': 1, 'y': 1}]}
     ]
     (looked,) = _returns(result.all_messages())
     assert looked.metadata == {'performed': 1}
@@ -234,29 +235,35 @@ async def test_require_approval_lets_looking_through_and_defers_acting() -> None
 
 
 async def test_only_the_newest_screenshots_are_sent_and_history_keeps_them_all() -> None:
-    sent_images: list[int] = []
+    last_request: list[str] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        parts = [part for message in messages for part in message.parts]
-        returns = [part for part in parts if isinstance(part, ToolReturnPart)]
-        sent_images.append(sum(isinstance(item, BinaryContent) for part in returns for item in part.content_items()))
-        if sum(isinstance(part, ToolCallPart) for part in parts) < 4:
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        # What each tool return carries in this request: an image, or the note that replaced it.
+        last_request[:] = [
+            'image' if any(isinstance(item, BinaryContent) for item in part.content_items()) else 'note'
+            for part in returns
+        ]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart('photo', {})])
+        if len(returns) < 5:
             return ModelResponse(parts=[ToolCallPart('computer', {'actions': [{'type': 'screenshot'}]})])
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(
         FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=2)]
     )
-    result = await agent.run('Look four times.')
-    assert sent_images == [0, 1, 2, 2, 2]
 
-    sent_images.clear()
-    every = Agent(
-        FunctionModel(respond), capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=None)]
-    )
-    await every.run('Look four times.')
-    assert sent_images == [0, 1, 2, 3, 4]
-    assert [part.content_items()[1] for part in _returns(result.all_messages())] == [SCREENSHOT] * 4
+    @agent.tool_plain
+    def photo() -> BinaryImage:
+        return SCREENSHOT
+
+    result = await agent.run('Take a photo, then look four times.')
+
+    # Another tool's image stays; of the four screenshots, only the newest two are sent.
+    assert last_request == ['image', 'note', 'note', 'image', 'image']
+    computer_returns = [part for part in _returns(result.all_messages()) if part.tool_name == 'computer']
+    assert [part.content_items()[1] for part in computer_returns] == [SCREENSHOT] * 4
 
 
 async def test_unknown_fields_are_ignored_and_a_batch_is_capped() -> None:
