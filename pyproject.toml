@@ -361,6 +361,8 @@ include = [
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
+    ".github/scripts/review_gates/**/*.py",
+    ".github/scripts/test_review_gates.py",
 ]
 
 [tool.ruff.lint]
@@ -436,6 +438,7 @@ quote-style = "single"
 ".github/scripts/test_shard_durations.py" = ["D"]
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
+".github/scripts/test_review_gates.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]

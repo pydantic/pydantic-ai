@@ -1,0 +1,62 @@
+name: Review Gates
+
+# Advisory model gates that judge a pull request once `CI` has passed on its head, each reported as
+# its own check run that concludes `success`, or `neutral` when it has anything to report. The logic,
+# and its tests, live in `.github/scripts/review_gates/`.
+#
+# `workflow_run` runs the default branch's copy of this workflow with repository secrets, fork PRs
+# included, so a PR that changes it cannot exercise its own change. That privilege is why this job
+# never checks out, installs, imports or runs PR code and never reads a PR-produced artifact: the
+# checkout is the workflow's own commit, and the script reads the PR as data through the API. No PR
+# value is expanded inside `run:`; each reaches the script through `env:`.
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- workflow_run is needed for the decision-model key on fork PRs;
+  # nothing here checks out or executes PR code, and PR content is only ever read as data.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  # One run per PR branch: a newer head's run replaces an older one, whose result would be skipped anyway.
+  group: review-gates-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  review-gates:
+    name: Review gates
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Posts one check run per gate.
+      checks: write
+      # Reads the diff and the head and base files through the contents and compare APIs.
+      contents: read
+      pull-requests: read
+      # Reads the issues the PR body says it closes.
+      issues: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+
+      # `--frozen` installs the default branch's own lock; `pydantic-ai-slim` is this checkout's.
+      - name: Run the review gates
+        env:
+          PYTHONPATH: .github/scripts
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }} # zizmor: ignore[secrets-outside-env] -- the review-gates Environment is not created yet
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_WRITE_TOKEN }} # zizmor: ignore[secrets-outside-env] -- as above
+        run: uv run --frozen --no-dev --package pydantic-ai-slim --extra openai --extra logfire python -m review_gates run

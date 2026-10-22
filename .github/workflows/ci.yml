@@ -277,6 +277,7 @@ jobs:
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_shard_durations.py
           .github/scripts/test_ci_matrix.py
+          .github/scripts/test_review_gates.py
           scripts/test_gather_pydantic_ai_review_context.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong

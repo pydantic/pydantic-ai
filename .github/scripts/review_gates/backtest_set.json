@@ -1,0 +1,359 @@
+{
+  "window": [
+    "2026-09-21",
+    "2026-10-21"
+  ],
+  "findings": [
+    {
+      "idx": 3,
+      "pr": 8618,
+      "head": "e6737c78531d548ef77709db856d3550e893c3d2",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/8618#discussion_r4072194495",
+      "path": "pydantic_ai_slim/pydantic_ai/providers/_github_copilot_oauth.py",
+      "line": 81,
+      "summary": "OAuth deadline anchored before the request"
+    },
+    {
+      "idx": 5,
+      "pr": 10265,
+      "head": "dd8ee2c9536c477ca21d0e0a32d2e3fba43ceaa1",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/10265#discussion_r4276752485",
+      "path": "src/pydantic_clai2/web-ui/src/components/ToolCard.tsx",
+      "line": 66,
+      "summary": "`glob(` in the regex with no `summarize` case"
+    },
+    {
+      "idx": 7,
+      "pr": 7662,
+      "head": "b26abe8144a2dde814d8f8b5c7b71c2ad63258bb",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/7662#discussion_r4321262954",
+      "path": ".agents/skills/refresh-issue-brief/SKILL.md",
+      "line": 98,
+      "summary": "issue text double-quoted in a shell recipe"
+    },
+    {
+      "idx": 11,
+      "pr": 10265,
+      "head": "77b5b8427a80b4cfcf0273e96e2ed92e78933ddc",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/10265#discussion_r4276322743",
+      "path": "src/pydantic_clai2/web-ui/src/App.tsx",
+      "line": 211,
+      "summary": "empty preview renders a blank pane"
+    },
+    {
+      "idx": 12,
+      "pr": 8583,
+      "head": "f9a3207560541aa92282f2e5482ca19f8e850537",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/8583#discussion_r4066168443",
+      "path": "pydantic_evals/pydantic_evals/evaluators/common.py",
+      "line": 322,
+      "summary": "Jev-only cap set in a constant every judge uses"
+    },
+    {
+      "idx": 20,
+      "pr": 8956,
+      "head": "a4b54ff40e7900d23f09802907d1cb8f8f4d636f",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/8956#discussion_r4126493658",
+      "path": "pydantic_ai_slim/pydantic_ai/workspaces/bubblewrap.py",
+      "line": 70,
+      "summary": "SSH backend treats an empty argv as success"
+    },
+    {
+      "idx": 21,
+      "pr": 8852,
+      "head": "2d98cbcae150163826a2d224ae7b768ee1ce9883",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/8852#discussion_r4137457398",
+      "path": "tests/evals/test_dataset.py",
+      "line": 1569,
+      "summary": "NaN diff styled as an improvement"
+    },
+    {
+      "idx": 22,
+      "pr": 10263,
+      "head": "34e2cfe16c684dbf58513b85df13623d8ed0043f",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/10263#discussion_r4278295564",
+      "path": "src/pydantic_clai2/web-ui/src/App.tsx",
+      "line": 174,
+      "summary": "\"Continue here\" swallows a rejection"
+    },
+    {
+      "idx": 23,
+      "pr": 10265,
+      "head": "dd8ee2c9536c477ca21d0e0a32d2e3fba43ceaa1",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/10265#discussion_r4276752506",
+      "path": "src/pydantic_clai2/web-ui/src/components/ToolCard.tsx",
+      "line": 27,
+      "summary": "regex matches calls inside comments"
+    },
+    {
+      "idx": 25,
+      "pr": 8782,
+      "head": "648703192063d2f9e730d7144ba99b4d2b201b7c",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/8782#discussion_r4135638066",
+      "path": "pydantic_ai_slim/pydantic_ai/models/test.py",
+      "line": 272,
+      "summary": "suffixed ids collide with a tool name"
+    },
+    {
+      "idx": 31,
+      "pr": 9462,
+      "head": "40cd30682aaf46714b50c2765122f949b41b305d",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/9462#discussion_r4145498865",
+      "path": "src/pydantic_clai2/pydantic_clai2/runtime/worktrees.py",
+      "line": 31,
+      "summary": "`Path.resolve()` raises on a symlink loop (Python 3.12 and older)"
+    },
+    {
+      "idx": 37,
+      "pr": 9295,
+      "head": "0c5b3e661f37bbf7172de7d25c56f17ad7bf3120",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/9295#discussion_r4136524382",
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/openai_live.py",
+      "line": 561,
+      "summary": "a second start orphans the pump task"
+    },
+    {
+      "idx": 40,
+      "pr": 10827,
+      "head": "d4b554abd06904af264ec68731aa6185bcabc671",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/10827#discussion_r4333572934",
+      "path": "src/pydantic_ai_harness/pydantic_ai_harness/browser_use/_toolset.py",
+      "line": 289,
+      "summary": "`quote_plus` raises on a lone surrogate"
+    },
+    {
+      "idx": 41,
+      "pr": 9802,
+      "head": "5b3415770e9d35c2a0843b22e343302cf3c33e90",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/9802#discussion_r4181557299",
+      "path": "docs/harness/skills.md",
+      "line": 285,
+      "summary": "docs say `$ARGUMENTS[0]` is unchanged, but `str.replace` rewrites it"
+    },
+    {
+      "idx": 43,
+      "pr": 10179,
+      "head": "d96e0261543fda7e4e04600f8a0f1b9f3b1023f0",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/10179#discussion_r4266783716",
+      "path": "pydantic_ai_slim/pydantic_ai/mcp.py",
+      "line": 1593,
+      "summary": "hook guard checks the result, not the args"
+    },
+    {
+      "idx": 46,
+      "pr": 8586,
+      "head": "6399692690d78ca8969f6cc096ab40e0285a332a",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/8586#discussion_r4077245032",
+      "path": "pydantic_ai_slim/pydantic_ai/output.py",
+      "line": 709,
+      "summary": "`bool` guard admits `Literal[True]`"
+    },
+    {
+      "idx": 56,
+      "pr": 9046,
+      "head": "e16b9961ae12708d4ce467a38b2418cd74f3a222",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/9046#discussion_r4129652248",
+      "path": "src/pydantic_ai_harness/pydantic_ai_harness/model_router/_capability.py",
+      "line": 167,
+      "summary": "`UserError` path skips documented attributes"
+    },
+    {
+      "idx": 57,
+      "pr": 9070,
+      "head": "de80d4dba65ac5d16f7cda8f4c3e5e8673a8f250",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/9070#discussion_r4130683383",
+      "path": "pydantic_ai_slim/pydantic_ai/realtime/xai.py",
+      "line": 370,
+      "summary": "flag not reset on reconnect"
+    },
+    {
+      "idx": 61,
+      "pr": 10265,
+      "head": "77b5b8427a80b4cfcf0273e96e2ed92e78933ddc",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/10265#discussion_r4276322712",
+      "path": "src/pydantic_clai2/web-ui/src/App.tsx",
+      "line": 195,
+      "summary": "composer remounts and loses focus"
+    },
+    {
+      "idx": 62,
+      "pr": 7662,
+      "head": "b26abe8144a2dde814d8f8b5c7b71c2ad63258bb",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/7662#discussion_r4321262982",
+      "path": ".agents/skills/file-followup-issue/SKILL.md",
+      "line": 57,
+      "summary": "a later step skips the earlier step's quoting"
+    },
+    {
+      "idx": 63,
+      "pr": 9066,
+      "head": "5fa257c4b53112186ae32579adfc7a76adb7b791",
+      "comment": "https://github.com/pydantic/pydantic-ai/pull/9066#discussion_r4130014828",
+      "path": "src/pydantic_ai_harness/pydantic_ai_harness/logfire/_managed_prompt.py",
+      "line": 86,
+      "summary": "undeclared keyword-only break"
+    }
+  ],
+  "clean": [
+    {
+      "pr": 7945,
+      "head": "1f9964567ced16eafe831296e2fc03307567e071"
+    },
+    {
+      "pr": 8536,
+      "head": "fffa1e3801b6dd21ff8913170aa4f6b728a9c2d0"
+    },
+    {
+      "pr": 8595,
+      "head": "7910283f200afc2459a5af61d116755f547de371"
+    },
+    {
+      "pr": 8611,
+      "head": "469fc4baa96d05c3585a5e2a68221f475001cb22"
+    },
+    {
+      "pr": 8641,
+      "head": "3ddc4c33d31468f59be4aa0ae590d40612c5ac39"
+    },
+    {
+      "pr": 8658,
+      "head": "c2a796e8df6abd91d3aac99fb15793690940ff4e"
+    },
+    {
+      "pr": 8761,
+      "head": "943fb36f4c338170ccf5f37f8b0f28625ce1da45"
+    },
+    {
+      "pr": 8783,
+      "head": "5197ce86e0048099c86116ce9aa0fe3a0f158caf"
+    },
+    {
+      "pr": 8802,
+      "head": "f0e59e4fa73bdcf4730fac29a42670c72deb3ff8"
+    },
+    {
+      "pr": 8872,
+      "head": "43bff1b19de6b3ae3ffb6aec4dcb3b66c60c9aea"
+    },
+    {
+      "pr": 8909,
+      "head": "f6c21ccbc4dd1185b9926c96416f05a4ee255b1e"
+    },
+    {
+      "pr": 9072,
+      "head": "dc39ca3a7827f95ceedbe08b81d361495898ddc4"
+    },
+    {
+      "pr": 9321,
+      "head": "e35a817c701b22d06f2ba5e762453ab3041a226f"
+    },
+    {
+      "pr": 9393,
+      "head": "5d77ec050e92f144647dee8d9eb007a73d2dd966"
+    },
+    {
+      "pr": 9401,
+      "head": "78fca51fe7e158eceaf225d290b6cf03a81efc36"
+    },
+    {
+      "pr": 9421,
+      "head": "0ae54b97b28fdd510a3bb1a071d08d002c6b44aa"
+    },
+    {
+      "pr": 9436,
+      "head": "2b996e0873f0ba26d1659d698a234e7595db5cb8"
+    },
+    {
+      "pr": 9478,
+      "head": "9118150757b396a6a6512dc35dc8027e9c816fe8"
+    },
+    {
+      "pr": 9592,
+      "head": "77d3d8e38fd278088468f2e4b3bcb79cf89e9169"
+    },
+    {
+      "pr": 9728,
+      "head": "4d5c08e82e0e2689e2f540c8ab8ce68a37f55955"
+    },
+    {
+      "pr": 9756,
+      "head": "9ca1fc25b0ba354e4ffaf7af27a65058d56dab28"
+    },
+    {
+      "pr": 9757,
+      "head": "8ea91bee86ea70daf0129b72b446496267c0e298"
+    },
+    {
+      "pr": 9782,
+      "head": "8d91c9b7f1bf4bfb0b3d7ea762698a9a25299c26"
+    },
+    {
+      "pr": 9833,
+      "head": "6231f08245fb71ec57de2b2b5497dc4c67e37bb7"
+    },
+    {
+      "pr": 9834,
+      "head": "1813face4f0d1e01968008491c124adf3835db9a"
+    },
+    {
+      "pr": 9968,
+      "head": "b44314b07c5a6ab8954b47c885038442f16bf528"
+    },
+    {
+      "pr": 10073,
+      "head": "95d53976af1befb871e7332056072f5c3c00f5b8"
+    },
+    {
+      "pr": 10134,
+      "head": "a12871cd0466b114b3ec965a860b0db7e45beaaa"
+    },
+    {
+      "pr": 10136,
+      "head": "7d863458149ada77fef88d5566304191fd45f07e"
+    },
+    {
+      "pr": 10152,
+      "head": "36ffa44290d8889ab4b294f8261b4f0538d91445"
+    },
+    {
+      "pr": 10175,
+      "head": "c961037cfe731e94ab4f77bfcdf05b91e939fd90"
+    },
+    {
+      "pr": 10207,
+      "head": "9013635022b160282efa1804c0b9f0196af273ce"
+    },
+    {
+      "pr": 10246,
+      "head": "c2147cc1d96d693ac2904fc67ef57b5266a2e178"
+    },
+    {
+      "pr": 10356,
+      "head": "1145fd4496fee85dfa444f179a6b6391f5ee8b86"
+    },
+    {
+      "pr": 10370,
+      "head": "4c9456840705d6dd706e6cfc594beba6008105e2"
+    },
+    {
+      "pr": 10380,
+      "head": "74c2db1dbf778771d122b137b631d23c68a7177e"
+    },
+    {
+      "pr": 10687,
+      "head": "22b4268112ac2b43ccdaac2f4f10794f5f87f801"
+    },
+    {
+      "pr": 10691,
+      "head": "fbbac91feff34488cb805cd76f418e9ea51f791e"
+    },
+    {
+      "pr": 10709,
+      "head": "9223dfbb4ca115d19a9dbb96a911c9fb6dfce4e6"
+    },
+    {
+      "pr": 10794,
+      "head": "6ab8eae28515a10701481ba551baa9065715a1df"
+    }
+  ]
+}
