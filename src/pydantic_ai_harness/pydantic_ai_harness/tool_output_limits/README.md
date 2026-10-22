@@ -259,12 +259,17 @@ spills_elsewhere = ToolOutputLimits(store=WorkspaceStore(workspace=LocalWorkspac
 `workspace=` takes a backend, not the `LocalWorkspace` capability. Under a durable engine such
 as Temporal it is written in-process, not through the workflow.
 
+To set one location for the files harness capabilities keep for themselves, add
+[Capability Storage](../capability_storage/) to the agent instead. The default `WorkspaceStore` then
+writes there, outside the model's file tools, so the model reads spills with `read_tool_result`.
+A store's own `workspace=` takes precedence.
+
 Spilled files are kept for the life of the workspace; they are not pruned by this capability.
 
 A read-only workspace cannot take spills: the spill warns and falls back to its `then` action (a
 bounded truncation by default). When a band can spill and the run has no workspace for the store
-to write to, the run fails at its start. For runs without a workspace, use `LocalFileStore`, which
-writes to the host's temp directory:
+to write to, the run fails at its start. For runs without a workspace, add a `CapabilityStorage`,
+or use `LocalFileStore`, which writes to the host's temp directory:
 
 ```python
 from datetime import timedelta

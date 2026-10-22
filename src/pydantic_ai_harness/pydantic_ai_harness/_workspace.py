@@ -154,8 +154,11 @@ def secondary_workspace(value: WorkspaceBackend | None, owner: str) -> Workspace
     It takes a backend (or a `Workspace` facade), never a workspace capability: the capability
     supplies a run's workspace, not one to read from on the side.
     """
-    if value is None:
-        return None
+    return None if value is None else backend_workspace(value, owner)
+
+
+def backend_workspace(value: WorkspaceBackend, owner: str) -> Workspace:
+    """`secondary_workspace` for a capability whose `workspace=` argument is required."""
     if isinstance(value, AbstractCapability):
         raise TypeError(
             f'`{owner}(workspace=...)` takes a workspace backend, not the `{type(value).__name__}` capability. '

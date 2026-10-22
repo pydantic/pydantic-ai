@@ -58,6 +58,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     Advisor,
     BackgroundTools,
+    CapabilityStorage,
     Coder,
     Planning,
     Researcher,
@@ -186,6 +187,11 @@ def _check_tool_output_limits(merged: Any) -> None:
     assert merged.strip_ansi is True
 
 
+def _check_capability_storage(merged: Any) -> None:
+    assert merged.workspace.ref.id == str(_TMP_B)
+    assert merged._storage.backend is merged.workspace
+
+
 def _check_advisor(merged: Any) -> None:
     assert merged.max_tokens == 4096
 
@@ -249,6 +255,14 @@ COMBINE_POLICY: dict[str, Policy] = {
         'one output-limit policy; `tool_filter`/`per_tool` are how one instance varies by tool',
         lambda: (ToolOutputLimits[Any](), ToolOutputLimits[Any](strip_ansi=True)),
         _check_tool_output_limits,
+    ),
+    'CapabilityStorage': Combines(
+        "a run keeps its capabilities' files in one place; the later location wins",
+        lambda: (
+            CapabilityStorage[Any](LocalWorkspaceBackend(_TMP_A)),
+            CapabilityStorage[Any](LocalWorkspaceBackend(_TMP_B)),
+        ),
+        _check_capability_storage,
     ),
     'SubAgents': Combines(
         'one delegate tool per agent, so two rosters become one',

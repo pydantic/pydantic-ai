@@ -3,7 +3,8 @@
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
 resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
 tasks (`AbsurdDurability`), pgtask durable tasks (`PGTaskDurability`), Render Workflows, harness capabilities under core durable execution, Logfire-managed
-instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
+instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), where capabilities keep
+their own files (`CapabilityStorage`), loading harness
 capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
 Agentic Workflow.
 
@@ -19,6 +20,7 @@ Agentic Workflow.
 | Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
+| Keep tool-output spills outside the run's workspace (read-only workspace, no workspace, per tenant) | `CapabilityStorage` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
@@ -435,6 +437,29 @@ model's code yourself. `load_active()` skips entries that fail to load. Under du
 `capabilities=` on a run is refused, and `CapabilityCreation` itself does not build under
 `TemporalDurability` (see the durable execution section). `guidance=''` drops the
 built-in system-prompt guidance. `CapabilityCreation` is not spec-serializable.
+
+## CapabilityStorage
+
+Moves the `.pydantic-ai-harness/` directory that harness capabilities keep their own files in from the
+run's workspace to a workspace backend you choose. Today that covers `ToolOutputLimits` spills made by
+its default `WorkspaceStore`; `Shell` job logs stay in the run's workspace, where the commands run.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend
+
+from pydantic_ai_harness import CapabilityStorage, ToolOutputLimits
+
+agent = Agent(
+    'test',
+    capabilities=[CapabilityStorage(LocalWorkspaceBackend('/var/lib/myapp/agent-files')), ToolOutputLimits()],
+)
+```
+
+Gotchas: it takes a backend, not the `LocalWorkspace` capability. Spills there are outside the model's
+file tools, so the model reads them with `read_tool_result`. An explicit `ToolOutputLimits(store=...)`
+wins. Its I/O runs in-process, not through a durable engine's workflow. Pass it per run
+(`agent.run(..., capabilities=[CapabilityStorage(...)])`) for a location per tenant.
 
 ## Harness capabilities in agent specs
 
