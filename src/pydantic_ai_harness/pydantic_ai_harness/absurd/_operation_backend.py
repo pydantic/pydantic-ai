@@ -82,10 +82,10 @@ def _from_checkpoint(stored: object) -> object:
 
 
 def _heartbeat_interval(task_ctx: AsyncTaskContext) -> float:
-    # The SDK keeps the worker's claim timeout private; fall back to its default rather than fail
-    # every step if that changes. Half of it is the interval the SDK's own long waits heartbeat at.
-    claim_timeout: int = getattr(task_ctx, '_claim_timeout', 120)
-    return max(0.5, claim_timeout / 2)
+    # The SDK has no public accessor for the worker's claim timeout. Read it directly: a fallback
+    # would skip heartbeats for a shorter `claim_timeout` without any error, while a rename in the SDK
+    # fails every step with `AttributeError`. Half of it is the interval the SDK's own long waits use.
+    return max(0.5, task_ctx._claim_timeout / 2)  # pyright: ignore[reportPrivateUsage]
 
 
 async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awaitable[object]]) -> object:
@@ -124,9 +124,11 @@ async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awai
                 error = exc
             tg.cancel_scope.cancel()
     except BaseExceptionGroup as group:
-        # Only `extend_claim` can fail inside the group, and it stops at its first failure.
-        [lost_claim] = group.exceptions
-        raise lost_claim from None
+        # Usually just `extend_claim`'s failure, or a `BaseException` the body raised.
+        if len(group.exceptions) == 1:
+            raise group.exceptions[0] from None
+        # Both failed at once: raise them together rather than lose either.
+        raise
     if error is not None:
         raise error
     return result
