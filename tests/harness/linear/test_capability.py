@@ -22,6 +22,8 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.linear import Linear
 
+from .._docs_examples import python_blocks, run_block
+
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
 pytestmark = [
     pytest.mark.filterwarnings(
@@ -78,10 +80,6 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
     return ctx.deps
 
 
-def token_from_deps(ctx: RunContext[str | None]) -> str | None:
-    return ctx.deps
-
-
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = transport(toolset).auth
     assert auth is not None
@@ -129,6 +127,27 @@ class TestLinear:
     def test_custom_id_is_forwarded(self, capability: Linear[str | None]) -> None:
         assert capability.get_toolset().id == 'tenant-linear'
 
+    def test_read_only_client_keeps_the_id_on_its_mcp_toolset(self) -> None:
+        # The read-only filter wraps the connection, so the id lives on the `MCPToolset` inside it.
+        toolset = Linear[None](id='tenant-linear', client='https://example.com/mcp', read_only=True).get_toolset()
+        ids: list[str | None] = []
+        toolset.apply(lambda leaf: ids.append(leaf.id))
+        assert ids == ['tenant-linear']
+
+    @pytest.mark.parametrize('id', [None, ''])
+    def test_unset_id_means_the_default(self, id: str | None) -> None:
+        capability = Linear[None](id=id, auth='linear-token')
+        assert (capability.id, capability.get_toolset().id) == ('linear', 'linear')
+
+    def test_unset_ids_that_differ_raise_when_the_agent_is_built(self) -> None:
+        with pytest.raises(UserError, match="Capability id 'linear' is used by multiple Linear capabilities"):
+            Agent(TestModel(), capabilities=[Linear(id=None, auth='a'), Linear(id=None, auth='b')])
+
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        toolset = Linear[None](client='https://example.com/mcp', auth='').get_toolset()
+        assert transport(toolset).url == 'https://example.com/mcp'
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[Linear(client=server, defer_loading=True)])
 
@@ -162,7 +181,7 @@ class TestLinear:
         monkeypatch.setenv('LINEAR_ACCESS_TOKEN', 'environment-token')
         assert bearer(Linear().get_toolset()) == 'Bearer environment-token'
 
-    @pytest.mark.parametrize('auth', ['token', token_from_deps], ids=['fixed', 'per-run'])
+    @pytest.mark.parametrize('auth', ['token', per_user_token], ids=['fixed', 'per-run'])
     @pytest.mark.parametrize('read_only', [True, False])
     async def test_native_read_only_endpoint(
         self, auth: str | Callable[[RunContext[str | None]], str | None], read_only: bool
@@ -199,3 +218,38 @@ class TestPerRunAuth:
         capability = Linear[str | None](auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
             await connections_for(capability, 'oauth')
+
+
+def fake_linear() -> FastMCP:
+    """A stand-in for Linear's server, so the documented examples run offline."""
+    server = FastMCP('linear-fake')
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    def list_issues() -> str:
+        return 'issues'  # pragma: no cover
+
+    return server
+
+
+class TestDocs:
+    @pytest.mark.parametrize(
+        'page', ['docs/harness/linear.md', 'src/pydantic_ai_harness/pydantic_ai_harness/linear/README.md']
+    )
+    def test_documented_examples_run(self, page: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('LINEAR_ACCESS_TOKEN', 'docs-token')
+        urls: list[str] = []
+
+        # Takes the arguments `Linear` passes `MCPToolset`, and connects to `fake_linear()` instead.
+        def offline(
+            client: str, *, id: str | None, include_instructions: bool, auth: str | None = None
+        ) -> MCPToolset[object]:
+            urls.append(client)
+            return MCPToolset(fake_linear(), id=id, include_instructions=include_instructions)
+
+        monkeypatch.setattr('pydantic_ai_harness.linear._capability.MCPToolset', offline)
+        quickstart, per_user, approval = python_blocks(page)
+        _, runs = run_block(quickstart)
+        assert (len(runs), urls) == (1, ['https://mcp.linear.app/mcp/readonly'])
+        assert isinstance(run_block(per_user)[0]['agent'], Agent)
+        assert isinstance(run_block(approval)[0]['agent'], Agent)
+        assert urls[-1] == 'https://mcp.linear.app/mcp'

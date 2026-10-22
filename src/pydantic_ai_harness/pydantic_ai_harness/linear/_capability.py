@@ -9,7 +9,8 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai_harness._mcp import connect_with_auth, credential, one_connection, read_only_toolset
+from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness._mcp import credential, per_run_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -25,10 +26,11 @@ class Linear(AbstractCapability[AgentDepsT]):
     """Give an agent the tools of Linear's hosted MCP server, with the permissions of the connected user."""
 
     id: str | None = _ID
-    """Stable capability and toolset ID, so `defer_loading=True` needs none.
+    """Stable capability ID, also used for the Linear MCP toolset, so `defer_loading=True` needs none.
 
-    One `Linear` is one connection to one account, like `StackOne`'s linked account. Two sharing this `id` are
-    one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
+    Each `Linear` is one connection to one Linear account. Two with the same `id` and settings are one connection, and
+    two with the same `id` but different settings raise. Give each its own `id` to keep both. `None` or `''` means
+    the default, `linear`.
     """
     description: str | None = 'Use Linear issues, projects, and teams.'
     auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
@@ -47,31 +49,33 @@ class Linear(AbstractCapability[AgentDepsT]):
     """Your own MCP client or transport, for full control of the connection. It cannot be combined with `auth`."""
 
     def __post_init__(self) -> None:
-        if self.client is not None and self.auth is not None:
+        # The toolset always needs an id, so normalize here and let `combine` see the id the toolset uses.
+        self.id = self.id or _ID
+        if self.client is not None and self.auth:
             raise UserError('`client` owns the connection, so it cannot be combined with `auth`.')
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one connection stated twice; two that disagree raise rather than merge."""
-        return one_connection(capabilities)
+        return one_per_id(capabilities)
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the Linear tools."""
-        id = self.id or _ID
         if self.client is not None:
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
-                self.client, id=id, include_instructions=self.include_instructions
+                self.client, id=self.id, include_instructions=self.include_instructions
             )
             if self.read_only:
                 return read_only_toolset(toolset)
             return toolset
-        return connect_with_auth(self.auth, self._connect, id=id)
+        if callable(self.auth):
+            return per_run_connection(self.auth, self._connect, id=self.id)
+        return self._connect(self.auth)
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(
             'https://mcp.linear.app/mcp/readonly' if self.read_only else 'https://mcp.linear.app/mcp',
-            id=self.id or _ID,
+            id=self.id,
             auth=credential(auth, env='LINEAR_ACCESS_TOKEN', service='Linear'),
-            headers=None,
             include_instructions=self.include_instructions,
         )
