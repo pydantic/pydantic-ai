@@ -7,6 +7,7 @@ import hashlib
 import os
 import posixpath
 import re
+import socket
 import stat
 from collections.abc import Sequence
 from dataclasses import replace
@@ -928,6 +929,19 @@ class TestReadFile:
         _assert_no_host_root(str(error.value), tmp_path)
         with pytest.raises(ModelRetry, match=r'^The path is not a regular file'):
             await toolset.write_file('pipe', 'x', workspace=ws)
+
+    @pytest.mark.skipif(not hasattr(socket, 'AF_UNIX') or os.name == 'nt', reason='needs Unix sockets')
+    async def test_socket_is_a_retry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Opening a socket fails with an errno of its own before core checks the file type.
+        monkeypatch.chdir(tmp_path)  # A relative name keeps the socket path within the length limit.
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind('sock')
+            toolset = _unhashed_toolset()
+            ws = LocalWorkspaceBackend(tmp_path)
+            for read in (toolset.read_file, toolset.file_info):
+                with pytest.raises(ModelRetry, match=r'^The path is not a regular file') as error:
+                    await read('sock', workspace=ws)
+                _assert_no_host_root(str(error.value), tmp_path)
 
     async def test_read_traversal_blocked(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         with pytest.raises(ModelRetry):

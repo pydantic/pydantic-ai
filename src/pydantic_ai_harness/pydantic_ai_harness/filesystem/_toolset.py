@@ -145,10 +145,15 @@ _RECOVERABLE_ERRORS = (PermissionError, FileNotFoundError, NotADirectoryError, I
 # retrying cannot fix `ENOSPC` or `EROFS`.
 #
 # Keyed by `OSError.errno`, which the stdlib types as `int | None`.
+_NOT_A_REGULAR_FILE_REASON = 'The path is not a regular file (a FIFO, socket, or device); use a regular file.'
+
 _RECOVERABLE_ERRNOS: dict[int | None, str] = {
     errno.ENAMETOOLONG: 'The path name is too long.',
     errno.ELOOP: 'The path resolves through a symlink loop.',
     errno.EILSEQ: 'The path name contains a byte sequence the filesystem cannot represent.',
+    # Opening a socket fails with `ENXIO` on Linux and `EOPNOTSUPP` on macOS, before core's own check.
+    errno.ENXIO: _NOT_A_REGULAR_FILE_REASON,
+    errno.EOPNOTSUPP: _NOT_A_REGULAR_FILE_REASON,
 }
 _WINDOWS_ERROR_INVALID_NAME = 123
 
@@ -282,9 +287,13 @@ def _is_hidden(relative: str) -> bool:
     return relative != '.' and any(part.startswith('.') for part in relative.split('/'))
 
 
+_HIDDEN_ALTERNATIVE = re.compile(r'[{,]\.')
+"""A brace alternative that starts with a dot, as `.github` does in `{.github,src}`."""
+
+
 def _explicit_hidden(pattern: str) -> bool:
-    """Whether the caller explicitly names a dot-prefixed glob component."""
-    return any(part.startswith('.') for part in pattern.split('/'))
+    """Whether the caller explicitly names a dot-prefixed glob component, or a brace alternative of one."""
+    return any(part.startswith('.') or _HIDDEN_ALTERNATIVE.search(part) for part in pattern.split('/'))
 
 
 def _ripgrep_hidden(glob: str | None) -> list[str]:
@@ -292,7 +301,10 @@ def _ripgrep_hidden(glob: str | None) -> list[str]:
 
     Unlike `_explicit_hidden`, a `.` or `..` component, as in `./src/*.py`, names nothing hidden.
     """
-    named = glob is not None and any(part.startswith('.') and part not in ('.', '..') for part in glob.split('/'))
+    named = glob is not None and any(
+        (part.startswith('.') and part not in ('.', '..')) or _HIDDEN_ALTERNATIVE.search(part)
+        for part in glob.split('/')
+    )
     return ['--hidden'] if named else []
 
 
@@ -355,7 +367,7 @@ def _recoverable(
                 reason = 'The path name is invalid.'
             if reason is None and e.errno is None and str(e).startswith(_NOT_A_REGULAR_FILE):
                 # Core has no dedicated error type for this, so the message is the only signal.
-                reason = 'The path is not a regular file (a FIFO, socket, or device); use a regular file.'
+                reason = _NOT_A_REGULAR_FILE_REASON
             if reason is None:
                 raise
             # The full error may embed an absolute path; the reason is path-free.
