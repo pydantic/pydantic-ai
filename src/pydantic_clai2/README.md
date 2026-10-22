@@ -293,6 +293,9 @@ closes; it stays saved, so click it to pick it up again. See
 public price data; a model without a price, like the scripted one in these screenshots,
 shows `unknown`.
 
+When a response omits usage, `/usage` and `/cost` label known totals as lower bounds,
+and the status row prefixes a known cost with `>=`.
+
 When the conversation nears the model's context limit, CLAI summarises older messages
 for you. Run `/compact` to do it now, and add a note to say what the summary must keep,
 such as `/compact keep the API decisions`.

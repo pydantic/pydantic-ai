@@ -62,7 +62,9 @@ documents, uploaded-file references, and model-generated files cannot be seeded.
     As in a standard run, `message_history` is treated as trusted server-side state: its system
     prompts become session instructions, and its image URLs are downloaded by your server
     according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
-    carries. If the history came from a browser or another untrusted client, pass it through
+    carries. Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
+    seeded history are ignored in favor of the agent's own.
+    If the history came from a browser or another untrusted client, pass it through
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see
     [Loading untrusted history](../message-history.md#loading-untrusted-history).
 
@@ -228,9 +230,18 @@ History follows the order of the provider's own conversation:
 - Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
   The one exception is a tool's return, which always directly follows the response that called it: a tool
   that finishes after later messages were recorded has its return inserted ahead of them.
+- With Gemini Live [asynchronous tool calls](gemini.md#asynchronous-tool-calls) on a model that keeps talking while
+  the tool runs, the model goes on in the turn that called the tool. That speech is recorded in the calling
+  response, after the [`ToolCallPart`][pydantic_ai.messages.ToolCallPart], since the model said it before it had
+  the result. The response ends when the model ends its turn, when the tool's result goes out, or when a spoken
+  user turn joins the conversation: whatever the model says after that is a response of its own, recorded after the
+  return. That includes the rest of a sentence the result cut into, and what the model says between the results of
+  several calls in one response, whose returns all directly follow it. A calling response the user cuts off while
+  its tool still runs is recorded as complete, as its tool round goes on.
 - A message already returned is never changed in place, but a later snapshot can hold an updated copy of it
   at the same position. A reply the user [barged in on](turns.md#barge-in) after it was recorded becomes an
-  interrupted copy (on models that support output truncation), and a speech part whose
+  interrupted copy (on models that support output truncation, and on ElevenLabs Agents, which reports what was
+  heard), and a speech part whose
   [retained audio](#retaining-audio) is evicted loses its audio. If you persist history as it grows, store
   the latest snapshot rather than appending only the messages past the ones you stored.
 
@@ -250,9 +261,9 @@ With transcription disabled:
   Gemini Live reports none, so a turn there is the audio sent since the last reply, recorded as the model
   replies to it;
 - with [push-to-talk](turns.md#push-to-talk), each `commit_audio()` after sending audio is a turn once the
-  provider has it (on xAI, commits made while a reply is still under way go out together after it, as one turn,
-  and one still held back when the session closes records nothing); a commit with no audio since the last one
-  records nothing;
+  provider has it, even if the session closes or the connection drops before the provider confirms the commit
+  (on xAI, commits made while a reply is still under way go out together after it, as one turn, and one still
+  held back when the session closes records nothing); a commit with no audio since the last one records nothing;
 - content-less parts preserve the local turn boundary but contribute no words to a text handoff and
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.

@@ -8,9 +8,14 @@ from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent, AskUserRequestedEvent
-from pydantic_ai_harness.ask_user._types import Answerer, AskUserRequest, AskUserResponse, Questions, check_response
-
-TOOL_NAME = 'ask_user_question'
+from pydantic_ai_harness.ask_user._types import (
+    TOOL_NAME,
+    Answerer,
+    AskUserRequest,
+    AskUserResponse,
+    Questions,
+    check_response,
+)
 
 DECLINED = 'The user declined to answer. Continue without the answer, or ask differently if it is essential.'
 """The tool result when the answerer reports a cancelled response."""
@@ -65,9 +70,13 @@ class AskUserToolset(FunctionToolset[AgentDepsT]):
             raise CallDeferred
         request = AskUserRequest(questions=tuple(questions))
         await ctx.emit(AskUserRequestedEvent(request=request))
-        response = AskUserResponse(cancelled=True)  # What observers see if the answerer times out.
-        with anyio.move_on_after(self._timeout) as scope:
-            response = await self._answerer(request)
+        response = AskUserResponse(cancelled=True)  # What observers see if the answerer times out or fails.
+        try:
+            with anyio.move_on_after(self._timeout) as scope:
+                response = await self._answerer(request)
+        except Exception:
+            await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, failed=True))
+            raise
         # Observers waiting since the request event are released whether or not the response fits.
         await ctx.emit(AskUserAnsweredEvent(request_id=request.id, response=response, timed_out=scope.cancelled_caught))
         if scope.cancelled_caught:

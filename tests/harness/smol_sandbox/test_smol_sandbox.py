@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import uuid
 from pathlib import Path
+from typing import Any, cast
 
 import anyio
 import pytest
@@ -28,7 +30,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend, _backend
 
 from .._tool_calls import call_tools
-from .fake_smol import FakeSmol
+from .fake_smol import FakeMachine, FakeSmol, FakeVM
 
 GONE = WorkspaceRef(provider='smol', id='pydantic-ai-' + '0' * 32)
 
@@ -69,6 +71,8 @@ def test_invalid_settings_fail_at_construction(settings: dict[str, object], mess
 async def test_invalid_backend_arguments_fail_before_any_vm(fake_smol: FakeSmol) -> None:
     with pytest.raises(ValueError, match="expected 'smol'"):
         SmolSandboxBackend(ref=WorkspaceRef(provider='e2b', id='sbx'))
+    with pytest.raises(ValueError, match='pass either `sandbox` or `ref`, not both'):
+        SmolSandboxBackend(sandbox=cast(Any, object()), ref=WorkspaceRef(provider='smol', id='dev'))
     with pytest.raises(ValueError, match='working_dir must be an absolute workspace path'):
         SmolSandboxBackend(working_dir='relative')
     with pytest.raises(TypeError, match='env keys and values must be strings'):
@@ -92,7 +96,7 @@ def test_capability_declines_foreign_reference() -> None:
 
 
 @pytest.mark.parametrize('machine_id', ['dev', 'smol-1a2b3c4d', '../../etc/passwd', 'pydantic-ai-' + 'A' * 32])
-async def test_refs_to_vms_it_did_not_create_are_refused(fake_smol: FakeSmol, machine_id: str) -> None:
+async def test_the_capability_refuses_refs_to_vms_it_did_not_create(fake_smol: FakeSmol, machine_id: str) -> None:
     # A local VM's id is its name, so a ref from history could otherwise reach a VM made by another
     # tool, with host mounts or network.
     ref = WorkspaceRef(provider='smol', id=machine_id)
@@ -335,6 +339,21 @@ async def test_live_program_named_like_an_option_runs() -> None:  # pragma: lax 
         await SmolSandbox[None]().destroy(backend.ref)
 
 
+@pytest.mark.smol_live
+async def test_live_vm_passed_in_is_used() -> None:  # pragma: lax no cover
+    # The backend opens its own handle, by id, to a VM the application already has open, made with the
+    # SDK's default, non-persistent config.
+    config = smol.MachineConfig(name=f'byo-{uuid.uuid4().hex[:12]}')
+    machine = await asyncio.to_thread(smol.Machine.create, config, smol.ConnectOptions(target='local'))
+    try:
+        backend = SmolSandboxBackend(sandbox=smol.AsyncMachine(machine))
+        assert backend.ref == WorkspaceRef(provider='smol', id=machine.id)
+        await backend.run(['touch', 'made-by-the-agent'])
+        assert machine.exec(['ls', '/workspace']).stdout == 'made-by-the-agent\n'
+    finally:
+        await asyncio.to_thread(machine.delete)
+
+
 async def test_failed_creation_can_retry(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
     fake_smol.create_error = smol.SmolError('SMOLVM_ERROR', 'image pull failed')
@@ -353,6 +372,43 @@ async def test_host_that_cannot_run_vms_is_unavailable(fake_smol: FakeSmol, code
     fake_smol.create_error = smol.SmolError(code, 'no hypervisor')
     with pytest.raises(WorkspaceUnavailableError, match=f'This host cannot run a local smol VM \\({code}\\)'):
         await SmolSandboxBackend().run(['true'])
+
+
+async def test_the_backend_attaches_to_a_vm_of_any_name(fake_smol: FakeSmol, working_dir: str) -> None:
+    fake_smol.module.Machine.create(smol.MachineConfig(name='dev'))
+    backend = SmolSandboxBackend(ref=WorkspaceRef(provider='smol', id='dev'), working_dir=working_dir)
+    assert (await backend.run(['echo', 'hi'])).stdout == 'hi\n'
+    assert backend.ref == WorkspaceRef(provider='smol', id='dev')
+
+
+@pytest.mark.parametrize('wrap', [False, True], ids=['Machine', 'AsyncMachine'])
+async def test_a_vm_passed_in_is_used_and_kept(fake_smol: FakeSmol, working_dir: str, wrap: bool) -> None:
+    machine = fake_smol.module.Machine.create(smol.MachineConfig(name='dev'))
+    backend = SmolSandboxBackend(sandbox=smol.AsyncMachine(machine) if wrap else machine, working_dir=working_dir)
+    # On the local target a VM's id is its name, so the backend opens its own handle to it by id.
+    assert backend.ref == WorkspaceRef(provider='smol', id='dev')
+    assert (await backend.run(['pwd'])).stdout == f'{working_dir}\n'
+    assert fake_smol.connections[-1] == ('dev', smol.ConnectOptions(target='local'))
+    assert list(fake_smol.vms) == ['dev']
+
+
+async def test_a_vm_not_on_this_machine_is_unavailable(fake_smol: FakeSmol, working_dir: str) -> None:
+    # Like a Smol Cloud machine: the local target doesn't know its id.
+    elsewhere = FakeMachine(FakeVM(id='mach-0a1b2c', config=smol.MachineConfig()))
+    backend = SmolSandboxBackend(sandbox=cast(Any, elsewhere), working_dir=working_dir)
+    with pytest.raises(
+        WorkspaceUnavailableError, match="'mach-0a1b2c' passed as `sandbox` is not, or is no longer, a VM on this"
+    ):
+        await backend.run(['true'])
+    assert fake_smol.commands == []
+
+
+async def test_a_deleted_vm_passed_in_is_unavailable(fake_smol: FakeSmol, working_dir: str) -> None:
+    machine = fake_smol.module.Machine.create(smol.MachineConfig(name='dev'))
+    backend = SmolSandboxBackend(sandbox=machine, working_dir=working_dir)
+    del fake_smol.vms['dev']
+    with pytest.raises(WorkspaceUnavailableError, match="'dev' passed as `sandbox` is not, or is no longer, a VM"):
+        await backend.run(['true'])
 
 
 async def test_attaching_to_a_deleted_vm_is_unavailable(fake_smol: FakeSmol) -> None:
@@ -519,6 +575,16 @@ async def test_agent_history_attaches_same_vm(fake_smol: FakeSmol, working_dir: 
     (vm,) = fake_smol.vms.values()
     assert first.workspace.ref == second.workspace.ref == WorkspaceRef(provider='smol', id=vm.id)
     assert [machine_id for machine_id, _ in fake_smol.connections] == [None, vm.id]
+
+
+async def test_history_does_not_reattach_a_vm_the_application_passed_in(fake_smol: FakeSmol, working_dir: str) -> None:
+    machine = fake_smol.module.Machine.create(smol.MachineConfig(name='dev'))
+    agent = Agent(TestModel(), capabilities=[SmolSandbox(working_dir=working_dir)])
+    first = await agent.run('go', workspace=SmolSandboxBackend(sandbox=machine, working_dir=working_dir))
+    assert first.workspace.ref == WorkspaceRef(provider='smol', id='dev')
+    # The history names `dev`, but only the application that chose it can open it again.
+    with pytest.raises(ValueError, match=re.escape("got 'dev'. To use another VM, pass `workspace=SmolSandboxBackend")):
+        await agent.run('go', message_history=first.all_messages())
 
 
 async def test_coder_works_in_the_vm(fake_smol: FakeSmol, working_dir: str) -> None:
