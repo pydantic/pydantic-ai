@@ -557,8 +557,10 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [other providers](tools.md#function-tools): the call's output is the error history records,
   `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
   again), and Live speaks what it makes of it. The exception is still raised from the session as
-  usual, and a [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was
-  waiting still returns. When the exception is a
+  usual, but the exchange goes on as it would after a result that succeeded: a
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was waiting returns,
+  and [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] arrives, once
+  Live has spoken that answer. When the exception is a
   [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out, so the round
   doesn't make another request: Pydantic AI gives it up, and turn boundaries are inferred again. To
   give the model something better than the generic failure, turn the exception into a result with

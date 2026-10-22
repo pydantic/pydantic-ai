@@ -19,7 +19,8 @@ failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] answer the call w
 standard agent run. Other tool exceptions end the exchange the call was part of: the model never gets the result, so
 [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for its
 answer. Gemini Live and GPT-Live are the exception: the model gets the failure history records,
-`{"error":"The tool raised an unhandled error."}`, as the call's result and answers it
+`{"error":"The tool raised an unhandled error."}`, as the call's result and answers it, and
+`wait_for_reply()` waits for that answer
 ([Gemini](gemini.md#provider-specific-quirks), [GPT-Live](openai.md#gpt-live-provider-specific-quirks)).
 While the event stream is being iterated, the exception is raised from `async for`, and the
 session goes on receiving: a consumer that catches it and iterates again keeps a working session,
