@@ -1078,8 +1078,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             supports_thinking = self.profile.get('supports_thinking', False)
             thinking_always_enabled = self.profile.get('thinking_always_enabled', False)
             if supports_thinking or thinking_always_enabled:
-                if not (thinking_value is False and thinking_always_enabled):
-                    params = replace(params, thinking=thinking_value)
+                # A model that can't turn thinking off thinks as little as it can instead.
+                if thinking_value is False and thinking_always_enabled:
+                    thinking_value = 'minimal'
+                params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
