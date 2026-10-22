@@ -332,8 +332,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox is still running: one killed elsewhere surfaces on the next operation. Calling this
         does not make you responsible for killing the sandbox; whoever holds the `ref` decides, as before.
         """
-        _require_asyncio()
-        if self._ref is None:
+        if self._ref is None and running_on_asyncio():
             # An AnyIO shield cannot stop native Task.cancel(); the backend owns this task
             # until it has recorded the paid sandbox, even if every caller leaves.
             task = self._acquisition
@@ -358,6 +357,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def _acquire(self) -> e2b.AsyncSandbox:
         async with self._lock:
             if (sandbox := self._sandbox) is None:
+                # Checked here, not in `get_sandbox`: a sandbox the caller passed in is returned as is.
+                _require_asyncio()
                 ref = self._ref
                 sandbox = await self._attach(ref.id) if ref is not None else await self._create()
                 if ref is None:
