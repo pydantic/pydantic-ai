@@ -1289,8 +1289,8 @@ class BedrockConverseModel(Model[BaseClient]):
             # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
             # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
             if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
-                # `True` picks `medium` like the other always-on effort-based variants.
+                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low` and `max`
+                # to `xhigh`; `True` picks `medium` like the other always-on effort-based variants.
                 effort_map: dict[ThinkingLevel, str] = {
                     True: 'medium',
                     'minimal': 'low',
@@ -1298,6 +1298,7 @@ class BedrockConverseModel(Model[BaseClient]):
                     'medium': 'medium',
                     'high': 'high',
                     'xhigh': 'xhigh',
+                    'max': 'xhigh',
                 }
                 existing['reasoning'] = {'effort': effort_map[thinking]}
 
