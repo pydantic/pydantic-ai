@@ -146,11 +146,12 @@ _SUPPRESSING_ENV_VARS = frozenset({'PYDANTIC_AI_NO_BANNER', 'CI', 'PYTEST_VERSIO
 def test_render_banner(render: Callable[..., str]):
     assert render() == snapshot("""\
                  HEADING
-      / \\
-     /   \\       agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
-   /___.___\\
-  /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+
+      / \\        agent: support_agent • model: openai:gpt-5.6-sol • tools: 2 • capabilities: 0
+     /   \\
+   /___.___\\     observability: off — see every model and tool call live, with cost
+  /    |    \\    set it up free with Logfire and a GitHub login:
+/      |      \\    uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -161,11 +162,12 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
     # An agent with no name of its own drops the `agent:` segment rather than inventing a name.
     assert render(name=None, output_type=list[str], capabilities=3) == snapshot("""\
                  HEADING
-      / \\
-     /   \\       model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
-   /___.___\\
-  /    |    \\    observability: off — see every model and tool call live, with cost
-/      |      \\    set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md
+
+      / \\        model: openai:gpt-5.6-sol • output: list[str] • tools: 2 • capabilities: 3
+     /   \\
+   /___.___\\     observability: off — see every model and tool call live, with cost
+  /    |    \\    set it up free with Logfire and a GitHub login:
+/      |      \\    uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -259,19 +261,20 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
     assert 'tools' not in banner
 
 
-def test_the_observability_links_each_survive_on_one_line(render: Callable[..., str]):
-    """A URL `textwrap` splits stops being clickable, which is the only reason it's in the banner."""
+def test_the_observability_links_and_command_each_survive_on_one_line(render: Callable[..., str]):
+    """The command must stay pasteable and the URL clickable at every supported width."""
     lines = _display._observability_lines(_MIN_TEXT_WIDTH)  # pyright: ignore[reportPrivateUsage]
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
+    command = 'uvx logfire-cli wizard --task pydantic-ai'
 
-    assert urls == snapshot(['https://pydantic.dev/ai-setup.md', 'https://pydantic.dev/docs/ai/logfire/#otel'])
+    assert urls == snapshot(['https://pydantic.dev/docs/ai/logfire/#otel'])
     assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
     # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
     # a floor under the text column measured from the copy rather than written down beside it.
     for width in range(_MIN_TEXT_WIDTH, 121):
         rendered = render(width=width).splitlines()
-        for url in urls:
-            assert sum(url in line for line in rendered) == 1, f'{url} was broken at {width} columns'
+        for copyable in [command, *urls]:
+            assert sum(copyable in line for line in rendered) == 1, f'{copyable} was broken at {width} columns'
 
 
 def test_the_narrowest_widths_the_banner_lays_itself_out_in():
@@ -292,7 +295,7 @@ def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callab
    /___.___\\     observability: off — see every model and tool call live, with
   /    |    \\      cost
 /      |      \\    set it up free with Logfire and a GitHub login:
-`---.._|_..---'    https://pydantic.dev/ai-setup.md
+`---.._|_..---'    uvx logfire-cli wizard --task pydantic-ai
                    or use any OpenTelemetry backend:
                    https://pydantic.dev/docs/ai/logfire/#otel
 
@@ -314,7 +317,7 @@ agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
 observability: off — see every model and tool call live,
   with cost
   set it up free with Logfire and a GitHub login:
-  https://pydantic.dev/ai-setup.md
+  uvx logfire-cli wizard --task pydantic-ai
   or use any OpenTelemetry backend:
   https://pydantic.dev/docs/ai/logfire/#otel
 

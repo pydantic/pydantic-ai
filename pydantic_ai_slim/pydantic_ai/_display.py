@@ -67,25 +67,26 @@ _INFO_INDENT = '  '
 # than spread through the functions that lay it out. Each is a sentence `textwrap` re-flows at render
 # time, so rewriting one doesn't mean re-flowing anything by hand.
 _OBSERVABILITY_HEADING = 'observability: off — see every model and tool call live, with cost'
-_LOGFIRE_LINE = 'set it up free with Logfire and a GitHub login: https://pydantic.dev/ai-setup.md'
+_LOGFIRE_COMMAND = 'uvx logfire-cli wizard --task pydantic-ai'
+_LOGFIRE_LINE = f'set it up free with Logfire and a GitHub login: {_LOGFIRE_COMMAND}'
 _OTEL_LINE = 'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel'
-"""The two paths, one link each.
+"""The two paths, one copyable command or link each.
 
-Neither is ever broken across lines: a URL `textwrap` splits stops being clickable in most
-terminals, which is the only reason either is in the banner. `_MIN_TEXT_WIDTH` is measured off
-these so that no width can wrap them, and `test_display` holds that at every width the banner is
-laid out for, so a reworded line or a wider logo can't quietly cost a link.
+Neither is ever broken across lines: a split command cannot be pasted and a split URL stops being
+clickable in most terminals. `_MIN_TEXT_WIDTH` is measured off these so that no width can wrap them,
+and `test_display` holds that at every width the banner is laid out for, so a reworded line or a
+wider logo can't quietly cost either one.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
 
 _MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
-    len(word) for line in (_OBSERVABILITY_HEADING, _LOGFIRE_LINE, _OTEL_LINE, _HIDE_LINE) for word in line.split()
+    len(_LOGFIRE_COMMAND),
+    *(len(word) for line in (_OBSERVABILITY_HEADING, _LOGFIRE_LINE, _OTEL_LINE, _HIDE_LINE) for word in line.split()),
 )
 """Narrowest the text column can be and still hold the banner's own words whole.
 
-Measured off the copy rather than written down, so a longer URL raises the floor with it instead of
-quietly starting to wrap — a URL `textwrap` splits stops being clickable, which is the only reason
-either link is in the banner.
+Measured off the copy rather than written down, so a longer command or URL raises the floor with it
+instead of quietly starting to wrap.
 """
 
 _MIN_WIDTH_FOR_LOGO = _LOGO_WIDTH + _GUTTER + _MIN_TEXT_WIDTH
@@ -464,9 +465,13 @@ def _version_line() -> str:
     return version + f' • Python {platform.python_version()}'
 
 
-def _wrapped(text: str, text_width: int, *, indented: bool = False) -> list[str]:
+def _wrapped(text: str, text_width: int, *, indented: bool = False, unbreakable: str | None = None) -> list[str]:
     """`text` re-flowed to the text column, continuing under its own indent rather than the label."""
-    return wrap(
+    if unbreakable is not None:
+        # NUL is not whitespace, so `textwrap` keeps the span together. Restore its spaces before
+        # returning text that could reach a terminal.
+        text = text.replace(unbreakable, unbreakable.replace(' ', '\0'))
+    lines = wrap(
         text,
         width=text_width,
         initial_indent=_INFO_INDENT if indented else '',
@@ -474,14 +479,15 @@ def _wrapped(text: str, text_width: int, *, indented: bool = False) -> list[str]
         # Hyphens here are in URLs and flag names, which don't survive being broken across lines.
         break_on_hyphens=False,
     )
+    return [line.replace('\0', ' ') for line in lines]
 
 
 def _observability_lines(text_width: int) -> list[str]:
     """How to see what the agent actually did, for someone who hasn't set that up yet."""
     return [
         *_wrapped(_OBSERVABILITY_HEADING, text_width),
-        # One link each, so that whichever of the two the reader wants is a single thing to follow.
-        *_wrapped(_LOGFIRE_LINE, text_width, indented=True),
+        # One copyable command or link each, so either path is a single thing to follow.
+        *_wrapped(_LOGFIRE_LINE, text_width, indented=True, unbreakable=_LOGFIRE_COMMAND),
         *_wrapped(_OTEL_LINE, text_width, indented=True),
     ]
 
