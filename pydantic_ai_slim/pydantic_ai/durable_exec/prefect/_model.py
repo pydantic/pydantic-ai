@@ -18,6 +18,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
+from .._operation_backend import durable_unit_scope
 from ._types import TaskConfig, default_task_config
 
 
@@ -58,7 +59,8 @@ class PrefectModel(WrapperModel):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
-            response = await super(PrefectModel, self).request(messages, model_settings, model_request_parameters)
+            with durable_unit_scope():
+                response = await super(PrefectModel, self).request(messages, model_settings, model_request_parameters)
             _stamp_response_provenance(response, messages)
             return response
 
@@ -72,19 +74,20 @@ class PrefectModel(WrapperModel):
             ctx: RunContext[Any] | None,
         ) -> ModelResponse:
             event_stream_handler = self._get_event_stream_handler()
-            async with super(PrefectModel, self).request_stream(
-                messages, model_settings, model_request_parameters, ctx
-            ) as streamed_response:
-                if event_stream_handler is not None:
-                    assert ctx is not None, (
-                        'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
-                        'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
-                    )
-                    await event_stream_handler(ctx, streamed_response)
+            with durable_unit_scope():
+                async with super(PrefectModel, self).request_stream(
+                    messages, model_settings, model_request_parameters, ctx
+                ) as streamed_response:
+                    if event_stream_handler is not None:
+                        assert ctx is not None, (
+                            'A Prefect model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. '
+                            'Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                        )
+                        await event_stream_handler(ctx, streamed_response)
 
-                # Consume the entire stream
-                async for _ in streamed_response:
-                    pass
+                    # Consume the entire stream
+                    async for _ in streamed_response:
+                        pass
             response = streamed_response.get()
             _stamp_response_provenance(response, messages)
             return response

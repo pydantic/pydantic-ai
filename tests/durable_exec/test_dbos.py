@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
@@ -121,6 +121,8 @@ except ImportError:  # pragma: lax no cover
 try:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .responses_websocket import drain_events, responses_reply, websocket_model
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
@@ -229,6 +231,24 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 async def round_trip_workspace(ctx: RunContext[None]) -> str:
     await ctx.workspace.write_text('note.txt', 'workspace content')
     return await ctx.workspace.read_text('note.txt')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_dbos_agent_model_steps_use_http_for_responses_websocket(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, stream: bool
+) -> None:
+    """A model step serves one request, so `openai_transport='websocket'` does nothing in it.
+
+    The deprecated wrapper has no durability capability, so its run holds the model's socket open like any run.
+    """
+    pytest.importorskip('websockets')
+    connect = AsyncMock()
+    monkeypatch.setattr('openai.lib._websocket._WebSocketConnect', connect)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(responses_reply)) as client:
+        agent = Agent(websocket_model(client), name=f'responses_websocket_{"stream" if stream else "request"}')
+        dbos_agent = DBOSAgent(agent, event_stream_handler=drain_events if stream else None)  # pyright: ignore[reportDeprecated]
+        assert (await dbos_agent.run('hello')).output == 'from HTTP'
+    connect.assert_not_called()
 
 
 async def test_dbos_agent_rejects_a_workspace_in_its_workflow(dbos: DBOS, tmp_path: Path) -> None:

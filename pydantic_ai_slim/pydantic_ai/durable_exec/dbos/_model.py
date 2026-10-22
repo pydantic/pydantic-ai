@@ -16,6 +16,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 
+from .._operation_backend import durable_unit_scope
 from ._utils import StepConfig
 
 
@@ -48,7 +49,8 @@ class DBOSModel(WrapperModel):
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
-            return await super(DBOSModel, self).request(messages, model_settings, model_request_parameters)
+            with durable_unit_scope():
+                return await super(DBOSModel, self).request(messages, model_settings, model_request_parameters)
 
         self._dbos_wrapped_request_step = wrapped_request_step
 
@@ -64,17 +66,18 @@ class DBOSModel(WrapperModel):
             run_context: RunContext[Any] | None = None,
         ) -> ModelResponse:
             event_stream_handler = self._get_event_stream_handler()
-            async with super(DBOSModel, self).request_stream(
-                messages, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
-                if event_stream_handler is not None:
-                    assert run_context is not None, (
-                        'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
-                    )
-                    await event_stream_handler(run_context, streamed_response)
+            with durable_unit_scope():
+                async with super(DBOSModel, self).request_stream(
+                    messages, model_settings, model_request_parameters, run_context
+                ) as streamed_response:
+                    if event_stream_handler is not None:
+                        assert run_context is not None, (
+                            'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                        )
+                        await event_stream_handler(run_context, streamed_response)
 
-                async for _ in streamed_response:
-                    pass
+                    async for _ in streamed_response:
+                        pass
             return streamed_response.get()
 
         self._dbos_wrapped_request_stream_step = wrapped_request_stream_step
