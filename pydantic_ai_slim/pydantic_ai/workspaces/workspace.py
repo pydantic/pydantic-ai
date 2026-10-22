@@ -417,7 +417,7 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if isinstance(backend, Workspace):
             return backend.has_display
-        return isinstance(backend, SupportsComputerUse) and not isinstance(backend, UnavailableWorkspace)
+        return isinstance(backend, SupportsComputerUse) and backend.has_display
 
     @property
     def ref(self) -> WorkspaceRef | None:
@@ -546,7 +546,7 @@ class Workspace(WorkspaceBackend):
         )
 
     async def display_size(self) -> tuple[int, int]:
-        """The display's `(width, height)` in pixels. Raises `UserError` if the workspace has no display."""
+        """The screenshot's `(width, height)` in pixels. Raises `UserError` if the workspace has no display."""
         return await self._computer.display_size()
 
     async def screenshot(self) -> bytes:

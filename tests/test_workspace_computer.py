@@ -16,12 +16,12 @@ from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
     Drag,
-    HoldKey,
-    KeyPress,
+    HoldKeys,
     MouseDown,
     MouseUp,
     MoveMouse,
     Point,
+    PressKeys,
     ReadOnlyWorkspace,
     Scroll,
     TypeText,
@@ -106,13 +106,13 @@ class BlockingCommands(ScriptedCommands):
         ),
         (Scroll(direction='left', amount=4), ['xdotool', 'click', '--repeat', '4', '6']),
         (TypeText(text='-n "hi"\n'), ['xdotool', 'type', '--', '-n "hi"\n']),
-        (KeyPress(keys=('ctrl', 's')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+s']),
-        (KeyPress(keys=('Return',), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'Return']),
-        (KeyPress(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
-        (KeyPress(keys=('KP_Enter',)), ['xdotool', 'key', '--repeat', '1', '--', 'KP_Enter']),
-        (KeyPress(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
-        (KeyPress(keys=('ctrl', '+')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+plus']),
-        (HoldKey(keys=('shift',), seconds=0.5), ['xdotool', 'keydown', 'shift', 'sleep', '0.5', 'keyup', 'shift']),
+        (PressKeys(keys=('ctrl', 's')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+s']),
+        (PressKeys(keys=('Return',), repeat=3), ['xdotool', 'key', '--repeat', '3', '--', 'Return']),
+        (PressKeys(keys=('PageDown', 'F5', 'ArrowUp')), ['xdotool', 'key', '--repeat', '1', '--', 'Next+F5+Up']),
+        (PressKeys(keys=('KP_Enter',)), ['xdotool', 'key', '--repeat', '1', '--', 'KP_Enter']),
+        (PressKeys(keys=('shift', 'XF86AudioMute')), ['xdotool', 'key', '--repeat', '1', '--', 'shift+XF86AudioMute']),
+        (PressKeys(keys=('ctrl', '+')), ['xdotool', 'key', '--repeat', '1', '--', 'ctrl+plus']),
+        (HoldKeys(keys=('shift',), seconds=0.5), ['xdotool', 'keydown', 'shift', 'sleep', '0.5', 'keyup', 'shift']),
     ],
 )
 async def test_x11_computer_runs_one_xdotool_command_per_action(action: ComputerAction, argv: list[str]) -> None:
@@ -124,11 +124,11 @@ async def test_x11_computer_runs_one_xdotool_command_per_action(action: Computer
 @pytest.mark.parametrize(
     'action',
     [
-        KeyPress(keys=('exec',)),
-        KeyPress(keys=('ctrl', 'a b')),
+        PressKeys(keys=('exec',)),
+        PressKeys(keys=('ctrl', 'a b')),
         Click(modifiers=('ctrl', 'exec')),
-        HoldKey(keys=('--help',), seconds=1),
-        KeyPress(keys=('é',)),
+        HoldKeys(keys=('--help',), seconds=1),
+        PressKeys(keys=('é',)),
     ],
 )
 async def test_x11_computer_refuses_key_names_xdotool_would_read_as_commands(action: ComputerAction) -> None:
@@ -160,13 +160,17 @@ async def test_x11_computer_releases_what_a_failed_action_held(action: ComputerA
 async def test_x11_computer_releases_held_keys_when_cancelled() -> None:
     commands = BlockingCommands()
     async with anyio.create_task_group() as tg:
-        tg.start_soon(X11Computer(commands).act, HoldKey(keys=('shift',), seconds=5))
+        tg.start_soon(X11Computer(commands).act, HoldKeys(keys=('shift',), seconds=5))
         await commands.started.wait()
         tg.cancel_scope.cancel()
     assert commands.argvs == [
         ['xdotool', 'keydown', 'shift', 'sleep', '5.0', 'keyup', 'shift'],
         ['xdotool', 'keyup', 'shift'],
     ]
+
+
+def test_an_x11_computer_has_a_display() -> None:
+    assert X11Computer(ScriptedCommands()).has_display is True
 
 
 async def test_x11_computer_does_not_release_after_an_action_without_held_input() -> None:
@@ -245,11 +249,11 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         ]
     )
     assert actions == [
-        KeyPress(keys=('ctrl', 'enter')),
+        PressKeys(keys=('ctrl', 'enter')),
         Click(x=1, y=2, modifiers=('ctrl', 'super', 'alt')),
-        HoldKey(keys=('escape',), seconds=1),
-        KeyPress(keys=('ctrl', 'shift', 't')),
-        KeyPress(keys=('+',)),
+        HoldKeys(keys=('escape',), seconds=1),
+        PressKeys(keys=('ctrl', 'shift', 't')),
+        PressKeys(keys=('+',)),
     ]
     assert adapter.validate_json(adapter.dump_json(actions)) == actions
     invalid_actions: list[dict[str, object]] = [
@@ -273,11 +277,11 @@ def test_actions_normalize_key_names_and_validate_from_json() -> None:
         lambda: Click(count=0),
         lambda: Click(x=-1, y=0),
         lambda: Drag(path=()),
-        lambda: KeyPress(keys=()),
-        lambda: HoldKey(keys=('shift',), seconds=float('inf')),
-        lambda: HoldKey(keys=('shift',), seconds=11),
-        lambda: KeyPress(keys=('a',), repeat=51),
-        lambda: KeyPress(keys=('a',) * 9),
+        lambda: PressKeys(keys=()),
+        lambda: HoldKeys(keys=('shift',), seconds=float('inf')),
+        lambda: HoldKeys(keys=('shift',), seconds=11),
+        lambda: PressKeys(keys=('a',), repeat=51),
+        lambda: PressKeys(keys=('a',) * 9),
         lambda: Scroll(direction='down', amount=51),
         lambda: TypeText(text='x' * 2_001),
         lambda: Drag(path=(Point(x=0, y=0),) * 51),
@@ -327,6 +331,7 @@ def test_has_display_follows_wrappers_without_io() -> None:
     assert ReadOnlyWorkspace(Workspace(provider.backend(None))).has_display is True
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
     assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
+    assert Workspace(InMemoryProvider(has_display=False).backend(None)).has_display is False
     assert provider.log == []
 
 
@@ -338,7 +343,7 @@ def test_the_schema_tells_the_model_what_each_field_means() -> None:
     assert schema['Scroll']['properties']['direction']['description'] == (
         'Which way the content moves into view: `down` shows what is below.'
     )
-    assert schema['KeyPress']['properties']['keys']['description'].startswith('One key per entry')
+    assert schema['PressKeys']['properties']['keys']['description'].startswith('One key per entry')
 
 
 async def test_x11_computer_bounds_every_command() -> None:
