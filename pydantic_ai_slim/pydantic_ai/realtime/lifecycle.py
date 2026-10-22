@@ -23,7 +23,8 @@ its codec events in the [`RealtimeFrame`][pydantic_ai.realtime.lifecycle.Realtim
   conversation, so history can follow the provider's order;
 - [`InputLost`][pydantic_ai.realtime.lifecycle.InputLost] and
   [`ResponseRequestRefused`][pydantic_ai.realtime.lifecycle.ResponseRequestRefused] settle the inputs no
-  response will ever answer;
+  response will ever answer, and [`ToolCallsAbandoned`][pydantic_ai.realtime.lifecycle.ToolCallsAbandoned] the
+  tool calls whose results none will;
 - [`OutputItemDetails`][pydantic_ai.realtime.lifecycle.OutputItemDetails] keeps what the provider says about an
   output item on the part it makes, and [`OutputItemCut`][pydantic_ai.realtime.lifecycle.OutputItemCut] records
   that the listener heard only part of it, even after its response ended.
@@ -56,6 +57,7 @@ from ._lifecycle import (
     ResponseStarted,
     ResponseStatus,
     StaleEvent,
+    ToolCallsAbandoned,
     UserTurnClosed,
     UserTurnEnded,
     UserTurnStarted,
@@ -77,6 +79,7 @@ __all__ = (
     'ResponseStarted',
     'ResponseStatus',
     'StaleEvent',
+    'ToolCallsAbandoned',
     'UserTurnClosed',
     'UserTurnEnded',
     'UserTurnStarted',
