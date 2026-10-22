@@ -237,10 +237,18 @@ async def test_a_command_reading_stdin_sees_eof_not_the_rest_of_the_script(tools
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'after', '')
 
 
-async def test_an_ssh_that_does_not_forward_its_input_is_unavailable(tools: FakeRemoteTools) -> None:
+@pytest.mark.parametrize(('destination', 'login_output'), [('box', ''), ('chatty', '\nLast login: yesterday')])
+async def test_an_ssh_that_does_not_forward_its_input_is_unavailable(
+    tools: FakeRemoteTools, destination: str, login_output: str
+) -> None:
     """The script travels on `ssh`'s input, which `-n` (as `-f` and `StdinNull` do) replaces with an empty one."""
-    with pytest.raises(WorkspaceUnavailableError, match='did not forward its input; remove `-n`'):
-        await SSHWorkspaceBackend('box', ssh_args=['-n']).working_dir()
+    with pytest.raises(WorkspaceUnavailableError) as unavailable:
+        await SSHWorkspaceBackend(destination, ssh_args=['-n']).working_dir()
+
+    assert str(unavailable.value) == (
+        f'SSH workspace {destination} is unavailable: the command never reached the host, as `ssh` did not forward '
+        f'its input; remove `-n` or `-f` from `ssh_args` and `StdinNull` from your SSH configuration{login_output}'
+    )
 
 
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(
