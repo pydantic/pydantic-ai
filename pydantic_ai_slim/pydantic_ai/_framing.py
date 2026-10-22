@@ -25,6 +25,7 @@ from __future__ import annotations as _annotations
 import html
 import re
 import threading
+import warnings
 from typing import Final, Literal, NewType, get_args
 
 from .exceptions import UserError
@@ -83,6 +84,8 @@ _registered_tags: tuple[RegisteredTag, ...] = ()
 _data_tag_openers: re.Pattern[str] = _tag_openers(*_BUILTIN_TAGS)
 """Matches every framing tag, built-in and registered. Rebuilt, under the lock, only when a new tag is registered."""
 _VOICE_TAG_OPENERS: Final = _tag_openers(SYSTEM_TAG)
+_data_tag_openers_used = False
+"""Whether `_data_tag_openers` has escaped any text yet, after which registering a new tag changes how text renders."""
 
 
 def register_tag(name: str) -> RegisteredTag:
@@ -98,7 +101,8 @@ def register_tag(name: str) -> RegisteredTag:
     how later requests escape text, including history that is re-rendered for each request, so it can
     change bytes the provider already cached.
 
-    Registering a name again returns the same tag. Registration is thread-safe, and each new name costs
+    Registering a new name after text has already been escaped emits a `UserWarning`. Registering a name
+    again returns the same tag. Registration is thread-safe, and each new name costs
     one recompile of the shared pattern; matching stays linear in the length of the text.
 
     Args:
@@ -119,10 +123,19 @@ def register_tag(name: str) -> RegisteredTag:
         raise UserError(f'{name!r} is a built-in framing tag: pass it to `wrap` directly instead of registering it.')
     tag = RegisteredTag(name)
     with _registration_lock:
-        if tag not in _registered_tags:
-            tags = (*_registered_tags, tag)
-            _data_tag_openers = _tag_openers(*_BUILTIN_TAGS, *tags)
-            _registered_tags = tags
+        if tag in _registered_tags:
+            return tag
+        tags = (*_registered_tags, tag)
+        _data_tag_openers = _tag_openers(*_BUILTIN_TAGS, *tags)
+        _registered_tags = tags
+    if _data_tag_openers_used:
+        warnings.warn(
+            f'Framing tag {name!r} was registered after framing tags were first escaped, so text containing it '
+            'now renders differently than before, including history in requests already sent. '
+            'Call `register_tag` at module level, so it runs at import time.',
+            UserWarning,
+            stacklevel=2,
+        )
     return tag
 
 
@@ -136,6 +149,8 @@ def neutralize_tags(text: str) -> str:
     Use it for untrusted text that will sit inside a framing tag without going through
     [`wrap`][pydantic_ai.framing.wrap], such as a value interpolated into a statement that a later step wraps.
     """
+    global _data_tag_openers_used
+    _data_tag_openers_used = True
     return _data_tag_openers.sub('&lt;', text)
 
 
@@ -225,5 +240,8 @@ def wrap(tag: FramingTag | RegisteredTag, body: str, /, **attrs: str | None) -> 
         UserError: If `tag` is neither a built-in tag nor registered, or an attribute name isn't
             lowercase letters, digits and underscores.
     """
-    openers = _VOICE_TAG_OPENERS if tag == SYSTEM_TAG else _data_tag_openers
-    return f'{open_tag(tag, **attrs)}{openers.sub("&lt;", body)}{close_tag(tag)}'
+    if tag == SYSTEM_TAG:
+        escaped = _VOICE_TAG_OPENERS.sub('&lt;', body)
+    else:
+        escaped = neutralize_tags(body)
+    return f'{open_tag(tag, **attrs)}{escaped}{close_tag(tag)}'

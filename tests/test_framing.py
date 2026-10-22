@@ -61,6 +61,9 @@ _SPELLINGS = [
     pytest.param('<{tag}/>', id='self-closing'),
     pytest.param('</{tag}>', id='close'),
     pytest.param('< / {tag} >', id='close-spaced'),
+    pytest.param('<{tag}\n>', id='open-newline'),
+    pytest.param('</ {tag}>', id='close-space-after-slash'),
+    pytest.param('</{tag}/>', id='close-self-closing'),
 ]
 
 
@@ -232,6 +235,8 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Registration is process-wide by design; restore it after the test so no registered tag leaks into others."""
     monkeypatch.setattr(_framing, '_registered_tags', _framing._registered_tags)  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(_framing, '_data_tag_openers', _framing._data_tag_openers)  # pyright: ignore[reportPrivateUsage]
+    # Other tests have escaped text by now; start from a fresh import, where registration comes first.
+    monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
 
 
 _DATA_TAGS = [tag for tag in get_args(FramingTag) if tag != SYSTEM_TAG]
@@ -362,3 +367,13 @@ def test_attribute_names_that_could_break_the_tag_are_refused(name: str) -> None
         wrap(TOOL_RESULT_TAG, 'body', **{name: 'x'})
     with pytest.raises(UserError, match='attribute names must match'):
         open_tag(TOOL_RESULT_TAG, **{name: None})
+
+
+@pytest.mark.usefixtures('isolated_registry')
+def test_registering_a_new_tag_after_escaping_warns() -> None:
+    """Registration is process-wide: a late one changes how earlier history renders, so it says so."""
+    register_tag('memory')
+    assert wrap(TOOL_RESULT_TAG, '</memory>') == '<tool_result>&lt;/memory></tool_result>'
+    register_tag('memory')
+    with pytest.warns(UserWarning, match="Framing tag 'goal' was registered after framing tags were first escaped"):
+        register_tag('goal')

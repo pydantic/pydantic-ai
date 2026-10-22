@@ -48,6 +48,7 @@ from pydantic_ai import (
     ToolReturnPart,
     ToolsetTool,
     UserPromptPart,
+    _framing,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
@@ -533,6 +534,12 @@ def test_docs_examples(
 
     # Reset global DEFAULT_CONFIG so configure() calls in doc examples don't leak between tests
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
+
+    # Doc examples register framing tags at module level, as on a fresh import: keep the tags from leaking between
+    # tests, and don't warn that registration came after other tests escaped text.
+    mocker.patch('pydantic_ai._framing._registered_tags', _framing._registered_tags)  # pyright: ignore[reportPrivateUsage]
+    mocker.patch('pydantic_ai._framing._data_tag_openers', _framing._data_tag_openers)  # pyright: ignore[reportPrivateUsage]
+    mocker.patch('pydantic_ai._framing._data_tag_openers_used', False)
 
     _patch_optional_mcp_modules(mocker)
     _patch_realtime_models(mocker, answers_a_send='.send(' in example.source)
