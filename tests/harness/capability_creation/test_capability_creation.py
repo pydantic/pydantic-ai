@@ -7,6 +7,7 @@ import sys
 import threading
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import get_type_hints
 from unittest.mock import Mock
 
 import anyio.to_thread
@@ -172,6 +173,31 @@ def _gate(module: ModuleType, name: str) -> threading.Event:
     return event
 
 
+class _ContendedLock:
+    """A lock that sets `contended` when a caller has to wait for it."""
+
+    def __init__(self, contended: threading.Event) -> None:
+        self._lock = threading.Lock()
+        self._contended = contended
+
+    def __enter__(self) -> None:
+        if not self._lock.acquire(blocking=False):
+            self._contended.set()
+            self._lock.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._lock.release()
+
+
+def _contended_locks(monkeypatch: pytest.MonkeyPatch, module: str, contended: threading.Event) -> None:
+    """Make `module` build `_ContendedLock`s, so a test sees when one of its callers waits for another."""
+
+    def lock() -> _ContendedLock:
+        return _ContendedLock(contended)
+
+    monkeypatch.setattr(f'{module}.threading', SimpleNamespace(Lock=lock, RLock=lock))
+
+
 class TestValidate:
     def test_valid_returns_class_name(self, tmp_path: Path) -> None:
         assert validate_capability_file(_write(tmp_path, 'm', VALID_CODE)) == 'MarkerCapability'
@@ -276,6 +302,101 @@ class UsesModels(AbstractCapability):
         added = [name for name in set(sys.modules) - before if name.startswith('_authored_capability_m_')]
         assert len(added) == 1
 
+    def test_reloading_changed_source_keeps_the_earlier_module(self, tmp_path: Path) -> None:
+        # A class loaded before its file was re-authored resolves its annotations against its own source.
+        code = (
+            'from __future__ import annotations\n'
+            'from pydantic_ai.capabilities import AbstractCapability\n'
+            'class {item}: ...\n'
+            'class Cap(AbstractCapability):\n'
+            '    item: {item} | None = None\n'
+        )
+        path = _write(tmp_path, 'm', code.format(item='ItemV1'))
+        old = type(load_capability_instance(path))
+        path.write_text(code.format(item='ItemV2'), encoding='utf-8')
+        new = type(load_capability_instance(path))
+        assert 'ItemV1' in str(get_type_hints(old)['item'])
+        assert 'ItemV2' in str(get_type_hints(new)['item'])
+
+    def test_failed_load_keeps_no_module_registered(self, tmp_path: Path) -> None:
+        before = set(sys.modules)
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(_write(tmp_path, 'm', 'raise RuntimeError("boom")\n'))
+        with pytest.raises(CapabilityValidationError, match='no `AbstractCapability` subclass'):
+            load_capability_instance(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
+        assert set(sys.modules) - before == set()
+
+    def test_failed_reload_keeps_the_earlier_module(self, tmp_path: Path) -> None:
+        # The same source can fail on a later load; the module an earlier instance resolves through stays.
+        code = (
+            'from pathlib import Path\nif Path(__file__).with_name("fail").exists():\n    raise RuntimeError("boom")\n'
+        ) + VALID_CODE
+        path = _write(tmp_path, 'm', code)
+        module = type(load_capability_instance(path)).__module__
+        registered = sys.modules[module]
+        (tmp_path / 'fail').touch()
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(path)
+        assert sys.modules[module] is registered
+
+    def test_loads_of_the_same_source_take_turns(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Two failing loads of one source that ran at once would each swap the other's module in and out,
+        # leaving a failed one registered.
+        contended = threading.Event()
+        _contended_locks(monkeypatch, 'pydantic_ai_harness.capability_creation._validate', contended)
+        gate = _gate_module(monkeypatch, 'entered', 'release')
+        code = f'import {gate.__name__} as g\ng.entered.set()\ng.release.wait({_READY_TIMEOUT})\nraise RuntimeError("boom")\n'
+        path = _write(tmp_path, 'm', code)
+        errors: list[str] = []
+
+        def load() -> None:
+            with pytest.raises(CapabilityValidationError, match='RuntimeError: boom') as exc_info:
+                load_capability_instance(path)
+            errors.append(str(exc_info.value))
+
+        before = set(sys.modules)
+        loaders = [threading.Thread(target=load), threading.Thread(target=load)]
+        loaders[0].start()
+        try:
+            assert _gate(gate, 'entered').wait(timeout=_READY_TIMEOUT)
+            loaders[1].start()
+            assert contended.wait(timeout=_READY_TIMEOUT)  # the second load waits for the first to finish
+        finally:
+            _gate(gate, 'release').set()
+            for loader in loaders:
+                loader.join(timeout=_READY_TIMEOUT)
+        assert errors == ['RuntimeError: boom', 'RuntimeError: boom']
+        assert set(sys.modules) - before == set()
+
+    def test_code_that_loads_its_own_source_does_not_wait_on_itself(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gate = _gate_module(monkeypatch, 'nested')
+        code = (
+            f'from pathlib import Path\nimport {gate.__name__} as g\n'
+            'from pydantic_ai_harness.capability_creation import load_capability_instance\n'
+            'if not g.nested.is_set():\n    g.nested.set()\n    load_capability_instance(Path(__file__))\n'
+        ) + VALID_CODE
+        path = _write(tmp_path, 'm', code)
+        loaded: list[AbstractCapability[object]] = []
+        loader = threading.Thread(target=lambda: loaded.append(load_capability_instance(path)), daemon=True)
+        loader.start()
+        loader.join(timeout=_READY_TIMEOUT)
+        assert [type(capability).__name__ for capability in loaded] == ['MarkerCapability']
+
+    def test_failed_load_leaves_an_entry_it_did_not_register(self, tmp_path: Path) -> None:
+        # Whatever replaced the module's entry while it ran is not the failed module, so it is left alone.
+        code = 'import sys\nsys.modules[__name__] = sys\nraise RuntimeError("boom")\n'
+        path = _write(tmp_path, 'm', code)
+        before = set(sys.modules)
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(path)
+        (added,) = set(sys.modules) - before
+        try:
+            assert sys.modules[added] is sys
+        finally:
+            del sys.modules[added]
+
     def test_validation_keeps_no_module_registered(self, tmp_path: Path) -> None:
         before = set(sys.modules)
         validate_capability_file(_write(tmp_path, 'm', VALID_CODE))
@@ -352,6 +473,17 @@ class TestCapabilityStore:
         assert store.list_all() == [good]
         active = store.load_active()
         assert [capability.get_instructions() for capability in active] == ['V1']
+
+    def test_failed_reauthor_with_a_deleted_source_records_it(self, tmp_path: Path) -> None:
+        # With the kept version's file gone there is nothing to keep, so the attempt is what gets recorded.
+        store = CapabilityStore(tmp_path)
+        store.write('marker', VALID_CODE)
+        (tmp_path / 'marker.py').unlink()
+        record = store.write('marker', NO_SUBCLASS_CODE)
+        assert record.module_file == 'marker.py'
+        assert record.last_error is not None
+        assert store.list_all() == [record]
+        assert not (tmp_path / 'marker.rejected.py').exists()
 
     def test_successful_reauthor_removes_rejected_source(self, tmp_path: Path) -> None:
         store = CapabilityStore(tmp_path)
@@ -441,29 +573,13 @@ class TestCapabilityStore:
         contended = threading.Event()
         real_replace = os.replace
 
-        class ContendedLock:
-            """A lock that records when a caller has to wait for it."""
-
-            def __init__(self) -> None:
-                self._lock = threading.Lock()
-
-            def __enter__(self) -> None:
-                if not self._lock.acquire(blocking=False):
-                    contended.set()
-                    self._lock.acquire()
-
-            def __exit__(self, *exc_info: object) -> None:
-                self._lock.release()
-
         def held_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
             if Path(dst).name == 'manifest.json' and not saving.is_set():
                 saving.set()
                 release.wait(timeout=_READY_TIMEOUT)  # hang guard; the test sets it
             real_replace(src, dst)
 
-        monkeypatch.setattr(
-            'pydantic_ai_harness.capability_creation._store.threading', SimpleNamespace(Lock=ContendedLock)
-        )
+        _contended_locks(monkeypatch, 'pydantic_ai_harness.capability_creation._store', contended)
         monkeypatch.setattr(os, 'replace', held_replace)
         writers = [
             threading.Thread(target=CapabilityStore(tmp_path).write, args=('first', VALID_CODE)),
@@ -589,6 +705,29 @@ class TestCapabilityStore:
             store.write('second', VALID_CODE)
         leftovers = [p.name for p in tmp_path.iterdir() if p.name.startswith('manifest.') and p.name.endswith('.tmp')]
         assert leftovers == []
+        assert not (tmp_path / 'second.py').exists()  # a new source goes with the entry that was not saved
+
+    def test_failed_manifest_save_keeps_the_previous_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The source and its manifest entry change together, so a failed save leaves both as they were.
+        store = CapabilityStore(tmp_path)
+        good = store.write('marker', _marker_code('Foo', 'V1'))
+        store.write('marker', NO_SUBCLASS_CODE)
+        files = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+        real_replace = os.replace
+
+        def _boom(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if Path(dst).name == 'manifest.json':
+                raise OSError('replace failed')
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, 'replace', _boom)
+        with pytest.raises(OSError, match='replace failed'):
+            store.write('marker', _marker_code('Bar', 'V2'))
+        assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == files
+        assert store.list_all() == [good]
+        assert [capability.get_instructions() for capability in store.load_active()] == ['V1']
 
     def test_load_active_skips_entry_that_failed_validation(self, tmp_path: Path) -> None:
         # A getter with a wrong return type fails at authoring and must not be loaded into the next run.
@@ -727,6 +866,7 @@ class TestCapabilityCreationToolset:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
         result = await toolset.author_capability('bad', NO_SUBCLASS_CODE)
         assert 'failed validation' in result
+        assert 'was written but' not in result
         assert 'previous version' not in result
 
     async def test_author_failure_message_names_kept_version(self, tmp_path: Path) -> None:

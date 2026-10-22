@@ -41,6 +41,11 @@ _DIRECTORY_LOCKS: dict[Path, threading.Lock] = {}
 _DIRECTORY_LOCKS_GUARD = threading.Lock()
 
 
+def rejected_module_file(name: str) -> str:
+    """The file `CapabilityStore.write` saves rejected code for `name` in while it keeps the previous version."""
+    return f'{name}.rejected.py'
+
+
 def _directory_lock(directory: Path) -> threading.Lock:
     """The lock shared by every store over `directory` in this process."""
     key = directory.resolve()
@@ -117,11 +122,15 @@ class CapabilityStore:
         The code is validated before it replaces anything. Code that passes
         replaces `<name>.py` and its manifest entry. Code that fails is kept on
         disk so it can be inspected: when the current entry for `name` has no
-        recorded error, that version and its manifest entry stay as they are,
-        the rejected code is saved as `<name>.rejected.py`, and the returned
-        record (with that `module_file`) is not saved to the manifest. Otherwise
-        the code is saved as `<name>.py` and recorded with `last_error` set, so
-        `load_active` skips it.
+        recorded error and its `<name>.py` still exists, that version and its
+        manifest entry stay as they are, the rejected code is saved as
+        `<name>.rejected.py`, and the returned record (with that `module_file`)
+        is not saved to the manifest. Otherwise the code is saved as `<name>.py`
+        and recorded with `last_error` set, so `load_active` skips it.
+
+        If saving the manifest fails, the previous `<name>.py` (or its absence)
+        is put back before the error is raised, so the source and its manifest
+        entry change together or not at all.
         """
         if not _NAME_RE.fullmatch(name):
             raise ValueError(
@@ -131,7 +140,7 @@ class CapabilityStore:
         self._load_manifest(for_update=True)
         self.directory.mkdir(parents=True, exist_ok=True)
         live = self.directory / f'{name}.py'
-        rejected = self.directory / f'{name}.rejected.py'
+        rejected = self.directory / rejected_module_file(name)
         # Authored code runs outside the directory lock, so code that blocks holds up only this call.
         staging = Path(tempfile.mkdtemp(dir=self.directory, prefix='.candidate-'))
         candidate = staging / live.name
@@ -147,14 +156,25 @@ class CapabilityStore:
                 if error is not None and previous is not None and previous.last_error is None and live.exists():
                     os.replace(candidate, rejected)
                     return AuthoredCapability(name=name, module_file=rejected.name, class_name='', last_error=error)
-                os.replace(candidate, live)
-                rejected.unlink(missing_ok=True)
                 record = AuthoredCapability(name=name, module_file=live.name, class_name=class_name, last_error=error)
                 if previous is None:
                     manifest.capabilities.append(record)
                 else:
                     manifest.capabilities[manifest.capabilities.index(previous)] = record
-                self._save_manifest(manifest)
+                backup = staging / 'previous.py'
+                replaced = live.exists()
+                if replaced:
+                    shutil.copy2(live, backup)
+                os.replace(candidate, live)
+                try:
+                    self._save_manifest(manifest)
+                except BaseException:
+                    if replaced:
+                        os.replace(backup, live)
+                    else:
+                        live.unlink()
+                    raise
+                rejected.unlink(missing_ok=True)
                 return record
         finally:
             shutil.rmtree(staging, ignore_errors=True)
@@ -185,9 +205,15 @@ class CapabilityStore:
         skipped, not raised. A load outcome that disagrees with the record's
         `last_error` is persisted back to the manifest: a newly broken entry records
         its error, a re-fixed entry clears it, so the manifest stays truthful about
-        which capabilities are actually active. An outcome is dropped when the entry
-        or its source was rewritten while it was loading, keeping the newer write's
-        state.
+        which capabilities are actually active. An outcome is not persisted when the
+        entry or its source was rewritten while it was loading, keeping the newer
+        write's state.
+
+        The returned instances are built from each file as this call read it. A
+        `write` that lands during the call may be in them or not, and the next call
+        picks it up. Making them always match the manifest would mean holding the
+        directory lock while authored code runs, which would let one module that
+        blocks hold up every write.
         """
         manifest = self._load_manifest()
         instances: list[AbstractCapability[object]] = []
