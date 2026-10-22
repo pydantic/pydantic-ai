@@ -28,10 +28,16 @@ from pydantic_ai import (
     BinaryContent,
     BoolCriteria,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
     ModelRequest,
     ModelResponse,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -617,11 +623,51 @@ async def test_sdk_errors_map_to_model_api_error_with_cause(allow_model_requests
     assert exc_info.value.message == 'OpenAI Decisions request failed'
     if error_kind == 'connection':
         [transport_error] = transport_errors
+        assert isinstance(exc_info.value, ModelConnectionError)
+        assert exc_info.value.phase == 'connect'
         assert isinstance(exc_info.value.__cause__, APIConnectionError)
         assert exc_info.value.__cause__.__cause__ is transport_error
     else:
         [sdk_error] = sdk_errors
         assert exc_info.value.__cause__ is sdk_error
+
+
+@pytest.mark.parametrize(
+    ('status', 'body', 'category'),
+    [
+        (429, {'message': 'Rate limit reached.', 'code': 'rate_limit_exceeded'}, ModelRateLimitError),
+        (429, {'message': 'You exceeded your quota.', 'code': 'insufficient_quota'}, ModelQuotaExceededError),
+        (503, {'message': 'Service unavailable.', 'type': 'service_unavailable'}, ModelUnavailableError),
+        (500, {'message': 'The server had an error.', 'type': 'server_error'}, ModelServerError),
+    ],
+)
+async def test_http_error_category(
+    allow_model_requests: None,
+    status: int,
+    body: dict[str, str],
+    category: type[ModelRateLimitError | ModelQuotaExceededError | ModelUnavailableError | ModelServerError],
+):
+    """A rate limit, exhausted quota or outage is raised in its error category, with the provider's code and type."""
+    model = mock_model(lambda _: httpx2.Response(status, json={'error': body}))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+    error = exc_info.value
+    # Exactly the category's HTTP error, so one classified too broadly (an overloaded 503 for a plain one) fails.
+    assert type(error) is type(ModelHTTPError.for_category(category, status_code=status, model_name='gpt-6-luna'))
+    assert (error.status_code, error.provider_error_code, error.provider_error_type) == (
+        status,
+        body.get('code'),
+        body.get('type'),
+    )
+
+
+async def test_timeout_error(allow_model_requests: None):
+    def time_out(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout('slow')
+
+    with pytest.raises(ModelTimeoutError) as exc_info:
+        await mock_model(time_out).decide(DecisionRequest(state='Review this.', questions={'q': NoulQuestion()}), {})
+    assert exc_info.value.message == 'OpenAI Decisions request failed'
 
 
 async def test_sdk_status_error_below_400_maps_to_model_api_error(allow_model_requests: None):
@@ -1531,30 +1577,25 @@ async def test_image_is_prepared_once_for_route_then_fill(allow_model_requests: 
     ('source', 'unsupported'),
     [
         pytest.param('prompt', BinaryContent(b'audio', media_type='audio/mpeg'), id='audio-prompt'),
+        pytest.param('prompt', AudioUrl('https://example.com/audio.mp3'), id='audio-url-prompt'),
         pytest.param('assistant-file', BinaryContent(b'%PDF', media_type='application/pdf'), id='document-assistant'),
-        pytest.param('tool-return', BinaryContent(b'video', media_type='video/mp4'), id='video-tool-return'),
     ],
 )
 async def test_unsupported_files_fail_before_a_decisions_request(
-    source: Literal['prompt', 'assistant-file', 'tool-return'],
-    unsupported: BinaryContent,
+    source: Literal['prompt', 'assistant-file'],
+    unsupported: BinaryContent | AudioUrl,
     allow_model_requests: None,
 ):
-    """Audio, documents, and video remain unsupported across user, assistant, and tool history."""
+    """Audio, documents, and video the user sent, or the model produced, fail before a request is sent."""
     history: list[ModelMessage] = []
-    prompt: str | list[BinaryContent] = 'Classify this content.'
+    prompt: str | list[BinaryContent | AudioUrl] = 'Classify this content.'
     if source == 'prompt':
         prompt = [unsupported]
-    elif source == 'assistant-file':
+    else:
+        assert isinstance(unsupported, BinaryContent)
         history = [
             ModelRequest.user_text_prompt('Earlier prompt.'),
             ModelResponse(parts=[FilePart(content=unsupported)]),
-        ]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
         ]
     captured = Captured(boolean_answers)
 
@@ -1565,28 +1606,37 @@ async def test_unsupported_files_fail_before_a_decisions_request(
     assert captured.requests == []
 
 
-@pytest.mark.parametrize('source', ['prompt', 'tool-return'])
-async def test_unsupported_audio_urls_fail_before_a_decisions_request(
-    source: Literal['prompt', 'tool-return'], allow_model_requests: None
+@pytest.mark.parametrize(
+    ('unsupported', 'note'),
+    [
+        pytest.param(
+            BinaryContent(b'video', media_type='video/mp4', identifier='clip'),
+            'File clip (video/mp4, 5 bytes) was not sent: this model cannot read video.',
+            id='video',
+        ),
+        pytest.param(
+            AudioUrl('https://example.com/audio.mp3', identifier='clip'),
+            'File clip (audio/mpeg) was not sent: this model cannot read audio files.',
+            id='audio-url',
+        ),
+    ],
+)
+async def test_unsupported_tool_return_files_are_named_in_a_note(
+    unsupported: BinaryContent | AudioUrl, note: str, allow_model_requests: None
 ):
-    """Audio URLs are rejected in user prompts and tool returns before a Decisions request is sent."""
-    audio_url = AudioUrl('https://example.com/audio.mp3')
-    history: list[ModelMessage] = []
-    prompt: str | list[AudioUrl] = 'Classify this content.'
-    if source == 'prompt':
-        prompt = [audio_url]
-    else:
-        history = [
-            ModelRequest.user_text_prompt('Look up the attachment.'),
-            ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
-            ModelRequest(parts=[ToolReturnPart('lookup', audio_url, tool_call_id='tool-1')]),
-        ]
+    """Audio or video a tool returned reaches the Decisions request as a note naming it, rather than failing the run."""
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Look up the attachment.'),
+        ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='tool-1')]),
+        ModelRequest(parts=[ToolReturnPart('lookup', unsupported, tool_call_id='tool-1')]),
+    ]
     captured = Captured(boolean_answers)
     agent = Agent(mock_model(captured), output_type=bool, instructions='Does this contain an image?')
 
-    with pytest.raises(UserError, match='unsupported file: this model accepts text and images only'):
-        await agent.run(prompt, message_history=history)
-    assert captured.requests == []
+    result = await agent.run('Classify this content.', message_history=history)
+
+    assert result.output is True
+    assert note in captured.requests[0].content.decode()
 
 
 async def test_image_download_error_prevents_a_decisions_request(allow_model_requests: None):

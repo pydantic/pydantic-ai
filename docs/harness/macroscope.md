@@ -103,6 +103,17 @@ using its other capabilities. Pair it with `FileSystem` or `Shell` to let the
 agent read code and apply fixes, and consider running the agent in an isolated
 worktree if you want fixes kept off your working tree.
 
+## Two of them
+
+`Macroscope` declares the default `id` `'macroscope'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `Macroscope`s on one agent that
+share it are one review configuration stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `run_macroscope_review`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
+
 ## Agent spec
 
 `Macroscope` works with Pydantic AI's [agent spec](../agent-spec.md),

@@ -58,6 +58,7 @@ from ..messages import (
     BinaryImage,
     CachePoint,
     DocumentUrl,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -68,7 +69,8 @@ from ..messages import (
     PartStartEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     TextContent,
     TextPart,
@@ -78,8 +80,14 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
+from ..models import (
+    Model,
+    ModelRequestParameters,
+    infer_model,
+    parse_model_id,
+)
 from ..models._speech import assistant_speech_text
 from ..models.openai import (
     OpenAIResponsesModel,
@@ -98,7 +106,7 @@ from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._inferred_lifecycle import InferredLifecycle
-from ._lifecycle import LifecycleEvent, RealtimeFrame
+from ._lifecycle import AnswersRevised, InputId, LifecycleEvent, RealtimeFrame, ResponseStatus, ToolCallsAbandoned
 from ._openai_protocol import (
     RealtimeHandshakeError,
     _without_media as without_media,  # pyright: ignore[reportPrivateUsage]
@@ -109,7 +117,13 @@ from ._openai_protocol import (
     tool_choice_config,
 )
 from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
-from ._utils import DEFAULT_MAX_RECONNECTS, inject_trace_context, reconnect_with_backoff, resolve_advertised_tools
+from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
+    inject_trace_context,
+    reconnect_with_backoff,
+    resolve_advertised_tools,
+    seed_retry_feedback_text,
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -137,6 +151,7 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
+        CommentaryAppendedEvent,
         DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
@@ -240,6 +255,7 @@ _ActedOnEvent = Annotated[
     OutputAudioDeltaEvent
     | OutputTranscriptDeltaEvent
     | InputTranscriptDeltaEvent
+    | CommentaryAppendedEvent
     | DelegationCreatedEvent
     | ResponseEvent
     | SessionUsageUpdatedEvent
@@ -254,6 +270,7 @@ _ACTED_ON_EVENT_TYPES = frozenset(
         'session.output_audio.delta',
         'session.output_transcript.delta',
         'session.input_transcript.delta',
+        'session.commentary.appended',
         'session.delegation.created',
         'response.event',
         'session.usage.updated',
@@ -353,6 +370,15 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     Takes precedence over the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking]
     setting, which otherwise sets the backend's effort the way it would on a direct Responses request to
     that model."""
+    reasoning_summary: Literal['detailed', 'concise', 'auto']
+    """A summary of the backend model's reasoning, as
+    [`openai_reasoning_summary`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_reasoning_summary]
+    requests on a direct Responses request.
+
+    The reasoning recorded ahead of a web search the backend runs then carries the summary, where the
+    backend wrote one, as its [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] content. Check the
+    [OpenAI Reasoning documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries)
+    for more details."""
     verbosity: Literal['low', 'medium', 'high']
     """How much detail the backend generates. Does not affect the Live model's spoken delivery."""
     service_tier: Literal['auto', 'default', 'flex', 'priority']
@@ -458,17 +484,21 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     seeded history, and not a developer note: its content comes from whatever the tool read, which
     must not be replayed with more authority than it had as a tool result.
     """
+    # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one of
+    # them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and reads
+    # exactly like the retried return the framework emits for the same failure.
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        part = _translate_legacy_retry_part(part)
     if isinstance(part, UserPromptPart):
         return 'user', _prompt_text(part, provider_name=provider_name)
     if isinstance(part, SpeechPart):
         return 'user', part.transcript or ''
     if isinstance(part, ToolReturnPart):
+        # A retried call's content is wrapped in an `{"error": ...}` object, so without it the
+        # `ToolCallPart` before it would not read as a round that failed.
         return 'user', f'Result of `{part.tool_name}`: {part.model_response_str()}'
-    if isinstance(part, RetryPromptPart):
-        # Without this the `ToolCallPart` before it seeds as a call with no outcome, and the backend
-        # reads a round that failed as one that succeeded.
-        attempt = f'`{part.tool_name}` failed' if part.tool_name else 'The previous attempt failed'
-        return 'user', f'{attempt}: {part.model_response()}'
+    if isinstance(part, RetryFeedbackPart):
+        return 'user', seed_retry_feedback_text(part)
     return None
 
 
@@ -596,6 +626,12 @@ class _Delegation:
 
     The continuation waits for its terminal, then goes out from the receive loop.
     """
+    stalled: bool = False
+    """A call it asked for settled without a result (a usage limit stopped it), so it can never be continued.
+
+    The backend resumes only from every output of its round, so it is given up as one that failed would be,
+    at once or, while a response is still running, at that response's terminal.
+    """
 
 
 class _LiveLifecycle(InferredLifecycle):
@@ -604,6 +640,18 @@ class _LiveLifecycle(InferredLifecycle):
     Live transcribes the user as they speak, so words over a reply are reported while it goes on, and its output is
     a continuous audio track, silent between replies: the connection says where the model takes the turn instead
     (`turn_taken`).
+
+    Text reaches Live as commentary, which it places on its timeline (`session.commentary.appended`) and answers in
+    the speech under way, if any, rather than in a reply of its own: text placed while a reply goes on is answered by
+    that reply once it says anything more (`AnswersRevised.claimed`), and by the next reply otherwise.
+
+    The tool calls a delegated backend response asks for are the reply's, but the reply doesn't end with them: Live
+    goes on speaking while the backend waits for their results ("Okay, checking the forecast ... now."), and only the
+    backend's answer is what it says with them in hand. So a reply that called tools goes on until a delegation
+    settles (`delegation_settled()`), with what Live says meanwhile, or until the backend calls more tools in a
+    continuation, which are a response of their own, after the results it was continued with, as in a standard run.
+    Any delegation settling ends it, not only the one that asked for its calls: what Live says next is that
+    delegation's outcome, which is a reply of its own.
     """
 
     transcripts_lag_replies = False
@@ -613,10 +661,83 @@ class _LiveLifecycle(InferredLifecycle):
         super().__init__()
         self.turn_taken = False
         """The provider message being mapped has the model take the turn (see `_open_response()`)."""
+        self._placed_text: list[InputId] = []
+        """Text placed on Live's timeline while the reply under way goes on, which its next output answers."""
+        self._round_reported = False
+        """The backend response that asked for the open response's tool calls reported its usage: it is over, and a
+        call that comes now is a continuation's."""
+        self._settles = False
+        """The provider message being mapped settles a delegation, whichever one the open response's calls came from."""
 
     def takes_turn(self, codec: Sequence[RealtimeCodecEvent]) -> bool:
         took_turn, self.turn_taken = self.turn_taken, False
         return took_turn
+
+    def frame_for(self, codec: Sequence[RealtimeCodecEvent]) -> RealtimeFrame:
+        try:
+            return super().frame_for(codec)
+        finally:
+            self._settles = False
+
+    def delegation_settled(self) -> None:
+        """The provider message being mapped settles a delegation: it owes nothing more.
+
+        Its backend usage report ends the open response, if that called tools (of this delegation or another one still
+        owed its results): what Live says next is the settled delegation's outcome, a reply of its own.
+        """
+        self._settles = True
+
+    def _event(
+        self, event: RealtimeCodecEvent, *, takes_turn: bool = False
+    ) -> tuple[list[LifecycleEvent], list[LifecycleEvent]]:
+        if not (isinstance(event, SessionUsage) and event.response_scoped and self._calls_awaiting_usage):
+            return super()._event(event, takes_turn=takes_turn)
+        # A delegated backend response is over. The reply that called the tools goes on, unless this settles them.
+        before: list[LifecycleEvent] = []
+        after: list[LifecycleEvent] = []
+        if not self._settles:
+            self._round_reported = True
+            return before, after
+        self._settles = False
+        ended = self._open
+        # The usage is the reply's if the backend response it reports asked for the reply's calls, and otherwise
+        # the answer's (which it then waits for, as usage between responses does).
+        self._end(before if self._round_reported else after, status='completed', finish_reason='tool_call')
+        self._ended_by_usage = ended
+        return before, after
+
+    def calls_abandoned(self, call_ids: Sequence[str]) -> None:
+        """The delegated backend that asked for these calls gave up: no reply will answer their results."""
+        self._pending.append(ToolCallsAbandoned(tool_call_ids=tuple(call_ids)))
+
+    def text_placed(self, input_id: InputId) -> None:
+        """Live acknowledged a text input, placing it on its timeline where the conversation now is."""
+        if self._open is not None and input_id in self._unanswered:
+            self._placed_text.append(input_id)
+
+    def _output(self, event: RealtimeCodecEvent, before: list[LifecycleEvent], after: list[LifecycleEvent]) -> None:
+        if isinstance(event, ToolCall) and self._round_reported and self._open is not None:
+            # A continuation's call, made with the results of the open response's: a response of its own.
+            self._end(before, status='completed', finish_reason='tool_call')
+        super()._output(event, before, after)
+        if (response_id := self._open) is not None and (claimed := tuple(self._placed_text)):
+            # The reply goes on past the text: Live speaks to it here, not in a reply of its own.
+            self._placed_text.clear()
+            self._unanswered = [input_id for input_id in self._unanswered if input_id not in claimed]
+            before.append(AnswersRevised(response_id=response_id, claimed=claimed))
+
+    def _end(
+        self,
+        events: list[LifecycleEvent],
+        *,
+        status: ResponseStatus,
+        finish_reason: FinishReason | None = None,
+        provider_details: dict[str, Any] | None = None,
+    ) -> None:
+        # Text the reply never spoke past is the next reply's to answer.
+        self._placed_text.clear()
+        self._round_reported = False
+        super()._end(events, status=status, finish_reason=finish_reason, provider_details=provider_details)
 
 
 class OpenAILiveConnection(RealtimeConnection):
@@ -718,6 +839,8 @@ class OpenAILiveConnection(RealtimeConnection):
         # Which response, user turn, and input each frame is about (see `frames()`). Live always
         # transcribes, and closes the user's turn as the model's reply starts.
         self._lifecycle = _LiveLifecycle()
+        # The text inputs sent as commentary that Live hasn't acknowledged yet, by the `event_id` they went out under.
+        self._unacknowledged_text: dict[str, InputId] = {}
 
     @property
     def model_name(self) -> str | None:
@@ -738,6 +861,29 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         return False
 
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        # The delegated backend resumes from all of a round's results together, with one `response.create`.
+        return True
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        # A round missing an output never continues, and Live can't cancel the delegation it is in: left so, Live
+        # delegates nothing more for the rest of the session (checked live).
+        return True
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        self._open_calls.discard(tool_call_id)
+        delegation_id = self._call_delegations.pop(tool_call_id, None)
+        if (delegation := self._delegations.get(delegation_id) if delegation_id is not None else None) is None:
+            return
+        delegation.pending_tool_calls.discard(tool_call_id)
+        delegation.stalled = True
+        if not delegation.response_in_flight:
+            # Settled outside any provider message, so no backend usage report follows to end the reply that called
+            # the tools: the turn clock, which the delegation no longer holds, ends it.
+            self._settle_delegation(delegation, gave_up=True, in_frame=False)
+
     def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         self._message_history = message_history
 
@@ -754,7 +900,7 @@ class OpenAILiveConnection(RealtimeConnection):
 
     async def send(self, content: RealtimeInput) -> Sequence[LifecycleEvent]:
         with self._lifecycle.sending(content) as input_index:
-            delivered = await self._send_input(content)
+            delivered = await self._send_input(content, input_index)
         if not delivered:
             # A tool result whose backend gave up on the call: nothing will reply to it.
             self._lifecycle.input_unanswerable(input_index)
@@ -762,13 +908,27 @@ class OpenAILiveConnection(RealtimeConnection):
         # known now.
         return self._lifecycle.take_pending()
 
-    async def _send_input(self, content: RealtimeInput) -> bool:
+    async def _send_input(self, content: RealtimeInput, input_index: InputId) -> bool:
         """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
             # A soliciting text turn. Live has no user-message event, so this goes in as speakable
             # context: the model relays or answers it rather than hearing it as the user's own words.
             await _check_context_length(content)
-            await self._send_event({'type': 'session.commentary.append', 'delegation_id': None, 'content': content})
+            # Live acknowledges it under this id once it places it on the timeline (`session.commentary.appended`).
+            event_id = f'pydantic_ai.commentary.{input_index}'
+            self._unacknowledged_text[event_id] = input_index
+            try:
+                await self._send_event(
+                    {
+                        'type': 'session.commentary.append',
+                        'event_id': event_id,
+                        'delegation_id': None,
+                        'content': content,
+                    }
+                )
+            except BaseException:
+                del self._unacknowledged_text[event_id]
+                raise
             return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
@@ -1027,8 +1187,15 @@ class OpenAILiveConnection(RealtimeConnection):
                     # Nothing under way on the dropped connection will finish, whether or not it is re-dialed.
                     lost: RealtimeFrame = [*self._lifecycle.connection_lost()]
                     if self._reconnect is None or self._dial is None:
-                        yield lost
-                        raise dropped
+                        # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
+                        # error and end the stream, as the other providers do, rather than raising the
+                        # `websockets` exception. The read started above is on the dead socket.
+                        self._cancel_read()
+                        error = RealtimeSessionErrorEvent(
+                            message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
+                        )
+                        yield [*lost, error]
+                        return
                     # The read started above is on the dead socket.
                     self._cancel_read()
                     reconnected = await self._try_reconnect()
@@ -1110,6 +1277,8 @@ class OpenAILiveConnection(RealtimeConnection):
         self._last_input_end_ms = None
         self._abandoned_calls.update(self._open_calls)
         self._open_calls.clear()
+        # (The connection's own drop handling settles the replies they asked for.)
+        self._unacknowledged_text.clear()
         self._delegations.clear()
         self._call_delegations.clear()
         self._continuations_due.clear()
@@ -1268,6 +1437,13 @@ class OpenAILiveConnection(RealtimeConnection):
             self._input_open = True
             self._heard_voice()
             return [InputTranscript(self._fragment('input', event.delta))]
+        if isinstance(event, CommentaryAppendedEvent):
+            if (
+                event.client_event_id is not None
+                and (input_index := self._unacknowledged_text.pop(event.client_event_id, None)) is not None
+            ):
+                self._lifecycle.text_placed(input_index)
+            return []
         if isinstance(event, DelegationCreatedEvent):
             return self._map_delegation(event)
         if isinstance(event, ResponseEvent):
@@ -1324,7 +1500,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return [RealtimeSessionErrorEvent(message=message, code=code)]
         events: list[RealtimeCodecEvent] = []
         for delegation in in_flight:
-            events.extend(self._response_ended_without_usage())
+            events.extend(self._response_ended_without_usage(unmeasured_requests=1))
             self._settle_delegation(delegation, gave_up=True)
         events.append(
             RealtimeSessionErrorEvent(
@@ -1426,7 +1602,7 @@ class OpenAILiveConnection(RealtimeConnection):
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
             if delegation is not None:
                 if not events:
-                    events = self._response_ended_without_usage()
+                    events = self._response_ended_without_usage(unmeasured_requests=int(event.response.usage is None))
                 self._settle_delegation(delegation, gave_up=not isinstance(event, ResponseCompletedEvent))
             if not isinstance(event, ResponseCompletedEvent):
                 events.append(_delegation_stopped(event))
@@ -1487,27 +1663,35 @@ class OpenAILiveConnection(RealtimeConnection):
         return events
 
     @staticmethod
-    def _response_ended_without_usage() -> list[RealtimeCodecEvent]:
-        """The empty usage report a backend response that ended without one still makes.
+    def _response_ended_without_usage(*, unmeasured_requests: int = 0) -> list[RealtimeCodecEvent]:
+        """The usage report a backend response that ended without mapped usage still makes.
 
         Every backend response is reported exactly once, usage or not: it is a request the backend made
         (see `responses_are_requests` on the profile), and the calls it asked for are reported as
         `response_usage_follows`, so their `ModelResponse` stays open until it arrives.
-        """
-        return [SessionUsage(RequestUsage())]
 
-    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool) -> None:
+        Args:
+            unmeasured_requests: Number of responses whose terminal omitted usage information.
+        """
+        return [SessionUsage(RequestUsage(unmeasured_requests=unmeasured_requests))]
+
+    def _settle_delegation(self, delegation: _Delegation, *, gave_up: bool, in_frame: bool = True) -> None:
         """Account for one finished backend response, closing the delegation once it owes nothing.
 
         A delegation suspends the turn clock, so leaving a dead one in the map would keep the session
         from ever reporting another turn boundary: a backend that fails or stops short has to close
         it just as a completed one does.
+
+        `in_frame` says it is settled by the provider message being mapped, whose backend usage report then ends the
+        reply that called the tools (see `_LiveLifecycle.delegation_settled()`).
         """
         delegation.response_in_flight = False
-        if gave_up:
+        if gave_up or delegation.stalled:
             # Nothing further is coming for this delegation — no continuation, and no answer to any
             # call it had asked for — so it must not hold the clock open waiting for one.
             self._abandoned_calls.update(delegation.pending_tool_calls)
+            if delegation.pending_tool_calls:
+                self._lifecycle.calls_abandoned(sorted(delegation.pending_tool_calls))
             delegation.pending_tool_calls.clear()
             delegation.continuation_due = False
         if delegation.pending_tool_calls:
@@ -1516,6 +1700,8 @@ class OpenAILiveConnection(RealtimeConnection):
             self._continuations_due.append(delegation)
             return
         self._delegations.pop(delegation.id, None)
+        if in_frame:
+            self._lifecycle.delegation_settled()
         self._heard_voice()
 
     def _map_backend_usage(self, response: Response) -> list[RealtimeCodecEvent]:
@@ -1940,8 +2126,13 @@ class OpenAILiveModel(RealtimeModel):
         parallel_tool_calls = delegation_settings.get('parallel_tool_calls', settings.get('parallel_tool_calls'))
         if parallel_tool_calls is not None:
             responses['parallel_tool_calls'] = parallel_tool_calls
+        reasoning: dict[str, str] = {}
         if (effort := _backend_reasoning_effort(delegation_settings, settings, responses['model'])) is not None:
-            responses['reasoning'] = {'effort': effort}
+            reasoning['effort'] = effort
+        if (summary := delegation_settings.get('reasoning_summary')) is not None:
+            reasoning['summary'] = summary
+        if reasoning:
+            responses['reasoning'] = reasoning
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
 

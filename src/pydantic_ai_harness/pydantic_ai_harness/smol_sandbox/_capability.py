@@ -57,7 +57,8 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         check_working_dir(self.working_dir)
 
     def backend(self, ref: WorkspaceRef) -> SmolSandboxBackend:
-        """Attach lazily to an existing VM."""
+        """Attach lazily to an existing VM, one `SmolSandbox` created."""
+        _backend.check_ref(ref)
         return SmolSandboxBackend(ref=ref, working_dir=self.working_dir, env=self.env)
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -77,6 +78,9 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         del ctx
         if ref is not None and ref.provider != 'smol':
             return None
+        if ref is not None:
+            # A ref from message history only reaches VMs `SmolSandbox` created.
+            _backend.check_ref(ref)
         return SmolSandboxBackend(
             ref=ref,
             image=self.image,
