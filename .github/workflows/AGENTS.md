@@ -233,7 +233,7 @@ environment entry are intentionally blocked without an operational incident.
 They fetch this controller from the default branch, so the skip applies even
 before their branch receives the provider migration. Update the branch from
 `main` to restore agent runs. An empty or missing Z.ai credential in current
-configuration blocks the run; the next section says which runs open an incident for it.
+configuration blocks the run; the provider-incident rules below say which runs open an incident for it.
 
 The controller keeps one assigned operational incident for a matching failure
 scope and marks it with both `agentic-workflows` and `pydanty:meta`. Leave both labels

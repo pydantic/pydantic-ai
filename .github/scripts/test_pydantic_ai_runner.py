@@ -2560,6 +2560,7 @@ def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
 @pytest.mark.parametrize(
     'error_code',
     [
+        '1113',
         '1308',
         '1309',
         '1310',
@@ -3274,6 +3275,7 @@ def _zai_429_body(code: str | int) -> dict[str, object]:
         (ModelHTTPError(429, 'test-model', None), 'rate_limit', 429),
         (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1302')), 'rate_limit', 429),
         (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1305')), 'rate_limit', 429),
+        (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1113')), 'plan_limit', 429),
         (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('1310')), 'plan_limit', 429),
         (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body(1311)), 'plan_limit', 429),
         (ModelHTTPError(429, 'glm-5.3-flash', _zai_429_body('9999')), 'rate_limit', 429),

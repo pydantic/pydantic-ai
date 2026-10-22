@@ -366,7 +366,7 @@ RATE_LIMIT_RETRY_SECS = 60
 # window. Other 429s, such as `1302` request-rate limits and `1305` overload, are transient.
 # Keep these codes aligned with https://docs.z.ai/api-reference/api-code.
 _ZAI_PLAN_LIMIT_CODES = frozenset(
-    {'1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
+    {'1113', '1308', '1309', '1310', '1311', '1313', '1314', '1315', '1316', '1317', '1318', '1319', '1320', '1321'}
 )
 _ERROR_BODY_ADAPTER = TypeAdapter(dict[str, object])
 
