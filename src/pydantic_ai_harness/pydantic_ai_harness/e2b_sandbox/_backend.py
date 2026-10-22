@@ -354,6 +354,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             return task.result()
         return await self._acquire()
 
+    async def _sandbox_for_operation(self) -> e2b.AsyncSandbox:
+        """`get_sandbox()` for the backend's own operations, which all make E2B requests."""
+        # Also for a sandbox the caller passed in: `get_sandbox()` returns that one on Trio too.
+        _require_asyncio()
+        return await self.get_sandbox()
+
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
         try:
             return await self._acquire()
@@ -442,7 +448,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         return error
 
     async def read_bytes(self, path: str) -> bytes:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         # envd reports FIFOs as files, and its read of one without a writer waits out the SDK's
         # 60-second request timeout. Probe via the shell before asking envd to open the path (also
         # follows links).
@@ -453,7 +459,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             return bytes(await sandbox.files.read(path, 'bytes', user=self._user))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not write {path!r}', path):
             # The SDK bounds a buffered upload by one whole-request deadline, and 0 means none: keep
             # its 60 s for small files and allow a slow link's throughput for large ones.
@@ -462,12 +468,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             await sandbox.files.write(path, data, user=self._user, request_timeout=deadline)  # pyright: ignore[reportUnknownMemberType]
 
     async def stat(self, path: str) -> FileEntry:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not stat {path!r}', path):
             return await _file_entry(sandbox, await sandbox.files.get_info(path, user=self._user), self._user)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not list {path!r}', path):
             # `depth=1` is E2B's non-recursive listing, as the protocol asks.
             entries = await sandbox.files.list(path, depth=1, user=self._user)
@@ -496,12 +502,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         return [entry for entry in resolved if entry is not None]
 
     async def make_dir(self, path: str) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not create directory {path!r}', path):
             await sandbox.files.make_dir(path, user=self._user)
 
     async def remove(self, path: str) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         context = f'Could not remove {path!r}'
         async with self._sdk_errors(sandbox.sandbox_id, context, path):
             exists = await sandbox.files.exists(path, user=self._user)
@@ -521,7 +527,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             await sandbox.files.remove(path, user=self._user)
 
     async def exists(self, path: str) -> bool:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not check {path!r}', path):
             return await sandbox.files.exists(path, user=self._user)
 
@@ -582,7 +588,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             result = await self._probe(['pwd', '-P'], 'Could not determine the working directory')
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
-                sandbox = await self.get_sandbox()
+                sandbox = await self._sandbox_for_operation()
                 raise WorkspaceError(
                     f'Could not determine the working directory of E2B sandbox {sandbox.sandbox_id}: '
                     f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
@@ -636,7 +642,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         line = shlex.join(command_argv(command, shell))
         check_timeout(timeout)
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         handle: e2b.AsyncCommandHandle | None = None
         result: e2b.CommandResult | None = None
         # The token is allocated before the start RPC: a lost ACK must not make the
