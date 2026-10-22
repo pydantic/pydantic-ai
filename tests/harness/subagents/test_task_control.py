@@ -471,8 +471,11 @@ class TestSubAgentsTaskControl:
         def many(messages: list[ModelMessage]) -> ModelResponse:
             return ModelResponse(
                 parts=[
-                    ToolCallPart('delegate_task', {'agent_name': 'researcher', 'task': f't{i}', 'background': True})
-                    for i in range(52)
+                    ToolCallPart('delegate_task', {'agent_name': 'quick', 'task': 'q'}),
+                    *(
+                        ToolCallPart('delegate_task', {'agent_name': 'researcher', 'task': f't{i}', 'background': True})
+                        for i in range(52)
+                    ),
                 ]
             )
 
@@ -483,13 +486,14 @@ class TestSubAgentsTaskControl:
 
         parent = Agent(
             scripted(many, call('list_tasks'), release, text('Done.'), text('Done.'), text('Done.')),
-            capabilities=[controlled(researcher(slow))],
+            capabilities=[controlled(researcher(slow), SubAgent(child(), name='quick'))],
         )
         with anyio.fail_after(WAIT):
             await parent.run('Go.', usage_limits=UsageLimits(request_limit=None))
         lines = listed[0].splitlines()
         assert len(lines) == 51
-        assert lines[-1] == '(2 older running tasks not shown.)'
+        # With no room left, the finished task left out is not called older: it may be newer than those shown.
+        assert lines[-1] == '(2 older running tasks and 1 finished task not shown.)'
         assert "'t2'" in lines[0] and "'t51'" in lines[-2]
 
     async def test_max_running_tasks_refuses_another_task(self) -> None:
