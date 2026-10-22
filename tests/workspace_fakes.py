@@ -471,17 +471,8 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
     async def act(self, action: ComputerAction) -> None:
         await self._files()
         # Everything but `hold_key`, so tests can see an action kind refused.
-        if action.kind not in {
-            'click',
-            'move_mouse',
-            'drag',
-            'mouse_down',
-            'mouse_up',
-            'scroll',
-            'type_text',
-            'key_press',
-        }:
-            raise UnsupportedComputerActionError(f'the fake display cannot perform {action.kind!r}')
+        if action.type not in {'click', 'move', 'drag', 'mouse_down', 'mouse_up', 'scroll', 'type', 'keypress'}:
+            raise UnsupportedComputerActionError(f'the fake display cannot perform {action.type!r}')
         self._provider.actions.append(action)
 
 

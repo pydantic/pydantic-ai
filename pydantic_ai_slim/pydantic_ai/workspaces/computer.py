@@ -1,19 +1,22 @@
 """The actions a [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] backend performs on a display.
 
-Actions are validated on construction. Coordinates are display pixels with the origin at the top left; a click
-or scroll without coordinates happens
-at the current pointer position. Common key names are normalized on construction to one lowercase spelling
-(`ctrl`, `shift`, `alt`, `super`, `enter`, `escape`, `tab`, `backspace`, `delete`, `insert`, `home`, `end`,
-`pageup`, `pagedown`, `up`, `down`, `left`, `right`, `space`, `f1` to `f24`, and single characters), so a backend
-reads one spelling whichever model produced the action. Other names, such as the X keysym `KP_Enter`, are kept
-as written.
+The vocabulary follows OpenAI's computer tool (`click`, `move`, `drag`, `scroll`, `type`, `keypress`), plus the
+pointer and key holds Anthropic's tool adds. Actions are validated on construction, every model-controlled amount is
+bounded, and unknown fields are ignored. Coordinates are display pixels with the origin at the top left; a click or
+scroll without coordinates happens at the pointer.
+
+Common key names are normalized to one lowercase spelling (`ctrl`, `shift`, `alt`, `super`, `enter`, `escape`,
+`tab`, `backspace`, `delete`, `insert`, `home`, `end`, `pageup`, `pagedown`, `up`, `down`, `left`, `right`,
+`space`, `f1` to `f24`, and single characters), and a combination written as one name, such as `ctrl+s`, is split
+into its keys. Other names, such as the X keysym `KP_Enter`, are kept as written; a backend refuses names it can't
+press.
 """
 
 from __future__ import annotations as _annotations
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
 __all__ = (
@@ -26,6 +29,7 @@ __all__ = (
     'MouseDown',
     'MouseUp',
     'MoveMouse',
+    'Point',
     'Scroll',
     'TypeText',
 )
@@ -34,7 +38,15 @@ MouseButton: TypeAlias = Literal['left', 'middle', 'right', 'back', 'forward']
 """A mouse button; `back` and `forward` are the side buttons."""
 
 _Coordinate: TypeAlias = Annotated[int, Field(ge=0)]
-_Seconds: TypeAlias = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+_Keys: TypeAlias = Annotated[tuple[str, ...], Field(max_length=8)]
+
+
+def _require_type(schema: dict[str, Any]) -> None:
+    # `type` has a default so Python callers can omit it, but a model must always send it: it picks the action.
+    schema['required'] = ['type', *(name for name in schema.get('required', []) if name != 'type')]
+
+
+_CONFIG = ConfigDict(use_attribute_docstrings=True, json_schema_extra=_require_type)
 
 _KEY_ALIASES = {
     'return': 'enter',
@@ -61,7 +73,6 @@ _KEY_ALIASES = {
     'spacebar': 'space',
     ' ': 'space',
 }
-
 
 _KEY_NAMES = frozenset(
     {
@@ -100,7 +111,9 @@ def _normalize_key(key: str) -> str:
 
 
 def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(_normalize_key(key) for key in keys)
+    # `ctrl+s` is one combination written as one name; a lone `+` is the plus key.
+    split = (part for key in keys for part in (key.split('+') if len(key) > 1 and '+' in key.strip('+') else [key]))
+    return tuple(_normalize_key(key) for key in split if key)
 
 
 def _check_position(x: int | None, y: int | None) -> None:
@@ -108,116 +121,133 @@ def _check_position(x: int | None, y: int | None) -> None:
         raise ValueError('give both `x` and `y`, or neither to act at the pointer')
 
 
-@dataclass(frozen=True, kw_only=True)
-class _Keyed:
-    keys: tuple[str, ...] = ()
-    """Keys held down during the action, such as `('ctrl',)` or `('shift', 'alt')`."""
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, 'keys', _normalize_keys(self.keys))
-
-
-@dataclass(frozen=True, kw_only=True)
-class Click(_Keyed):
-    """Click a mouse button, optionally moving the pointer first."""
-
-    x: _Coordinate | None = None
-    """Horizontal position; with `y` `None` too, clicks where the pointer is."""
-    y: _Coordinate | None = None
-    """Vertical position; with `x` `None` too, clicks where the pointer is."""
-    button: MouseButton = 'left'
-    count: Annotated[int, Field(ge=1, le=3)] = 1
-    """1 for a click, 2 for a double click, 3 for a triple click."""
-    kind: Literal['click'] = 'click'
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        _check_position(self.x, self.y)
-
-
-@dataclass(frozen=True, kw_only=True)
-class MoveMouse(_Keyed):
-    """Move the pointer."""
+@dataclass(frozen=True, config=_CONFIG)
+class Point:
+    """A position in display pixels."""
 
     x: _Coordinate
     y: _Coordinate
-    kind: Literal['move_mouse'] = 'move_mouse'
 
 
-@dataclass(frozen=True, kw_only=True)
-class Drag(_Keyed):
-    """Press the left button at the first point, move through the rest, and release at the last."""
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class Click:
+    """Click a mouse button, at a position or where the pointer is."""
 
-    path: Annotated[tuple[tuple[_Coordinate, _Coordinate], ...], Field(min_length=2)]
-    """The `(x, y)` points to drag through, at least a start and an end."""
-    kind: Literal['drag'] = 'drag'
-
-
-@dataclass(frozen=True, kw_only=True)
-class MouseDown:
-    """Press a mouse button without releasing it."""
-
-    button: MouseButton = 'left'
-    kind: Literal['mouse_down'] = 'mouse_down'
-
-
-@dataclass(frozen=True, kw_only=True)
-class MouseUp:
-    """Release a mouse button."""
-
-    button: MouseButton = 'left'
-    kind: Literal['mouse_up'] = 'mouse_up'
-
-
-@dataclass(frozen=True, kw_only=True)
-class Scroll(_Keyed):
-    """Turn the scroll wheel, optionally moving the pointer first.
-
-    Amounts are wheel clicks, not pixels: one click scrolls about three lines in most applications.
-    """
-
+    type: Literal['click'] = 'click'
     x: _Coordinate | None = None
+    """Pixels from the left edge of the screenshot. Omit both `x` and `y` to click where the pointer is."""
     y: _Coordinate | None = None
-    dx: int = 0
-    """Wheel clicks to the right; negative scrolls left."""
-    dy: int = 0
-    """Wheel clicks down; negative scrolls up."""
-    kind: Literal['scroll'] = 'scroll'
+    """Pixels from the top edge of the screenshot."""
+    button: MouseButton = 'left'
+    count: Annotated[int, Field(ge=1, le=3)] = 1
+    """1 for a click, 2 for a double click, 3 for a triple click."""
+    modifiers: _Keys = ()
+    """Keys held during the click, such as `["shift"]` or `["ctrl"]`."""
 
     def __post_init__(self) -> None:
-        super().__post_init__()
         _check_position(self.x, self.y)
-        if not self.dx and not self.dy:
-            raise ValueError('give a non-zero `dx` or `dy`')
+        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class MoveMouse:
+    """Move the pointer, for example to reveal a hover menu."""
+
+    type: Literal['move'] = 'move'
+    x: _Coordinate
+    """Pixels from the left edge of the screenshot."""
+    y: _Coordinate
+    """Pixels from the top edge of the screenshot."""
+    modifiers: _Keys = ()
+    """Keys held while moving."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
+
+
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class Drag:
+    """Press the left button at the first point, move through the rest, and release at the last."""
+
+    type: Literal['drag'] = 'drag'
+    path: Annotated[tuple[Point, ...], Field(min_length=2, max_length=50)]
+    """The points to drag through: at least a start and an end."""
+    modifiers: _Keys = ()
+    """Keys held during the drag."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
+
+
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class MouseDown:
+    """Press a mouse button and keep it pressed until a `mouse_up`."""
+
+    type: Literal['mouse_down'] = 'mouse_down'
+    button: MouseButton = 'left'
+
+
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class MouseUp:
+    """Release a mouse button pressed with `mouse_down`."""
+
+    type: Literal['mouse_up'] = 'mouse_up'
+    button: MouseButton = 'left'
+
+
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
+class Scroll:
+    """Scroll the content under a position, or under the pointer."""
+
+    type: Literal['scroll'] = 'scroll'
+    direction: Literal['up', 'down', 'left', 'right']
+    """Which way the content moves into view: `down` shows what is below."""
+    amount: Annotated[int, Field(ge=1, le=50)] = 3
+    """Mouse-wheel clicks; one click scrolls about three lines."""
+    x: _Coordinate | None = None
+    """Pixels from the left edge of the screenshot. Omit both `x` and `y` to scroll where the pointer is."""
+    y: _Coordinate | None = None
+    """Pixels from the top edge of the screenshot."""
+    modifiers: _Keys = ()
+    """Keys held while scrolling, such as `["shift"]` to scroll sideways in some applications."""
+
+    def __post_init__(self) -> None:
+        _check_position(self.x, self.y)
+        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
+
+
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class TypeText:
-    """Type text as key presses."""
+    """Type text at the keyboard focus. Use `keypress` for shortcuts and special keys."""
 
-    text: str
-    kind: Literal['type_text'] = 'type_text'
+    type: Literal['type'] = 'type'
+    text: Annotated[str, Field(min_length=1, max_length=2_000)]
+    """Up to 2,000 characters; type longer text in several actions."""
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class KeyPress:
-    """Press one key or key combination, such as `('ctrl', 's')`."""
+    """Press keys together as one combination, then release them."""
 
-    keys: Annotated[tuple[str, ...], Field(min_length=1)]
-    repeat: Annotated[int, Field(ge=1)] = 1
-    kind: Literal['key_press'] = 'key_press'
+    type: Literal['keypress'] = 'keypress'
+    keys: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
+    """One key per entry, pressed together: `["enter"]`, `["ctrl", "a"]`, `["super", "shift", "t"]`."""
+    repeat: Annotated[int, Field(ge=1, le=50)] = 1
+    """How many times to press the combination."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, 'keys', _normalize_keys(self.keys))
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class HoldKey:
     """Hold keys down for a while, then release them."""
 
-    keys: Annotated[tuple[str, ...], Field(min_length=1)]
-    seconds: _Seconds
-    kind: Literal['hold_key'] = 'hold_key'
+    type: Literal['hold_key'] = 'hold_key'
+    keys: Annotated[tuple[str, ...], Field(min_length=1, max_length=8)]
+    """One key per entry, held together."""
+    seconds: Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)]
+    """How long to hold them."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, 'keys', _normalize_keys(self.keys))
@@ -225,7 +255,7 @@ class HoldKey:
 
 ComputerAction: TypeAlias = Annotated[
     Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | KeyPress | HoldKey,
-    Field(discriminator='kind'),
+    Field(discriminator='type'),
 ]
-"""A mouse or keyboard action on a display. New kinds may be added, so a backend must refuse a kind it doesn't know with
+"""A mouse or keyboard action on a display. New types may be added, so a backend must refuse one it doesn't know with
 [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError]."""
