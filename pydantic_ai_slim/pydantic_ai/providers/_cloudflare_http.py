@@ -3,6 +3,7 @@
 import httpx2
 
 from .. import _model_errors
+from .._utils import error_body
 from ..exceptions import ModelHTTPError
 
 
@@ -14,10 +15,7 @@ async def send_request(client: httpx2.AsyncClient, request: httpx2.Request, *, m
             model_name, f'{type(e).__name__}: {e}', e, timeout=isinstance(e, httpx2.TimeoutException)
         ) from e
     if response.is_error:
-        try:
-            body: object = response.json()
-        except ValueError:
-            body = response.text
+        body: object = error_body(response)
         raise ModelHTTPError.for_category(
             _model_errors.http_status_category(response.status_code, str(body)),
             status_code=response.status_code,

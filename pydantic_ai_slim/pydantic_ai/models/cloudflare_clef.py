@@ -77,10 +77,12 @@ class CloudflareClefModel(DecisionModel[httpx2.AsyncClient]):
 
     @property
     def client(self) -> httpx2.AsyncClient:
+        """The underlying HTTP client."""
         return self._provider.client
 
     @property
     def base_url(self) -> str:
+        """The account-scoped Cloudflare API base URL."""
         return self._provider.base_url
 
     @property

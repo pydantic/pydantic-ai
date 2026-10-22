@@ -272,6 +272,8 @@ Use one of these settings to control output geometry:
 prefixed because the providers use different concepts and value ranges. An explicit provider-specific geometry setting
 takes precedence over the value a portable setting maps to, and warns only when the two disagree.
 
+The Cloudflare image models add `cloudflare_steps`, `cloudflare_seed`, `cloudflare_guidance`, and `cloudflare_negative_prompt`; see [Cloudflare](models/cloudflare.md#image-generation).
+
 Gemini takes the aspect ratio as a native request field, so the ratio you ask for is sent as-is and Gemini decides
 whether it can honor it; a rejection arrives as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. OpenAI and
 xAI cannot carry every ratio: OpenAI has no ratio field at all, so Pydantic AI maps the ratio to one of the model

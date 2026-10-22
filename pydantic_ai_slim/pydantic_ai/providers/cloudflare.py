@@ -19,20 +19,25 @@ from ._cloudflare_http import send_request
 if TYPE_CHECKING:
     from ._cloudflare_openai import CloudflareOpenAIProvider
 
+_MAX_CATALOG_PAGES = 20
+
 
 class CloudflareProvider(Provider[httpx2.AsyncClient]):
     """Provider for the account-scoped [Cloudflare Workers AI API](https://developers.cloudflare.com/workers-ai/)."""
 
     @property
     def name(self) -> str:
+        """The provider name."""
         return 'cloudflare'
 
     @property
     def base_url(self) -> str:
+        """The account-scoped Cloudflare API base URL."""
         return self._base_url
 
     @property
     def client(self) -> httpx2.AsyncClient:
+        """The underlying HTTP client."""
         return self._client
 
     @property
@@ -49,6 +54,7 @@ class CloudflareProvider(Provider[httpx2.AsyncClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        """Get the model profile for the given model name."""
         return cloudflare_model_profile(model_name)
 
     def __init__(
@@ -109,7 +115,7 @@ class CloudflareProvider(Provider[httpx2.AsyncClient]):
         self._refresh_http_client()
         names: set[str] = set()
         page = 1
-        while True:
+        for _page in range(_MAX_CATALOG_PAGES):
             request = self.client.build_request(
                 'GET',
                 f'{self.base_url}/ai/models/search',
@@ -134,6 +140,11 @@ class CloudflareProvider(Provider[httpx2.AsyncClient]):
             if not parsed.result or (page * 100 >= total if total is not None else len(parsed.result) < 100):
                 break
             page += 1
+        else:
+            raise UnexpectedModelBehavior(
+                f'Cloudflare model catalog discovery for task {task!r} did not complete within'
+                f' {_MAX_CATALOG_PAGES} pages'
+            )
         self._discovery_cache[task] = sorted(names)
         return list(self._discovery_cache[task])
 

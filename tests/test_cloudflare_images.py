@@ -1,6 +1,7 @@
 """Recorded native Workers AI image families and their request formats."""
 
 import os
+from dataclasses import dataclass
 
 import pytest
 
@@ -24,36 +25,71 @@ def cloudflare_provider(request_capture: RequestCapture) -> CloudflareProvider:
     )
 
 
-@pytest.mark.parametrize(
-    'model_name',
-    [
-        '@cf/black-forest-labs/flux-1-schnell',
-        '@cf/black-forest-labs/flux-2-klein-4b',
-        '@cf/leonardo/lucid-origin',
-        '@cf/leonardo/phoenix-1.0',
-        '@cf/stabilityai/stable-diffusion-xl-base-1.0',
-    ],
-)
-async def test_generate(model_name: str, cloudflare_provider: CloudflareProvider, request_capture: RequestCapture):
-    model = infer_image_generation_model(f'cloudflare:{model_name}', provider_factory=lambda _: cloudflare_provider)
-    assert isinstance(model, CloudflareImageGenerationModel)
-    settings: ImageGenerationSettings = {} if model_name.endswith('flux-1-schnell') else {'dimensions': (256, 256)}
-    prompt = (
-        'A scenic landscape with rolling green hills and a clear blue sky.'
-        if model_name.startswith('@cf/leonardo/')
-        else 'A simple blue circle on a white background.'
+@dataclass
+class GenerateCase:
+    model_name: str
+    settings: ImageGenerationSettings
+    prompt: str
+    multipart: bool
+    raw_fragments: tuple[bytes, ...]
+
+
+CASES = [
+    GenerateCase(
+        model_name='@cf/black-forest-labs/flux-1-schnell',
+        settings={},
+        prompt='A simple blue circle on a white background.',
+        multipart=False,
+        raw_fragments=(),
+    ),
+    GenerateCase(
+        model_name='@cf/black-forest-labs/flux-2-klein-4b',
+        settings={'dimensions': (256, 256)},
+        prompt='A simple blue circle on a white background.',
+        multipart=True,
+        raw_fragments=(b'name="prompt"', b'name="width"'),
+    ),
+    GenerateCase(
+        model_name='@cf/leonardo/lucid-origin',
+        settings={'dimensions': (256, 256)},
+        prompt='A scenic landscape with rolling green hills and a clear blue sky.',
+        multipart=False,
+        raw_fragments=(),
+    ),
+    GenerateCase(
+        model_name='@cf/leonardo/phoenix-1.0',
+        settings={'dimensions': (256, 256)},
+        prompt='A scenic landscape with rolling green hills and a clear blue sky.',
+        multipart=False,
+        raw_fragments=(),
+    ),
+    GenerateCase(
+        model_name='@cf/stabilityai/stable-diffusion-xl-base-1.0',
+        settings={'dimensions': (256, 256)},
+        prompt='A simple blue circle on a white background.',
+        multipart=False,
+        raw_fragments=(),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', CASES, ids=lambda case: case.model_name)
+async def test_generate(case: GenerateCase, cloudflare_provider: CloudflareProvider, request_capture: RequestCapture):
+    model = infer_image_generation_model(
+        f'cloudflare:{case.model_name}', provider_factory=lambda _: cloudflare_provider
     )
-    result = await ImageGenerator(model).generate(prompt, settings=settings)
+    assert isinstance(model, CloudflareImageGenerationModel)
+    result = await ImageGenerator(model).generate(case.prompt, settings=case.settings)
     assert result.image.media_type in ('image/png', 'image/jpeg', 'image/webp')
     assert result.image.data
-    assert result.model_name == model_name
+    assert result.model_name == case.model_name
     assert result.provider_name == 'cloudflare'
-    if 'flux-2-' in model_name:
+    if case.multipart:
         assert request_capture.headers[-1]['content-type'].startswith('multipart/form-data; boundary=')
-        assert b'name="prompt"' in request_capture.raw_bodies[-1]
-        assert b'name="width"' in request_capture.raw_bodies[-1]
+        for fragment in case.raw_fragments:
+            assert fragment in request_capture.raw_bodies[-1]
     else:
-        assert request_capture.body()['prompt'] == prompt
+        assert request_capture.body()['prompt'] == case.prompt
 
 
 async def test_edit(

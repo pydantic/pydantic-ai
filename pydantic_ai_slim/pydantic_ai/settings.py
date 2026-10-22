@@ -403,6 +403,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions (sent, but endpoint acceptance is unverified)
     * OpenAI
     * Anthropic (`'required'` and specific tools not supported with thinking enabled)
     * Google

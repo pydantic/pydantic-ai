@@ -87,6 +87,13 @@ FLUX.1 Schnell, which has no size control and rejects geometry settings before m
 `aspect_ratio` maps to integer dimensions preserving the requested ratio with the longest edge at most
 1024 pixels; model-specific size limits are enforced by Workers AI. Explicit `dimensions` are forwarded unchanged.
 
+The image models accept the following Cloudflare-specific settings:
+
+- `cloudflare_steps` — the number of sampling steps.
+- `cloudflare_seed` — a seed for reproducible generation.
+- `cloudflare_guidance` — the guidance scale.
+- `cloudflare_negative_prompt` — text describing what to avoid.
+
 ## Model discovery
 
 Any full Workers AI model ID is accepted; the autocomplete list is intentionally representative.

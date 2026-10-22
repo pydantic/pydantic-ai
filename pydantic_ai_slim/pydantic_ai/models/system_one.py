@@ -7,7 +7,7 @@ from typing import ClassVar, Literal, cast
 import httpx2
 from pydantic import ValidationError
 
-from .. import _model_errors
+from .. import _model_errors, _utils
 from .._http import to_httpx2_timeout
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
@@ -168,7 +168,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             ) from e
 
         if response.is_error:
-            error_body = _system_one.error_body(response)
+            error_body = _utils.error_body(response)
             raise ModelHTTPError.for_category(
                 _model_errors.http_status_category(response.status_code, str(error_body)),
                 status_code=response.status_code,

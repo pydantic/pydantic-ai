@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Literal
@@ -42,6 +43,19 @@ from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.usage import RequestUsage
 
 pytestmark = pytest.mark.usefixtures('allow_model_requests')
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not os.getenv('CLOUDFLARE_API_TOKEN'), reason='requires Cloudflare credentials to record')
+async def test_clef_agent_run():
+    """Recorded end-to-end run of the Clef path through `Agent`."""
+    provider = CloudflareProvider(
+        api_key=os.environ['CLOUDFLARE_API_TOKEN'], account_id=os.environ['CLOUDFLARE_ACCOUNT_ID']
+    )
+    agent = Agent(CloudflareClefModel('@cf/cloudflare/clef', provider=provider), instructions='Answer briefly.')
+    result = await agent.run('What is the capital of France?')
+    assert result.output
+
 
 ACCOUNT_URL = 'https://api.cloudflare.com/client/v4/accounts/test-account'
 MODEL_IDS: list[str] = ['@cf/cloudflare/clef', '@cf/cloudflare/clef-flash']

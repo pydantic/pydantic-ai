@@ -106,10 +106,3 @@ def validate_response(
         usage=RequestUsage(input_tokens=parsed.usage.input_tokens, output_tokens=parsed.usage.output_tokens),
         provider_response_id=provider_response_id,
     )
-
-
-def error_body(response: httpx2.Response) -> object:
-    try:
-        return response.json()
-    except ValueError:
-        return response.text

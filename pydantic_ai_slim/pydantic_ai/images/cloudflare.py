@@ -93,14 +93,17 @@ class CloudflareImageGenerationModel(ImageGenerationModel):
 
     @property
     def model_name(self) -> str:
+        """The full Workers AI image model ID."""
         return self._model_name
 
     @property
     def system(self) -> str:
+        """The model provider."""
         return self._provider.name
 
     @property
     def base_url(self) -> str:
+        """The account-scoped Cloudflare API base URL."""
         return self._provider.base_url
 
     async def generate(  # noqa: C901
@@ -110,6 +113,7 @@ class CloudflareImageGenerationModel(ImageGenerationModel):
         images: Sequence[ImageGenerationInput] | None = None,
         settings: ImageGenerationSettings | None = None,
     ) -> ImageGenerationResult:
+        """Generate an image for the given prompt."""
         check_allow_model_requests()
         prompt, prepared_images, merged_settings = self.prepare_generate(prompt, images=images, settings=settings)
         native_settings = _settings_adapter.validate_python(merged_settings)

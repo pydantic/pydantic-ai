@@ -1,6 +1,7 @@
 """Synthetic malformed images, errors and request overrides cannot be obtained reliably with VCR."""
 
 import base64
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx2
@@ -161,3 +162,25 @@ async def test_url_reference():
             await model.generate('A landscape', images=[ImageUrl('https://example.com/image.png')])
         assert b'name="input_image_0"' in requests[0].content
         assert PNG in requests[0].content
+
+
+async def test_flux1_steps_sent_as_steps():
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        request.read()
+        requests.append(request)
+        return httpx2.Response(
+            200, json={'result': {'image': base64.b64encode(PNG).decode()}}, headers={'cf-ai-req-id': 'image-id'}
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = CloudflareImageGenerationModel(
+            '@cf/black-forest-labs/flux-1-schnell',
+            provider=CloudflareProvider(api_key='token', account_id='account', http_client=client),
+        )
+        await model.generate('A circle', settings={'cloudflare_steps': 8})
+
+    body = json.loads(requests[0].content)
+    assert body['steps'] == 8
+    assert 'num_steps' not in body
