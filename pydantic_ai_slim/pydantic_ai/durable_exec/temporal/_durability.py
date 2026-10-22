@@ -73,6 +73,7 @@ from ._transports import (
     _EventStreamHandlerParams as _EventStreamHandlerParams,
     _EventStreamHandlerTransport,
     _FunctionCallTransport,
+    _GetInstructionsTransport,
     _GetToolsTransport,
     _MCPCallTransport,
     _ModelRequestTransport,
@@ -456,8 +457,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _get_tools_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
         return _GetToolsTransport(self)
 
-    def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
-        return _GetToolsTransport(self)
+    def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetInstructionsTransport:
+        return _GetInstructionsTransport(self)
 
     def _dynamic_get_tools_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicGetToolsTransport:
         return _DynamicGetToolsTransport(self)
