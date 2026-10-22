@@ -12,7 +12,15 @@ from typing import Literal, TypeAlias
 from pydantic_ai.agent.abstract import AgentInstructions
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart, post_compaction_window
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    RetryPromptPart,
+    TextContent,
+    ToolReturnPart,
+    UserPromptPart,
+    post_compaction_window,
+)
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
@@ -134,6 +142,9 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     _resolved_scope: tuple[MemoryStore, str] | None = field(default=None, init=False, repr=False, compare=False)
 
+    _run_snapshot: str | None = field(default=None, init=False, repr=False, compare=False)
+    """The snapshot the model reads as current during this run, kept so compaction can't take it away."""
+
     _toolset: MemoryToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one `memory` toolset, shared with every per-run copy so durable execution sees the leaf it registered."""
 
@@ -155,6 +166,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         """Return a clone with scope resolution isolated to this run."""
         clone = copy(self)
         clone._resolved_scope = None
+        clone._run_snapshot = None
         store, scope = clone._resolve_scope(ctx)
         clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
         return clone
@@ -263,18 +275,26 @@ class Memory(AbstractCapability[AgentDepsT]):
         The snapshot is added to the conversation once and sent unchanged with every later request, so
         history only ever grows. It is added only on a run's first request, with the user's prompt: later
         requests in a run carry tool results, where a block of user-channel text reads as a new message
-        from the user.
+        from the user. If compaction later in the run drops the snapshot the run started with, the same
+        snapshot is put back where compaction rewrote the history, without reading the store again.
         """
-        if not self.inject_memory or ctx.run_step > 1:
+        if not self.inject_memory:
             return request_context
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
-        # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.
         metadata = _snapshot_metadata(scope_hash, self.id)
+        # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.
         latest = _latest_snapshot(post_compaction_window(ctx.messages), metadata)
-        # A run without a prompt of its own (resuming after a deferred tool approval) is sent tool results:
-        # the snapshot already in history stays current until the next prompt.
-        if latest is not None and not _has_user_prompt(ctx.messages[-1]):
+        if ctx.run_step > 1:
+            if self._run_snapshot is not None and latest != self._run_snapshot:
+                _restore_snapshot(
+                    ctx, request_context, UserPromptPart([TextContent(self._run_snapshot, metadata=metadata)])
+                )
+            return request_context
+        self._run_snapshot = latest
+        # A run that continues from tool results without a prompt of its own (resuming after a deferred tool
+        # approval) waits for the next prompt: a snapshot after tool results reads as a new user message.
+        if _is_tool_continuation(ctx.messages[-1]):
             return request_context
         with ctx.tracer.start_as_current_span(
             'memory.inject', record_exception=False, set_status_on_exception=False
@@ -314,6 +334,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
                 ctx.enqueue(UserPromptPart([TextContent(appended, metadata=metadata)]))
+                self._run_snapshot = appended
             if span.is_recording():
                 span.set_attributes(
                     {
@@ -461,6 +482,31 @@ def _snapshot_metadata(scope_hash: str, memory_id: str | None) -> dict[str, str]
 
 def _has_user_prompt(message: ModelMessage) -> bool:
     return isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
+
+
+def _is_tool_continuation(message: ModelMessage) -> bool:
+    """Whether the request about to be sent carries tool results and no prompt of its own."""
+    return (
+        isinstance(message, ModelRequest)
+        and not _has_user_prompt(message)
+        and any(isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts)
+    )
+
+
+def _restore_snapshot(ctx: RunContext[AgentDepsT], request_context: ModelRequestContext, part: UserPromptPart) -> None:
+    """Put a snapshot compaction dropped back into history, right after the latest prompt it kept.
+
+    This only happens on the request where compaction rewrote the history, so the prefix that moves is the one
+    compaction already moved. It goes in as a request of its own, which the request ahead of it absorbs when sent.
+    """
+    history = ctx.messages
+    anchor = next((i for i in range(len(history) - 2, -1, -1) if _has_user_prompt(history[i])), -1)
+    anchor_message = history[anchor] if anchor >= 0 else None
+    restored = ModelRequest(parts=[part])
+    history.insert(anchor + 1, restored)
+    # With no prompt left, or one this request no longer sends, it leads the request instead.
+    sent = next((i for i, message in enumerate(request_context.messages) if message is anchor_message), -1)
+    request_context.messages.insert(sent + 1, restored)
 
 
 def _validate_positive(name: str, value: int) -> None:

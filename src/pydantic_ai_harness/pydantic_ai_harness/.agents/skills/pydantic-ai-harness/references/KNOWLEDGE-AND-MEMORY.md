@@ -151,8 +151,8 @@ with the model's writes.
 
 ### Several memories on one agent
 
-Give each instance a distinct `agent_name` or `namespace` (otherwise they share one scope and one
-snapshot), a distinct `heading`, and a distinct `id` (all default to `'memory'`; duplicates raise
+Give each instance a distinct `agent_name` or `namespace` (the storage scope: instances with the same
+scope and store share one notebook, though each still tracks its own snapshots by `id`), a distinct `heading`, and a distinct `id` (all default to `'memory'`; duplicates raise
 `UserError` at `Agent` construction), and wrap all but one with `.prefix_tools(...)` so tool
 names do not collide:
 

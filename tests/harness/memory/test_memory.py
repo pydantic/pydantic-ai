@@ -1690,6 +1690,75 @@ class TestInjection:
         assert _memory_contexts(captured[1]) == _memory_contexts(captured[0])
         assert '- likes tea' in _memory_contexts(captured[1])[0]
 
+    async def test_memory_filled_during_a_deferred_approval_waits_for_the_next_prompt(self) -> None:
+        store = InMemoryStore()
+        captured: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            captured.append(messages)
+            if len(captured) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)], output_type=[str, DeferredToolRequests])
+        agent.tool_plain(requires_approval=True)(lookup)
+        first = await agent.run('what do I like?')
+        assert not _memory_contexts(first.all_messages())
+        await _seed(store, 'main/MEMORY.md', '- likes coffee')
+
+        resumed = await agent.run(
+            message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'lookup': True}),
+        )
+
+        # No snapshot follows the approved tool's result, even though history had none to keep current.
+        assert not _memory_contexts(captured[1])
+        assert not _memory_contexts(resumed.all_messages())
+        nxt = await agent.run('and now?', message_history=resumed.all_messages())
+        assert '- likes coffee' in _memory_contexts(nxt.all_messages())[-1]
+
+    @pytest.mark.parametrize('preserve_first_user_message', [True, False])
+    async def test_compaction_mid_run_keeps_the_run_snapshot_current(self, preserve_first_user_message: bool) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- version A')
+        latest_sent: list[str] = []
+        calls = 0
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            latest_sent.append(_latest_memory_context(messages))
+            if calls > 1 and calls < 6:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id=f'call-{calls}')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        agent = Agent(
+            FunctionModel(model),
+            capabilities=[
+                SlidingWindowCompaction(
+                    max_messages=6, keep_messages=2, preserve_first_user_message=preserve_first_user_message
+                ),
+                Memory(store=store),
+            ],
+        )
+        agent.tool_plain(lookup)
+        first = await agent.run('first')
+        await _seed(store, 'main/MEMORY.md', '- version B')
+        latest_sent.clear()
+
+        second = await agent.run('second', message_history=first.all_messages())
+
+        # Compaction drops the run's snapshot, and the earlier one it keeps must not read as current.
+        assert len(latest_sent) == 5
+        assert all('- version B' in context for context in latest_sent)
+        assert '- version B' in _memory_contexts(second.all_messages())[-1]
+
     async def test_snapshot_without_user_prompt_goes_to_last_request(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')
