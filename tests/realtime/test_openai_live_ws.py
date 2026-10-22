@@ -173,10 +173,17 @@ async def test_audio_in_delegated_tool_round(
         assert response.provider_details is not None
         repriced = calc_price(response.usage, response.provider_details['delegated_model'], provider_id='openai')
         assert response.usage.cost == repriced.total_price
+    # Live goes on speaking after the backend asked for the tool, and after its result went back (" now." comes
+    # after the backend's terminal): that is the reply that called it, ahead of the result, not the answer.
+    assert [part.transcript for part in tool_call_response.parts if isinstance(part, SpeechPart)] == snapshot(
+        ['Okay, checking the forecast', ' now.']
+    )
     # And Live speaks the backend's answer, which is the point of delegating.
     answer = spoken_reply.parts[0]
     assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'
-    assert 'fourteen' in (answer.transcript or '').lower() or '14' in (answer.transcript or '')
+    assert answer.transcript == snapshot(
+        ' It\u2019s looking like about 14 degrees Celsius with some light rain. You might want a jacket.'
+    )
 
 
 async def test_thinking_sets_the_backends_reasoning_effort(

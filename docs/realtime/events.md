@@ -25,7 +25,7 @@ never discarded.
 | [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | Incremental speech audio/transcript or text content. |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A finalized part; retained speech audio appears here, not at part start. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | A local function tool began executing. |
-| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool completed or returned a retry prompt. |
+| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool produced a result — a return, a failure, or a retry. |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A tool call was deferred (e.g. needs approval); emitted before any inline capability handler runs. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | An inline capability handler resolved the deferred requests; the results go through normal tool processing. |
 | [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
@@ -34,7 +34,7 @@ never discarded.
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
 | [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
 | [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. These are emitted on a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where the provider owns audio playback. |
-| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The exchange is over: the model gave every reply it owed, and no tool remains active. |
+| [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The exchange is over: the model gave every reply it owed (or, after a [failure](#the-turn-boundary), never will), and no tool remains active. |
 | [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
 | [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
 
@@ -75,6 +75,10 @@ cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
 
 A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
 (server-side voice activity detection). The user's transcript can still finish after it.
+
+An exchange that fails also ends with the event, once: when a [tool raises](tools.md#function-tools) and its failure
+doesn't go out to the model, or a tool's result would pass a usage limit, the model never gets what it needs to reply.
+The event follows the exception in the event stream, or comes as the response still under way ends.
 
 ## Reading raw audio events
 

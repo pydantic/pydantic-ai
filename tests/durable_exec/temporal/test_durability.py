@@ -35,13 +35,15 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartStartEvent,
     PrefixedToolset,
+    PromptedOutput,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     RunTimedOut,
     RunUsage,
+    SystemPromptPart,
     TextPart,
-    TextPartDelta,
     Tool,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
@@ -62,8 +64,10 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instrumentation,
     NativeTool,
+    PrepareTools,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     Toolset,
     WrapperCapability,
     durable_operation,
@@ -97,6 +101,7 @@ from pydantic_ai.models import (
     ModelRequestContext,
     ModelRequestParameters,
     ModelResolutionContext,
+    ModelSelectionContext,
     infer_model,
 )
 from pydantic_ai.models.fallback import FallbackModel
@@ -971,6 +976,61 @@ async def test_durability_deadline_survives_replay(client: Client):
         (deadline, None),
         (None, deadline),
         (None, deadline),
+    ]
+
+
+_selection_seen: list[tuple[int, str | None, str | None, str | None]] = []
+
+
+def _record_selection(ctx: ModelSelectionContext[object]) -> Model:
+    deadline = ctx.deadline.isoformat() if ctx.deadline is not None else None
+    _selection_seen.append((ctx.run_step, ctx.run_id, ctx.conversation_id, deadline))
+    assert ctx.model is not None
+    return ctx.model
+
+
+_selection_agent = Agent(
+    FunctionModel(_deadline_model_fn),
+    name='durability_selection_run_fields',
+    toolsets=[FunctionToolset(tools=[record_deadline], id='deadline')],
+    capabilities=[SelectModel(_record_selection), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class SelectionRunFieldsWorkflow:
+    @workflow.run
+    async def run(self, timeout: float) -> tuple[list[tuple[int, str | None, str | None, str | None]], list[str]]:
+        # The selector runs in the workflow, so each replay records its selections afresh.
+        _selection_seen.clear()
+        start = workflow.now()
+        result = await _selection_agent.run('Hello', timeout=timeout)
+        return list(_selection_seen), [result.run_id, result.conversation_id, start.isoformat()]
+
+
+async def test_durability_selector_sees_run_ids_and_deadline(client: Client):
+    """A model selector in the workflow sees the run's replay-stable IDs and deadline on every step.
+
+    Step one is selected during run setup and later steps in the graph; with workflow caching off, every
+    activity result replays the workflow, and each replay selects with the same values.
+    """
+    timeout = 3600
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SelectionRunFieldsWorkflow],
+        plugins=[AgentPlugin(_selection_agent)],
+        max_cached_workflows=0,
+    ):
+        workflow_id = f'selection-run-fields-{uuid.uuid4()}'
+        handle = await client.start_workflow(
+            SelectionRunFieldsWorkflow.run, args=[timeout], id=workflow_id, task_queue=TASK_QUEUE
+        )
+        selections, (run_id, conversation_id, start) = await handle.result()
+    deadline = (datetime.fromisoformat(start) + timedelta(seconds=timeout)).isoformat()
+    assert run_id.startswith(f'{handle.result_run_id}:')
+    assert [tuple(selection) for selection in selections] == [
+        (step, run_id, conversation_id, deadline) for step in (1, 2, 3)
     ]
 
 
@@ -2160,7 +2220,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 
     The model streams inside the request-stream activity — the capability's handler sees the model
     events with `activity.in_activity()` true — and the workflow-side `StreamedRunResult` is fed by
-    the events the activity captured off the live stream, so it stays deterministic across replays.
+    the activity's final response, one event per part, so it stays deterministic across replays.
     The single text delta is not a durability artifact: `run_stream()` consumes events up to the
     `FinalResultEvent` before yielding, so `stream_text(delta=True)` returns the same one chunk for
     this model outside a workflow.
@@ -2237,9 +2297,6 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'ToolAvailabilityDeltaEvent',
             'PartStartEvent',
             'FinalResultEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
-            'PartDeltaEvent',
             'PartEndEvent',
             'AgentRunResultEvent',
         ]
@@ -2302,14 +2359,19 @@ _process_durable_agent = Agent(
 @workflow.defn
 class ProcessStreamDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str) -> tuple[str, list[bool], list[str]]:
+    async def run(self, prompt: str) -> tuple[str, list[bool], list[str], list[str]]:
         result = await _process_durable_agent.run(prompt)
-        text_chunks = [
-            event.delta.content_delta
+        model_event_kinds = [
+            type(event).__name__
             for event in _process_events_collected
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
+            if isinstance(event, (PartStartEvent, PartDeltaEvent))
         ]
-        return result.output, _process_model_events_in_activity, text_chunks
+        text_parts = [
+            event.part.content
+            for event in _process_events_collected
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+        ]
+        return result.output, _process_model_events_in_activity, text_parts, model_event_kinds
 
 
 def test_durability_tool_metadata_disables_activity():
@@ -2482,7 +2544,7 @@ async def test_durability_mcp_instructions_use_operation_activity_summary(monkey
 
 
 async def test_durability_process_event_stream_fires_workflow_side(client: Client):
-    """ProcessEventStream sees the real captured events replayed in the workflow."""
+    """ProcessEventStream sees the activity's final response replayed in the workflow, each part complete."""
     _process_events_collected.clear()
     _process_model_events_in_activity.clear()
     async with Worker(
@@ -2491,7 +2553,7 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         workflows=[ProcessStreamDurableAgentWorkflow],
         plugins=[AgentPlugin(_process_durable_agent)],
     ):
-        output, model_events_in_activity, text_chunks = await client.execute_workflow(
+        output, model_events_in_activity, text_parts, model_event_kinds = await client.execute_workflow(
             ProcessStreamDurableAgentWorkflow.run,
             args=['Hello'],
             id=ProcessStreamDurableAgentWorkflow.__name__,
@@ -2501,7 +2563,8 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert model_events_in_activity
         assert not any(model_events_in_activity)
 
-    assert text_chunks == ['ed ', 'response']
+    assert text_parts == ['Streamed response']
+    assert model_event_kinds == ['PartStartEvent']
 
 
 # --- Capability events emitted workflow-side reach the handler activity ---
@@ -2855,7 +2918,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2883,7 +2946,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -2964,7 +3027,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -3137,7 +3200,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -3237,11 +3300,13 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                 ),
                 ModelRequest(
                     parts=[
-                        RetryPromptPart(
+                        ToolReturnPart(
                             content='Did you mean Mexico City?',
                             tool_name='durability_get_weather_in_city',
                             tool_call_id='call_TtLEMpCeAhnG48btCDrw8lhl',
                             timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                         )
                     ],
                     timestamp=IsDatetime(),
@@ -5254,8 +5319,8 @@ def _text_part_indices(events: list[AgentStreamEvent]) -> list[tuple[str, int]]:
 async def test_durability_streaming_continuation_chain_in_workflow(client: Client):
     """A streamed suspended → complete chain is stitched across per-segment activities.
 
-    `ProcessEventStream` receives each captured segment in workflow code, and the
-    final response merges both segments' text with usage summed once.
+    `ProcessEventStream` receives each segment's final response in workflow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     _continuation_stream_model.reset(
         segments=[
@@ -5292,9 +5357,7 @@ async def test_durability_streaming_continuation_chain_in_workflow(client: Clien
     assert usage.requests == 1
     assert usage.input_tokens == 8
     assert usage.output_tokens == 6
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 2
     assert _scheduled_activity_count(history) == 2
 
@@ -5337,12 +5400,7 @@ async def test_durability_streaming_continuation_resume_from_history(client: Cli
     assert isinstance(response, ModelResponse)
     assert response.state == 'complete'
     assert [part.content for part in response.parts if isinstance(part, TextPart)] == ['The answer ', 'is 42.']
-    assert indices == snapshot(
-        [
-            ('PartStartEvent', 1),
-            ('PartDeltaEvent', 1),
-        ]
-    )
+    assert indices == snapshot([('PartStartEvent', 1)])
     assert _continuation_stream_model.request_stream_calls == 1
 
 
@@ -5427,7 +5485,10 @@ async def test_durability_static_tool_prepare_runs_only_in_workflow(client: Clie
     assert _prepared_descriptions == snapshot(['prepared 1', 'prepared 2'])
     # The `timeout=0.01` from the workflow-side call is what the activity enforced.
     retry_prompts = [
-        part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+        part.content
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ]
     assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
 
@@ -5666,6 +5727,68 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
     assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
 
 
+# --- Retry feedback for output that answered no tool call ---
+
+
+@dataclass
+class RetryFeedbackAnswer:
+    count: int
+
+
+_retry_feedback_shown: list[list[SystemPromptPart | UserPromptPart]] = []
+"""The retry feedback the model was shown, one entry per model request."""
+
+_RETRY_FEEDBACK_TAGS = ('<system>', '<validation_errors>')
+"""The two tags a translated `RetryFeedbackPart` can arrive under; a `SystemPromptPart` needs none."""
+
+
+def _retry_feedback_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A raw `RetryFeedbackPart` raises rather than rendering when it reaches a model, so whatever
+    # lands here is what `prepare_messages` made of it under the profile of the model being used.
+    shown = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+        or (
+            isinstance(part, UserPromptPart)
+            and isinstance(part.content, str)
+            and any(tag in part.content for tag in _RETRY_FEEDBACK_TAGS)
+        )
+    ]
+    _retry_feedback_shown.append(shown)
+    return ModelResponse(parts=[TextPart('{"count": 3}' if shown else '{"count": "lots"}')])
+
+
+_retry_feedback_inline_model = FunctionModel(
+    _retry_feedback_model,
+    model_name='retry-feedback-inline',
+    profile=ModelProfile(supports_inline_system_prompts=True),
+)
+
+
+def _resolve_retry_feedback_alias(ctx: ModelResolutionContext[None], model_id: str) -> FunctionModel | None:
+    """Resolve the alias for the model that takes a mid-conversation system message.
+
+    `infer_model` can't build the alias, so the raw string is what crosses the activity boundary and
+    the worker-side chain rebuilds the model there.
+    """
+    return _retry_feedback_inline_model if model_id == 'retry-feedback-inline' else None
+
+
+_retry_feedback_agent = Agent(
+    FunctionModel(_retry_feedback_model),
+    name='durability_retry_feedback_agent',
+    deps_type=type(None),
+    output_type=PromptedOutput(RetryFeedbackAnswer),
+    capabilities=[
+        ResolveModelId(_resolve_retry_feedback_alias),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
 _workspace_probe_backends: list[FakeWorkspace] = []
 
 
@@ -5722,6 +5845,112 @@ _workspace_probe_agent = Agent(
         TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
     ],
 )
+
+
+@dataclass
+class RetryFeedbackResult:
+    count: int
+    messages: list[ModelMessage]
+
+
+@workflow.defn
+class DurabilityRetryFeedbackWorkflow:
+    @workflow.run
+    async def run(
+        self, prompt: str, model_id: str | None, message_history: list[ModelMessage] | None
+    ) -> RetryFeedbackResult:
+        result = await _retry_feedback_agent.run(prompt, model=model_id, message_history=message_history)
+        return RetryFeedbackResult(count=result.output.count, messages=result.all_messages())
+
+
+async def test_durability_output_retry_feedback_survives_the_activity_and_a_resume(client: Client):
+    """Output that failed validation retries as a durable history fact, in the harness's own voice.
+
+    The retry answers no tool call, so it is a `RetryFeedbackPart` and not the retried
+    `ToolReturnPart` the tool path carries. It has to cross the model activity's payload boundary, come back out through
+    the workflow's own result, and go back in as a second execution's argument — the shape a suspend
+    and resume leaves behind.
+
+    The resuming model is reached by an alias only the `ResolveModelId` capability can build, so the
+    workflow leaves the history untouched and the raw part is what crosses the activity boundary
+    there. Keeping the presentation out of the history is what lets each execution build the sendable
+    part for the model it is actually using — here the same `<validation_errors>` fence both times,
+    because a `'validation_error'`'s voice comes from its `cause` rather than from the profile.
+    """
+    _retry_feedback_shown.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRetryFeedbackWorkflow],
+        plugins=[AgentPlugin(_retry_feedback_agent)],
+    ):
+        first = await client.execute_workflow(
+            DurabilityRetryFeedbackWorkflow.run,
+            args=['how many?', None, None],
+            id=f'{DurabilityRetryFeedbackWorkflow.__name__}-first-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        second = await client.execute_workflow(
+            DurabilityRetryFeedbackWorkflow.run,
+            args=['how many again?', 'retry-feedback-inline', first.messages],
+            id=f'{DurabilityRetryFeedbackWorkflow.__name__}-second-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    # Both runs recovered: the retry reached the model and the next response validated.
+    assert (first.count, second.count) == (3, 3)
+    # The resumed history still carries the part model-neutrally...
+    assert [
+        part
+        for message in second.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryFeedbackPart)
+    ] == snapshot(
+        [
+            RetryFeedbackPart(
+                content=[
+                    {
+                        'type': 'int_parsing',
+                        'loc': ('count',),
+                        'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                        'input': 'lots',
+                    }
+                ],
+                retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    # ...and each execution translated that one part for itself, on the far side of the activity
+    # boundary, rather than replaying a presentation the first execution had baked in.
+    assert _retry_feedback_shown == snapshot(
+        [
+            [],
+            [
+                UserPromptPart(
+                    content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
+</validation_errors>\
+""",
+                    timestamp=IsDatetime(),
+                )
+            ],
+            [
+                UserPromptPart(
+                    content="""\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<validation_errors>
+[{"type":"int_parsing","loc":["count"],"msg":"Input should be a valid integer, unable to parse string as an integer","input":"lots"}]
+</validation_errors>\
+""",
+                    timestamp=IsDatetime(),
+                )
+            ],
+        ]
+    )
 
 
 decide_durable_agent = Agent(
@@ -5856,3 +6085,81 @@ async def test_durability_decide_span_in_activity(
     # Without content an answer keeps its numbers, which a yes/no's answer is all of.
     assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
     assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content
+
+
+# --- Mid-run tool population changes (https://github.com/pydantic/pydantic-ai/issues/7251) ---
+
+
+def _population_change_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call `unlock`, then `later` once it is advertised, then finish."""
+    returned = {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    if 'unlock' not in returned:
+        return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
+    if 'later' not in returned and any(tool.name == 'later' for tool in info.function_tools):
+        return ModelResponse(parts=[ToolCallPart('later', {}, tool_call_id='c2')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+async def _admit_later_from_step_two(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    # Workflow-side and derived from the run step, so replay resolves the same population.
+    return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
+
+
+def _unlock() -> str:
+    return 'unlocked'
+
+
+def _later() -> str:
+    return 'later ran'
+
+
+population_change_agent = Agent(
+    FunctionModel(_population_change_model_fn),
+    name='durability_population_change',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class PopulationChangeWorkflow:
+    @workflow.run
+    async def run(self) -> list[list[str]]:
+        result = await population_change_agent.run('go')
+        return [
+            part.tools_added
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+
+
+async def test_population_change_delta_is_recorded_once_and_replays(client: Client):
+    """A mid-run newcomer is recorded once in the workflow, and replaying the workflow history reproduces it exactly.
+
+    The diff runs in workflow code, so a replay re-derives the same baseline from the same steps and
+    writes the same delta: any divergence would surface as a non-determinism `replay_failure`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PopulationChangeWorkflow],
+        plugins=[AgentPlugin(population_change_agent)],
+    ):
+        handle = await client.start_workflow(
+            PopulationChangeWorkflow.run,
+            id=f'{PopulationChangeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        deltas = await handle.result()
+        history = await handle.fetch_history()
+
+    assert deltas == [['later']]
+    replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None

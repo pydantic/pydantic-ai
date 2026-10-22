@@ -14,16 +14,21 @@ tool calls are covered in [Capabilities and hooks](capabilities.md).
 When a model calls a tool, the session emits
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent], runs the tool, returns the
 result, and emits [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Parse
-failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] produce a
-[`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], matching a standard agent run. Other tool
-exceptions end the exchange the call was part of: the model never gets the result, so
+failures and [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] answer the call with a
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying `outcome='retried'`, matching a
+standard agent run. Other tool exceptions end the exchange the call was part of: the model never gets the result, so
 [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] stops waiting for its
-answer. While the event stream is being iterated, the exception is raised from `async for`, and the
+answer. GPT-Live is the exception: its backend can't move on without a result for every call, so the
+model gets the failure history records, and `wait_for_reply()` waits for its answer
+([details](openai.md#gpt-live-provider-specific-quirks)).
+While the event stream is being iterated, the exception is raised from `async for`, and the
 session goes on receiving: a consumer that catches it and iterates again keeps a working session,
 and a reply asked for afterwards is answered as usual. Otherwise the session stops receiving, the
 audio and transcript views end, and the exception is raised when the session closes. If the receive
 side has already ended, an outbound session method raises the failure instead; it is delivered only
-once.
+once. Where the model never gets the result, the exchange the call was part of still ends with a
+[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], after the exception
+(see [the turn boundary](events.md#the-turn-boundary)).
 The failed call is recorded with `outcome='failed'`, so the settled history can be passed to
 [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run].
 The general

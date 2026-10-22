@@ -9,18 +9,32 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import reprlib
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from copy import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
 from difflib import get_close_matches
 from functools import cache, cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Generic, Literal, Self, TypeVar, cast, get_args, overload
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    Self,
+    TypeAlias,
+    TypeVar,
+    cast,
+    get_args,
+    overload,
+)
 
 import httpx2
 from pydantic import Field
@@ -28,6 +42,14 @@ from typing_extensions import TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._file_input import (
+    KNOWN_DOCUMENT_MEDIA_TYPES,
+    FileInputKind,
+    SendableFile,
+    unsupported_file_input,
+    unsupported_file_note,
+)
+from .._framing import SYSTEM_TAG, neutralize_tags, wrap
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
@@ -56,6 +78,7 @@ from ..messages import (
     BaseToolReturnPart,
     BinaryImage,
     CompactionPart,
+    DocumentMediaType,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -74,7 +97,8 @@ from ..messages import (
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     SystemPromptPart,
     TextPart,
@@ -91,7 +115,9 @@ from ..messages import (
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
     _is_request_scoped,  # pyright: ignore[reportPrivateUsage]
     _render_append_parts,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -106,6 +132,7 @@ from ..profiles import (
     _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
     merge_profile,
 )
+from ..profiles.decision import decision_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import CacheSetting, ModelSettingName, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
@@ -120,7 +147,7 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
-    from ..usage import RunUsage
+    from ..usage import RunUsage, UsageLimits
 else:
     # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
     # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
@@ -239,6 +266,21 @@ class ModelRequestParameters:
     for and stays set after a reveal, so this answers the separate question of what the model can
     see *now*. History can name tools that no longer exist in the current run's definitions; those
     are dropped where this is derived, so it is a subset of `function_tools`' names by construction.
+    """
+
+    introduced_tool_names: set[str] = field(default_factory=set[str], repr=False)
+    """Immediately-available function tools that joined the run's tool population after its first request.
+
+    `tools` is the first cache section, so a tool that appears mid-run (added to a `FunctionToolset`
+    from inside a tool, returned by a dynamic toolset, listed by an MCP server after
+    `tools/list_changed`, let through by `prepare_tools`) is not added to it. It travels like a
+    revealed deferred tool instead: the run records a
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] naming it, and visibility
+    resolution puts it on the provider's tool-addition channel once that delta is in the outgoing
+    history. Without the delta it stays an ordinary visible `tools` entry, because it is callable either way.
+
+    This changes only how the definition reaches the model. `ToolDefinition.defer_loading` stays as
+    authored, and whether the tool can be called is decided exactly as before.
     """
 
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
@@ -520,6 +562,57 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
 
+    retry: int = 0
+    """The number of output retries the run has used before this request step.
+
+    This is what output validators see as [`RunContext.retry`][pydantic_ai.tools.RunContext.retry]. It goes up
+    each time the run asks the model to try again for its output: an output tool's arguments failed validation,
+    an output function or validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], the response had
+    no usable output, or a capability's model request hook raised `ModelRetry`. Steps in between, such as
+    function tool calls, don't reset it, and function tool retries don't count towards it.
+    """
+
+    max_retries: int = 0
+    """The run's output retry budget, as output validators see it in [`RunContext.max_retries`][pydantic_ai.tools.RunContext.max_retries].
+
+    An output tool with its own budget, set with [`ToolOutput(max_retries=...)`][pydantic_ai.output.ToolOutput],
+    is limited by that budget instead, while [`retry`][pydantic_ai.models.ModelSelectionContext.retry] still
+    counts the retries of every output.
+    """
+
+    usage_limits: UsageLimits | None = None
+    """The [`UsageLimits`][pydantic_ai.usage.UsageLimits] enforced for this run, as
+    [`RunContext.usage_limits`][pydantic_ai.tools.RunContext.usage_limits] holds them.
+
+    During a run this is always set: if no limits were passed, the run enforces the default
+    [`UsageLimits()`][pydantic_ai.usage.UsageLimits]. It is only `None` when a model is selected outside a
+    run, as by [`system_prompt_parts()`][pydantic_ai.agent.AbstractAgent.system_prompt_parts]. Treat it as
+    read-only: it is the live object the run enforces against.
+    """
+
+    deadline: datetime | None = None
+    """The time (timezone-aware, in UTC) by which this run must finish, or `None` if it has no deadline,
+    as [`RunContext.deadline`][pydantic_ai.tools.RunContext.deadline] holds it.
+
+    Set from `timeout=` on the agent run methods, or inherited from an enclosing run. The run's clock
+    starts before its first model is selected, so the time a selector takes counts toward it.
+    """
+
+    run_id: str | None = None
+    """Unique identifier for the agent run, as [`RunContext.run_id`][pydantic_ai.tools.RunContext.run_id] holds it.
+
+    The `run_id` argument to `Agent.run` (etc.), or a fresh UUID7. Inside a durable workflow or flow,
+    the default is derived from the workflow or flow run instead, so it stays the same when the engine
+    re-executes the run. `None` when a model is selected outside a run.
+    """
+
+    conversation_id: str | None = None
+    """Unique identifier for the conversation this run belongs to, as
+    [`RunContext.conversation_id`][pydantic_ai.tools.RunContext.conversation_id] holds it.
+
+    `None` when a model is selected outside a run.
+    """
+
 
 class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
@@ -554,6 +647,23 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     default), the standing prompt travels in a per-request channel rebuilt from those items, so the
     trim has to re-insert them or it is silently dropped from every subsequent request. See
     `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
+    _unsupported_file_inputs: ClassVar[frozenset[FileInputKind]] = frozenset()
+    """Kinds of file this adapter's message mapping cannot send, whatever the model.
+
+    `profile` turns the matching file-input flags off after every other layer, the user's included,
+    so the profile never claims a file the mapping would refuse.
+    """
+    _supported_document_media_types: ClassVar[frozenset[DocumentMediaType] | None] = None
+    """The document media types this adapter's message mapping can send, or `None` for all of them.
+
+    Intersected with the profile's `supported_document_media_types`, like `_unsupported_file_inputs`.
+    """
+    _renders_retry_feedback: ClassVar[bool] = False
+    """Whether this model renders a `RetryFeedbackPart` itself, so `prepare_messages` passes it through untranslated.
+
+    Set by a model that judges the conversation rather than answering it: translated, the feedback would
+    read as the user's request or as a system prompt, where the model has to see it as a step the agent took.
+    """
     unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
     """The [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields this model class ignores.
 
@@ -627,8 +737,37 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
+    def __eq__(self, other: object) -> bool:
+        """Compare `settings`, `profile`, and the subclass's dataclass fields; a subclass that hashes by identity compares by identity."""
+        if not isinstance(other, type(self)) or other.__class__ is not self.__class__:
+            return NotImplemented
+        return (self._settings, self._profile) == (other._settings, other._profile) and _utils.dataclass_fields_equal(
+            self, other
+        )
+
+    # Defining `__eq__` would otherwise set `__hash__` to `None`, making non-dataclass subclasses unhashable.
+    __hash__ = AbstractModel.__hash__
+
+    @reprlib.recursive_repr()
+    def __repr__(self) -> str:
+        shown = [f'model_name={self.model_name!r}']
+        if is_dataclass(self):
+            shown.extend(f'{f.name}={getattr(self, f.name)!r}' for f in fields(self) if f.repr)
+        if self._settings is not None:
+            shown.append(f'settings={self._settings!r}')
+        if self._profile is not None:
+            shown.append(f'profile={self._profile!r}')
+        return f'{self.__class__.__qualname__}({", ".join(shown)})'
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
+        # `@dataclass` generates `__eq__` and `__repr__` from the subclass's own fields, which leaves out the
+        # `settings` and `profile` stored on this base, so two models configured differently would compare
+        # equal and print the same. `@dataclass` keeps a method the class already defines.
+        if '__eq__' not in cls.__dict__ and cls.__eq__ is Model.__eq__:
+            cls.__eq__ = Model.__eq__
+        if '__repr__' not in cls.__dict__ and cls.__repr__ is Model.__repr__:
+            cls.__repr__ = Model.__repr__
         # TODO(v3): remove along with `resolve_prompt_cache_retention`.
         legacy = cls.__dict__.get('resolve_prompt_cache_retention')
         if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:
@@ -1048,9 +1187,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         # tool has to get here on its own account: one gated by an on-demand capability belongs to no
         # native tool's corpus, so a run whose deferred tools are all capability-gated reaches this
         # point with neither a native tool nor a `with_native` between them.
-        if params.native_tools or any(
-            t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
-        ):
+        if _needs_tool_resolution(params):
             params = self._resolve_request_tools(params)
         else:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
@@ -1104,6 +1241,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Translates each retry part into the part that carries it on the wire, by its `retry.cause`: a
+        `RetryFeedbackPart` for a `'validation_error'` or `'model_retry'` becomes a `UserPromptPart`
+        fenced in `<validation_errors>` or `<retry_feedback>` behind an application attribution line,
+        since either can quote the model's own output, and only `'no_output'`, whose text is the
+        framework's own, becomes a mid-conversation `SystemPromptPart`. A legacy `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='retried'`
+        when it names a tool, and the `RetryFeedbackPart` it always meant when it doesn't.
+
         Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
         `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
         instruction baseline or compaction.
@@ -1113,12 +1257,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         and moves the current request's ones to the end of the last request.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`, and converts
+        the profile's `supports_inline_system_prompts` is `False`, converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /
-        `TextPart`s that any model can consume, and puts the tool results in each request in the
-        order of the calls they answer, so the request bytes (and the provider's prompt cache)
-        don't depend on the order a history happened to store them in. When the profile sets
-        `tool_call_id_length`, tool call IDs that don't fit it are replaced with stable hashes that do.
+        `TextPart`s that any model can consume, replaces each file a tool returned that the
+        profile's file-input flags say the model can't read with a note naming it, and puts the
+        tool results in each request in the order of the calls they answer, so the request bytes
+        (and the provider's prompt cache) don't depend on the order a history happened to store
+        them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
+        replaced with stable hashes that do.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -1144,6 +1290,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             )
 
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        # Translated before every later step — the tool-availability announcement and the `<system>`
+        # wrap below it — so they see the plain parts a retry becomes rather than the retry itself.
+        messages = _translate_retry_parts(messages, keep_feedback=self._renders_retry_feedback)
+        messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
         # history was authored with, and an announcement opening the first request is not part of it.
         first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
@@ -1152,6 +1302,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         clears_request_scoped_prompts = self.profile.get('supports_request_scoped_system_prompts', False)
         if not clears_request_scoped_prompts:
             messages = _drop_superseded_request_scoped_prompts(messages)
+        else:
+            messages = _drop_request_scoped_prompts_no_user_message_clears(messages)
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -1172,10 +1324,22 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # only names matching a currently-served *authored-deferred* function tool render —
             # a forged-but-well-shaped name must not reach system voice, and an always-visible
             # tool named by a delta has no "now available" news and no exchange to fabricate:
-            # the delta is a no-op for it on this channel just as on the native ones.
-            deferred_tool_names = (
-                {tool.name for tool in model_request_parameters.function_tools if tool.defer_loading}
+            # the delta is a no-op for it on this channel just as on the native ones. A mid-run
+            # newcomer is the exception: it wasn't in `tools` before, so its arrival is news. The tools are
+            # the ones resolved for this model, which may drop one, like a local fallback for a native tool
+            # it supports, that the model must not be told about.
+            served_params = (
+                self._tools_resolved_for_messages(model_request_parameters)
                 if model_request_parameters is not None
+                else None
+            )
+            deferred_tool_names = (
+                {
+                    tool.name
+                    for tool in served_params.function_tools
+                    if tool.defer_loading or tool.name in served_params.introduced_tool_names
+                }
+                if served_params is not None
                 else None
             )
             # Two different jobs hide behind "render the delta", and which applies turns on whether this
@@ -1254,17 +1418,20 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Whether this request puts a tool on the wire with its schema withheld."""
         if params is None:
             return self.tool_deferral_mode == 'standalone'
-        # Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing
-        # native and nothing deferred there is no schema to withhold anyway.
-        if not (
-            params.native_tools
-            or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
-        ):
-            return False
+        resolved = self._tools_resolved_for_messages(params)
+        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+
+    def _tools_resolved_for_messages(self, params: ModelRequestParameters) -> ModelRequestParameters:
+        """`params` with its tools resolved for this model, for message projection that runs before `prepare_request`.
+
+        Mirrors `prepare_request`'s guard so this can't raise where that wouldn't: with nothing native and
+        nothing deferred, every function tool is sent as it stands.
+        """
         # TODO(#7196): reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = params if params.tool_visibility is not None else self._resolve_request_tools(params)
-        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
+        if params.tool_visibility is not None or not _needs_tool_resolution(params):
+            return params
+        return self._resolve_request_tools(params)
 
     def _resolve_request_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model."""
@@ -1324,7 +1491,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Resolution order (later layers override earlier ones):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
-             for this model.
+             for this model — or what `_provider_model_profile()` returns in its place.
           3. A best-effort `context_window` value from
              [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
              partial user profile explicitly set the field (including to `None`).
@@ -1336,12 +1503,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         After resolution we compute the intersection of the profile's `supported_native_tools`
         and the model class's implemented tools, ensuring `model.profile['supported_native_tools']`
-        is the single source of truth for what's actually usable.
+        is the single source of truth for what's actually usable. The file-input flags are narrowed the
+        same way, to the kinds of file the model class's message mapping can send.
         """
         # Step 1+2: provider default merged with base default
-        provider_profile: ModelProfile = {}
-        if (provider := self.provider) is not None:
-            provider_profile = provider.model_profile(self.model_name) or {}
+        provider_profile = self._provider_model_profile()
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
         # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
@@ -1377,7 +1543,37 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if effective_tools != profile_supported:
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
+        # Step 6: file input the model class's message mapping can't send, whatever the profile says
+        unsupported = self._unsupported_file_inputs
+        document_media_types = self._supported_document_media_types
+        if unsupported or document_media_types is not None:
+            supported_document_media_types = resolved.get('supported_document_media_types', KNOWN_DOCUMENT_MEDIA_TYPES)
+            if document_media_types is not None:
+                supported_document_media_types &= document_media_types
+            resolved = merge_profile(
+                resolved,
+                ModelProfile(
+                    supports_image_input=resolved.get('supports_image_input', True) and 'image' not in unsupported,
+                    supports_document_input=resolved.get('supports_document_input', True)
+                    and 'document' not in unsupported,
+                    supported_document_media_types=supported_document_media_types,
+                    supports_audio_file_input=resolved.get('supports_audio_file_input', True)
+                    and 'audio' not in unsupported,
+                    supports_video_input=resolved.get('supports_video_input', True) and 'video' not in unsupported,
+                ),
+            )
+
         return resolved
+
+    def _provider_model_profile(self) -> ModelProfile:
+        """The provider's profile for this model's name, the second layer of [`profile`][pydantic_ai.models.Model.profile].
+
+        Override this for a model class whose endpoint the provider's profile doesn't describe, because the provider
+        also serves the model name on another API.
+        """
+        if (provider := self.provider) is None:
+            return {}
+        return provider.model_profile(self.model_name) or {}
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -1406,8 +1602,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         # Fallback: synthesize from message history for direct model.request() callers.
         # Mirrors the last-two-requests logic from `pydantic_ai._instrumentation.get_instructions`:
-        # if the most recent request only has tool-return/retry-prompt parts (a "mock" request
-        # for result tools), use the instructions from the second-to-most-recent request.
+        # if the most recent request only has tool-return/retry-prompt/retry-feedback parts (a "mock"
+        # request for result tools), use the instructions from the second-to-most-recent request.
         last_two_requests: list[ModelRequest] = []
         for message in reversed(messages):
             if isinstance(message, ModelRequest):
@@ -1421,7 +1617,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             most_recent = last_two_requests[0]
             second = last_two_requests[1]
             if (
-                all(p.part_kind == 'tool-return' or p.part_kind == 'retry-prompt' for p in most_recent.parts)
+                all(
+                    # TODO(v3): remove `RetryPromptPart`
+                    isinstance(p, ToolReturnPart | RetryFeedbackPart | RetryPromptPart)  # pyright: ignore[reportDeprecated]
+                    for p in most_recent.parts
+                )
                 and second.instructions is not None
             ):
                 return [InstructionPart(content=second.instructions)]
@@ -2055,7 +2255,13 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        provider_profile = provider_class.model_profile(model_name)
+        # `OpenAIProvider` profiles a name such as `gpt-6-luna` for the Responses API, so the Decisions API's model
+        # class brings its own profile, as `OpenAIDecisionsModel._provider_model_profile` does.
+        provider_profile = (
+            decision_model_profile(model_name)
+            if provider == 'openai-decisions'
+            else provider_class.model_profile(model_name)
+        )
     except (ValueError, UserError):
         return DEFAULT_PROFILE
     profile = provider_profile or DEFAULT_PROFILE
@@ -2195,11 +2401,11 @@ def infer_model(  # noqa: C901
             raise UserError('System One models require a `SystemOneProvider`.')
         return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'openai-decisions':
-        from ..providers.openai_decisions import OpenAIDecisionsProvider
+        from ..providers.openai import OpenAIProvider
         from .openai_decisions import OpenAIDecisionsModel
 
-        if not isinstance(provider, OpenAIDecisionsProvider):
-            raise UserError('OpenAI Decisions models require an `OpenAIDecisionsProvider`.')
+        if not isinstance(provider, OpenAIProvider):
+            raise UserError('OpenAI Decisions models require an `OpenAIProvider`.')
         return OpenAIDecisionsModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
@@ -2387,6 +2593,15 @@ def _customize_output_object(
     )
 
 
+def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
+    """Whether any tool's wire representation depends on the model; when not, every function tool is plainly visible."""
+    return bool(
+        params.native_tools
+        or params.introduced_tool_names
+        or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
+    )
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -2523,7 +2738,11 @@ def resolve_request_tools(
         # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
         if t.with_native and t.with_native not in supported_ids:
             t = replace(t, with_native=None)
-        if not t.defer_loading:
+        # A mid-run newcomer resolves like a revealed deferred tool, but only once its delta is on the
+        # outgoing history: it is callable from the moment it exists, so without the delta it stays in
+        # `tools`.
+        revealed_newcomer = t.name in params.introduced_tool_names and t.name in params.revealed_tool_names
+        if not (t.defer_loading or revealed_newcomer):
             visibility = 'visible'
         else:
             revealed = t.name in params.revealed_tool_names
@@ -2555,12 +2774,53 @@ def resolve_request_tools(
         function_tools.append(t)
         visibility_by_name[t.name] = visibility
 
-    return replace(
-        params,
-        native_tools=supported_natives,
-        function_tools=function_tools,
-        tool_visibility=visibility_by_name,
+    # The agent graph makes the same call when recording a newcomer, but only resolution knows which native
+    # tools survive for this model: an unsupported `optional` one the graph counted is left out here.
+    return _declare_lone_newcomers(
+        replace(
+            params,
+            native_tools=supported_natives,
+            function_tools=function_tools,
+            tool_visibility=visibility_by_name,
+        )
     )
+
+
+def _declare_lone_newcomers(
+    params: ModelRequestParameters,
+    declared_names: Collection[str] | None = None,
+    *,
+    wire_native_tools: Sequence[AbstractNativeTool] | None = None,
+) -> ModelRequestParameters:
+    """Declare mid-run newcomers plainly when the request has no other plainly declared tool.
+
+    A newcomer goes on the tool-addition channel to keep the request's `tools` section stable. With nothing
+    else plainly declared there is no section to keep, so it is declared like any other tool, which also
+    keeps an Anthropic request from carrying only deferred tools.
+
+    `declared_names` narrows the declarations to the ones a provider still sends after its own filtering,
+    such as Anthropic's `tool_choice` restriction; by default every resolved tool counts. `wire_native_tools`
+    narrows the native tools to the ones that become entries in the request's tools, leaving out one a
+    provider sends elsewhere, such as Anthropic's `mcp_servers`; by default every native tool counts.
+    """
+    tool_visibility = params.tool_visibility
+    if tool_visibility is None or (params.native_tools if wire_native_tools is None else wire_native_tools):
+        return params
+
+    def declared(name: str) -> bool:
+        return declared_names is None or name in declared_names
+
+    if any(declared(tool.name) for tool in params.output_tools) or any(
+        visibility == 'visible' and declared(name) for name, visibility in tool_visibility.items()
+    ):
+        return params
+    newcomers = [name for name in params.introduced_tool_names if name in tool_visibility and declared(name)]
+    if not newcomers:
+        return params
+    resolved = dict(tool_visibility)
+    for name in newcomers:
+        resolved[name] = 'visible'
+    return replace(params, tool_visibility=resolved)
 
 
 def prepare_return_schemas(
@@ -2802,6 +3062,57 @@ def _drop_superseded_request_scoped_prompts(messages: list[ModelMessage]) -> lis
     return [*kept_messages, *messages[start:]]
 
 
+def _drop_request_scoped_prompts_no_user_message_clears(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Leave out the superseded request-scoped prompts a model that clears them itself never gets to clear.
+
+    Such a model clears a request-scoped `SystemPromptPart` at the next user message. When the request
+    after the one that held it reaches the model in the system voice alone, such as a `'no_output'`
+    retry, no user message follows it before that request is sent, so the model would see it next to the
+    retried step's own. It's left out of every later request too, so the bytes of the history don't
+    depend on how far the conversation has got: whether it goes is settled by the request right after
+    it, which never changes.
+
+    Returns the original list when nothing changed.
+    """
+    start = _current_request_start(messages)
+    dropped: set[int] = set()
+    for index in range(start):
+        message = messages[index]
+        if not (isinstance(message, ModelRequest) and any(_is_request_scoped(part) for part in message.parts)):
+            continue
+        following = index + 1
+        while following < len(messages) and isinstance(messages[following], ModelResponse):
+            following += 1
+        next_request_parts: list[ModelRequestPart] = []
+        while following < len(messages) and isinstance(next_request := messages[following], ModelRequest):
+            next_request_parts.extend(next_request.parts)
+            following += 1
+        if not any(_reaches_the_model_as_a_user_message(part) for part in next_request_parts):
+            dropped.add(index)
+    if not dropped:
+        return messages
+    kept_messages: list[ModelMessage] = []
+    for index, message in enumerate(messages):
+        if index in dropped:
+            assert isinstance(message, ModelRequest)
+            if parts := [part for part in message.parts if not _is_request_scoped(part)]:
+                kept_messages.append(replace(message, parts=parts))
+        else:
+            kept_messages.append(message)
+    return kept_messages
+
+
+def _reaches_the_model_as_a_user_message(part: ModelRequestPart) -> bool:
+    """Whether a request part reaches the model in the user role, the message a request-scoped prompt clears at.
+
+    Everything but the parts that render in the system voice: system prompts, instruction records, tool
+    reveals, and the retry feedback that speaks for the harness.
+    """
+    if isinstance(part, SystemPromptPart | InstructionDeltaPart | InstructionBaselinePart | ToolAvailabilityDeltaPart):
+        return False
+    return not (isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
+
+
 def _move_request_scoped_prompts_to_tail(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Send the current request's request-scoped prompts last, and record that they're there.
 
@@ -2909,6 +3220,9 @@ def _request_scoped_tail_texts(messages: Sequence[ModelMessage]) -> tuple[str, .
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
+    A closing `</system>` inside a part's content is neutralized as it is wrapped, so text that reached
+    the instruction from elsewhere (a tool name, a validation error) can't end the block early.
+
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
     in the first request". The caller counts them on the history as authored and passes
@@ -2931,7 +3245,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
         start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
-                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
+                UserPromptPart(content=wrap(SYSTEM_TAG, part.content), timestamp=part.timestamp)
                 if index >= start and isinstance(part, SystemPromptPart)
                 else part
                 for index, part in enumerate(msg.parts)
@@ -2942,6 +3256,49 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_p
             new_messages.append(msg)
 
     return new_messages if changed else messages
+
+
+def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Replace each file a tool returned that the profile says the model can't read with a note naming it.
+
+    The model asked for what a tool returns; the user didn't choose to send it, so a file the model
+    can't take shouldn't end the run the way it would if the adapter were handed it. A file in a user
+    prompt is left for the adapter to refuse, since the user chose to send it. Only the outgoing copy
+    changes: the file stays on the `ToolReturnPart` in history, so the same history sent to a model that
+    reads that kind of file carries it as before.
+
+    Returns the original list when nothing changed.
+    """
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [
+                _without_unsupported_files(part, profile) if isinstance(part, ToolReturnPart) else part
+                for part in message.parts
+            ]
+            if any(new is not old for new, old in zip(parts, message.parts)):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _without_unsupported_files(part: ToolReturnPart, profile: ModelProfile) -> ToolReturnPart:
+    if not part.files:
+        return part
+    items = part.content_items()
+    new_items = [_note_if_unsupported(item, profile) for item in items]
+    if all(new is old for new, old in zip(new_items, items)):
+        return part
+    return replace(part, content=new_items if isinstance(part.content, list) else new_items[0])
+
+
+def _note_if_unsupported(item: object, profile: ModelProfile) -> object:
+    if not isinstance(item, SendableFile):
+        return item
+    unsupported = unsupported_file_input(item, profile)
+    return item if unsupported is None else unsupported_file_note(item, unsupported)
 
 
 def _render_append_blocks(params: ModelRequestParameters) -> ModelRequestParameters:
@@ -3030,7 +3387,7 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
     The order results are stored in depends on how they were produced: `end_strategy='early'` stores output
     tool results first, and a UI client such as AG-UI rebuilds them in the order the tools completed. The
     provider's prompt cache is keyed on the bytes sent, so the same exchange has to render the same way
-    whichever path built the history. Only the positions holding a `ToolReturnPart` or `RetryPromptPart` that
+    whichever path built the history. Only the positions holding a `ToolReturnPart` that
     answers a call in the immediately preceding `ModelResponse` are refilled, in call order; every other part
     keeps its position, and results answering the same call keep their relative order.
 
@@ -3049,7 +3406,7 @@ def _order_tool_results_by_call(messages: list[ModelMessage]) -> list[ModelMessa
             answers = [
                 (index, part)
                 for index, part in enumerate(message.parts)
-                if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_call_id in call_order
+                if isinstance(part, ToolReturnPart) and part.tool_call_id in call_order
             ]
             slots = [index for index, _ in answers]
             results = sorted((part for _, part in answers), key=lambda part: call_order[part.tool_call_id])
@@ -3084,7 +3441,7 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
     Implements the profile's `tool_call_id_length`. An ID that already fits is kept, and any other is
     replaced with `_hashed_tool_call_id` of it, so the same history always renders the same bytes and the
     provider's prompt cache keeps hitting. Every part that names a call is rewritten with the same mapping,
-    so a call, its result or retry prompt, and the `<tool_result>` tags rendered from the result's ID keep
+    so a call, its result (a retried one included), and the `<tool_result>` tags rendered from the result's ID keep
     pairing up.
 
     IDs are assigned in history order, and an ID whose replacement is already taken by an earlier,
@@ -3121,8 +3478,9 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
     def fit_request_part(part: ModelRequestPart) -> ModelRequestPart:
         if (
-            isinstance(part, ToolReturnPart | RetryPromptPart)
-            and (replacement := fit(part.tool_call_id)) != part.tool_call_id
+            # `prepare_messages` has already translated a legacy `RetryPromptPart` that answers a call
+            # into the retried `ToolReturnPart` it always meant, so this covers both.
+            isinstance(part, ToolReturnPart) and (replacement := fit(part.tool_call_id)) != part.tool_call_id
         ):
             return replace(part, tool_call_id=replacement)
         return part
@@ -3145,24 +3503,73 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
     return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
 
 
-def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """The error for a `ToolAvailabilityDeltaPart` that reached an adapter with no way to render it.
+# TODO(v3): remove `RetryPromptPart`
+_UnpreparedPart: TypeAlias = (
+    ToolAvailabilityDeltaPart | RetryFeedbackPart | RetryPromptPart  # pyright: ignore[reportDeprecated]
+)
+"""The request parts `prepare_messages` translates away before any adapter sees them.
 
-    `prepare_messages` projects every delta to the local tool-search exchange unless the profile
-    advertises native support, so an adapter that doesn't support the part natively only sees one
-    when that projection didn't run. Running a model through an agent always runs it, but
+Each of these carries something no provider API has a field for — a mid-conversation change to the
+tool list, or a retry that isn't a plain turn — and `prepare_messages` turns it into the parts every
+adapter already knows how to map. So an adapter meeting one has been handed a history that step never
+ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart`
+on a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
+A deprecated `RetryPromptPart` never reaches this branch either: adapters map their parts through
+`_sendable_request_parts`, which renders it the way it rendered before it was deprecated.
+"""
+
+
+# TODO(v3): remove `_legacy_retry_as_sendable` and `_sendable_request_parts` along with `RetryPromptPart`
+def _legacy_retry_as_sendable(
+    part: RetryPromptPart,  # pyright: ignore[reportDeprecated]
+) -> ToolReturnPart | UserPromptPart:
+    """A deprecated `RetryPromptPart` an adapter was handed directly, as the part it maps instead.
+
+    `prepare_messages` translates the deprecated part before any adapter sees it, but
+    [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't run it, and
+    deprecated functionality keeps working until v3. A tool-bound one is that call's result again,
+    as a `ToolReturnPart` with `outcome='retried'`; a tool-less one goes out as the user text it
+    always rendered as.
+    """
+    translated = _translate_legacy_retry_part(part)
+    if isinstance(translated, ToolReturnPart):
+        return translated
+    return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+
+
+def _sendable_request_parts(parts: Sequence[ModelRequestPart]) -> Generator[ModelRequestPart]:  # pyright: ignore[reportUnusedFunction]
+    """A request's parts as an adapter maps them, with any deprecated `RetryPromptPart` rendered.
+
+    See `_legacy_retry_as_sendable`. Every other part comes through unchanged, so an index into the
+    request still lines up.
+    """
+    for part in parts:
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            yield _legacy_retry_as_sendable(part)
+        else:
+            yield part
+
+
+def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a request part that reached an adapter with no way to render it.
+
+    Running a model through an agent always runs `prepare_messages`, but
     [`Model.request`][pydantic_ai.models.Model.request] and
     [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
-    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
-    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence a
+    `UserError` naming the missing step, rather than an assertion about an internal invariant.
 
-    Raising beats dropping the part: silently discarding it would tell the model nothing about the
-    tools that appeared, and it would then fail to call a tool it was supposed to have gained.
+    Raising beats rendering something: a silently dropped availability delta tells the model nothing
+    about the tools that appeared, so it then fails to call one it was supposed to have gained, and a
+    retry the model reads as something a person wrote is the exact confusion
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] was introduced to end
+    (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
     return UserError(
-        '`ToolAvailabilityDeltaPart` cannot be rendered by this model. '
-        'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
-        'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
+        f'`{type(part).__name__}` cannot be rendered by this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that translates the part '
+        'into the shape every model understands. `Agent` does this for you; a direct '
         '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
     )
 
@@ -3198,6 +3605,65 @@ leaves it unable to explain a list that grew mid-conversation. Naming them is en
 more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
 for, on a turn the user didn't write.
 """
+
+
+def _translate_retry_parts(messages: list[ModelMessage], *, keep_feedback: bool) -> list[ModelMessage]:
+    """Replace every retry part with the part that carries it on the wire.
+
+    Runs in [`prepare_messages`][pydantic_ai.models.Model.prepare_messages] ahead of the tool-search
+    synthesis, the tool-availability announcement and the `<system>` wrap, so they all see plain
+    parts: feedback bound for the system voice is degraded by the same
+    `_wrap_non_leading_system_prompts` that degrades an operator's own mid-conversation prompt.
+
+    Replaced in place, so a request that also holds a user prompt keeps the order it was authored in,
+    and the original list comes back when nothing changed, so the identity check in `_make_request`
+    can skip the redundant `_clean_message_history` pass.
+
+    The one exception is feedback that would extend the first request's opening run of system
+    prompts. Every adapter lifts that run into the provider's system field as the run's standing
+    prompt, inline-capable profiles included, and feedback is never part of it, so there it is
+    `<system>`-tagged user text on every profile. A run's own feedback reaches that position when a
+    model-request hook retries the first request of a run with no user prompt.
+
+    With `keep_feedback`, for a model that sets `Model._renders_retry_feedback`, a `RetryFeedbackPart`
+    stays as it is, and so does the one a tool-less legacy `RetryPromptPart` becomes.
+    """
+
+    def translate(part: ModelRequestPart, *, in_standing_run: bool) -> ModelRequestPart:
+        # TODO(v3): remove `RetryPromptPart`
+        if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+            translated = _translate_legacy_retry_part(part)
+            if isinstance(translated, ToolReturnPart) or keep_feedback:
+                return translated
+            part = translated
+        elif not isinstance(part, RetryFeedbackPart) or keep_feedback:
+            return part
+        if not _retry_feedback_speaks_for_the_harness(part):
+            return UserPromptPart(content=part.model_response(), timestamp=part.timestamp)
+        if in_standing_run:
+            return UserPromptPart(content=wrap(SYSTEM_TAG, part.model_response()), timestamp=part.timestamp)
+        return SystemPromptPart(content=part.model_response(), timestamp=part.timestamp)
+
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+    transformed: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+            or (isinstance(part, RetryFeedbackPart) and not keep_feedback)
+            for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+        changed = True
+        in_standing_run = message is first_request
+        parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            translated = translate(part, in_standing_run=in_standing_run)
+            in_standing_run = in_standing_run and isinstance(translated, SystemPromptPart)
+            parts.append(translated)
+        transformed.append(replace(message, parts=parts))
+    return transformed if changed else messages
 
 
 def _legacy_fabricated_tool_search_reveals(
@@ -3371,14 +3837,19 @@ def _announce_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 replacement_parts.append(part)
                 continue
-            # A delta that adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
+            # A delta that adds nothing has nothing to announce, so it drops out entirely. A name can come
+            # from a remote MCP server, so one that carries a framing tag (which could end the `<system>`
+            # wrap on a fallback model, or open a frame of its own) isn't named. Its content gains nothing
+            # otherwise: the model sees the same name in the request's tool definitions. The tool itself
+            # still goes on the wire; it just isn't announced.
+            added = [
+                name
+                for name in part.tools_added
+                if (deferred_tool_names is None or name in deferred_tool_names) and neutralize_tags(name) == name
+            ]
             if added:
-                replacement_parts.append(
-                    SystemPromptPart(
-                        content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=', '.join(f'`{name}`' for name in added))
-                    )
-                )
+                names = ', '.join(f'`{name}`' for name in added)
+                replacement_parts.append(SystemPromptPart(content=TOOL_AVAILABILITY_ANNOUNCEMENT.format(names=names)))
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
         if replacement_parts:
@@ -3435,12 +3906,13 @@ def _synthesize_tool_availability_delta_messages(
         part.tool_call_id
         for message in messages
         for part in message.parts
-        if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
+        if isinstance(part, BaseToolCallPart | BaseToolReturnPart)
     }
 
     def is_tool_result(part: ModelRequestPart) -> bool:
-        # A retry without a tool name is output-validation feedback, not a tool result.
-        return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+        # A retry that answers a call is that call's own `ToolReturnPart`, and `_translate_retry_parts`
+        # has already made that true of a legacy `RetryPromptPart` too, so one branch covers both.
+        return isinstance(part, ToolReturnPart)
 
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
