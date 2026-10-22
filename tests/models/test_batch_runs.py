@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -620,12 +621,21 @@ async def test_queueing_many_identical_requests_takes_linear_time() -> None:
                 request_count=len(requests),
             )
 
-    model = FastModel()
-    pool = BatchPool(max_requests=50_000, max_wait=None)
     encoded = EncodedBatchRequest(custom_id='', group='group', body='same')
-    await asyncio.gather(*(pool.enqueue(model, encoded, None) for _ in range(50_000)))
 
-    assert len(set(model.custom_ids)) == 50_000
+    async def queue(count: int) -> float:
+        model = FastModel()
+        pool = BatchPool(max_requests=count, max_wait=None)
+        start = time.perf_counter()
+        await asyncio.gather(*(pool.enqueue(model, encoded, None) for _ in range(count)))
+        elapsed = time.perf_counter() - start
+        assert len(set(model.custom_ids)) == count
+        return elapsed
+
+    # Eight times the requests take about eight times as long in linear time, and 64 times as long in quadratic time.
+    small = min([await queue(1_000) for _ in range(3)])
+    large = min([await queue(8_000) for _ in range(3)])
+    assert large / small < 24
 
 
 def test_one_capability_serves_runs_on_several_event_loops_and_threads() -> None:
