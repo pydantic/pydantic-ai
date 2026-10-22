@@ -45,6 +45,7 @@ def isolate_copilot(monkeypatch: pytest.MonkeyPatch) -> None:
         'GITHUB_COPILOT_BASE_URL',
         'COPILOT_API_URL',
         'GITHUB_COPILOT_API_BASE',
+        'GITHUB_COPILOT_INTEGRATION_ID',
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -301,6 +302,26 @@ async def test_discovery_http_failure(monkeypatch: pytest.MonkeyPatch, status: i
         await github_copilot.discover(transport=httpx2.MockTransport(respond))
     assert len(requests) == 1
     assert 'private error' not in str(caught.value)
+
+
+async def test_integration_id_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CLAI 2 builds its own provider, so the environment is how a launcher picks the integration id."""
+    monkeypatch.setenv('GITHUB_COPILOT_API_KEY', 'test-token')
+    monkeypatch.setenv('GITHUB_COPILOT_INTEGRATION_ID', 'agentic-workflows')
+    model = github_copilot.model('github-copilot:gpt-5.4')
+    assert model.client.default_headers['copilot-integration-id'] == 'agentic-workflows'
+    async with model:
+        pass
+
+    integration_ids: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        integration_ids.append(request.headers['copilot-integration-id'])
+        served = {'id': 'gpt-5.4', 'supported_endpoints': ['/chat/completions'], 'model_picker_enabled': True}
+        return httpx2.Response(200, json={'data': [served]})
+
+    assert await github_copilot.discover(transport=httpx2.MockTransport(respond)) == ['gpt-5.4']
+    assert integration_ids == ['agentic-workflows']
 
 
 @pytest.mark.parametrize('body', ['{"data": []}', '{"data": [{"id": "responses-only"}]}', '{"bad": true}'])
