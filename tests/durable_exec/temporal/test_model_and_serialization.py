@@ -1875,7 +1875,7 @@ async def test_temporal_activities_manage_inferred_model_lifecycle(monkeypatch: 
 @pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('streaming', [True, False])
 async def test_temporal_activity_restores_request_telemetry_ids(legacy_payload: bool, streaming: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
     assert capability.id == identity
     observed_ids: list[set[str]] = []
@@ -1987,7 +1987,7 @@ async def test_temporal_direct_activity_recovers_url_derived_native_mcp_id() -> 
 @pytest.mark.parametrize('legacy_payload', [True, False])
 @pytest.mark.parametrize('compact', [True, False])
 def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy_payload: bool) -> None:
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     capability = MCP('https://mcp.example.test/private/SENTINEL-path-token', native=True, local=False)
     assert capability.id == identity
     model = TestModel()
@@ -2049,7 +2049,7 @@ def test_temporal_transport_restores_request_telemetry_ids(compact: bool, legacy
 @pytest.mark.parametrize('derived_id', [True, False])
 def test_temporal_legacy_payload_recovers_dynamic_native_mcp_id(derived_id: bool) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
-    identity = 'mcp.example.test-SENTINEL-path-token' if derived_id else 'chosen-id'
+    identity = 'mcp.example.test' if derived_id else 'chosen-id'
     model = TestModel()
     agent = Agent(
         model,
@@ -2147,7 +2147,7 @@ def test_temporal_legacy_payload_preserves_non_mcp_dynamic_id() -> None:
 @pytest.mark.parametrize('strategy', ['generated_native', 'provided_native', 'factory_native', 'local_only'])
 def test_temporal_legacy_payload_classifies_static_explicit_mcp_id_matching_url(strategy: str) -> None:
     url = 'https://mcp.example.test/private/SENTINEL-path-token'
-    identity = 'mcp.example.test-SENTINEL-path-token'
+    identity = 'mcp.example.test'
     model = TestModel()
     if strategy == 'provided_native':
         capability = MCP(native=MCPServerTool(id=identity, url=url), local=False)
@@ -3609,6 +3609,28 @@ def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: p
     with pytest.raises(ModelAPIError):
         with model_errors_as_application_errors():
             raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_non_retryable_model_error_that_cannot_be_rebuilt_is_still_marked_non_retryable():
+    """An error the workflow can't rebuild, like one defined outside Pydantic AI, still fails the activity without a
+    retry when it's listed, under its own class name as Temporal would have reported it."""
+
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors((ApplicationModelError,)):
+            raise error
+    assert (raised.value.type, raised.value.non_retryable, raised.value.details) == (
+        'ApplicationModelError',
+        True,
+        (),
+    )
+    assert raised.value.__cause__ is error
+    with pytest.raises(ActivityError):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
 
 
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
