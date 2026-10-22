@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import RunContext, SkipModelRequest
 from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
-from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai_harness.subagents import SubAgents
 
@@ -57,10 +57,10 @@ class TaskPrompt(AbstractCapability[object]):
     def _respond(self, ctx: RunContext[object], request: ModelRequest) -> ModelResponse:
         for part in request.parts:
             if isinstance(part, ToolReturnPart):
-                self.reply = part.model_response_str()
-                return ModelResponse(parts=[TextPart('done')])
-            if isinstance(part, RetryPromptPart):
-                self.refused = str(part.content)
+                if part.outcome == 'retried':
+                    self.refused = str(part.content)
+                else:
+                    self.reply = part.model_response_str()
                 return ModelResponse(parts=[TextPart('done')])
         tool = delegate_tool(ctx)
         if tool is None:
