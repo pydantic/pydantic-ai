@@ -1044,7 +1044,8 @@ def _decide_span_attributes(
         attributes['pydantic_ai.decision.route_questions'] = safe_to_json(route_questions).decode()
         json_attributes.append('pydantic_ai.decision.route_questions')
     if include_content:
-        # The state is text or JSON, as it is on the wire, and only JSON is declared as such.
+        # The state is text or JSON, as a backend that sends it puts it on the wire, and only JSON is declared as such.
+        # A backend that sends `request.messages` instead puts the conversation the model request span records.
         if isinstance(request.state, str):
             attributes['pydantic_ai.decision.state'] = request.state
         else:

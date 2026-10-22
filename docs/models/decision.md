@@ -253,7 +253,7 @@ Every input to the agent ends up in one of two places: the state, which is judge
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
 
-OpenAI Decisions is sent the same conversation as messages instead, with no `history`, `text` and `done` to point at: the latest user message is the request. See [OpenAI](openai.md#decisions-api).
+OpenAI Decisions is sent the same conversation as messages instead, with no `history`, `text` and `done` to point at, so say in the question what to judge, such as "the user's latest request". See [OpenAI](openai.md#decisions-api).
 
 **Asked**, as the questions:
 
