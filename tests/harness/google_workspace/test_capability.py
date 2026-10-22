@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import pickle
 from typing import get_args
 
 import httpx
@@ -107,6 +109,11 @@ class TestGoogleWorkspace:
         assert GoogleWorkspace('gmail', description=None).get_description() is None
         released_default = 'Use Gmail, Calendar, Drive, and the other Google Workspace products.'
         assert GoogleWorkspace('gmail', description=released_default).get_description() == released_default
+
+    def test_copies_keep_the_derived_default_description(self) -> None:
+        capability = GoogleWorkspace('gmail')
+        for copied in (copy.deepcopy(capability), pickle.loads(pickle.dumps(capability))):
+            assert copied.get_description() == 'Use these Google Workspace products: Gmail.'
 
     def test_missing_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('GOOGLE_ACCESS_TOKEN', raising=False)

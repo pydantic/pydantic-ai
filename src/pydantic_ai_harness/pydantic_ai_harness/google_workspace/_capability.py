@@ -38,6 +38,10 @@ _MCP_URLS: dict[str, str] = {
 class _DefaultDescription(str):
     """The released default text, a distinct object so a caller passing an equal string keeps it verbatim."""
 
+    def __reduce__(self) -> str:
+        # Copies and pickles resolve to the module constant, so the identity check still recognizes them.
+        return '_DEFAULT_DESCRIPTION'
+
 
 _DEFAULT_DESCRIPTION = _DefaultDescription('Use Gmail, Calendar, Drive, and the other Google Workspace products.')
 
