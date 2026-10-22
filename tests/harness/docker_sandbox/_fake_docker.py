@@ -142,10 +142,21 @@ printf '%s %s\\n' "$DISPLAY" "$*" >> "$bin/xdotool-calls"
 """Stands in for `xdotool` in a container: reports a 1280x800 display unless `no-display` exists, and logs each call."""
 
 _FAKE_XVFB = """#!/bin/sh
-echo 'Fatal server error: no screens found' >&2
-exit 1
+bin=$(dirname "$0")
+echo "$*" >> "$bin/xvfb-starts"
+if [ -e "$bin/xvfb-fails" ]; then echo 'Fatal server error: no screens found' >&2; exit 1; fi
+rm -f "$bin/no-display"
+exec sleep 2
 """
-"""Stands in for an X server in a container that cannot start one; also keeps a host's real Xvfb from starting."""
+"""Stands in for an X server: brings the fake display up and stays running a while, or fails if `xvfb-fails` exists.
+
+Also keeps a host's real Xvfb from starting.
+"""
+
+_FAKE_SETSID = """#!/bin/sh
+exec "$@"
+"""
+"""Stands in for `setsid`, which macOS lacks."""
 
 
 class FakeDocker:
@@ -194,8 +205,16 @@ class FakeDocker:
     def fail_builds(self) -> None:
         (self.bin_dir / 'fail-builds').touch()
 
-    def remove_display(self) -> None:
+    def remove_display(self, *, can_start: bool = True) -> None:
+        """Take the display down; `Xvfb` brings it back unless `can_start` is false."""
         (self.bin_dir / 'no-display').touch()
+        if not can_start:
+            (self.bin_dir / 'xvfb-fails').touch()
+
+    @property
+    def xvfb_starts(self) -> int:
+        path = self.bin_dir / 'xvfb-starts'
+        return len(path.read_text().splitlines()) if path.exists() else 0
 
     def hang_stops(self, name: str) -> None:
         (self.bin_dir / 'containers' / f'{name}.hang-stop').touch()
@@ -212,7 +231,8 @@ def install_fake_docker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Fake
     (bin_dir / 'podman').chmod(0o755)
     (bin_dir / 'xdotool').write_text(_FAKE_XDOTOOL)
     (bin_dir / 'xdotool').chmod(0o755)
-    (bin_dir / 'Xvfb').write_text(_FAKE_XVFB)
-    (bin_dir / 'Xvfb').chmod(0o755)
+    for name, script in [('Xvfb', _FAKE_XVFB), ('setsid', _FAKE_SETSID)]:
+        (bin_dir / name).write_text(script)
+        (bin_dir / name).chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
     return FakeDocker(bin_dir)

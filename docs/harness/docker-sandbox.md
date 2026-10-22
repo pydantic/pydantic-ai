@@ -173,6 +173,12 @@ Without an `image`, the first run on a machine builds one from `DESKTOP_DOCKERFI
 
 A custom `image` needs Xvfb, `xdotool` and `scrot`, plus whatever applications the agent should use; `DESKTOP_DOCKERFILE` is a starting point for one.
 
+Under [durable execution](../durable_execution/overview.md), build the image before the first run, so the build doesn't count against a workspace operation's timeout, and pass it as `image`:
+
+```bash
+python -c "from pydantic_ai_harness.docker_sandbox import DESKTOP_DOCKERFILE; print(DESKTOP_DOCKERFILE)" | docker build --tag my-desktop -
+```
+
 ## Clean up
 
 A run never removes its container. Remove it, with its anonymous volumes, with the ref you stored:
@@ -240,5 +246,3 @@ The machine running the agent must be POSIX (Linux or macOS), like [`LocalWorksp
 ::: pydantic_ai_harness.docker_sandbox.DockerSandbox
 
 ::: pydantic_ai_harness.docker_sandbox.DockerSandboxBackend
-
-::: pydantic_ai_harness.docker_sandbox.DockerDesktopBackend

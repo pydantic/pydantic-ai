@@ -29,12 +29,13 @@ import re
 import secrets
 import shutil
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 import anyio
 
+from pydantic_ai import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     ComputerAction,
@@ -52,9 +53,11 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import check_timeout, command_argv, stop_shielded
 
-__all__ = ('DESKTOP_DOCKERFILE', 'DockerDesktopBackend', 'DockerSandboxBackend', 'desktop_image', 'remove_container')
+__all__ = ('DESKTOP_DOCKERFILE', 'DockerSandboxBackend', 'desktop_image', 'remove_container')
 
 PROVIDER = 'docker'
+
+T = TypeVar('T')
 
 _READY = '__pydantic_ai_docker_ready__\n'
 """Printed on stderr before the command starts; anything before it is the `docker` client's own error."""
@@ -211,7 +214,57 @@ async def remove_container(name: str, *, executable: str = 'docker') -> None:
         raise WorkspaceError(f'could not remove container {name}: {result.stderr.strip()}')
 
 
-class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
+DESKTOP_DOCKERFILE = """\
+FROM debian:bookworm-slim
+RUN apt-get update \\
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
+        xvfb xdotool scrot fluxbox xterm firefox-esr fonts-dejavu-core ca-certificates \\
+    && rm -rf /var/lib/apt/lists/*
+"""
+"""The image `DockerSandbox(desktop=True)` builds on first use: an X server, a window manager, a terminal and a browser."""
+
+_DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
+
+_DISPLAY = ':1'
+
+_START_DESKTOP = (
+    'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
+    'setsid Xvfb :1 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>/tmp/.xvfb.log & xvfb=$!; i=0; '
+    'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
+    'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
+    "echo 'the X server did not start:' >&2; tail -n 5 /tmp/.xvfb.log >&2; exit 1; fi; "
+    'sleep 0.1; i=$((i+1)); done; '
+    'setsid fluxbox >/dev/null 2>&1 & '
+    'fi; xdotool getdisplaygeometry'
+)
+"""Starts a 1280x800 X display with a window manager unless one is running, then reports its size.
+
+It gives up as soon as the X server exits, or after 10 seconds.
+"""
+
+
+async def desktop_image(executable: str = 'docker') -> str:
+    """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it, and return its tag."""
+    runner = _runner()
+    if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
+        return _DESKTOP_IMAGE
+
+    def build_context() -> str:
+        directory = tempfile.mkdtemp(prefix='pydantic-ai-desktop-')
+        (Path(directory) / 'Dockerfile').write_text(DESKTOP_DOCKERFILE)
+        return directory
+
+    directory = await anyio.to_thread.run_sync(build_context)
+    try:
+        result = await runner.run([executable, 'build', '--tag', _DESKTOP_IMAGE, '--', directory])
+    finally:
+        await anyio.to_thread.run_sync(shutil.rmtree, directory)
+    if result.exit_code != 0:
+        raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
+    return _DESKTOP_IMAGE
+
+
+class DockerSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsComputerUse):
     """Run commands in a local Docker container, created on first use, through the `docker` CLI.
 
     The image needs a POSIX `sh` and the usual file utilities; its own entrypoint and command don't run. A
@@ -222,8 +275,12 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     if it is gone. The backend never removes the container: call
     [`DockerSandbox.destroy`][pydantic_ai_harness.docker_sandbox.DockerSandbox.destroy] with its ref.
 
+    With `desktop=True` the container has a 1280x800 display, started on first use and driven with
+    [`X11Computer`][pydantic_ai.workspaces.X11Computer], so the image needs Xvfb, `xdotool` and `scrot`.
+
     Args:
-        image: The image for a new container. Pass it or `ref`, not both.
+        image: The image for a new container. Pass it or `ref`, not both; with `desktop=True`, leave both out to
+            use an image built from `DESKTOP_DOCKERFILE` on first use.
         ref: A `WorkspaceRef(provider='docker', id=<container name>)` to attach to instead of creating one.
         working_dir: The absolute directory in the container where commands start and relative paths
             resolve; created on first use if the container doesn't have it. `None` uses the image's own
@@ -236,6 +293,7 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             can't change the container's name, workspace label or entrypoint. A `--pids-limit` here replaces the
             default of 2048.
         executable: The container CLI to run, such as `'podman'`.
+        desktop: Whether the container has a display for [`ComputerUse`][pydantic_ai.capabilities.ComputerUse].
     """
 
     def __init__(
@@ -248,8 +306,13 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = True,
         docker_args: Sequence[str] = (),
         executable: str = 'docker',
+        desktop: bool = False,
     ):
-        if (image is None) == (ref is None):
+        if image is not None and ref is not None:
+            raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
+        # A desktop without either runs the desktop image, built just before its container is first created.
+        self._builds_desktop_image = desktop and image is None and ref is None
+        if image is None and ref is None and not desktop:
             raise ValueError('pass exactly one of `image`, to create a container, or `ref`, to attach to one')
         if ref is not None and ref.provider != PROVIDER:
             raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {PROVIDER!r}')
@@ -259,8 +322,11 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise ValueError(f'working_dir must be an absolute path in the container, got {working_dir!r}')
         if isinstance(docker_args, str):
             raise TypeError('docker_args must be a sequence of arguments, not a string')
-        self._image = image
+        self._image = _DESKTOP_IMAGE if self._builds_desktop_image else image
         self._ref = ref
+        self._desktop = desktop
+        self._display_started = False
+        self._display_lock = anyio.Lock()
         self._working_dir = None if working_dir is None else posixpath.normpath(working_dir)
         self._env = _checked_env(env or {})
         self._allow_internet_access = allow_internet_access
@@ -311,6 +377,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     async def _create(self) -> None:
         assert self._image is not None
+        if self._builds_desktop_image:
+            await desktop_image(self._executable)
         if self._ref is None:
             # Set before `docker run`: the daemon may create the container even if the client is cancelled,
             # and whoever holds the ref can then remove it.
@@ -439,110 +507,35 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         argv = [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag]
         await stop_shielded(lambda: self._runner.run(argv), grace=_STOP_TIMEOUT)
 
+    @property
+    def has_display(self) -> bool:
+        return self._desktop
 
-DESKTOP_DOCKERFILE = """\
-FROM debian:bookworm-slim
-RUN apt-get update \\
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
-        xvfb xdotool scrot fluxbox xterm firefox-esr fonts-dejavu-core ca-certificates procps \\
-    && rm -rf /var/lib/apt/lists/*
-"""
-"""The image `DockerSandbox(desktop=True)` builds on first use: an X server, a window manager, a terminal and a browser."""
-
-_DESKTOP_IMAGE = f'pydantic-ai-desktop:{hashlib.sha256(DESKTOP_DOCKERFILE.encode()).hexdigest()[:12]}'
-
-_DISPLAY = ':1'
-
-_START_DESKTOP = (
-    'if ! xdotool getdisplaygeometry >/dev/null 2>&1; then '
-    'setsid Xvfb :1 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>/tmp/.xvfb.log & xvfb=$!; i=0; '
-    'until xdotool getdisplaygeometry >/dev/null 2>&1; do '
-    'if ! kill -0 $xvfb 2>/dev/null || [ $i -ge 100 ]; then '
-    "echo 'the X server did not start:' >&2; tail -n 5 /tmp/.xvfb.log >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done; '
-    'setsid fluxbox >/dev/null 2>&1 & '
-    'fi; xdotool getdisplaygeometry'
-)
-"""Starts a 1280x800 X display with a window manager unless one is running, then reports its size.
-
-It gives up as soon as the X server exits, or after 10 seconds.
-"""
-
-
-async def desktop_image(executable: str = 'docker') -> str:
-    """Build the desktop image from `DESKTOP_DOCKERFILE` unless this machine has it, and return its tag."""
-    runner = _runner()
-    if (await runner.run([executable, 'image', 'inspect', '--', _DESKTOP_IMAGE])).exit_code == 0:
-        return _DESKTOP_IMAGE
-
-    def build_context() -> str:
-        directory = tempfile.mkdtemp(prefix='pydantic-ai-desktop-')
-        (Path(directory) / 'Dockerfile').write_text(DESKTOP_DOCKERFILE)
-        return directory
-
-    directory = await anyio.to_thread.run_sync(build_context)
-    try:
-        result = await runner.run([executable, 'build', '--tag', _DESKTOP_IMAGE, '--', directory])
-    finally:
-        await anyio.to_thread.run_sync(shutil.rmtree, directory)
-    if result.exit_code != 0:
-        raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
-    return _DESKTOP_IMAGE
-
-
-class DockerDesktopBackend(DockerSandboxBackend, SupportsComputerUse):
-    """A [`DockerSandboxBackend`][pydantic_ai_harness.docker_sandbox.DockerSandboxBackend] whose container has a display.
-
-    The display starts on first use, at 1280x800, and again after the container restarts; it is driven with
-    [`X11Computer`][pydantic_ai.workspaces.X11Computer], so the image needs Xvfb, `xdotool` and `scrot`, as
-    `DESKTOP_DOCKERFILE` installs.
-    """
-
-    def __init__(
-        self,
-        *,
-        image: str | None = None,
-        ref: WorkspaceRef | None = None,
-        working_dir: str | None = '/workspace',
-        env: Mapping[str, str] | None = None,
-        allow_internet_access: bool = True,
-        docker_args: Sequence[str] = (),
-        executable: str = 'docker',
-    ):
-        # Without an image or ref, the container runs the desktop image, built just before it is first created.
-        self._builds_desktop_image = image is None and ref is None
-        super().__init__(
-            image=_DESKTOP_IMAGE if self._builds_desktop_image else image,
-            ref=ref,
-            working_dir=working_dir,
-            env=env,
-            allow_internet_access=allow_internet_access,
-            docker_args=docker_args,
-            executable=executable,
-        )
-        self._desktop_started = False
-
-    async def _create(self) -> None:
-        if self._builds_desktop_image:
-            await desktop_image(self._executable)
-        await super()._create()
-
-    async def _computer(self) -> X11Computer:
-        if not self._desktop_started:
-            result = await self.run(_START_DESKTOP, shell=True, env={'DISPLAY': _DISPLAY}, timeout=30)
-            if result.exit_code != 0:
-                raise WorkspaceError(
-                    f'could not start the display in Docker workspace {self._name}: the image needs Xvfb, xdotool '
-                    f'and scrot ({(result.stderr or result.stdout).strip()})'
-                )
-            self._desktop_started = True
-        return X11Computer(self, display=_DISPLAY)
+    async def _on_display(self, operation: Callable[[X11Computer], Awaitable[T]]) -> T:
+        if not self._desktop:
+            raise UserError('This Docker workspace has no display: create it with `desktop=True`.')
+        # One start at a time: two would both find no display and launch two X servers.
+        async with self._display_lock:
+            if not self._display_started:
+                result = await self.run(_START_DESKTOP, shell=True, env={'DISPLAY': _DISPLAY}, timeout=30)
+                if result.exit_code != 0:
+                    raise WorkspaceError(
+                        f'could not start the display in Docker workspace {self._name}: the image needs Xvfb, '
+                        f'xdotool and scrot ({(result.stderr or result.stdout).strip()})'
+                    )
+                self._display_started = True
+        try:
+            return await operation(X11Computer(self, display=_DISPLAY))
+        except WorkspaceError:
+            # The X server may have died, or the container restarted: the next call checks and starts it again.
+            self._display_started = False
+            raise
 
     async def display_size(self) -> tuple[int, int]:
-        return await (await self._computer()).display_size()
+        return await self._on_display(lambda computer: computer.display_size())
 
     async def screenshot(self) -> bytes:
-        return await (await self._computer()).screenshot()
+        return await self._on_display(lambda computer: computer.screenshot())
 
     async def act(self, action: ComputerAction) -> None:
-        await (await self._computer()).act(action)
+        await self._on_display(lambda computer: computer.act(action))

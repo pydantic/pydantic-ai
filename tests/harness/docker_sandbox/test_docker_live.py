@@ -13,9 +13,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 import anyio
 import pytest
 
-from pydantic_ai.workspaces import Click, KeyPress, TypeText, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
+from pydantic_ai.workspaces import Click, PressKeys, TypeText, WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
-from pydantic_ai_harness.docker_sandbox import DockerDesktopBackend, DockerSandbox, DockerSandboxBackend
+from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
 
 LIVE_IMAGE = 'python:3.13-slim'
 EXECUTABLE = os.environ.get('PYDANTIC_AI_HARNESS_DOCKER_EXECUTABLE', 'docker')
@@ -148,13 +148,13 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
 
     @pytest.fixture
     async def backend(self) -> AsyncIterator[WorkspaceBackend]:
-        backend = DockerDesktopBackend(executable=EXECUTABLE)
+        backend = DockerSandboxBackend(executable=EXECUTABLE, desktop=True)
         yield backend
         if backend.ref is not None:
             await _destroy(backend)
 
     async def test_typed_text_reaches_the_focused_window(self, backend: WorkspaceBackend) -> None:
-        assert isinstance(backend, DockerDesktopBackend)
+        assert isinstance(backend, DockerSandboxBackend)
         await backend.display_size()  # starts the display
         await backend.run(
             'setsid xterm -geometry 60x10+100+100 -e sh -c "cat > typed.txt" >/dev/null 2>&1 &',
@@ -165,7 +165,7 @@ class TestLiveDockerDesktop(WorkspaceBackendSuite):
 
         await backend.act(Click(x=300, y=180))
         await backend.act(TypeText(text='hello, desktop'))
-        await backend.act(KeyPress(keys=('enter',)))
+        await backend.act(PressKeys(keys=('enter',)))
         await anyio.sleep(1)
 
         assert (await backend.run(['cat', 'typed.txt'])).stdout == 'hello, desktop\n'
