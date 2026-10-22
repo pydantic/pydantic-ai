@@ -142,8 +142,8 @@ the default `id='summarizing_compaction'` under durable execution.
 
 ### `RelevanceCompaction`
 
-`RelevanceCompaction(judge, *, summarizer=None, max_tokens=None, max_fraction=None, target_tokens=None, target_fraction=None, keep_tokens=8_000, summary_input_tokens=30_000, judge_step_tokens=2_000, judge_context_tokens=500, judge_concurrency=8, truncated_result_chars=300, receipts=False, id='relevance_compaction')`:
-`judge` is required: a decision model (`'system-one:<model>'`, `'typesafe:jev-latest'`) or any
+`RelevanceCompaction(model, *, summarizer=None, max_tokens=None, max_fraction=None, target_tokens=None, target_fraction=None, keep_tokens=8_000, summary_input_tokens=30_000, judge_step_tokens=2_000, judge_context_tokens=500, judge_concurrency=8, truncated_result_chars=300, receipts=False, id='relevance_compaction')`:
+`model`, the judge, is required: a decision model (`'system-one:<model>'`, `'typesafe:jev-latest'`) or any
 model with structured output, or a `FallbackModel` of both. Each older step (a response and the
 requests answering it) gets one judge request with two questions, `needed_verbatim` and
 `still_matters`. Steps are kept by `needed_verbatim` rank until the target (default half the

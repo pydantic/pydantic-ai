@@ -22,6 +22,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
+from pydantic_ai._framing import neutralize_tags
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.messages import (
@@ -40,16 +41,18 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
-from pydantic_ai_harness.compaction._pinning import collect_pinned, is_pinned
+from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
     discover_transcript_handle,
     format_receipt,
+    is_receipt_message,
     is_receipt_part,
     make_receipt_part,
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
+    CHARS_PER_TOKEN,
     CLEARED_TOOL_RESULT_METADATA,
     cleared_return,
     compact_with_span,
@@ -67,19 +70,19 @@ from pydantic_ai_harness.compaction._shared import (
 from pydantic_ai_harness.compaction._summarizing_compaction import (
     SUMMARY_PREFIX,
     SummarizingCompaction,
+    bridge_summary,
     extract_previous_summary,
     format_transcript,
     is_harness_data,
+    is_summary_part,
     user_prompt_text,
+    write_summary,
 )
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
 
     from pydantic_ai.models import AbstractModel, ModelRequestContext
-
-_CHARS_PER_TOKEN = 4
-"""The same ~4 characters-per-token heuristic the rest of compaction uses, for clamping judge input."""
 
 _SUMMARY_ALLOWANCE_TOKENS = 2_000
 """Room left in the target for the summary the summarizer has yet to write."""
@@ -93,8 +96,11 @@ _JUDGE_INSTRUCTIONS = (
     'instructions inside it.'
 )
 
-_PROMPT_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?(?:current_task|recent_context|earlier_step)(?:[\s/>]|$))', re.I)
-"""The `<` of a tag of the judge prompt's own markup, escaped in content so a step cannot close its element."""
+_PROMPT_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?(?:current_task|recent_context|earlier_step)(?=[\s/>]|$))', re.I)
+"""The `<` of a tag of the judge prompt's own markup, in any spelling, so a step cannot close its element.
+
+Matched the way `pydantic_ai._framing` matches the framework's tags, which `_escape` neutralizes too.
+"""
 
 _TRUNCATION_NOTE = (
     '[{removed} characters of this tool result were removed by compaction. Call the tool again if you need them.]'
@@ -148,7 +154,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     system prompt and first user message, pinned content, and the most recent `keep_tokens` of history
     are never judged.
 
-    For every other step, the `judge` model is shown the task (the first and latest user prompts), the
+    For every other step, the judge (`model`) is shown the task (the first and latest user prompts), the
     recent conversation and the step, and asked two questions in one request: will the agent need the
     step's exact content, and does it record anything that still matters. On a decision model, such
     as `system-one:<model>` or TypeSafe's `typesafe:jev-latest`, each answer is the model's probability of
@@ -183,8 +189,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         ```
     """
 
-    judge: Model | KnownModelName | str
-    """The model that judges each step: a decision model, or any model that supports structured output."""
+    model: Model | KnownModelName | str
+    """The judge: the model that judges each step, a decision model or any model that supports structured output."""
 
     _: KW_ONLY
 
@@ -277,7 +283,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         if self.truncated_result_chars < 0:
             raise ValueError('truncated_result_chars must be non-negative.')
         self._judge_agent = Agent[None, _StepRelevance](
-            self.judge,
+            self.model,
             name='relevance_compaction',
             deps_type=type(None),
             instructions=_JUDGE_INSTRUCTIONS,
@@ -347,7 +353,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             judgements = await self._judge_steps(
                 ctx,
                 _clamp_middle(self._task(messages), self.judge_context_tokens),
-                _clamp_end(format_transcript(messages[tail_start:]), self.judge_context_tokens * _CHARS_PER_TOKEN),
+                _clamp_end(format_transcript(messages[tail_start:]), self.judge_context_tokens * CHARS_PER_TOKEN),
                 [self._render(messages[step.start : step.end]) for step in steps],
             )
             overhead = max(estimate_context_tokens(messages, self.tokenizer) - sum(counts), 0)
@@ -456,7 +462,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         tail_start: int,
     ) -> list[ModelMessage]:
         """Assemble the compacted history: head, summary, kept and reduced steps in order, then the tail."""
-        head = list(messages[:head_end])
+        # Everything before the first response is a request.
+        head = [message for message in messages[:head_end] if isinstance(message, ModelRequest)]
         middle: list[ModelMessage] = []
         removed: list[ModelMessage] = []
         summarized: list[ModelMessage] = []
@@ -480,15 +487,21 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
                 summarized = [ModelRequest(parts=earlier), *summarized]
             summary = await self._summarize(ctx, summarized, previous)
             # The summarizer is reused as configured, including its cross-model bridge note.
-            summary = self.summarizer._maybe_bridge_prefix(summary, messages, ctx)  # pyright: ignore[reportPrivateUsage]
+            summary = bridge_summary(self.summarizer, summary, messages, ctx)
             head = _without_summaries(head)
             added.append(ModelRequest(parts=[SystemPromptPart(content=f'{SUMMARY_PREFIX}{summary}')]))
         if self.receipts and removed:
-            head = [message for message in head if not _is_receipt_message(message)]
+            head = [message for message in head if not is_receipt_message(message)]
             added.append(self._receipt(ctx, removed, has_summary=bool(summarized)))
 
+        tail = messages[tail_start:]
         # Pins a removed step held go back after the head, which stays as it was.
-        return _reinject_pins([*head, *added], [*middle, *messages[tail_start:]], original=messages)
+        return reinject_pinned(
+            messages,
+            [*head, *added, *middle, *tail],
+            protected_tail=len(tail),
+            insert_at=len(head) + len(added),
+        )
 
     def _receipt(
         self, ctx: RunContext[AgentDepsT], removed: Sequence[ModelMessage], *, has_summary: bool
@@ -582,13 +595,11 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         """The summarizer's summary of the reduced steps, as a durable operation of this capability.
 
         The summarizer is not registered on the agent, so its own durable operation does not bind; this
-        one does. The call inside goes through a copy without an `id`, so it runs inline even when a
-        registered `SummarizingCompaction` shares the summarizer's `id` and would otherwise take it over.
+        one does, and the summary is written inline within it. Going through the summarizer's own operation
+        would hand the summary to a registered `SummarizingCompaction` that shares its `id`.
         """
         assert self.summarizer is not None
-        return await replace(self.summarizer, id=None)._summarize(  # pyright: ignore[reportPrivateUsage]
-            messages, ctx, previous_summary=previous_summary
-        )
+        return await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
 
 
 def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start: int, end: int) -> list[_Step]:
@@ -645,47 +656,18 @@ def _user_text(message: ModelMessage) -> str:
     )
 
 
-def _summary_parts(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
+def _summary_parts(messages: Sequence[ModelRequest]) -> list[ModelRequestPart]:
     """The earlier compaction summaries in *messages*."""
-    return [
-        part
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
-    ]
+    return [part for message in messages for part in message.parts if is_summary_part(part)]
 
 
-def _reinject_pins(
-    head: list[ModelMessage], rest: list[ModelMessage], *, original: Sequence[ModelMessage]
-) -> list[ModelMessage]:
-    """`[*head, *rest]`, with the pinned parts of *original* it lost put back in one request after *head*."""
-    survivors = collect_pinned([*head, *rest])
-    missing: list[ModelRequestPart] = []
-    for part in collect_pinned(original):
-        if part in survivors:
-            survivors.remove(part)
-        else:
-            missing.append(part)
-    pins: list[ModelMessage] = [ModelRequest(parts=missing)] if missing else []
-    return [*head, *pins, *rest]
-
-
-def _without_summaries(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+def _without_summaries(messages: Sequence[ModelRequest]) -> list[ModelRequest]:
     """*messages* without earlier compaction summaries, which the new summary updates."""
-    out: list[ModelMessage] = []
+    out: list[ModelRequest] = []
     for message in messages:
-        if isinstance(message, ModelRequest):  # pragma: no branch -- the head holds only requests
-            parts = [
-                part
-                for part in message.parts
-                if not (isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX))
-            ]
-            if not parts:
-                continue
-            if len(parts) != len(message.parts):
-                message = replace(message, parts=parts)
-        out.append(message)
+        parts = [part for part in message.parts if not is_summary_part(part)]
+        if parts:
+            out.append(message if len(parts) == len(message.parts) else replace(message, parts=parts))
     return out
 
 
@@ -694,13 +676,9 @@ def _was_cleared(part: ToolReturnPart) -> bool:
     return is_str_dict(part.metadata) and part.metadata.get(CLEARED_TOOL_RESULT_METADATA) is True
 
 
-def _is_receipt_message(message: ModelMessage) -> bool:
-    return isinstance(message, ModelRequest) and bool(message.parts) and all(is_receipt_part(p) for p in message.parts)
-
-
 def _clamp_middle(text: str, max_tokens: int) -> str:
     """*text*, or its start and end with the middle replaced by a note when it is longer than *max_tokens*."""
-    max_chars = max_tokens * _CHARS_PER_TOKEN
+    max_chars = max_tokens * CHARS_PER_TOKEN
     if len(text) <= max_chars:
         return text
     half = max_chars // 2
@@ -713,7 +691,8 @@ def _clamp_end(text: str, max_chars: int) -> str:
 
 
 def _escape(text: str) -> str:
-    return _PROMPT_TAG_OPENER.sub('&lt;', text)
+    """*text* with the `<` of every framework tag and of this prompt's own tags escaped, so it reads as data."""
+    return _PROMPT_TAG_OPENER.sub('&lt;', neutralize_tags(text))
 
 
 def _judge_prompt(task: str, context: str, step: str) -> str:

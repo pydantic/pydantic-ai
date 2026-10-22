@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 # Token estimation
 # ---------------------------------------------------------------------------
 
-_CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 4
 """Rough approximation: ~4 characters per token on average."""
 
 _COMPACTION_RECLAIM: ContextVar[tuple[str | None, int, int] | None] = ContextVar(
@@ -246,14 +246,14 @@ def estimate_text_tokens(text: str, tokenizer: Callable[[str], int] | None = Non
     """
     if tokenizer is not None:
         return tokenizer(text)
-    return len(text) // _CHARS_PER_TOKEN
+    return len(text) // CHARS_PER_TOKEN
 
 
 def _count_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     """Token count of text segments: per segment with *tokenizer*, otherwise the heuristic over their total."""
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def estimate_token_count(
@@ -368,7 +368,7 @@ def estimate_message_tokens(
 def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] | None) -> int:
     if tokenizer is not None:
         return sum(tokenizer(s) for s in segments)
-    return sum(len(s) for s in segments) // _CHARS_PER_TOKEN
+    return sum(len(s) for s in segments) // CHARS_PER_TOKEN
 
 
 def _reported_input_tokens(message: ModelMessage) -> int:

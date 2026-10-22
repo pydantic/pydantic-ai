@@ -451,7 +451,7 @@ agent = Agent(
 )
 ```
 
-The judge is required. A [decision model](../models/decision.md), such as `system-one:<model>` on [System One](../models/system-one.md) (including the models Ollama runs locally) or TypeSafe's `typesafe:jev-latest`, answers with a probability. Any other model that supports structured output fills the same two fields, so `judge=` also takes a `FallbackModel` that tries a decision model first and a language model second.
+The judge, `model`, is required. A [decision model](../models/decision.md), such as `system-one:<model>` on [System One](../models/system-one.md) (including the models Ollama runs locally) or TypeSafe's `typesafe:jev-latest`, answers with a probability. Any other model that supports structured output fills the same two fields, so `judge=` also takes a `FallbackModel` that tries a decision model first and a language model second.
 
 A *step* is a model response together with the requests that answer it: its tool results, retry feedback, and the next user prompt. A step is kept or removed whole, so a tool call never loses its result. Everything before the first response (the system prompt, the first user message, and an earlier summary), pinned content, and the most recent `keep_tokens` (default 8,000) of history are never judged.
 
