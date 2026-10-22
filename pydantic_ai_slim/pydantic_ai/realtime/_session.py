@@ -1891,7 +1891,7 @@ class RealtimeSession:
             if cancel:
                 await self._send_frame(CancelResponse())
             self._apply_core(self._playback_interruption(played_ms, truncations))
-            self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
+            self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
             return True
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         try:
