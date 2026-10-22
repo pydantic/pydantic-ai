@@ -43,7 +43,11 @@ class SpeculativeCodeUpdateEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
 
 @dataclass(kw_only=True)
 class SpeculativeCallLaunchedEvent(CapabilityEvent, namespace=CODE_MODE_EVENTS):
-    """A sandbox tool call started executing while its snippet was still streaming."""
+    """A sandbox tool call was launched while its snippet was still streaming.
+
+    While a parallel `InputGuardrail` is still deciding, the launched call waits for its verdict
+    before it executes, and durations measured from the launch include that wait.
+    """
 
     launch_id: str
     """Identifier shared by this launch's later settled and claimed/evicted events."""

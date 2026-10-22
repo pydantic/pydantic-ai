@@ -8,20 +8,26 @@ import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Generic, Literal, NoReturn, TypeVar
 
 from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
-from pydantic_ai.workspaces import WorkspaceError
+from pydantic_ai.workspaces import (
+    WorkspaceError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 from pydantic_ai_harness._durable import RetryRequest, raise_retry, retry_as_result
 from pydantic_ai_harness._workspace import raise_tool_failure
+from pydantic_ai_harness.memory._file import FileStore
 from pydantic_ai_harness.memory._store import (
-    FileStore,
     MemoryConflictError,
     MemoryMutation,
     MemoryOperation,
@@ -29,7 +35,9 @@ from pydantic_ai_harness.memory._store import (
     MemorySearchMatch,
     MemorySearchResult,
     MemoryStore,
+    MetadataMemoryStore,
     SearchableMemoryStore,
+    lexical_search,
 )
 
 if TYPE_CHECKING:
@@ -39,14 +47,15 @@ MAIN_FILENAME = 'MEMORY.md'
 """The main notebook file injected as bounded user-role context."""
 
 _FILENAME_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}')
-_CHARS_PER_TOKEN = 4
 _MAX_CAS_ATTEMPTS = 16
 _MAX_SEARCH_QUERY_CHARS = 1_000
 _MAX_SEARCH_TERMS = 32
-_MIN_FILENAME_LIST_CHARS = 6
 _READ_TRUNCATION_MARKER = (
     '\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
 )
+
+
+_WriteStatus = Literal['created', 'appended', 'updated']
 
 
 class MemoryWriteResult(TypedDict):
@@ -55,7 +64,7 @@ class MemoryWriteResult(TypedDict):
     file: str
     version: str
     replayed: bool
-    status: Literal['created', 'appended', 'updated']
+    status: _WriteStatus
 
 
 class MemoryDeleteResult(TypedDict):
@@ -116,152 +125,7 @@ def _normalize_search_query(query: str) -> str:
     return ' '.join(terms)
 
 
-async def list_subfiles(store: MemoryStore, scope: str, *, limit: int) -> tuple[list[str], bool]:
-    """Return a bounded filename list and whether additional paths may exist."""
-    prefix = f'{scope}/'
-    names: list[str] = []
-    request_limit = limit + 2  # one main notebook plus one truncation sentinel
-    returned_paths = await store.list_paths(prefix, limit=request_limit)
-    paths = returned_paths[:request_limit]
-    for path in paths:
-        if not path.startswith(prefix):
-            raise RuntimeError('memory backend returned a path outside the requested scope')
-        name = path.removeprefix(prefix)
-        if '/' not in name and name != MAIN_FILENAME and name.endswith('.md'):
-            names.append(name)
-    names.sort()
-    return names[:limit], len(names) > limit or len(returned_paths) >= request_limit
-
-
-def injection_listing_limit(max_tokens: int) -> int:
-    """Derive a finite backend listing bound from the complete prompt budget."""
-    return max(1, max_tokens * _CHARS_PER_TOKEN // _MIN_FILENAME_LIST_CHARS)
-
-
-def render_memory_prompt(
-    main_content: str,
-    subfiles: list[str],
-    *,
-    heading: str,
-    guidance: str,
-    max_lines: int,
-    max_tokens: int,
-    main_truncated: bool = False,
-    files_truncated: bool = False,
-) -> str:
-    """Render a complete memory section within the strict approximate token budget."""
-    budget = max_tokens * _CHARS_PER_TOKEN
-    rendered_guidance = guidance
-    source_lines = main_content.rstrip().splitlines()
-    kept_lines = source_lines[-max_lines:] if max_lines else []
-    dropped_lines = len(source_lines) - len(kept_lines)
-
-    max_filename_candidates = min(len(subfiles), budget // 4)
-    shown_files = subfiles[:max_filename_candidates]
-    omitted_files = len(subfiles) - len(shown_files)
-
-    rendered = _render_sections(
-        heading,
-        rendered_guidance,
-        kept_lines,
-        dropped_lines,
-        shown_files,
-        omitted_files,
-        main_truncated,
-        files_truncated,
-    )
-    while len(rendered) > budget and shown_files:
-        shown_files.pop()
-        omitted_files += 1
-        rendered = _render_sections(
-            heading,
-            rendered_guidance,
-            kept_lines,
-            dropped_lines,
-            shown_files,
-            omitted_files,
-            main_truncated,
-            files_truncated,
-        )
-    while len(rendered) > budget and kept_lines:
-        kept_lines.pop(0)
-        dropped_lines += 1
-        rendered = _render_sections(
-            heading,
-            rendered_guidance,
-            kept_lines,
-            dropped_lines,
-            shown_files,
-            omitted_files,
-            main_truncated,
-            files_truncated,
-        )
-    if len(rendered) > budget and dropped_lines:
-        dropped_lines = 0
-        rendered = _render_sections(
-            heading,
-            rendered_guidance,
-            kept_lines,
-            dropped_lines,
-            shown_files,
-            omitted_files,
-            main_truncated,
-            files_truncated,
-        )
-    if len(rendered) > budget and rendered_guidance:
-        rendered_guidance = rendered_guidance[: max(0, len(rendered_guidance) - (len(rendered) - budget))]
-        rendered = _render_sections(
-            heading,
-            rendered_guidance,
-            kept_lines,
-            dropped_lines,
-            shown_files,
-            omitted_files,
-            main_truncated,
-            files_truncated,
-        )
-    if len(rendered) <= budget:
-        return rendered
-    if omitted_files or files_truncated:
-        marker = '[Memory files omitted; use search_memory]'
-        return marker[:budget]
-    return rendered[:budget]
-
-
-def _render_sections(
-    heading: str,
-    guidance: str,
-    main_lines: list[str],
-    dropped_lines: int,
-    subfiles: list[str],
-    omitted_files: int,
-    main_truncated: bool,
-    files_truncated: bool,
-) -> str:
-    sections = [f'## {heading}'] if heading else []
-    if guidance:
-        sections.append(guidance)
-    if main_lines or dropped_lines or main_truncated:
-        lines = list(main_lines)
-        if dropped_lines:
-            lines.insert(
-                0,
-                f'... [{dropped_lines} earlier lines; use read_memory("{MAIN_FILENAME}") for the full notebook] ...',
-            )
-        if main_truncated:
-            lines.append('... [notebook exceeds `max_memory_size`; bounded prefix shown] ...')
-        sections.append(f'### {MAIN_FILENAME}\n\n' + '\n'.join(lines))
-    if subfiles or omitted_files or files_truncated:
-        listing = [f'- {name}' for name in subfiles]
-        if files_truncated:
-            listing.append('- ... [more files omitted; use search_memory to find relevant memory]')
-        elif omitted_files:
-            listing.append(f'- ... [{omitted_files} more files; use search_memory to find relevant memory]')
-        sections.append('### Other memory files\n\n' + '\n'.join(listing))
-    return '\n\n'.join(sections)
-
-
-def _apply_write(existing: str | None, content: str, old_text: str | None, name: str) -> tuple[str, str]:
+def _apply_write(existing: str | None, content: str, old_text: str | None, name: str) -> tuple[str, _WriteStatus]:
     if old_text is None:
         if existing is not None and existing.strip():
             return f'{existing.rstrip()}\n{content.rstrip()}\n', 'appended'
@@ -294,6 +158,17 @@ async def run_as_operation(call: Awaitable[_T]) -> _T | RetryRequest:
         return await retry_as_result(call)
     finally:
         _IN_OPERATION.reset(token)
+
+
+def require_metadata_store(store: MemoryStore) -> MetadataMemoryStore:
+    """Return `store` if it records write metadata; `Memory(write_metadata=...)` would otherwise lose it."""
+    if not isinstance(store, MetadataMemoryStore):
+        raise UserError(
+            '`Memory(write_metadata=...)` needs a store that records write metadata, and '
+            f'`{type(store).__name__}` does not. Use `InMemoryStore`, `SqliteMemoryStore` or '
+            '`PostgresMemoryStore`, or implement `MetadataMemoryStore.write_with_metadata` in a custom store.'
+        )
+    return store
 
 
 @dataclass(frozen=True)
@@ -386,6 +261,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         if old_text is None and not content.strip():
             raise ModelRetry('Nothing to write -- pass the text to append, or `old_text` to replace.')
         store, scope = self._resolve_scope(ctx)
+        metadata_store = None if capability.write_metadata is None else require_metadata_store(store)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'write', path, {'content': content, 'file': file, 'old_text': old_text})
         scope_hash = _scope_hash(scope)
@@ -400,6 +276,8 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                     _set_span_result(span, 'replayed', replayed=True)
                     return result
 
+                write_metadata = capability.write_metadata
+                metadata = write_metadata(ctx) if callable(write_metadata) else write_metadata
                 for attempt in range(_MAX_CAS_ATTEMPTS):
                     current = await store.read(path, max_chars=capability.max_memory_size)
                     if current is not None and current.truncated:
@@ -418,13 +296,16 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                             f'{name!r} would grow to {len(updated)} characters; the limit is '
                             f'{capability.max_memory_size}. Split the content into separate memory files.'
                         )
+                    expected_version = None if current is None else current.version
                     try:
-                        mutation = await store.write(
-                            path,
-                            updated,
-                            expected_version=None if current is None else current.version,
-                            operation=operation,
-                        )
+                        if metadata_store is None:
+                            mutation = await store.write(
+                                path, updated, expected_version=expected_version, operation=operation
+                            )
+                        else:
+                            mutation = await metadata_store.write_with_metadata(
+                                path, updated, expected_version=expected_version, operation=operation, metadata=metadata
+                            )
                     except MemoryConflictError:
                         if attempt + 1 == _MAX_CAS_ATTEMPTS:
                             raise ModelRetry('Memory changed repeatedly while writing; retry the operation.')
@@ -435,10 +316,10 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
             except WorkspaceError as exc:
                 _set_span_error(span, exc)
-                raise_tool_failure(exc)
+                _raise_workspace_failure(exc, name)
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
-                raise ModelRetry(str(exc)) from exc
+                raise ModelRetry(_escape_message(name)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -472,7 +353,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 return memory_file.content + (_READ_TRUNCATION_MARKER if memory_file.truncated else '')
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
-                raise ModelRetry(str(exc)) from exc
+                raise ModelRetry(_escape_message(name)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -524,10 +405,10 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
                 raise RuntimeError('unreachable CAS retry state')  # pragma: no cover
             except WorkspaceError as exc:
                 _set_span_error(span, exc)
-                raise_tool_failure(exc)
+                _raise_workspace_failure(exc, name)
             except MemoryPathEscapeError as exc:
                 _set_span_error(span, exc)
-                raise ModelRetry(str(exc)) from exc
+                raise ModelRetry(_escape_message(name)) from exc
             except Exception as exc:
                 _set_span_error(span, exc)
                 raise
@@ -607,7 +488,8 @@ def _operation(
     run_id = ctx.run_id
     if not run_id:
         raise RuntimeError('memory mutations require a stable run_id')
-    operation_id = _digest({'scope': scope, 'run_id': run_id, 'tool_call_id': tool_call_id})
+    # Ids are unique within one model response, not across a run's responses, so the step is part of the key.
+    operation_id = _digest({'scope': scope, 'run_id': run_id, 'run_step': ctx.run_step, 'tool_call_id': tool_call_id})
     fingerprint = _digest({'kind': kind, 'path': path, 'model_args': model_args})
     return MemoryOperation(id=operation_id, fingerprint=fingerprint)
 
@@ -622,19 +504,13 @@ def _write_result(
     mutation: MemoryMutation,
     old_text: str | None,
     *,
-    status: str | None = None,
+    status: _WriteStatus | None = None,
 ) -> MemoryWriteResult:
     if mutation.version is None:
         raise RuntimeError('memory write returned no version')  # pragma: no cover
     if status is None:
         status = 'updated' if old_text is not None else ('appended' if mutation.existed else 'created')
-    if status == 'created':
-        typed_status: Literal['created', 'appended', 'updated'] = 'created'
-    elif status == 'appended':
-        typed_status = 'appended'
-    else:
-        typed_status = 'updated'
-    return {'file': name, 'version': mutation.version, 'replayed': mutation.replayed, 'status': typed_status}
+    return {'file': name, 'version': mutation.version, 'replayed': mutation.replayed, 'status': status}
 
 
 def _delete_result(name: str, mutation: MemoryMutation) -> MemoryDeleteResult:
@@ -658,52 +534,29 @@ async def _fallback_search(
     max_file_chars: int,
 ) -> MemorySearchResult:
     paths = await store.list_paths(prefix, limit=max_files + 1)
-    terms = query.lower().split()
-    scored: list[tuple[float, str, str]] = []
+    files: list[tuple[str, str]] = []
     scanned = 0
     content_truncated = False
     for path in paths[:max_files]:
-        scanned += 1
         if not path.startswith(prefix):
             raise RuntimeError('memory backend returned a path outside the requested scope')
         name = path.removeprefix(prefix)
         if '/' in name or not _FILENAME_RE.fullmatch(name) or '..' in name:
             continue
+        scanned += 1
         memory_file = await store.read(path, max_chars=max_file_chars)
         if memory_file is None:
             continue
         content_truncated = content_truncated or memory_file.truncated
-        lower_path = name.lower()
-        lower_content = memory_file.content.lower()
-        score = float(sum(lower_content.count(term) + 2 * lower_path.count(term) for term in terms))
-        if score:
-            scored.append((score, path, memory_file.content))
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    matches = [
-        MemorySearchMatch(path=path, snippet=_search_snippet(content, query, max_chars), score=score)
-        for score, path, content in scored[:limit]
-    ]
-    return MemorySearchResult(
-        matches=matches,
-        scanned=scanned,
-        truncated=len(paths) > max_files or len(scored) > len(matches) or content_truncated,
+        files.append((path, memory_file.content))
+    result = await lexical_search(
+        files, query, limit=limit, max_files=max_files, max_chars=max_chars, score_prefix=prefix
     )
-
-
-def _search_snippet(content: str, query: str, max_chars: int) -> str:
-    lower = content.lower()
-    positions = [lower.find(term) for term in query.lower().split()]
-    found = [position for position in positions if position >= 0]
-    center = min(found) if found else 0
-    start = max(0, center - max_chars // 3)
-    end = min(len(content), start + max_chars)
-    start = max(0, end - max_chars)
-    snippet = content[start:end]
-    if start and len(snippet) >= 3:
-        snippet = f'...{snippet[3:]}'
-    if end < len(content) and len(snippet) >= 3:
-        snippet = f'{snippet[:-3]}...'
-    return snippet
+    return MemorySearchResult(
+        matches=result.matches,
+        scanned=scanned,
+        truncated=result.truncated or len(paths) > max_files or content_truncated,
+    )
 
 
 def _bounded_search_matches(
@@ -732,6 +585,24 @@ def _bounded_search_matches(
         bounded.append(_search_match(match, prefix, snippet))
         remaining -= len(snippet)
     return bounded, truncated
+
+
+def _raise_workspace_failure(error: WorkspaceError, name: str) -> NoReturn:
+    """Report a failed workspace mutation naming only the memory file.
+
+    A backend's message can carry the host path and the scope, which includes the namespace, so
+    the model sees only the filename. The original error stays chained as `__cause__`.
+    """
+    if isinstance(error, WorkspaceUnavailableError | WorkspaceReadOnlyError):
+        raise_tool_failure(error)
+    if isinstance(error, WorkspaceTimeoutError):
+        raise ToolFailed(f'Updating memory file {name!r} timed out.') from error
+    raise ToolFailed(f'Could not update memory file {name!r}.') from error
+
+
+def _escape_message(name: str) -> str:
+    # The store's own message names the scope-qualified path, which includes the namespace.
+    return f'memory file {name!r} resolves outside the store directory; use a different filename.'
 
 
 def _scope_hash(scope: str) -> str:
