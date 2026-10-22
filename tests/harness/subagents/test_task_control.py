@@ -1899,7 +1899,8 @@ class TestDelegationTasksConcurrency:
 
         async with owner.opened():
             started = await self.accepting(owner, run)
-            assert not owner._workers  # pyright: ignore[reportPrivateUsage]
+            [record] = owner.records.values()
+            assert not started.done() and record.status == 'running', 'still persisting its acceptance'
             with anyio.fail_after(WAIT):
                 await owner.wait_children(None)
                 await started
@@ -1922,6 +1923,23 @@ class TestDelegationTasksConcurrency:
             [record] = owner.records.values()
             assert (record.status, record.outcome) == ('finished', 'cancelled')
 
+    async def test_a_child_stopped_before_its_worker_is_scheduled_ends_the_wait(self, tmp_path: Path) -> None:
+        owner = DelegationTasks(directory=tmp_path)
+
+        async def run(record: DelegationTask) -> str:
+            raise AssertionError('not scheduled')  # pragma: no cover
+
+        async with owner.opened():
+            started = await self.accepting(owner, run)
+            [record] = owner.records.values()
+            waiting = asyncio.create_task(owner.wait_children(None))
+            await asyncio.sleep(0)
+            with anyio.fail_after(WAIT):
+                await owner.cancel(record.id)
+                await waiting
+                assert 'stopped before execution' in await started
+            assert (record.status, record.outcome) == ('finished', 'cancelled')
+
     async def test_closing_schedules_no_worker_for_a_delegation_persisting_its_acceptance(self, tmp_path: Path) -> None:
         owner = DelegationTasks(directory=tmp_path)
         ran: list[str] = []
@@ -1930,13 +1948,15 @@ class TestDelegationTasksConcurrency:
             ran.append(record.id)  # pragma: no cover
             return 'done'  # pragma: no cover
 
+        accepting: list[asyncio.Task[str]] = []
+
         async def lingering(record: DelegationTask) -> str:
             try:
                 await asyncio.Event().wait()
             finally:
                 # Its cleanup outlasts the other delegation's save, so closing waits on it meanwhile.
                 with anyio.CancelScope(shield=True):
-                    await anyio.sleep(0.2)
+                    await asyncio.wait(accepting)
             raise AssertionError('unreachable')  # pragma: no cover
 
         async with owner.opened():
@@ -1961,6 +1981,7 @@ class TestDelegationTasksConcurrency:
                     run=run,
                 )
             )
+            accepting.append(started)
             while len(owner.records) == records:
                 await asyncio.sleep(0)
         assert 'stopped before execution' in await started

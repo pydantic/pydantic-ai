@@ -812,15 +812,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         shown = {record.id for record in [*listed_running, *listed_finished]}
         lines = [_task_line(owner, record) for record in visible if record.id in shown]
         omitted = [
-            f'{count} {kind}'
+            f'{count} {kind} task{"s" if count != 1 else ""}'
             for count, kind in (
                 (len(running) - len(listed_running), 'older running'),
-                (len(finished) - len(listed_finished), 'older finished'),
+                # With no room left, the finished tasks left out may be newer than those shown.
+                (len(finished) - len(listed_finished), 'older finished' if listed_finished else 'finished'),
             )
             if count
         ]
         if omitted:
-            lines.append(f'({" and ".join(omitted)} tasks not shown.)')
+            lines.append(f'({" and ".join(omitted)} not shown.)')
         return '\n'.join(lines)
 
     async def message_task(self, ctx: RunContext[AgentDepsT], task_id: str, message: str) -> str:

@@ -353,7 +353,11 @@ class DelegationTasks:
             self._wake()
             raise
         if record.user_stopped or record.status != 'running' or not self._open:
-            # Stopped meanwhile, or its owner is closing, which settles every running record.
+            # Stopped meanwhile, or its owner is closing: it settles without a worker.
+            if record.status == 'running':
+                record.status, record.outcome = 'finished', 'cancelled'
+                record.output, record.finished_at = 'Task stopped before execution.', time.time()
+                self._wake()
             return f'Task {record.id} was stopped before execution.'
         worker = asyncio.create_task(self._run(record, run), name=f'delegate-{record.id}')
         self._workers[record.id] = worker
@@ -471,6 +475,7 @@ class DelegationTasks:
                 record.status, record.outcome = 'finished', 'cancelled'
                 record.output = 'Task stopped before execution.'
                 record.finished_at = time.time()
+                self._wake()
                 await self.notify(record)
             await self.save(record)
         if cleanup.cancel_called:
