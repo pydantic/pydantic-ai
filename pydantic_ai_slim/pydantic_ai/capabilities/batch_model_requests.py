@@ -33,7 +33,7 @@ class BatchModelRequests(AbstractCapability[Any]):
     from pydantic_ai.capabilities import BatchModelRequests
 
     batching = BatchModelRequests(max_requests=5_000, max_wait=timedelta(minutes=5))
-    agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[batching])
+    agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[batching])
     ```
 
     A batch is submitted when it holds `max_requests` requests, when its oldest request has waited `max_wait`, or when

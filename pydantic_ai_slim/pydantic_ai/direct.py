@@ -184,7 +184,7 @@ async def model_request_batch(
     async def main():
         questions = {'france': 'What is the capital of France?', 'italy': 'What is the capital of Italy?'}
         responses = await model_request_batch(
-            'anthropic:claude-haiku-4-5',
+            'anthropic:claude-haiku-5-5',
             [
                 BatchRequest(custom_id=key, messages=[ModelRequest.user_text_prompt(question)])
                 for key, question in questions.items()
