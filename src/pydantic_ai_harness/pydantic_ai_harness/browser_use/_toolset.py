@@ -10,7 +10,7 @@ from collections.abc import Awaitable
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from typing import Literal, Protocol
-from urllib.parse import quote, quote_plus, urlsplit
+from urllib.parse import quote_plus, urlsplit
 
 import anyio
 from pydantic import BaseModel, JsonValue, ValidationError
@@ -262,15 +262,14 @@ def _scope_flat_secrets(
 
 
 def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None) -> dict[str, str]:
-    """Each secret value, and its JSON-escaped and URL-encoded forms, mapped to its placeholder.
+    """Each secret value, and its JSON-escaped and `quote_plus`-encoded forms, mapped to its placeholder.
 
     The mapping redacts tool output.
 
     browser-use substitutes a placeholder in the parameters of every action, the final
     `done` text included, so a value can come back in the result. Schema output escapes
     characters such as `"`, hence the JSON-escaped form. A blocked `search` reports the
-    URL it built with `quote_plus` (`p%40ss+word`), and a URL can also carry a value
-    percent-encoded with `%20` for a space, as `quote` writes it (`p%40ss%20word`).
+    URL it built with `quote_plus` (`p%40ss+word`), its only URL encoding of a value.
     """
     if sensitive_data is None:
         return {}
@@ -290,7 +289,6 @@ def _secret_placeholders(sensitive_data: dict[str, str | dict[str, str]] | None)
         placeholders.setdefault(json.dumps(value, ensure_ascii=False)[1:-1], placeholder)
         # `surrogatepass` keeps a lone surrogate (as `os.environ` decodes invalid UTF-8) from raising.
         placeholders.setdefault(quote_plus(value, errors='surrogatepass'), placeholder)
-        placeholders.setdefault(quote(value, errors='surrogatepass'), placeholder)
     return placeholders
 
 

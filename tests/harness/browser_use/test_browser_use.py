@@ -1421,12 +1421,11 @@ class TestSensitiveDataSafety:
         )
 
     async def test_url_encoded_secret_values_are_redacted(self, kill_calls: list[BrowserSession]) -> None:
-        """A blocked `search` reports the URL it built, with a `quote_plus` or `quote` encoding of the value."""
+        """A blocked `search` reports the URL it built, with the value encoded by `quote_plus`."""
         history = _FakeHistory(
             step_errors=[
                 'Failed to search duckduckgo for "p@ss word": Navigation to non-allowed URL: '
                 'https://duckduckgo.com/?q=p%40ss+word',
-                'Navigation to non-allowed URL: https://evil.example/p%40ss%20word',
             ]
         )
         capability = BrowserUse[None](
@@ -1439,8 +1438,7 @@ class TestSensitiveDataSafety:
         assert result == (
             'The browser agent stopped without producing a result (Failed to search duckduckgo for '
             '"<secret>x_password</secret>": Navigation to non-allowed URL: '
-            'https://duckduckgo.com/?q=<secret>x_password</secret>; '
-            'Navigation to non-allowed URL: https://evil.example/<secret>x_password</secret>).'
+            'https://duckduckgo.com/?q=<secret>x_password</secret>).'
         )
 
     async def test_a_value_equal_to_another_secret_s_encoding_keeps_its_own_placeholder(

@@ -245,7 +245,7 @@ Gotchas:
   `BrowserAgentSettings(use_judge=False)`.
 - Flat `sensitive_data` values require explicit-hostname `allowed_domains` (globs rejected) and are
   substituted only on allowlisted pages; prefer the domain-scoped form `{'https://site': {'key': 'value'}}`.
-  Secret values, and their JSON-escaped and URL-encoded (`quote_plus`, `quote`) forms, are replaced with
+  Secret values, and their JSON-escaped and `quote_plus`-encoded forms, are replaced with
   their placeholder in the `browse_web` result. Screenshots are not redacted.
 - `session_scope='agent'` reuses one browser across calls (serialized); close with `aclose()` or
   `async with BrowserUse(...) as browser:`. Under `TemporalDurability`, `Agent(...)` raises
