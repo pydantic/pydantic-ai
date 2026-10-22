@@ -37,7 +37,7 @@ async def main():
         #> The capital of Italy is Rome.
 ```
 
-Tools, structured output, output validation and retries all work as usual; each model request in a run goes into whichever batch is being collected when it's made. A run that needs several model requests, for example to call tools or to retry after an output validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], takes several batch round trips, each of which can take as long as the provider's batch window. [Usage limits](agent.md#usage-limits) apply to each run as usual.
+Tools, structured output, output validation and retries all work as usual; each model request in a run goes into whichever batch is being collected when it's made. A run that needs several model requests, for example to call tools or to retry after an output validator raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], takes several batch round trips, each of which can take as long as the provider's batch window. [Usage limits](agent.md#usage-limits) apply to each run as usual. A request that fails only fails its own run, not the others in its batch: pass `return_exceptions=True` to `asyncio.gather` to get each run's result or error.
 
 A batch is submitted when it holds `max_requests` requests (default 1,000), when the next request would take it past the provider's size limit, or when its oldest request has waited `max_wait` (default 30 seconds), whichever comes first. Later requests never extend `max_wait`. With `max_wait=None`, a batch is only submitted when it's full or when you call [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush]. Raise `max_requests` when you make many more requests at a time, to submit fewer, larger batches: providers limit how many batches can be in progress at once. Each request then waits for its batch to end, checking after `poll_interval` (default 30 seconds) and then at intervals that grow up to `max_poll_interval` (default 10 minutes). A run that takes several batch round trips can wait up to `max_wait` plus the time until the next check for each, on top of the provider's own time, so lower `max_poll_interval` when that adds up, at the cost of more status requests.
 
@@ -157,6 +157,41 @@ With [instrumentation](logfire.md) enabled, a batch is traced once, in a trace o
 ### Durable execution
 
 Under [durable execution](durable_execution/overview.md) with Temporal, DBOS or Prefect, add `BatchModelRequests` to the agent alongside its durability capability. Submitting a request and every check on its batch run as separate durable steps, so a run that's interrupted while its batch is processed, for example by a deployment, continues from the same batch when it's recovered. Under Temporal and DBOS, the waits between checks are durable too. Requests are collected into batches per worker process: the requests of concurrent workflow runs on one worker share batches. Temporal and DBOS don't support capabilities passed to a run inside a workflow, so there the capability has to be on the agent.
+
+```python {title="batch_temporal.py" gateway_toggle="skip"}
+from pydantic import BaseModel
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import BatchModelRequests
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+
+
+class Extraction(BaseModel):
+    remote: bool
+    countries: list[str]
+
+
+agent = Agent(
+    '{{ google:medium }}',
+    name='extractor',
+    output_type=Extraction,
+    instructions='Extract the remote-work details from this job posting.',
+    capabilities=[BatchModelRequests(), TemporalDurability()],
+)
+
+
+@workflow.defn
+class ExtractPosting(PydanticAIWorkflow):  # (1)!
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, posting: str) -> Extraction:
+        result = await agent.run(posting)
+        return result.output
+```
+
+1. Start one workflow per posting: the requests of the workflows running on a worker share batches, and no worker slot is held while a batch is processed. See [Temporal](durable_execution/temporal.md) for running the worker and starting workflows.
 
 Once the step that submitted a request has completed, replaying or recovering the workflow reuses its recorded result, so the request isn't submitted again. The one exception is a step that's retried after the provider created its batch but before the step completed, for example because the worker crashed, or because the step timed out: like any model request, the retry sends the request again, which submits it in another batch. A request waits for its batch to be submitted inside its step, so keep `max_wait` well below the step's timeout (for example, the Temporal model activity's `start_to_close_timeout`). For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush] can't be called from workflow code. A [resubmission](#failed-requests) happens inside the step that found the failure, with the same exception.
 
