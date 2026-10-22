@@ -259,7 +259,7 @@ async def test_an_older_model_gets_a_function(allow_model_requests: None) -> Non
     assert [(tool['name'], 'input_schema' in tool) for tool in request['tools']] == [('computer', True)]
 
 
-def test_the_toolset_goes_to_the_claude_api_and_google_cloud_only() -> None:
+def test_the_toolset_goes_to_the_claude_api_only() -> None:
     pytest.importorskip('botocore')
     params = ModelRequestParameters(function_tools=[ComputerUse().get_toolset().tools['computer'].tool_def])
     native: dict[str, bool] = {}
