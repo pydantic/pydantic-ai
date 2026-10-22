@@ -1819,7 +1819,10 @@ async def test_bedrock_trace_streamed_metadata_before_stop(
 
 
 async def test_bedrock_citation_response_mapping(bedrock_provider: BedrockProvider) -> None:
-    """Bedrock maps list-valued `sourceContent` to public source excerpts."""
+    """Bedrock maps list-valued `sourceContent` to public source excerpts.
+
+    Unit test: no recorded Bedrock answer has several `sourceContent` items or a web location.
+    """
     text = 'The policy allows thirty days for returns.'
     citations = [
         {
@@ -1907,12 +1910,16 @@ _RETURNS_POLICY_CITATION = {
             TextPart('Empty citation.'),
             id='citation-without-source-fields',
         ),
+        pytest.param({'content': [], 'citations': []}, None, id='empty'),
     ],
 )
 async def test_bedrock_partial_citation_block(
-    bedrock_provider: BedrockProvider, citations_content: dict[str, Any], expected: TextPart
+    bedrock_provider: BedrockProvider, citations_content: dict[str, Any], expected: TextPart | None
 ) -> None:
-    """A citations block missing its text or its citations keeps whatever it has, without an anchor."""
+    """A citations block missing its text or its citations keeps whatever it has, without an anchor.
+
+    Unit test: these degenerate blocks are synthetic, as no recorded Bedrock answer has one.
+    """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     response = await model._process_response(  # pyright: ignore[reportPrivateUsage]
         cast(
@@ -1926,7 +1933,7 @@ async def test_bedrock_partial_citation_block(
         )
     )
 
-    assert response.parts == [expected]
+    assert response.parts == ([expected] if expected else [])
 
 
 async def test_bedrock_leaves_out_citations_it_cannot_check(bedrock_provider: BedrockProvider) -> None:
