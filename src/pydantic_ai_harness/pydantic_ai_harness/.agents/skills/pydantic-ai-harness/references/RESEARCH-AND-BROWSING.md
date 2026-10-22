@@ -102,8 +102,8 @@ agent = Agent(
 head kept), `text_summary=False` (`True` or a format string prepends a `Summary:` line),
 `include_deep_search=False`, `include_domains=[]` / `exclude_domains=[]` (mutually exclusive; they filter
 `web_search` and `deep_search`, not `get_page`),
-`guidance=None` (`''` = no instructions), `client=None` (`ExaClient`; default `exa_py.AsyncExa` from
-`EXA_API_KEY`).
+`guidance=None` (`''` = no instructions), `client=None` (`ExaClient`; default wraps `exa_py.AsyncExa` from
+`EXA_API_KEY`, rebuilt on a new asyncio event loop).
 
 `ExaAgent` fields: `effort=None` (an `exa_py` `AgentEffort`, e.g. `'low'` or `'auto'`), `execution='inline'`
 (polls to completion inside the run) or `'external'`, `output_schema=None` (Pydantic model class, validated;

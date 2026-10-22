@@ -310,7 +310,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     """
 
     runs: ExaAgentRuns | None = None
-    """Exa Agent runs client; when `None`, `exa_py.AsyncExa().agent.runs` is built from `EXA_API_KEY`.
+    """Exa Agent runs client; when `None`, a default client wrapping `exa_py.AsyncExa` is built from `EXA_API_KEY`.
 
     Any object satisfying the `ExaAgentRuns` protocol works: use it to pass an
     API key explicitly or substitute a fake in tests.
