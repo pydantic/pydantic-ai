@@ -65,6 +65,8 @@ A request that failed on the provider's side is submitted again in a new batch, 
 
 The count is recorded in the message history, so a run resumed from a history whose batch has failed this way submits the request again, rather than reading the same failed result every time it's resumed. A resubmitted request waits for its new batch as usual, or, with [`PendingModelResponse`](#ending-a-run-while-it-waits), ends the run with a new `PendingModelResponse`.
 
+To try another model once a request's error reaches the run, add [`ModelFallback`](capabilities/model-fallback.md): the request then goes into a batch on the next model in its chain. When a run resumed from history finds that the batch it was waiting on failed, it also moves on to the next model, rather than starting over with a new batch on the first.
+
 ### Sharing batches between agents
 
 Each `BatchModelRequests` instance collects its own batches. Add the same instance to several agents, or pass it to runs with `capabilities=`, and their requests share batches:
