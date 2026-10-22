@@ -179,3 +179,7 @@ ENV/**
 
 # Compiled gh-aw workflows (generated from their `.md` sources).
 .github/workflows/*.lock.yml
+
+# The `clai2` web plugin's built browser UI: minified bundles that `npm run build`
+# writes from src/pydantic_clai2/web-ui, marked linguist-generated in .gitattributes.
+src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static/**
