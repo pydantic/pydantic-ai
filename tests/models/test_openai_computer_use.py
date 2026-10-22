@@ -218,6 +218,25 @@ async def test_a_result_whose_call_is_stored_server_side_is_a_computer_call_outp
     assert second['input'][0]['call_id'] == 'call_1'
 
 
+async def test_a_call_with_safety_checks_is_sent_again_to_acknowledge_them(allow_model_requests: None) -> None:
+    provider = InMemoryProvider()
+    first = _computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}, safety_checks=[CHECK])
+    first.id = 'resp_1'
+    client = MockOpenAIResponses.create_mock([first, _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    agent = Agent(
+        model,
+        capabilities=[provider.capability(), ComputerUse(settle_seconds=0)],
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    assert (await agent.run('Go.')).output == 'done'
+    _, second = get_mock_responses_kwargs(client)
+    assert 'previous_response_id' not in second or not second['previous_response_id']
+    (output,) = [item for item in second['input'] if item.get('type') == 'computer_call_output']
+    assert output['acknowledged_safety_checks'] == [CHECK]
+
+
 async def test_tool_choice_naming_the_computer_names_the_native_tool(allow_model_requests: None) -> None:
     client = MockOpenAIResponses.create_mock([_done(), _done()])
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
