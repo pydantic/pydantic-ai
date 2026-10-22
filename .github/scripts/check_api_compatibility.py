@@ -16,9 +16,11 @@ PACKAGES = {
     'pydantic_graph': 'pydantic_graph',
     'pydantic_evals': 'pydantic_evals',
     'clai': 'clai',
+    'pydantic_ai_harness': 'src/pydantic_ai_harness',
+    'pydantic_clai2': 'src/pydantic_clai2',
 }
-# Run from its own tool environment: in the project venv, `prefect`'s `griffe` 1.x installs over `griffelib`'s
-# `griffe` module, and `griffecli` then crashes. A bump can reword findings, which changes their fingerprints.
+# Run from its own tool environment: `griffe` 1.x, which `prefect` accepts, installs over `griffelib`'s `griffe`
+# module, and `griffecli` crashes against it. A bump can reword findings, which changes their fingerprints.
 GRIFFECLI_VERSION = '2.3.0'
 _FINDING_RE = re.compile(r'^(?P<path>.*):(?P<line>\d+): (?P<message>.*)$')
 
