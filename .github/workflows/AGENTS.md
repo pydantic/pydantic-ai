@@ -162,6 +162,27 @@ Two consequences of the trigger, both easy to get backwards:
   it reads as clean. Marking the check **required** is what closes that: a check that never
   ran stays pending and blocks the merge.
 
+# `PR Gates` answer merge questions from PR metadata
+
+`pr-gates.yml` runs one job per gate, and each job's check is the gate. The logic lives in
+`.github/scripts/pr_gates.py`. The workflow runs on `pull_request_target` from `main`, so
+`test_pr_gates.py` is the only check of a change to either before it merges.
+
+| Check | Fails when |
+|---|---|
+| `Gate: protected paths approved` | the PR changes a protected scope without that scope's `approved:<scope>` label |
+| `Gate: compatibility waiver labeled` | the PR adds a waiver to `.github/api-compatibility-allowlist.json` without `compatibility impact` |
+
+| Label | Scope |
+|---|---|
+| `approved:dependencies` | any `pyproject.toml` or `uv.lock` |
+| `approved:ci-config` | `.github/workflows/**`, `.github/actions/**`, `.github/scripts/**`, `.pre-commit-config.yaml`, `Makefile` |
+
+`approved:<scope>` is the standard for permission labels. Every PR that changes a scope needs
+its label, a maintainer's own included. The gate accepts a label only when its latest `labeled`
+event comes from a `User` whose `.permission` is `write` or `admin`. A push that changes a scope
+removes that scope's label, so an approval covers only the changes the maintainer saw.
+
 # Agentic workflows (`gh-aw`)
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.

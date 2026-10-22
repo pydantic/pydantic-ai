@@ -1,0 +1,90 @@
+name: PR Gates
+
+# Merge gates a script answers from the pull request's metadata, each reported as its own check
+# so it can be made required. `.github/workflows/AGENTS.md` ("PR Gates") documents both gates and
+# the `approved:<scope>` label standard. The logic, and its tests, live in
+# `.github/scripts/pr_gates.py`: this workflow runs from the default branch, so a PR that changes
+# it cannot exercise its own change.
+#
+# No `paths:` filter: a required check that never runs stays pending and blocks the merge, so
+# every PR event runs both gates. No concurrency group either: a group replaces a pending run
+# with the next one, which would drop the `synchronize` run that removes a voided approval.
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target runs the default branch's copy, so a
+  # PR can't rewrite its own gate, and gets a token that can remove labels on fork PRs. Nothing here
+  # checks out or executes PR code: the script comes from the workflow's own commit and reads the
+  # PR through the API.
+  pull_request_target:
+    # `labeled` and `unlabeled` change the verdict. `edited` is the only event fired when the base
+    # branch changes, which changes the diff the gates judge.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  # A required check has to report on the merge group's commit, or the queue stalls. Both gates
+  # judge the PR's own diff and labels, settled on its head before it could be enqueued, so they
+  # skip here, and a job skipped by `if:` reports success.
+  merge_group:
+    types: [checks_requested]
+
+permissions: {}
+
+jobs:
+  protected-paths:
+    name: 'Gate: protected paths approved'
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Reads labels, label events and the labeler's permission, and removes a voided approval.
+      pull-requests: write
+    steps:
+      # `workflow_sha`, not the default `GITHUB_SHA`: on a PR into another branch, that is the
+      # other branch's tip, which may not carry the script.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/pr_gates.py
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      # An exact pin keeps a compromised new release away from a job holding a write token.
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Require an approval label for each protected scope the PR changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_STATE: ${{ github.event.pull_request.state }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+        run: python3 .github/scripts/pr_gates.py protected-paths
+
+  compatibility-waiver:
+    name: 'Gate: compatibility waiver labeled'
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/pr_gates.py
+            .github/scripts/check_api_compatibility.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        run: python3 -m pip install --quiet 'pydantic==2.13.4'
+      - name: Require `compatibility impact` on a PR that adds an API compatibility waiver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_STATE: ${{ github.event.pull_request.state }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/pr_gates.py compatibility-waiver
