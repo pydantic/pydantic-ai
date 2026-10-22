@@ -1003,6 +1003,15 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             self._check_access(posixpath.relpath(spelling, scope.root), write=write, check_allowed=check_allowed)
         return resolved, real
 
+    async def _read_target(self, scope: _Scope, resolved: str) -> bytes:
+        """The bytes of the file a tool call names, refusing a socket the way core refuses a FIFO."""
+        try:
+            return await scope.workspace.read_bytes(resolved)
+        except OSError as e:
+            if e.errno in _SOCKET_OPEN_ERRNOS:
+                raise ModelRetry(_NOT_A_REGULAR_FILE_REASON) from e
+            raise
+
     async def _stat(self, scope: _Scope, resolved: str) -> FileEntry | None:
         """The entry at `resolved`, or `None` when nothing is there (including below a file)."""
         try:
@@ -1123,13 +1132,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # The whole file: the header reports its line count and the hash write_file and
         # edit_file verify against, and both need every byte.
         try:
-            raw = await scope.workspace.read_bytes(resolved)
+            raw = await self._read_target(scope, resolved)
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
             return f'Path not found: {path}'
-        except OSError as e:
-            if e.errno in _SOCKET_OPEN_ERRNOS:
-                raise ModelRetry(_NOT_A_REGULAR_FILE_REASON) from e
-            raise
         content_hash = _bytes_hash(raw)
         media_type = _sniff_media_type(raw)
         if media_type is not None or _is_binary(raw):
@@ -2306,13 +2311,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             parts.append(f'contents: not read (over {_MAX_READ_FILE_BYTES} bytes)')
         elif not entry.is_dir:
             try:
-                raw = await scope.workspace.read_bytes(resolved)
+                raw = await self._read_target(scope, resolved)
             except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
                 return f'Path not found: {path}'
-            except OSError as e:
-                if e.errno in _SOCKET_OPEN_ERRNOS:
-                    raise ModelRetry(_NOT_A_REGULAR_FILE_REASON) from e
-                raise
             is_bin = _is_binary(raw)
             parts.append(f'binary: {is_bin}')
             if not is_bin:
