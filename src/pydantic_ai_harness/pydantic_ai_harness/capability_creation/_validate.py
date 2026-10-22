@@ -148,9 +148,10 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
     `get_model_settings`, `get_serialization_name`) and checks their returns, down to
     each instruction and native tool, against the types the agent accepts, so a wrong
     return type fails here instead of crashing the next `agent.run`. The async
-    lifecycle hooks need a live `RunContext` and are not invoked. `SystemExit` raised
-    by the authored code is reported as a validation error rather than ending the
-    process. Loads from different threads run one at a time.
+    lifecycle hooks need a live `RunContext` and are not invoked. Anything else the
+    authored code raises, `SystemExit` and other `BaseException` subclasses included,
+    is reported as a validation error rather than ending the process; only
+    `KeyboardInterrupt` propagates. Loads from different threads run one at a time.
 
     Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
     instance is accepted by any agent's `capabilities=` parameter.
@@ -165,9 +166,9 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
             _check_native_tool_items(instance.get_native_tools())
             _check_model_settings_return(instance.get_model_settings())
             cls.get_serialization_name()
-        except CapabilityValidationError:
+        except (CapabilityValidationError, KeyboardInterrupt):
             raise
-        except (Exception, SystemExit) as exc:
+        except BaseException as exc:
             raise CapabilityValidationError(f'{type(exc).__name__}: {exc}') from exc
     return instance
 

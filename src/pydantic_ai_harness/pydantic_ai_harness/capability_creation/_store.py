@@ -55,7 +55,10 @@ class CapabilityStore:
         return self.directory / 'manifest.json'
 
     def _module_path(self, record: AuthoredCapability) -> Path:
-        """The record's module file, refused unless it is a `.py` file directly in `directory`."""
+        """The record's module file, refused unless it is a `.py` file directly in `directory`.
+
+        The check is on the path as written, so a symlink in `directory` is followed wherever it points.
+        """
         path = self.directory / record.module_file
         if path.parent != self.directory or path.suffix != '.py':
             raise CapabilityValidationError(f'module file {record.module_file!r} is not a `.py` file in the directory')
