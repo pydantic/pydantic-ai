@@ -10,54 +10,70 @@ from typing_extensions import TypedDict
 
 from .messages import BinaryImage, ToolKind
 from .workspaces import Click, Drag, HoldKey, KeyPress, MouseDown, MouseUp, MoveMouse, Scroll, TypeText
+from .workspaces.computer import _CONFIG  # pyright: ignore[reportPrivateUsage]
 
-__all__ = ('COMPUTER_KIND', 'ComputerArgs', 'ComputerContent', 'ComputerResult', 'ComputerToolAction', 'Screenshot', 'Wait')
+__all__ = (
+    'COMPUTER_KIND',
+    'MAX_ACTIONS_PER_CALL',
+    'OBSERVING_ACTIONS',
+    'ComputerArgs',
+    'ComputerContent',
+    'ComputerResult',
+    'ComputerToolAction',
+    'Screenshot',
+    'Wait',
+)
+
+MAX_ACTIONS_PER_CALL = 20
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class Wait:
-    """Do nothing for a while, letting the screen settle."""
+    """Pause, for example while a page or application loads."""
 
-    seconds: Annotated[float, Field(ge=0, le=60, allow_inf_nan=False)] = 1.0
-    kind: Literal['wait'] = 'wait'
+    type: Literal['wait'] = 'wait'
+    seconds: Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)] = 1
+    """How long to wait, up to 10 seconds."""
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class Screenshot:
-    """Ask for a screenshot; the `computer` tool returns one after every call anyway."""
+    """Look at the screen without acting. Every call already ends with a screenshot."""
 
-    kind: Literal['screenshot'] = 'screenshot'
+    type: Literal['screenshot'] = 'screenshot'
 
 
 ComputerToolAction: TypeAlias = Annotated[
     Click | MoveMouse | Drag | MouseDown | MouseUp | Scroll | TypeText | KeyPress | HoldKey | Wait | Screenshot,
-    Field(discriminator='kind'),
+    Field(discriminator='type'),
 ]
-"""What the `computer` tool accepts: the workspace's display actions, plus waiting and asking for a screenshot."""
+"""What the `computer` tool accepts: the workspace's display actions, plus waiting and looking."""
+
+OBSERVING_ACTIONS = frozenset({'wait', 'screenshot'})
+"""Action types that change nothing on the screen, so `require_approval` lets them through."""
 
 
 class ComputerArgs(TypedDict):
     """The `computer` tool's arguments."""
 
     actions: list[ComputerToolAction]
-    """The actions to perform, in order."""
 
 
 class ComputerResult(TypedDict):
-    """What the `computer` tool reports next to the screenshot it returns."""
+    """A `computer` call's outcome, kept in the tool return's `metadata` for model adapters and UIs."""
 
-    executed: int
-    """How many of the actions were performed: all of them, or those before the one that failed."""
+    performed: int
+    """How many actions ran: all of them, or those before the one that failed."""
 
     error: NotRequired[str]
-    """Why the action after the performed ones failed; the rest were not attempted."""
+    """Why the action after the performed ones failed; the rest did not run."""
 
-    screen_size: list[int]
-    """The screenshot's `[width, height]` in pixels, the coordinate space of the actions."""
+    screenshot_size: NotRequired[tuple[int, int]]
+    """The closing screenshot's width and height, absent when it failed."""
 
 
-ComputerContent: TypeAlias = list[ComputerResult | BinaryImage]
-"""What a `computer` call returns: the result, then the screenshot taken after the actions."""
+ComputerContent: TypeAlias = list[str | BinaryImage]
+"""What the model sees from a `computer` call: a short summary, then the screenshot."""
 
 COMPUTER_KIND = ToolKind._core('computer', args=ComputerArgs, content=ComputerContent)  # pyright: ignore[reportPrivateUsage]
 """The kind of the `computer` tool, which model adapters send as their provider's native computer tool."""

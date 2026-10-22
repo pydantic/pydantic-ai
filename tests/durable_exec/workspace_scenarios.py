@@ -24,6 +24,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, ComputerUse, LocalWorkspace
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.workspaces import (
     HoldKey,
     KeyPress,
@@ -168,9 +169,10 @@ def scenario_agents(
             TestModel(), name=f'{prefix}uncaught', capabilities=[ReadMissingInHook(), workspaces(), durability()]
         ),
         computer=Agent(
-            TestModel(call_tools=['computer']),
+            # A grid model: its coordinates are scaled to pixels with `display_size`, read from workflow code.
+            TestModel(call_tools=['computer'], profile=ModelProfile(computer_use_coordinate_grid=1000)),
             name=f'{prefix}computer',
-            capabilities=[ComputerUse(), workspaces(), durability()],
+            capabilities=[ComputerUse(settle_seconds=0), workspaces(), durability()],
         ),
     )
 
@@ -415,9 +417,12 @@ async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
 
 
 async def check_computer(run: Runner, agents: ScenarioAgents) -> None:
-    """The `computer` tool reaches the display from inside a durable unit and returns the screenshot's size."""
+    """The `computer` tool acts and looks from inside a durable unit; a grid model's scaling reads the display size."""
     output = await run('computer', None)
-    assert '"screen_size":[1280,800]' in output, output
+    assert 'Screenshot attached (1280x800).' in output, output[:300]
+    assert agents.provider.actions, 'the tool performed no action on the display'
+    # Scaling grid coordinates needs the run's model, so it runs in workflow code and reads the size through a unit.
+    assert agents.provider.display_size_calls == 1
 
 
 async def check_local(run: Runner, agents: ScenarioAgents) -> None:

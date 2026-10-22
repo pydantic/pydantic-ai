@@ -2093,6 +2093,12 @@ def test_model_json_schema_with_capabilities():
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
                         'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
                         'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'require_approval': {'title': 'Require Approval', 'type': 'boolean'},
+                        'settle_seconds': {'title': 'Settle Seconds', 'type': 'number'},
+                        'keep_screenshots': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'title': 'Keep Screenshots',
+                        },
                     },
                     'title': 'spec_params_ComputerUse',
                     'type': 'object',
