@@ -1604,6 +1604,39 @@ async def test_openrouter_forced_tool_choice_follows_default_thinking(
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == expected_tool_choice
 
 
+async def test_openrouter_thinking_false_on_always_on_route(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """o3 can't stop reasoning, and OpenRouter rejects `effort='none'` for it, so `thinking=False` sends `low`."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('openai/o3', provider=provider)
+
+    response = await model_request(
+        model,
+        [ModelRequest.user_text_prompt('Reply with exactly: OK')],
+        model_settings=OpenRouterModelSettings(thinking=False),
+    )
+    assert response.parts[-1] == TextPart(content='OK')
+    assert request_capture.body()['reasoning'] == snapshot({'effort': 'low'})
+
+
+async def test_openrouter_explicit_forcing_with_thinking_false_on_always_on_route(allow_model_requests: None) -> None:
+    """On a route that can't stop reasoning, `thinking=False` sends the lowest effort, and that reasoning gives way to
+    an explicit forcing `tool_choice` like the model's default reasoning does, rather than raising."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-fable-5', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=OpenRouterModelSettings(thinking=False, tool_choice='required'),
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+    [kwargs] = get_mock_chat_completion_kwargs(mock_client)
+    assert kwargs['tool_choice'] == 'required'
+    assert kwargs['extra_body']['reasoning'] == {'effort': 'low'}
+
+
 @pytest.mark.parametrize(
     ('settings', 'expected_tool_choice'),
     [

@@ -182,7 +182,10 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         return None
 
     if thinking is False:
-        return 'none' if 'none' in supported_efforts else None
+        if 'none' in supported_efforts:
+            return 'none'
+        # A model that can't turn reasoning off (e.g. Grok 4.5, which 400s on `'none'`) reasons as little as it can.
+        thinking = 'minimal'
     if thinking is True:
         # `True` requests reasoning at the model's default level rather than a specific effort.
         # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default

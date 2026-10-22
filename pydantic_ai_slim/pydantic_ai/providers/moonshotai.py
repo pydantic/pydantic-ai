@@ -10,6 +10,7 @@ from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
+    OpenAIReasoningEffort,
 )
 
 try:
@@ -44,6 +45,24 @@ MoonshotAIModelName = Literal[
 ]
 
 
+_REASONING_EFFORTS_BY_PREFIX: dict[str, tuple[OpenAIReasoningEffort, ...]] = {
+    # https://platform.kimi.ai/docs/guide/use-reasoning-effort
+    'kimi-k3': ('low', 'high', 'max'),
+    # Live-verified in https://github.com/pydantic/pydantic-ai/pull/6208: `'none'` is rejected.
+    'kimi-k2.5': ('minimal', 'low', 'medium', 'high'),
+    'kimi-k2.6': ('minimal', 'low', 'medium', 'high'),
+}
+"""The `reasoning_effort` values `api.moonshot.ai` accepts, per model-name prefix. Kimi K2.7 Code has no effort
+knob, so it's left out and `thinking=False` sends nothing for it."""
+
+
+def _reasoning_efforts(model_name: str) -> tuple[OpenAIReasoningEffort, ...] | None:
+    lower_name = model_name.lower()
+    return next(
+        (efforts for prefix, efforts in _REASONING_EFFORTS_BY_PREFIX.items() if lower_name.startswith(prefix)), None
+    )
+
+
 class MoonshotAIProvider(_OpenAICompatibleProvider):
     """Provider for MoonshotAI platform (Kimi models)."""
 
@@ -63,13 +82,16 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = moonshotai_model_profile(model_name)
 
-        # `api.moonshot.ai` rejects `reasoning_effort='none'` (it accepts minimal/low/medium/high),
-        # and reasoning can't be turned off through the unified `thinking` setting (the native off
-        # switch is a `thinking={'type': 'disabled'}` body object we don't send). Mark reasoning as
-        # always-enabled so `thinking=False` omits `reasoning_effort` rather than sending the rejected
-        # `'none'`. This is set here, not in `moonshotai_model_profile`, because that profile is also
-        # routed through OpenRouter/Heroku, whose gateways don't share this endpoint quirk.
+        # `api.moonshot.ai` rejects `reasoning_effort='none'`, and reasoning can't be turned off through
+        # the unified `thinking` setting (the native off switch is a `thinking={'type': 'disabled'}` body
+        # object we don't send). Mark reasoning as always-enabled so `thinking=False` sends the model's
+        # lowest effort rather than the rejected `'none'`. This is set here, not in `moonshotai_model_profile`,
+        # because that profile is also routed through OpenRouter/Heroku, whose gateways don't share this
+        # endpoint quirk.
         is_reasoning = bool(profile and profile.get('supports_thinking'))
+        reasoning_profile = OpenAIModelProfile(thinking_always_enabled=is_reasoning)
+        if is_reasoning and (efforts := _reasoning_efforts(model_name)) is not None:
+            reasoning_profile['openai_supported_reasoning_efforts'] = efforts
 
         # As the MoonshotAI API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.
@@ -84,8 +106,8 @@ class MoonshotAIProvider(_OpenAICompatibleProvider):
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
                 openai_chat_send_back_thinking_parts='field',
-                thinking_always_enabled=is_reasoning,
             ),
+            reasoning_profile,
         )
 
     @overload

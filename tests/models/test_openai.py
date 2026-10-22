@@ -5526,6 +5526,25 @@ async def test_openai_text_verbosity_chat_completions(
     ] == [{'verbosity': 'low'}, {}]
 
 
+async def test_openai_chat_thinking_false_on_always_reasoning_model(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """o4-mini can't stop reasoning and accepts `low` through `high`, so `thinking=False` sends `low` and keeps
+    dropping sampling parameters, since reasoning stays on."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('o4-mini', provider=provider))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        result = await agent.run(
+            'What is the capital of France? Answer in one word.',
+            model_settings=ModelSettings(thinking=False, temperature=0.5),
+        )
+    assert result.output == snapshot('Paris')
+    body = request_capture.body('/chat/completions')
+    assert body['reasoning_effort'] == 'low'
+    assert 'temperature' not in body
+
+
 async def test_openai_gpt_5_2_temperature_allowed_by_default(allow_model_requests: None):
     """GPT-5.2 allows temperature by default (reasoning_effort defaults to 'none')."""
     c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))

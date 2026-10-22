@@ -4,7 +4,9 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.settings import ThinkingLevel
 
 from ..conftest import TestEnv, try_import
 
@@ -97,7 +99,8 @@ def test_moonshotai_model_profile_thinking():
     # replay an existing recording green. A direct profile assertion is what catches it.
     provider = MoonshotAIProvider(api_key='api-key')
 
-    # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.
+    # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none', so
+    # `thinking=False` sends the lowest effort the model accepts (see the test below).
     for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k3'):
         profile = provider.model_profile(reasoning_model)
         assert profile is not None
@@ -113,3 +116,26 @@ def test_moonshotai_model_profile_thinking():
         assert profile.get('supports_thinking', False) is False
         assert profile.get('thinking_always_enabled', False) is False
         assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'thinking', 'expected'),
+    [
+        # Kimi K3 accepts `low`, `high` and `max` (https://platform.kimi.ai/docs/guide/use-reasoning-effort).
+        pytest.param('kimi-k3', False, 'low', id='k3-false'),
+        pytest.param('kimi-k3', True, 'high', id='k3-true'),
+        pytest.param('kimi-k3', 'medium', 'high', id='k3-medium'),
+        # Kimi K2.5 and K2.6 accept `minimal` through `high`, and reject `none`.
+        pytest.param('kimi-k2.6', False, 'minimal', id='k2.6-false'),
+        pytest.param('kimi-k2.5', 'xhigh', 'high', id='k2.5-xhigh'),
+        # Kimi K2.7 Code has no effort knob, so `thinking=False` sends nothing.
+        pytest.param('kimi-k2.7-code', False, None, id='k2.7-code-false'),
+    ],
+)
+def test_moonshotai_thinking_resolves_to_accepted_effort(
+    model_name: str, thinking: ThinkingLevel, expected: str | None
+):
+    """Unit (not VCR; no Moonshot key at hand): the efforts come from Kimi's docs and the live checks in #6208."""
+    model = OpenAIChatModel(model_name, provider=MoonshotAIProvider(api_key='api-key'))
+    effort = model._translate_thinking({}, ModelRequestParameters(thinking=thinking))  # pyright: ignore[reportPrivateUsage]
+    assert (None if effort is openai.omit else effort) == expected

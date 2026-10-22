@@ -365,6 +365,10 @@ levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.g
 `low`. On Google Cloud it rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
 
+`thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
+little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
+and Gemini 2.5 Pro uses its minimum `thinking_budget` of 128 tokens. Neither asks for the thoughts to be returned.
+
 See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings

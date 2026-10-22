@@ -338,7 +338,13 @@ class GroqModel(Model[AsyncGroq]):
                 # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
                 # so no reasoning format is needed.
                 return NOT_GIVEN
-            # Other reasoning models have no true disable; 'hidden' only suppresses reasoning output.
+            if self.profile.get('thinking_always_enabled', False) and not self.profile.get(
+                'groq_supports_graded_reasoning_effort', False
+            ):
+                # An always-on model with no effort knob has nothing to turn down, so nothing is sent.
+                return NOT_GIVEN
+            # Other reasoning models have no true disable: gpt-oss reasons at its lowest `reasoning_effort` (set in
+            # `extra_body`), and 'hidden' keeps the reasoning out of the response.
             return 'hidden'
         if thinking is not None:
             return 'parsed'
@@ -418,7 +424,10 @@ class GroqModel(Model[AsyncGroq]):
             thinking = model_request_parameters.thinking
             if thinking is True:
                 effort = 'medium'
-            elif thinking is not None and thinking is not False:
+            elif thinking is False:
+                # gpt-oss can't turn reasoning off (`'none'` is a 400), so it reasons as little as it can.
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP['minimal']
+            elif thinking is not None:
                 effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
         if effort is not None:
             # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.

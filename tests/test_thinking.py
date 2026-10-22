@@ -134,9 +134,9 @@ class TestPrepareRequestThinkingResolution:
         assert _resolve_thinking(model, thinking=True) is None
 
     def test_thinking_false_with_always_enabled(self):
-        """Cannot disable thinking on always-on models; silently ignored."""
+        """`False` reaches the adapter on always-on models, which sends the least thinking the model accepts."""
         model = _make_model(thinking_always_enabled=True)
-        assert _resolve_thinking(model, thinking=False) is None
+        assert _resolve_thinking(model, thinking=False) is False
 
     def test_thinking_effort_with_always_enabled(self):
         """Effort levels pass through even on always-on models."""
@@ -243,6 +243,51 @@ class TestAnthropicThinkingTranslation:
         params = ModelRequestParameters(thinking=False)
         result = AnthropicModel._translate_thinking(model, {}, params)
         assert result == snapshot({'type': 'disabled'})
+
+    def test_thinking_false_between_tools(self):
+        """thinking=False -> {'type': 'between_tools'} on a model that turns thinking off that way."""
+        model = FunctionModel(
+            _echo,
+            profile=AnthropicModelProfile(
+                supports_thinking=True,
+                anthropic_supports_adaptive_thinking=True,
+                thinking_enabled_by_default=True,
+                anthropic_disables_thinking_with_between_tools=True,
+            ),
+        )
+        params = ModelRequestParameters(thinking=False)
+        result = AnthropicModel._translate_thinking(model, {}, params)
+        assert result == snapshot({'type': 'between_tools'})
+
+    def test_thinking_false_always_on_uses_lowest_effort(self):
+        """thinking=False on a model that can't turn thinking off -> adaptive thinking at `low` effort."""
+        model = _anthropic_model(
+            AnthropicModelProfile(
+                supports_thinking=True,
+                thinking_always_enabled=True,
+                thinking_enabled_by_default=True,
+                anthropic_supports_adaptive_thinking=True,
+                anthropic_supports_effort=True,
+            ),
+        )
+        params = ModelRequestParameters(thinking=False)
+        assert model._translate_thinking({}, params) == snapshot({'type': 'adaptive'})
+        assert model._build_output_config(params, {}) == snapshot({'effort': 'low'})
+
+    def test_thinking_false_always_on_without_effort_sends_nothing(self):
+        """thinking=False on a model that can't turn thinking off and has no effort setting leaves its default."""
+        model = _anthropic_model(
+            AnthropicModelProfile(
+                supports_thinking=True,
+                thinking_always_enabled=True,
+                thinking_enabled_by_default=True,
+                anthropic_supports_adaptive_thinking=True,
+                anthropic_supports_effort=False,
+            ),
+        )
+        params = ModelRequestParameters(thinking=False)
+        assert model._translate_thinking({}, params) is anthropic_omit
+        assert model._build_output_config(params, {}) is None
 
     def test_thinking_none_returns_omit(self, adaptive_model: FunctionModel):
         """thinking=None -> OMIT (not sent to API)."""
@@ -430,6 +475,62 @@ class TestOpenAIChatThinkingTranslation:
         result = OpenAIChatModel._translate_thinking(model, settings, params)
 
         assert result == 'minimal'
+
+    @pytest.mark.parametrize(
+        ('model_name', 'thinking', 'expected'),
+        [
+            # `thinking=False` on a model that can't stop reasoning sends its lowest effort.
+            pytest.param('o3', False, 'low', id='o-series-false'),
+            pytest.param('gpt-5', False, 'minimal', id='gpt-5-false'),
+            pytest.param('gpt-5-pro', False, 'high', id='gpt-5-pro-false'),
+            pytest.param('gpt-5.5-pro', False, 'medium', id='gpt-5.5-pro-false'),
+            pytest.param('gpt-6-astra', False, 'low', id='gpt-6-astra-false'),
+            pytest.param('gpt-5.3-chat-latest', False, 'medium', id='chat-latest-false'),
+            # A model that can turn reasoning off still gets `'none'`.
+            pytest.param('gpt-5.6-sol', False, 'none', id='can-disable-false'),
+            # Other levels resolve to the lowest accepted effort at or above them, else the highest.
+            pytest.param('o3', 'minimal', 'low', id='o-series-minimal'),
+            pytest.param('o3', 'xhigh', 'high', id='o-series-xhigh'),
+            pytest.param('gpt-5-pro', True, 'high', id='gpt-5-pro-true'),
+            pytest.param('gpt-5.5-pro', 'low', 'medium', id='gpt-5.5-pro-low'),
+            pytest.param('gpt-5.5-pro', 'xhigh', 'xhigh', id='gpt-5.5-pro-xhigh'),
+            pytest.param('gpt-6-astra', 'minimal', 'low', id='gpt-6-astra-minimal'),
+        ],
+    )
+    def test_thinking_resolves_to_accepted_effort(self, model_name: str, thinking: ThinkingLevel, expected: str):
+        """Not a VCR test: pins the resolution against each model's accepted efforts, which were verified live."""
+        params = ModelRequestParameters(thinking=thinking)
+        model = FunctionModel(_echo, profile=openai_model_profile(model_name))
+
+        assert OpenAIChatModel._translate_thinking(model, {}, params) == expected
+
+    def test_thinking_false_omitted_without_known_efforts_on_always_on_model(self):
+        """An always-on model whose accepted efforts aren't known (e.g. Qwen3 Thinking on vLLM) keeps its default."""
+        params = ModelRequestParameters(thinking=False)
+        model = FunctionModel(_echo, profile=OpenAIModelProfile(supports_thinking=True, thinking_always_enabled=True))
+
+        assert OpenAIChatModel._translate_thinking(model, {}, params) is openai_omit
+
+    def test_thinking_omitted_without_effort_knob(self):
+        """An empty set of accepted efforts means the model has no effort knob, so no level is sent."""
+        model = FunctionModel(
+            _echo,
+            profile=OpenAIModelProfile(
+                supports_thinking=True, thinking_always_enabled=True, openai_supported_reasoning_efforts=()
+            ),
+        )
+
+        assert OpenAIChatModel._translate_thinking(model, {}, ModelRequestParameters(thinking=False)) is openai_omit
+        assert OpenAIChatModel._translate_thinking(model, {}, ModelRequestParameters(thinking='high')) is openai_omit
+
+    def test_thinking_false_keeps_reasoning_active_on_always_on_model(self):
+        """`thinking=False` on a model that can't stop reasoning still reasons, so it counts as thinking."""
+        params = ModelRequestParameters(thinking=False)
+        always_on = FunctionModel(_echo, profile=openai_model_profile('o3'))
+        can_disable = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
+
+        assert OpenAIChatModel._request_thinks(always_on, {}, params) is True
+        assert OpenAIChatModel._request_thinks(can_disable, {}, params) is False
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -746,6 +847,21 @@ class TestGoogleThinkingTranslation:
         result = GoogleModel._translate_thinking(gemini_25_model, settings, params)
         assert result == snapshot({'thinking_budget': 0})
 
+    def test_thinking_false_gemini_25_pro_uses_min_budget(self):
+        """Gemini 2.5 Pro rejects `thinking_budget=0`, so `thinking=False` sends its minimum budget, without
+        asking for the thoughts back so it stays distinct from `'minimal'`."""
+        model = FunctionModel(_echo, profile=google_model_profile('gemini-2.5-pro'))
+        params = ModelRequestParameters(thinking=False)
+        result = GoogleModel._translate_thinking(model, {}, params)
+        assert result == snapshot({'thinking_budget': 128})
+
+    def test_thinking_false_always_on_gemini_3_uses_lowest_level(self):
+        """Gemini 3.1 Pro can't turn thinking off and rejects `MINIMAL`, so `thinking=False` sends `LOW`."""
+        model = FunctionModel(_echo, profile=google_model_profile('gemini-3.1-pro-preview'))
+        params = ModelRequestParameters(thinking=False)
+        result = GoogleModel._translate_thinking(model, {}, params)
+        assert result == snapshot({'thinking_level': 'LOW'})
+
     def test_thinking_none(self, gemini_3_model: FunctionModel):
         params = ModelRequestParameters(thinking=None)
         settings: ModelSettings = {}
@@ -787,6 +903,20 @@ class TestGroqThinkingTranslation:
 
         model = FunctionModel(_echo)
         result = GroqModel._translate_thinking(model, settings, params, False)
+        assert result == 'hidden'
+
+    def test_thinking_false_always_on_without_effort_sends_nothing(self):
+        """An always-on model with no effort knob (e.g. the legacy `deepseek-r1-distill`) has nothing to turn down."""
+        params = ModelRequestParameters(thinking=False)
+        model = FunctionModel(_echo, profile=groq_model_profile('deepseek-r1-distill-llama-70b'))
+        result = GroqModel._translate_thinking(model, {}, params, False)
+        assert result is groq_NOT_GIVEN
+
+    def test_thinking_false_gpt_oss_hides_reasoning(self):
+        """gpt-oss reasons at its lowest effort for `thinking=False`, with the reasoning kept out of the response."""
+        params = ModelRequestParameters(thinking=False)
+        model = FunctionModel(_echo, profile=groq_model_profile('openai/gpt-oss-120b'))
+        result = GroqModel._translate_thinking(model, {}, params, False)
         assert result == 'hidden'
 
     def test_thinking_none(self):
@@ -970,20 +1100,24 @@ class TestBedrockThinkingTranslation:
         result = model._build_additional_model_request_fields(settings, params, [])
         assert result == {'thinking': {'type': 'disabled'}}
 
-    def test_openai_variant_thinking_false(self):
-        """thinking=False on OpenAI Bedrock variant is a no-op (Bedrock rejects 'none')."""
+    @pytest.mark.parametrize(
+        ('level', 'effort'),
+        [(False, 'low'), ('minimal', 'low'), ('low', 'low'), (True, 'medium'), ('high', 'high'), ('xhigh', 'high')],
+    )
+    def test_openai_variant_effort_map(self, level: ThinkingLevel, effort: str):
+        """gpt-oss accepts only `low`, `medium`, and `high`, so `thinking=False` and `'minimal'` send `low`."""
         model = _bedrock_model(
             BedrockModelProfile(
                 bedrock_thinking_variant='openai',
                 supports_thinking=True,
+                thinking_always_enabled=True,
             )
         )
 
         settings = BedrockModelSettings()
-        params = ModelRequestParameters(thinking=False)
+        params = ModelRequestParameters(thinking=level)
         result = model._build_additional_model_request_fields(settings, params, [])
-        # thinking=False: no reasoning_effort set, returns None
-        assert result is None
+        assert result == {'reasoning_effort': effort}
 
     def test_openai_variant_thinking_high(self):
         model = _bedrock_model(
@@ -1012,7 +1146,7 @@ class TestBedrockThinkingTranslation:
         assert result == {'reasoning_config': 'high'}
 
     def test_qwen_variant_thinking_false(self):
-        """thinking=False on Qwen variant is a no-op (Qwen has no disable mechanism)."""
+        """thinking=False on Qwen sends `reasoning_config='none'`."""
         model = _bedrock_model(
             BedrockModelProfile(
                 bedrock_thinking_variant='qwen',
@@ -1023,8 +1157,7 @@ class TestBedrockThinkingTranslation:
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=False)
         result = model._build_additional_model_request_fields(settings, params, [])
-        # thinking=False on Qwen: no reasoning_config set, returns None (empty dict is falsy)
-        assert result is None
+        assert result == {'reasoning_config': 'none'}
 
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
@@ -1143,6 +1276,48 @@ class TestBedrockThinkingTranslation:
         )
         assert result == {'thinking': {'type': 'disabled'}}
 
+    def test_anthropic_variant_adaptive_thinking_false_between_tools(self):
+        """thinking=False sends `between_tools` on a model that turns thinking off that way."""
+        model = _bedrock_model(
+            merge_profile(
+                BedrockModelProfile(
+                    bedrock_thinking_variant='anthropic',
+                    bedrock_supports_adaptive_thinking=True,
+                    supports_thinking=True,
+                    thinking_enabled_by_default=True,
+                ),
+                AnthropicModelProfile(anthropic_disables_thinking_with_between_tools=True),
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking=False), []
+        )
+        assert result == {'thinking': {'type': 'between_tools'}}
+
+    @pytest.mark.parametrize(
+        ('supports_effort', 'expected'),
+        [(True, {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}), (False, None)],
+    )
+    def test_anthropic_variant_adaptive_thinking_false_always_on(
+        self, supports_effort: bool, expected: dict[str, Any] | None
+    ):
+        """thinking=False on a model that can't turn thinking off sends adaptive thinking at `low` effort, or nothing
+        when the model has no effort setting."""
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='anthropic',
+                bedrock_supports_adaptive_thinking=True,
+                bedrock_supports_effort=supports_effort,
+                supports_thinking=True,
+                thinking_enabled_by_default=True,
+                thinking_always_enabled=True,
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking=False), []
+        )
+        assert result == expected
+
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 class TestOpenRouterThinkingTranslation:
@@ -1170,6 +1345,14 @@ class TestOpenRouterThinkingTranslation:
         extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
         assert extra_body.get('reasoning') == {'effort': 'none'}
 
+    def test_thinking_false_emits_lowest_effort_when_always_enabled(self):
+        """A route that can't stop reasoning gets the lowest effort, without asking for reasoning to be enabled."""
+        settings = OpenRouterModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = _openrouter_settings_to_openai_settings(settings, params, thinking_always_enabled=True)
+        extra_body: dict[str, Any] = result.get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('reasoning') == {'effort': 'low'}
+
     @pytest.mark.parametrize(
         ('model_name', 'expected_always_enabled'),
         [
@@ -1179,20 +1362,21 @@ class TestOpenRouterThinkingTranslation:
             pytest.param('z-ai/glm-4.6', False, id='glm-hybrid'),
             pytest.param('openai/gpt-oss-120b', False, id='gpt-oss-hybrid'),
             pytest.param('anthropic/claude-sonnet-4.5', False, id='claude-hybrid'),
-            # Always-on routes — upstream cannot disable; gate silently drops `thinking=False`,
+            # Grok 3 Mini takes Grok 4.3's efforts, `'none'` included (verified live on xAI).
+            pytest.param('x-ai/grok-3-mini', False, id='grok-3-mini-hybrid'),
+            # Always-on routes — upstream cannot disable, so `thinking=False` sends the lowest effort,
             # matching the same model's direct-route behavior.
             pytest.param('openai/o3', True, id='o3-always-on'),
             pytest.param('openai/gpt-5', True, id='gpt-5-always-on'),
             pytest.param('mistralai/magistral-medium-2509', True, id='magistral-always-on'),
             pytest.param('deepseek/deepseek-r1', True, id='deepseek-r1-always-on'),
-            pytest.param('x-ai/grok-3-mini', True, id='grok-3-mini-always-on'),
         ],
     )
     def test_provider_profile_propagates_thinking_capability(self, model_name: str, expected_always_enabled: bool):
         """OpenRouter's base profile sets `supports_thinking=True` so the gate forwards
         `thinking` to the transformer for every routed model; `thinking_always_enabled`
         propagates from the sub-profile via `merge_profile` so always-on upstream routes
-        silently drop `thinking=False` at the gate — matching their direct-route behavior
+        send their lowest effort for `thinking=False` — matching their direct-route behavior
         per the `ModelProfile.thinking_always_enabled` docstring."""
         profile = OpenRouterProvider.model_profile(model_name)
         assert profile is not None
@@ -1227,6 +1411,20 @@ class TestCerebrasThinkingTranslation:
         result = _cerebras_settings_to_openai_settings(settings, params)
         assert result.get('openai_reasoning_effort') == 'none'
         assert 'extra_body' not in result
+
+    def test_thinking_false_sets_lowest_effort_when_always_enabled(self):
+        """gpt-oss can't turn reasoning off, so `thinking=False` sends its lowest documented effort."""
+        settings = CerebrasModelSettings()
+        params = ModelRequestParameters(thinking=False)
+        result = _cerebras_settings_to_openai_settings(settings, params, thinking_always_enabled=True)
+        assert result.get('openai_reasoning_effort') == 'low'
+
+    def test_thinking_false_keeps_explicit_effort_when_always_enabled(self):
+        """An explicit `openai_reasoning_effort` wins over the lowest effort `thinking=False` would send."""
+        settings: dict[str, Any] = {'openai_reasoning_effort': 'high'}
+        params = ModelRequestParameters(thinking=False)
+        result = _cerebras_settings_to_openai_settings(settings, params, thinking_always_enabled=True)
+        assert result.get('openai_reasoning_effort') == 'high'
 
     def test_thinking_true_omits_reasoning_effort(self):
         settings = CerebrasModelSettings()
@@ -1338,22 +1536,14 @@ class TestXaiThinkingTranslation:
         _, resolved_params = model.prepare_request(settings, params)
         assert resolved_params.thinking is True
 
-    def test_grok_3_mini_profile_drops_thinking_false_via_gate(self):
-        """The `thinking_always_enabled` flag is what enforces the gate drop for grok-3-mini.
-
-        Two instances because `Model.profile` is a `cached_property`."""
-        always_on = XaiModel(
-            'grok-3-mini', provider=XaiProvider(api_key='mock-api-key'), profile=grok_model_profile('grok-3-mini')
+    @pytest.mark.parametrize('model_name', ['grok-3-mini', 'grok-4.5'])
+    def test_thinking_false_reaches_the_adapter(self, model_name: str):
+        """`thinking=False` survives the gate on both a model that can turn reasoning off (grok-3-mini) and
+        one that can't (grok-4.5), where the adapter sends its lowest effort instead."""
+        model = XaiModel(
+            model_name, provider=XaiProvider(api_key='mock-api-key'), profile=grok_model_profile(model_name)
         )
-        _, resolved = always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
-        assert resolved.thinking is None
-
-        non_always_on = XaiModel(
-            'grok-4',
-            provider=XaiProvider(api_key='mock-api-key'),
-            profile=ModelProfile(supports_thinking=True, thinking_always_enabled=False),
-        )
-        _, resolved = non_always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
+        _, resolved = model.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
         assert resolved.thinking is False
 
 
@@ -1508,7 +1698,7 @@ class TestThinkingIntegration:
         assert captured_params[0].thinking == 'high'
 
     async def test_thinking_false_capability_on_always_enabled(self):
-        """Thinking(effort=False) on always-on model -> silently ignored."""
+        """Thinking(effort=False) on always-on model -> passed to the adapter, which maps it to its lowest setting."""
         captured_params: list[ModelRequestParameters] = []
 
         def _capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1522,7 +1712,7 @@ class TestThinkingIntegration:
         agent = Agent(model, capabilities=[Thinking(effort=False)])
         result = await agent.run('test')
         assert result.output == 'done'
-        assert captured_params[0].thinking is None
+        assert captured_params[0].thinking is False
 
     async def test_prepare_request_does_not_mutate_model_settings(self):
         """Regression: prepare_request() must not mutate the original model_settings dict."""
@@ -1718,7 +1908,7 @@ class TestProfileThinkingCapabilities:
         assert profile is not None
         assert isinstance(profile, dict)
         assert profile.get('supports_thinking', False) is True
-        assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'high'})
+        assert profile.get('grok_reasoning_efforts') == frozenset({'none', 'low', 'medium', 'high'})
 
     def test_grok_3_fast_profile_thinking_support(self):
         profile = grok_model_profile('grok-3-fast')
@@ -1739,12 +1929,16 @@ class TestProfileThinkingCapabilities:
         assert profile.get('thinking_always_enabled', False) is True
 
     def test_grok_profile_thinking_always_enabled(self):
-        """grok-3-mini's `reasoning_effort` has no `'none'` value, so the profile
-        is marked always-on and the gate drops `thinking=False`."""
-        profile = grok_model_profile('grok-3-mini')
+        """grok-4.5's `reasoning_effort` has no `'none'` value, so the profile is marked always-on and
+        `thinking=False` sends its lowest effort; grok-3-mini accepts `'none'`, so it isn't."""
+        profile = grok_model_profile('grok-4.5')
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
         assert profile.get('thinking_always_enabled', False) is True
+
+        profile = grok_model_profile('grok-3-mini')
+        assert profile is not None
+        assert profile.get('thinking_always_enabled', False) is False
 
         # grok-4 reasoning models reject `reasoning_effort` outright, so the profile
         # leaves thinking unsupported — guarding against accidental promotion to always-on.
@@ -1764,15 +1958,25 @@ class TestProfileThinkingCapabilities:
         assert profile.get('thinking_always_enabled', False) is True
 
     @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
-    def test_bedrock_qwen_variant_thinking_always_enabled(self):
-        """Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3;
-        marked always-on so the gate drops `thinking=False`."""
+    @pytest.mark.parametrize(
+        ('model_name', 'supports_thinking'),
+        [
+            ('qwen.qwen3-32b-v1:0', True),
+            ('qwen.qwen3-next-80b-a3b', True),
+            ('qwen.qwen3-vl-235b-a22b', True),
+            ('qwen.qwen3-coder-30b-a3b-v1:0', False),
+            ('qwen.qwen3-coder-next', False),
+        ],
+    )
+    def test_bedrock_qwen_variant_thinking_support(self, model_name: str, supports_thinking: bool):
+        """Qwen3 on Bedrock-Converse reasons only when asked to and accepts `reasoning_config='none'`, so it can turn
+        thinking off. Qwen3-Coder returns no reasoning at any level. Verified live."""
         from pydantic_ai.providers.bedrock import BedrockProvider
 
-        profile = BedrockProvider.model_profile('qwen.qwen3-32b-v1:0')
+        profile = BedrockProvider.model_profile(model_name)
         assert profile is not None
-        assert profile.get('supports_thinking', False) is True
-        assert profile.get('thinking_always_enabled', False) is True
+        assert profile.get('supports_thinking', False) is supports_thinking
+        assert profile.get('thinking_always_enabled', False) is False
 
 
 class TestCrossProviderPortability:
@@ -1808,13 +2012,12 @@ class TestCrossProviderPortability:
         _merged, params = model.prepare_request(settings, ModelRequestParameters())
         assert params.thinking is None
 
-    def test_thinking_false_silently_dropped_on_always_enabled_models(self):
-        """`thinking=False` is stripped from params on always-on profiles, codifying
-        the contract advertised at docs/thinking.md ("silently ignored on always-on
-        models"). Non-False values flow through unchanged."""
+    def test_thinking_false_reaches_adapter_on_always_enabled_models(self):
+        """`thinking=False` stays on the params of always-on profiles, so the adapter can send the least thinking
+        the model accepts rather than ignoring it. Other values flow through unchanged."""
         model = _make_model(supports_thinking=True, thinking_always_enabled=True)
         _merged, params = model.prepare_request({'thinking': False}, ModelRequestParameters())
-        assert params.thinking is None
+        assert params.thinking is False
 
         _merged, params = model.prepare_request({'thinking': 'high'}, ModelRequestParameters())
         assert params.thinking == 'high'
@@ -1826,24 +2029,21 @@ class TestCrossProviderPortability:
             'openai/gpt-5',
             'mistralai/magistral-medium-2509',
             'deepseek/deepseek-r1',
-            'x-ai/grok-3-mini',
         ],
     )
-    def test_thinking_false_silently_dropped_on_always_on_openrouter_routes(self, model_name: str):
-        """Aggregator-route consistency: OpenRouter routes to always-on upstream models
-        silently drop `thinking=False` at the gate — same behavior the direct route to
-        the same model would exhibit. `ModelProfile.update()` propagates
-        `thinking_always_enabled=True` from the sub-profile, no aggregator-specific
-        override required."""
-        from pydantic_ai.providers.openrouter import OpenRouterProvider
+    def test_thinking_false_sends_lowest_effort_on_always_on_openrouter_routes(self, model_name: str):
+        """Aggregator-route consistency: OpenRouter routes to always-on upstream models send their lowest
+        effort for `thinking=False`, as the direct route to the same model does, since OpenRouter rejects
+        `effort='none'` on them ("Reasoning is mandatory"). `thinking_always_enabled` propagates from the
+        sub-profile, no aggregator-specific override required."""
+        model = OpenRouterModel(model_name, provider=OpenRouterProvider(api_key='mock-api-key'))
+        settings, _params = model.prepare_request({'thinking': False}, ModelRequestParameters())
+        extra_body: dict[str, Any] = (settings or {}).get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('reasoning') == {'effort': 'low'}
 
-        profile = OpenRouterProvider.model_profile(model_name)
-        assert profile is not None
-        model = FunctionModel(_echo, profile=profile)
-        _merged, params = model.prepare_request({'thinking': False}, ModelRequestParameters())
-        assert params.thinking is None
-        _merged, params = model.prepare_request({'thinking': 'high'}, ModelRequestParameters())
-        assert params.thinking == 'high'
+        settings, _params = model.prepare_request({'thinking': 'high'}, ModelRequestParameters())
+        extra_body = (settings or {}).get('extra_body') or {}  # type: ignore[assignment]
+        assert extra_body.get('reasoning') == {'effort': 'high', 'enabled': True}
 
 
 class TestPrepareRequestNoMutationDetailed:

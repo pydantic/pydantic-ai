@@ -81,7 +81,7 @@ from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -4070,17 +4070,18 @@ async def test_bedrock_thinking_true_openai_variant(
     assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'medium'}
 
 
-async def test_bedrock_thinking_false_openai_variant_silent_drop(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+@pytest.mark.parametrize('thinking', [False, 'minimal'])
+async def test_bedrock_thinking_openai_variant_lowest_effort(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette, thinking: ThinkingLevel
 ) -> None:
-    """`thinking=False` on gpt-oss is silently dropped — Converse rejects
-    `reasoning_effort='none'`, so the profile is always-on."""
+    """`thinking=False` and `'minimal'` on gpt-oss send `reasoning_effort='low'`: Converse rejects `'none'` as
+    unsupported and `'minimal'` as invalid, so `low` is the least reasoning gpt-oss accepts."""
     model = BedrockConverseModel('openai.gpt-oss-120b-1:0', provider=bedrock_provider)
-    agent = Agent(model, model_settings=ModelSettings(thinking=False))
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
     await agent.run('Reply with the single word: ok')
 
     sent = single_request_body(vcr)
-    assert 'reasoning_effort' not in sent.get('additionalModelRequestFields', {})
+    assert sent['additionalModelRequestFields'] == {'reasoning_effort': 'low'}
 
 
 async def test_bedrock_thinking_high_qwen_variant(
@@ -4102,17 +4103,17 @@ async def test_bedrock_thinking_high_qwen_variant(
     assert any(isinstance(p, ThinkingPart) for p in result.response.parts)
 
 
-async def test_bedrock_thinking_false_qwen_variant_silent_drop(
+async def test_bedrock_thinking_false_qwen_variant(
     allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
 ) -> None:
-    """`thinking=False` on qwen3 is silently dropped — Converse exposes only
-    `reasoning_config ∈ {low, high}` with no disable, so the profile is always-on."""
+    """`thinking=False` on qwen3 sends `reasoning_config='none'`, and the response carries no reasoning."""
     model = BedrockConverseModel('qwen.qwen3-32b-v1:0', provider=bedrock_provider)
     agent = Agent(model, model_settings=ModelSettings(thinking=False))
-    await agent.run('Reply with the single word: ok')
+    result = await agent.run('Reply with the single word: ok')
 
     sent = single_request_body(vcr)
-    assert 'reasoning_config' not in sent.get('additionalModelRequestFields', {})
+    assert sent['additionalModelRequestFields'] == {'reasoning_config': 'none'}
+    assert not any(isinstance(p, ThinkingPart) for p in result.response.parts)
 
 
 async def test_bedrock_thinking_true_qwen_variant(
@@ -8178,9 +8179,24 @@ async def test_bedrock_agent_output_tool_with_thinking_is_unforced(
     [
         # Opus 5 thinks by default but can turn it off, and then the output tool is forced as usual.
         pytest.param('us.anthropic.claude-opus-5', {'thinking': {'type': 'disabled'}}, {'any': {}}, id='opus-5'),
-        # Fable 5 and Opus 5.5 can't turn thinking off, so `thinking=False` is ignored and forcing gives way.
-        pytest.param('us.anthropic.claude-fable-5', None, {'auto': {}}, id='fable-5'),
-        pytest.param('us.anthropic.claude-opus-5-5', None, {'auto': {}}, id='opus-5-5'),
+        # Sonnet 5.5 turns thinking off with `between_tools`, but rejects a forced choice.
+        pytest.param(
+            'global.anthropic.claude-sonnet-5-5', {'thinking': {'type': 'between_tools'}}, {'auto': {}}, id='sonnet-5-5'
+        ),
+        # Fable 5 and Opus 5.5 can't turn thinking off, so `thinking=False` thinks at the lowest effort and forcing
+        # gives way.
+        pytest.param(
+            'us.anthropic.claude-fable-5',
+            {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+            {'auto': {}},
+            id='fable-5',
+        ),
+        pytest.param(
+            'us.anthropic.claude-opus-5-5',
+            {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+            {'auto': {}},
+            id='opus-5-5',
+        ),
     ],
 )
 async def test_bedrock_thinking_false_on_models_that_think_by_default(
@@ -8191,8 +8207,9 @@ async def test_bedrock_thinking_false_on_models_that_think_by_default(
     expected_fields: dict[str, Any] | None,
     expected_tool_choice: dict[str, Any],
 ) -> None:
-    """`thinking=False` sends `disabled` where omitting `thinking` would leave it on. Mocked because the payload is
-    the claim, and restricted-access models can't all be recorded here."""
+    """`thinking=False` turns thinking off where omitting `thinking` would leave it on, or asks for the least thinking
+    where it can't be turned off. Mocked because the payload is the claim, and restricted-access models can't all be
+    recorded here; `test_bedrock_claude_thinking_false` records Opus 5.5 and Sonnet 5.5."""
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     stream_bedrock_converse_mock(mocker, model.client)
     converse = mocker.patch.object(
@@ -8217,6 +8234,33 @@ async def test_bedrock_thinking_false_on_models_that_think_by_default(
     assert result.output == 42
     assert converse.call_args.kwargs.get('additionalModelRequestFields') == expected_fields
     assert converse.call_args.kwargs['toolConfig']['toolChoice'] == expected_tool_choice
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected_fields'),
+    [
+        pytest.param(
+            'us.anthropic.claude-opus-5-5',
+            {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}},
+            id='opus-5-5',
+        ),
+        pytest.param('global.anthropic.claude-sonnet-5-5', {'thinking': {'type': 'between_tools'}}, id='sonnet-5-5'),
+    ],
+)
+async def test_bedrock_claude_thinking_false(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    model_name: str,
+    expected_fields: dict[str, Any],
+) -> None:
+    """Bedrock accepts what `thinking=False` sends on Claude models that reject `{'type': 'disabled'}`: the lowest
+    effort on Opus 5.5, which can't turn thinking off, and `between_tools` on Sonnet 5.5."""
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    result = await Agent(model).run('What is 2+2?', model_settings={'thinking': False})
+
+    assert '4' in result.output
+    assert single_request_body(vcr)['additionalModelRequestFields'] == expected_fields
 
 
 class _CityInfo(BaseModel):

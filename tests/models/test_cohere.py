@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import httpx
 import pytest
+from cassetter import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -35,10 +36,13 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 
 with try_import() as imports_successful:
@@ -731,6 +735,49 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
             ),
         ]
     )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.parametrize(
+    ('thinking', 'expected_thinking', 'expect_thinking_part'),
+    [
+        pytest.param(False, {'type': 'disabled'}, False, id='false'),
+        pytest.param(True, {'type': 'enabled'}, True, id='true'),
+        pytest.param('minimal', {'type': 'enabled', 'token_budget': 512}, True, id='minimal'),
+        pytest.param('xhigh', {'type': 'enabled', 'token_budget': 31000}, True, id='xhigh'),
+    ],
+)
+async def test_cohere_unified_thinking(
+    allow_model_requests: None,
+    co_api_key: str,
+    vcr: Cassette,
+    thinking: ThinkingLevel,
+    expected_thinking: dict[str, Any],
+    expect_thinking_part: bool,
+):
+    """The unified `thinking` setting maps to Cohere's `thinking` parameter: `False` turns reasoning off, and an
+    effort level caps it at a `token_budget`."""
+    model = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(model, model_settings=ModelSettings(thinking=thinking))
+
+    result = await agent.run('What is 2+2? Reply with just the number.')
+
+    assert '4' in result.output
+    assert single_request_body(vcr)['thinking'] == expected_thinking
+    assert any(isinstance(part, ThinkingPart) for part in result.response.parts) is expect_thinking_part
+
+
+async def test_cohere_thinking_false_on_always_on_profile_uses_smallest_budget(allow_model_requests: None):
+    """A profile that marks thinking always-on gets the smallest budget for `thinking=False` instead of `disabled`."""
+    model = CohereModel(
+        'command-a-reasoning-08-2025',
+        provider=CohereProvider(api_key='foobar'),
+        profile=ModelProfile(supports_thinking=True, thinking_always_enabled=True),
+    )
+    assert model._translate_thinking(ModelRequestParameters(thinking=False)) == snapshot(  # pyright: ignore[reportPrivateUsage]
+        cohere.Thinking(type='enabled', token_budget=512)
+    )
+    assert model._translate_thinking(ModelRequestParameters()) is None  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.vcr()

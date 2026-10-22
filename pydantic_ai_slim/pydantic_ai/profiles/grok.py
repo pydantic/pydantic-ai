@@ -38,6 +38,11 @@ _GROK_43_REASONING_MODELS = frozenset(
         'grok-3',
     )
 )
+# Grok 3 Mini takes Grok 4.3's `reasoning_effort` values, including `none`, though xAI's retirement guide
+# doesn't list it: verified live 2026-10-22, `grok-3-mini` and `grok-3-mini-fast` accept all four, with no
+# reasoning tokens for `none`. They stay out of `_GROK_43_REASONING_MODELS`, which also grants builtin
+# tools. Other `grok-3-mini` ids keep the `low`/`high` set it documented.
+_GROK_3_MINI_43_REASONING_MODELS = frozenset(('grok-3-mini', 'grok-3-mini-fast'))
 _GROK_45_REASONING_MODELS = (
     frozenset(
         (
@@ -91,7 +96,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         or model_name in _GROK_43_REASONING_MODELS
     )
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
-    if model_name in _GROK_43_REASONING_MODELS:
+    if model_name in _GROK_43_REASONING_MODELS or model_name in _GROK_3_MINI_43_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_43_REASONING_EFFORTS
     elif model_name in _GROK_45_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_45_REASONING_EFFORTS
@@ -109,7 +114,7 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=bool(grok_reasoning_efforts),
-        # A reasoning model whose `reasoning_effort` set lacks `'none'` (e.g. grok-3-mini) reasons by
+        # A reasoning model whose `reasoning_effort` set lacks `'none'` (e.g. Grok 4.5) reasons by
         # default and can't be disabled, so it's always-on; Grok 4.3 supports `'none'`, so it's not.
         thinking_always_enabled=bool(grok_reasoning_efforts) and 'none' not in grok_reasoning_efforts,
         grok_supports_builtin_tools=grok_supports_builtin_tools,

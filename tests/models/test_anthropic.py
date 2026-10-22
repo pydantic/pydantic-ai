@@ -5559,19 +5559,67 @@ async def test_anthropic_opus_5_5_features(allow_model_requests: None, anthropic
     assert any(isinstance(p, TextPart) for p in response.parts)
 
 
-async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+@pytest.mark.parametrize('model_name', ['claude-opus-5-5', 'claude-fable-5', 'claude-fable-5-1'])
+async def test_anthropic_thinking_false_uses_lowest_effort_where_thinking_cant_be_turned_off(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, model_name: str
 ):
-    """Claude Opus 5.5 rejects `thinking: {'type': 'disabled'}`, and unified `thinking=False` never sends it.
-
-    With no `thinking` field the model thinks adaptively at its default effort, so the request succeeds.
+    """Claude Opus 5.5 and Fable reject `thinking: {'type': 'disabled'}` and `{'type': 'between_tools'}`, so unified
+    `thinking=False` asks for the least thinking they accept: adaptive thinking at `low` effort.
     """
-    m = AnthropicModel('claude-opus-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, model_settings={'thinking': False})
 
     result = await agent.run('What is 2+2?')
-    assert result.output == snapshot('2 + 2 = **4**')
-    assert 'thinking' not in single_request_body(vcr)
+    assert '4' in result.output
+    request_body = single_request_body(vcr)
+    assert {k: request_body.get(k) for k in ('thinking', 'output_config')} == snapshot(
+        {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'low'}}
+    )
+
+
+async def test_anthropic_sonnet_5_5_thinking_false_sends_between_tools(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+):
+    """Claude Sonnet 5.5 rejects `thinking: {'type': 'disabled'}`, so unified `thinking=False` sends `between_tools`,
+    which turns thinking off before the response."""
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings={'thinking': False})
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert not any(isinstance(p, ThinkingPart) for p in response.parts)
+    request_body = single_request_body(vcr)
+    assert request_body['thinking'] == snapshot({'type': 'between_tools'})
+    assert 'output_config' not in request_body
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param(AnthropicModelSettings(thinking=False, anthropic_effort='xhigh'), id='unified'),
+        pytest.param(
+            AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'}, anthropic_effort='max'),
+            id='anthropic_thinking',
+        ),
+    ],
+)
+async def test_anthropic_sonnet_5_5_rejects_top_effort_when_thinking_disabled(
+    allow_model_requests: None, settings: AnthropicModelSettings
+):
+    """Claude Sonnet 5.5 caps effort at `high` with `between_tools`, like Opus 5 with `disabled`.
+
+    Verified live: `claude-sonnet-5-5` returns a 400 (`output_config.effort 'xhigh' is not supported when thinking
+    is disabled on this model`) for `xhigh` and `max` with `between_tools`, and accepts `low` to `high`.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Hello!', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
+    )
+    model = AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings
+    )
+
+    with pytest.raises(UserError, match=r"while thinking is disabled .*'between_tools'"):
+        await Agent(model).run('Hello')
 
 
 async def test_anthropic_sonnet_5_5_between_tools(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
@@ -5739,8 +5787,10 @@ async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_request
     assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
 
 
-async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None):
-    """Verify that thinking=False does not send a thinking parameter at all."""
+@pytest.mark.parametrize('model_name', ['claude-opus-4-6', 'claude-mythos-preview'])
+async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests: None, model_name: str):
+    """Verify that thinking=False sends no thinking parameter on a model that doesn't think by default, or on one
+    that can't turn thinking off and has no effort setting to lower (Claude Mythos Preview)."""
     from anthropic._types import omit as OMIT
 
     responses = [
@@ -5750,14 +5800,14 @@ async def test_anthropic_unified_thinking_false_omits_param(allow_model_requests
         ),
     ]
     mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=ModelSettings(thinking=False))
 
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    # thinking=False on always-thinking model is silently ignored — thinking param is OMIT
     assert kwargs.get('thinking') is OMIT
+    assert kwargs.get('output_config') is OMIT
 
 
 @pytest.mark.parametrize('model_name', ['claude-opus-4-7', 'claude-opus-4-8'])
