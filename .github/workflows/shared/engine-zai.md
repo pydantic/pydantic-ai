@@ -63,6 +63,11 @@ engine:
     PYDANTIC_AI_TASK_ID: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
     # An outer retry repeats the task and can duplicate investigation or output.
     GH_AW_HARNESS_MAX_RETRIES: "0"
+  # One agent run at a time per workflow, on the shared Z.AI account. gh-aw applies this
+  # group by default, but drops it for a workflow with `pull_request*` triggers.
+  concurrency:
+    group: "gh-aw-pydantic-ai-${{ github.workflow }}"
+    queue: max
 safe-outputs:
   threat-detection:
     # Detection has an independent budget and uses the same verified model pricing.

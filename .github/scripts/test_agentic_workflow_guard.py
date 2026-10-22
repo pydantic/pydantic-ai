@@ -31,6 +31,7 @@ from agentic_workflow_guard import (
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
     check_compiler_versions,
+    check_daily_aic_guardrail,
     check_dangling_needs,
     check_job_timeout_env,
     check_lock_regenerated,
@@ -83,9 +84,10 @@ def test_ci_review_deduplicates_both_footer_formats(body: str | None, commit_id:
     )
     assert query is not None
     caller = gate['env']['REVIEW_CALL_ID'].replace('${{ github.repository }}', 'pydantic/pydantic-ai')
-    reviews: list[list[dict[str, object]]] = [
-        [{'commit_id': commit_id, 'body': body, 'user': {'login': 'github-actions[bot]'}}],
-        [{'commit_id': 'current-head', 'body': 'Another review from the same bot.'}],
+    # `$REVIEWS`: every page of reviews, already flattened by `jq 'add // []'`.
+    reviews: list[dict[str, object]] = [
+        {'commit_id': commit_id, 'body': body, 'user': {'login': 'github-actions[bot]'}},
+        {'commit_id': 'current-head', 'body': 'Another review from the same bot.'},
     ]
     # Exercise the compiled jq program with its production interpreter.
     result = subprocess.run(
@@ -1089,6 +1091,98 @@ jobs:
     )
 
     assert check_ai_credits_accounting(lock) == []
+
+
+# --- daily AI-credits guardrail (the artifact scan that drained `GITHUB_TOKEN`) -
+
+
+def test_daily_aic_guardrail_rejects_the_compiled_default(tmp_path: Path):
+    """The shape every lock carried before `max-daily-ai-credits: -1`, as gh-aw v0.86 compiles it."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    env:
+      GH_AW_MAX_DAILY_AI_CREDITS: ${{ vars.GH_AW_DEFAULT_MAX_DAILY_AI_CREDITS || '5000' }}
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_daily_aic_workflow_guardrail.cjs');
+            await main();
+""",
+    )
+
+    violations = check_daily_aic_guardrail(lock)
+
+    assert [v.check for v in violations] == ['daily-aic-guardrail']
+    assert '`max-daily-ai-credits: -1`' in violations[0].message
+
+
+def test_daily_aic_guardrail_rejects_the_renamed_step_after_a_compiler_upgrade(tmp_path: Path):
+    """gh-aw v0.92.6 compiles the step under a new id; it still runs the same guardrail script."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-ai-credits-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const path = require('path');
+            const actionsDir = path.join(process.env.RUNNER_TEMP, 'gh-aw', 'actions');
+            const { main } = require(path.join(actionsDir, 'check_daily_aic_workflow_guardrail.cjs'));
+            await main();
+""",
+    )
+
+    assert [v.check for v in check_daily_aic_guardrail(lock)] == ['daily-aic-guardrail']
+
+
+def test_daily_aic_guardrail_rejects_a_disable_set_only_in_an_import(tmp_path: Path):
+    """An imported `-1` drops the threshold env but still compiles the step."""
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check daily workflow token guardrail
+        id: daily-effective-workflow-guardrail
+        if: ${{ env.GH_AW_MAX_DAILY_AI_CREDITS != '' }}
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_daily_aic_workflow_guardrail.cjs');
+""",
+    )
+
+    assert [v.check for v in check_daily_aic_guardrail(lock)] == ['daily-aic-guardrail']
+
+
+def test_daily_aic_guardrail_accepts_a_lock_without_the_step(tmp_path: Path):
+    lock = _write(
+        tmp_path / 'w.lock.yml',
+        """
+jobs:
+  activation:
+    steps:
+      - name: Check workflow lock file
+        id: check-lock-file
+        with:
+          script: |
+            const { main } = require('${{ runner.temp }}/gh-aw/actions/check_workflow_timestamp_api.cjs');
+""",
+    )
+
+    assert check_daily_aic_guardrail(lock) == []
 
 
 def test_compiler_version_compatibility_rejects_a_blocked_version(tmp_path: Path):

@@ -5,9 +5,13 @@ from dataclasses import dataclass, field
 from types import EllipsisType
 from typing import Literal, assert_never, cast
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+)
 
-from .. import ModelHTTPError, usage
+from .. import _model_errors, usage
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
@@ -18,19 +22,19 @@ from ..messages import (
     CompactionPart,
     FilePart,
     FinishReason,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
-    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -42,8 +46,11 @@ from ..tools import ToolDefinition
 from . import (
     Model,
     ModelRequestParameters,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
-    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
@@ -125,6 +132,9 @@ class CohereModel(Model[AsyncClientV2]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    # Cohere's chat API takes text only.
+    _unsupported_file_inputs = frozenset({'image', 'document', 'audio', 'video'})
 
     unsupported_settings = frozenset(
         {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
@@ -225,13 +235,21 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
+                message = e.body.get('message') if _is_str_dict(e.body) else None
+                category = _model_errors.http_status_category(status_code, message)
+                # Cohere reports a context window overflow as a 400 identifiable only by its message, like
+                # `too many tokens: size limit exceeded by N tokens`.
+                if status_code == 400 and isinstance(message, str) and message.lower().startswith('too many tokens'):
+                    category = ModelContextWindowExceededError
+                raise ModelHTTPError.for_category(
+                    category, status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         except httpx.TransportError as e:
             # `cohere` doesn't wrap connection errors and timeouts in its own exceptions.
-            raise ModelAPIError(model_name=self.model_name, message=transport_error_message(e)) from e
+            timeout = isinstance(e, httpx.TimeoutException)
+            message = transport_error_message(e)
+            raise _model_errors.connection_error(self.model_name, message, e, timeout=timeout) from e
 
     def _get_tool_choice(
         self,
@@ -385,7 +403,7 @@ class CohereModel(Model[AsyncClientV2]):
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
-        for part in message.parts:
+        for part in _sendable_request_parts(message.parts):
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
@@ -407,17 +425,10 @@ class CohereModel(Model[AsyncClientV2]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=part.model_response_str(),
                 )
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    yield UserChatMessageV2(role='user', content=part.model_response())
-                else:
-                    yield ToolChatMessageV2(
-                        role='tool',
-                        tool_call_id=_guard_tool_call_id(t=part),
-                        content=part.model_response(),
-                    )
-            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
             elif isinstance(part, SpeechPart):  # pragma: no cover
                 # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
                 raise _unconverted_speech_part_error()

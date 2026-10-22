@@ -32,6 +32,9 @@ budget before anyone noticed, documented in #6766:
 - `ai_credits_accounting` — provider overlays use USD per token, unlike default
   pricing's USD per million. Confusing those units exhausted the fixed firewall
   credit cap on one request. Only the verified GLM overlay is allowed here.
+- `daily_aic_guardrail` — gh-aw's daily AI-credits guardrail listed the artifacts of every
+  run from the past 24h on each activation, about 700 REST calls per CI Review activation,
+  and exhausted the repo's `GITHUB_TOKEN` rate limit to total credits that were always 0.
 - `compiler_version_compatibility` — the compiler version in every generated lock
   must not appear in gh-aw's live blocked-version policy.
 - `lock_regenerated` — `.github/workflows/AGENTS.md` requires a recompiled
@@ -108,6 +111,11 @@ SANDBOX_PATH = re.compile(rf'{re.escape(SANDBOX_PREFIX)}[^\s`\'"()\[\]<>]*')
 # the version may be quoted, and the capture must not swallow those quotes: a pin that
 # only differs from the compiled version by a pair of them is the same pin.
 AWF_INSTALL_VERSION = re.compile(r'install_awf_binary\.sh"?\s+"?([^"\s]+)')
+
+# The script gh-aw's daily AI-credits guardrail step runs. Match it rather than the step id,
+# which changes across releases: `daily-effective-workflow-guardrail` in v0.86.2,
+# `daily-ai-credits-workflow-guardrail` in v0.92.6.
+DAILY_AIC_GUARDRAIL_SCRIPT = 'check_daily_aic_workflow_guardrail.cjs'
 
 NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
@@ -686,6 +694,29 @@ def check_ai_credits_accounting(lock: Path) -> list[Violation]:
         for proxy in [_as_mapping(config.get('apiProxy'))]
         if (proxy.get('providers') is not None and proxy.get('providers') != expected)
         or (proxy.get('defaultAiCreditsPricing') is not None and proxy.get('defaultAiCreditsPricing') != fallback)
+    ]
+
+
+def check_daily_aic_guardrail(lock: Path) -> list[Violation]:
+    """No lock may compile gh-aw's daily AI-credits guardrail.
+
+    With a threshold set, the guardrail spends hundreds of REST calls per activation on
+    the repo's `GITHUB_TOKEN` to total AI credits, which do not measure the Z.AI quota.
+    gh-aw drops it only for `max-daily-ai-credits: -1` in the workflow's own frontmatter.
+    An imported `-1` only skips the scan at run time and still compiles the guardrail
+    with its conclusion-job cache steps, so this reads the lock.
+    """
+    if DAILY_AIC_GUARDRAIL_SCRIPT not in lock.read_text(encoding='utf-8'):
+        return []
+    return [
+        Violation(
+            str(lock),
+            'daily-aic-guardrail',
+            "the lock compiles gh-aw's daily AI-credits guardrail. With a threshold set, every activation "
+            "lists each recent run's artifacts and exhausts the `GITHUB_TOKEN` rate limit. With `-1` only "
+            'in an import, that scan is skipped but its conclusion-job cache steps still run whenever the conclusion job runs. '
+            "Set `max-daily-ai-credits: -1` in the source's own frontmatter and recompile.",
+        )
     ]
 
 
@@ -1426,6 +1457,7 @@ def run_checks(
         violations += check_compiled_runner_contract(lock)
         violations += check_awf_binary_version(lock)
         violations += check_ai_credits_accounting(lock)
+        violations += check_daily_aic_guardrail(lock)
     for source in sources:
         violations += check_safe_output_job_max(source)
         violations += check_timeout_declared(source)
