@@ -349,11 +349,18 @@ async def test_a_model_selected_later_without_image_input_is_refused_before_its_
 
 
 @pytest.mark.parametrize(
-    'actions', [[{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}]], ids=['act', 'look']
+    'actions, profile',
+    [
+        ([{'type': 'click', 'x': 1, 'y': 1}], ModelProfile()),
+        ([{'type': 'screenshot'}], ModelProfile()),
+        ([{'type': 'click', 'x': 1, 'y': 1}], ModelProfile(computer_use_coordinate_grid=1000)),
+    ],
+    ids=['act', 'look', 'size-on-a-grid'],
 )
-async def test_an_environment_that_is_gone_ends_the_run(actions: list[dict[str, Any]]) -> None:
+async def test_an_environment_that_is_gone_ends_the_run(actions: list[dict[str, Any]], profile: ModelProfile) -> None:
     provider = InMemoryProvider()
-    agent = Agent(_scripted(actions), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
+    model = _scripted(actions, profile=profile)
+    agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
     with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
         await agent.run('Go.', workspace=WorkspaceRef(provider='fake', id='expired'))
 
