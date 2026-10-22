@@ -42,8 +42,8 @@ A [`Citation`][pydantic_ai.messages.Citation] has one or more `sources` and an o
   providers, such as Google, give that range. Others, such as Anthropic, give no position in the answer: they split it
   into text parts and cite whole parts, so the anchor covers the whole part and is only as narrow as the provider's
   split.
-- A [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] selects a citation marker, such as `[1]`, that
-  the model wrote into its answer.
+- A [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] selects a citation marker, such as `[1]` or a
+  link, that the model wrote into its answer.
 - A citation without an anchor belongs to the text part, but its position in the text is unknown.
 
 ```python {title="render_citations.py"}
@@ -91,7 +91,7 @@ from pydantic_ai import (
     WebCitationSource,
 )
 
-# Google and Anthropic select the supported text. Google lists both sources for the selected text.
+# Google selects the supported text, and here lists both sources for it. Anthropic's anchor covers the whole part.
 TextPart(
     'Pydantic validates data.',
     citations=[
@@ -102,13 +102,13 @@ TextPart(
     ],
 )
 
-# OpenAI selects the citation marker the model wrote.
+# OpenAI selects the link the model wrote.
 TextPart(
-    'Pydantic validates data. [1]',
+    'Pydantic validates data. ([example.com](https://example.com))',
     citations=[
         Citation(
             sources=[WebCitationSource('https://example.com')],
-            anchor=MarkerCitationAnchor(start=25, end=28),
+            anchor=MarkerCitationAnchor(start=25, end=61),
         )
     ],
 )

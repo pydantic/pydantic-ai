@@ -457,6 +457,7 @@ async def test_web_citations(
     openai_api_key: str,
     request: pytest.FixtureRequest,
 ) -> None:
+    """Web search and fetch answers carry web citations with their source domains, excerpt counts and anchored text."""
     if not WEB_PROVIDER_AVAILABLE[case.provider]():
         pytest.skip(f'{case.provider} dependencies not installed')
 
@@ -546,6 +547,7 @@ async def test_document_citations(
     anthropic_api_key: str,
     document_content: BinaryContent,
 ) -> None:
+    """Answers about a text or PDF document carry document citations with the cited excerpt and its anchor."""
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
