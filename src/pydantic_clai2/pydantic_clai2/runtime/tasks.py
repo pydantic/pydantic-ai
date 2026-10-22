@@ -245,7 +245,7 @@ class Tasks:
         self.listening = listening
         self.send_input = send_input
         self.prompt_task = prompt_task
-        self._prompts: dict[str, asyncio.Task[None]] = {}
+        self._prompts: dict[str, asyncio.Task[Exception | None]] = {}
         """The runs `prompt` started, by task ID: nothing else waits for these tasks."""
         self._starting: dict[str, asyncio.Event] = {}
         self.sink: Callable[[AgentStreamEvent], Awaitable[None]] | None = None
@@ -289,7 +289,7 @@ class Tasks:
     async def deliver(self, update: DelegationTaskEvent) -> None:
         """Tell plugins, wake the prompt, and show lifecycle rows for a task of the active conversation."""
         record, event = update.task, update.event
-        if record.status == 'running' and (starting := self._starting.get(record.id)) is not None:
+        if record.status == 'running' and (starting := self._starting.pop(record.id, None)) is not None:
             starting.set()
         # It runs for every event of the child's stream, so build nothing that no plugin reads.
         if self.fire is not None and self.listening():
@@ -482,26 +482,22 @@ class Tasks:
         try:
             # Prompting it is the user's leave to resume it, as asking the agent to is.
             await self.owner.allow_resume(record.id)
-            run = self._prompts[record.id] = asyncio.create_task(
-                self._run_prompt(self.prompt_task, record, text, starting), name=f'clai2-task-prompt-{record.id}'
-            )
-            started = asyncio.create_task(starting.wait())
-            try:
-                await asyncio.wait((run, started), return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                started.cancel()
-                await asyncio.gather(started, return_exceptions=True)
-        finally:
+        except BaseException:
             del self._starting[record.id]
-        if starting.is_set():
-            return
-        try:
-            await run
-        except Exception:
-            # It never ran: the user's stop still holds.
-            record.user_stopped = stopped
-            await self.owner.save(record)
             raise
+        # From here the run settles the prompt, also once this caller is cancelled, as a dropped request is.
+        run = self._prompts[record.id] = asyncio.create_task(
+            self._run_prompt(self.prompt_task, record, text, starting, stopped=stopped),
+            name=f'clai2-task-prompt-{record.id}',
+        )
+        started = asyncio.create_task(starting.wait())
+        try:
+            await asyncio.wait((run, started), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            started.cancel()
+            await asyncio.gather(started, return_exceptions=True)
+        if not starting.is_set() and (error := run.result()) is not None:
+            raise error
 
     async def _run_prompt(
         self,
@@ -509,18 +505,29 @@ class Tasks:
         record: DelegationTask,
         text: str,
         starting: asyncio.Event,
-    ) -> None:
-        """Prompt `record`, then forget this run; a failure after its task started has no caller left to hear it."""
+        *,
+        stopped: bool,
+    ) -> Exception | None:
+        """Prompt `record`, then forget this run; the failure that kept its task from starting, for `prompt`.
+
+        `stopped` is the user's stop from before `allow_resume` lifted it, which a task that never ran keeps.
+        A failure after the task started has no caller left to hear it, so it is logged.
+        """
         try:
             await prompt_task(record, text)
-        except Exception:
+        except Exception as error:
             if not starting.is_set():
-                raise
+                record.user_stopped = stopped
+                await self.owner.save(record)
+                return error
             logging.getLogger(__name__).exception('Prompting task %s failed', record.id)
         finally:
+            if self._starting.get(record.id) is starting:
+                del self._starting[record.id]
             # The task may have been prompted again meanwhile, by a run that is still going.
             if self._prompts.get(record.id) is asyncio.current_task():
                 del self._prompts[record.id]
+        return None
 
     async def stop_prompts(self) -> None:
         """Stop the runs `prompt` started, which stops their tasks, before this session closes."""

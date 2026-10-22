@@ -1,6 +1,7 @@
 """`host.tasks`, the `TaskCatalog` over `/tasks`, and the `on_task_event` moment."""
 
 import asyncio
+import gc
 import io
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -364,6 +365,48 @@ async def test_a_run_prompted_again_is_not_forgotten_by_the_one_before() -> None
         ui.background(record.id)  # Still the second run's.
     second.set()
     await settled(ui, record, [second_run])
+
+
+async def test_a_prompt_whose_caller_is_cancelled_still_restores_a_stop_it_never_lifted(tmp_path: Path) -> None:
+    """Its run outlives a cancelled caller, as a web request the browser drops, and settles the task alone."""
+    blocked, fail = asyncio.Event(), asyncio.Event()
+    runs: list[asyncio.Task[object]] = []
+    unretrieved: list[dict[str, object]] = []
+
+    async def prompt_task(record: DelegationTask, text: str) -> str:
+        this_run(runs)
+        blocked.set()
+        await fail.wait()
+        raise ValueError('no delegate tool')
+
+    ui = Tasks(
+        console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=tmp_path, prompt_task=prompt_task
+    )
+    record = finished(ui)
+    record.user_stopped = True
+    loop = asyncio.get_running_loop()
+    handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda loop, context: unretrieved.append(context))
+    try:
+        caller = asyncio.create_task(ui.prompt(record.id, 'hello'))
+        await blocked.wait()
+        assert not record.user_stopped, 'prompting lifted the stop'
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(ValueError, match='starting from a prompt'):
+            await ui.prompt(record.id, 'not while the first one starts')
+        fail.set()
+        await asyncio.wait(runs)
+        del runs[:], caller
+        gc.collect()
+    finally:
+        loop.set_exception_handler(handler)
+    assert unretrieved == [], 'nobody is left to hear it'
+    assert record.user_stopped, "the user's stop holds when the task never ran"
+    assert '"user_stopped":true' in (tmp_path / f'{record.id}.json').read_text().replace(' ', '')
+    with pytest.raises(ValueError, match='no delegate tool'):
+        await ui.prompt(record.id, 'it can be prompted again')
 
 
 async def test_a_task_starting_from_a_prompt_takes_no_second_one() -> None:
