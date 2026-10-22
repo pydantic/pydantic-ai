@@ -1548,7 +1548,7 @@ class TestSensitiveDataSafety:
             assert tools.display_files_in_done_text is False
         else:
             assert tools is configured
-        actions = tools.registry.registry.actions  # pyright: ignore[reportUnknownMemberType]
+        actions = tools.registry.registry.actions
         # Only `evaluate`: the file actions stay a custom factory's own choice, as without secrets.
         assert 'evaluate' not in actions
         assert {'read_file', 'upload_file'} <= set(actions)
