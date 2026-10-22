@@ -29,7 +29,7 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
 )
-from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult
+from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult, revalidate_function_call
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -535,6 +535,11 @@ class TemporalParameterTransports(ParameterTransports):
 
     def function_call(self, toolset: FunctionToolset[Any]) -> _FunctionCallTransport:
         return _FunctionCallTransport(self._durability, toolset)
+
+    async def prepare_function_call(
+        self, toolset: FunctionToolset[Any], params: ToolsetCallToolParams
+    ) -> ToolsetCallToolParams:
+        return await revalidate_function_call(toolset, params, engine_name='Temporal')
 
     def mcp_call(self, toolset: AbstractToolset[Any]) -> _MCPCallTransport:
         return _MCPCallTransport(self._durability, toolset)

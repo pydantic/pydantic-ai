@@ -40,6 +40,7 @@ from ._compat import (
     make_model_request_context,
     model_settings_from_json,
     model_settings_to_json,
+    prepare_function_call_params,
     resolve_function_tool_for_definition,
     resolve_mcp_tool_for_definition,
 )
@@ -430,6 +431,11 @@ class RenderParameterTransports(ParameterTransports):
 
     def function_call(self, toolset: FunctionToolset[Any]) -> RenderFunctionCallTransport[Any]:
         return RenderFunctionCallTransport(self._codec(), toolset)
+
+    async def prepare_function_call(
+        self, toolset: FunctionToolset[Any], params: ToolsetCallToolParams
+    ) -> ToolsetCallToolParams:
+        return await prepare_function_call_params(toolset, params)
 
     def mcp_call(self, toolset: AbstractToolset[Any]) -> RenderMCPCallTransport[Any]:
         return RenderMCPCallTransport(self._codec(), toolset)

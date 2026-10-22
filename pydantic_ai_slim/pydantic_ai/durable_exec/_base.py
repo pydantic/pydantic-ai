@@ -1114,12 +1114,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return unwrap_recorded_tool_call_result(payload)
         return unwrap_tool_call_result(payload)
 
-    async def _prepare_function_call_params(
-        self, toolset: FunctionToolset[AgentDepsT], params: ToolsetCallToolParams
-    ) -> ToolsetCallToolParams:
-        """Prepare engine-transported function call parameters for the common handler."""
-        return params
-
     @contextmanager
     def _tool_call_payload_errors(self, tool_name: str) -> Generator[None]:
         """Map engine-specific failures while dispatching a tool call."""
@@ -1130,9 +1124,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Install the durable run-context policy used by common tool handlers."""
         with self._durable_run_context_scope(ctx) as durable_ctx:
             yield durable_ctx
-
-    def _validation_context(self, ctx: RunContext[Any]) -> Any:
-        return ctx.validation_context
 
     def _bind_validate_tool_arguments_operation(
         self,
@@ -1155,7 +1146,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         async def handler(params: ToolsetCallToolParams | DynamicToolsetCallToolParams) -> CallToolResult:
             if isinstance(params, ToolsetCallToolParams):
-                function_params = await self._prepare_function_call_params(
+                function_params = await backend.parameter_transports.prepare_function_call(
                     cast(FunctionToolset[AgentDepsT], toolset), params
                 )
                 assert function_params.tool is not None
@@ -1171,7 +1162,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         params.tool_args,
                         durable_ctx,
                         tool_def=params.tool_def,
-                        validation_context=self._validation_context,
                     )
                 )
 
@@ -1237,7 +1227,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         base_config = self._toolset_operation_config('function', cast(str, toolset.id))
 
         async def call_tool_handler(params: ToolsetCallToolParams) -> CallToolResult:
-            params = await self._prepare_function_call_params(toolset, params)
+            params = await backend.parameter_transports.prepare_function_call(toolset, params)
             assert params.tool is not None
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 return await wrap_tool_call_result(
@@ -1319,7 +1309,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         params.tool_args,
                         durable_ctx,
                         tool_def=params.tool_def,
-                        validation_context=self._validation_context,
                     )
                 )
 

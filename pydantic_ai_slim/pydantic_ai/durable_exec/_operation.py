@@ -397,6 +397,17 @@ class ParameterTransports:
         """Transport for function tool calls and argument validation in `toolset`."""
         return IdentityParameterTransport()
 
+    async def prepare_function_call(
+        self, toolset: FunctionToolset[Any], params: ToolsetCallToolParams
+    ) -> ToolsetCallToolParams:
+        """Prepare loaded function call parameters worker-side, before the tool's arguments are validated and it runs.
+
+        The default returns `params` unchanged. Engines whose arguments crossed the boundary as
+        JSON return [`revalidate_function_call`][pydantic_ai.durable_exec.revalidate_function_call]'s
+        result, so the tool gets schema-validated Python values.
+        """
+        return params
+
     def mcp_call(self, toolset: AbstractToolset[Any]) -> ParameterTransport[ToolsetCallToolParams, Any]:
         """Transport for MCP tool calls in `toolset`."""
         return IdentityParameterTransport()

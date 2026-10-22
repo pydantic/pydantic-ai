@@ -43,7 +43,7 @@ from pydantic_ai.durable_exec import (
     WorkspaceCallParams,
     WorkspaceCallResult,
     capability_operation_result_type,
-    validation_context_from_agent,
+    revalidate_function_call,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
@@ -253,29 +253,17 @@ def operation_run_context(params: object) -> RunContext[Any] | None:
 
 
 async def prepare_function_call_params(
-    agent: AbstractAgent[ToolDepsT, Any],
     toolset: FunctionToolset[ToolDepsT],
     params: ToolsetCallToolParams,
 ) -> ToolsetCallToolParams:
     """Restore typed function arguments after the Render JSON round trip."""
-    tool = params.tool
-    if tool is None:
-        try:
-            tool = (await toolset.get_tools(params.ctx))[params.name]
-        except KeyError as exc:
-            raise UserError(
-                f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
-                'Removing or renaming tools during an agent run is not supported with Render Workflows.'
-            ) from exc
+    params = await revalidate_function_call(toolset, params, engine_name='Render Workflows')
+    assert params.tool is not None
     from ._protocol import current_effect_recorder
 
     if recorder := current_effect_recorder():  # pragma: no branch - called inside operation_task
-        recorder.set_event_capability(tool.tool_def.capability_id)
-    args = tool.args_validator.validate_python(
-        params.tool_args,
-        context=validation_context_from_agent(agent)(params.ctx),
-    )
-    return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
+        recorder.set_event_capability(params.tool.tool_def.capability_id)
+    return params
 
 
 def load_json_type(type_form: type[T], payload: object) -> T:
@@ -484,7 +472,6 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
             deps=deps_value,
             agent=self._agent,
             engine_spec=self._engine_spec,
-            rebuild_validation_context=True,
         )
 
     def _resolve_tracer(self, model: Model | None) -> Tracer:

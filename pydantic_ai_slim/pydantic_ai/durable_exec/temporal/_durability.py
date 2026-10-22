@@ -25,11 +25,10 @@ from pydantic_ai.durable_exec._base import (
 from pydantic_ai.durable_exec._operation import (
     DurableOperationId,
     ToolsetCallToolId,
-    ToolsetCallToolParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
 )
-from pydantic_ai.durable_exec._toolset import DurableToolsetBase, validation_context_from_agent
+from pydantic_ai.durable_exec._toolset import DurableToolsetBase
 from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
@@ -37,7 +36,7 @@ from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameter
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._event_stream import (
@@ -432,26 +431,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return False
         return cast(ActivityConfig, {**base_config, **config})
 
-    def _validation_context(self, ctx: RunContext[Any]) -> Any:
-        return validation_context_from_agent(self._agent)(ctx)
-
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         return [cast(Any, operation).registration for operation in operations]
-
-    async def _prepare_function_call_params(
-        self, toolset: FunctionToolset[AgentDepsT], params: ToolsetCallToolParams
-    ) -> ToolsetCallToolParams:
-        tool = params.tool
-        if tool is None:
-            try:
-                tool = (await toolset.get_tools(params.ctx))[params.name]
-            except KeyError as exc:
-                raise UserError(
-                    f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
-                    'Removing or renaming tools during an agent run is not supported with Temporal.'
-                ) from exc
-        args = tool.args_validator.validate_python(params.tool_args, context=self._validation_context(params.ctx))
-        return ToolsetCallToolParams(params.name, tool_args=args, ctx=params.ctx, tool=tool)
 
     def _tool_call_payload_errors(self, tool_name: str):
         return tool_result_payload_errors(tool_name)
@@ -474,7 +455,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
-    def _default_run_id(self) -> str | None:
+    def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None
         # `workflow.uuid4()` draws from the workflow's random sequence. Histories recorded before every
@@ -491,10 +472,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
 
-    def _default_conversation_id(self, run_id: str) -> str | None:
+    def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
-    def _run_clock(self) -> Callable[[], datetime] | None:
+    def get_run_clock(self) -> Callable[[], datetime] | None:
         # `workflow.now()` is replay-safe: a replayed run computes the same deadline and timer.
         return workflow.now if self.in_durable_context else None
 

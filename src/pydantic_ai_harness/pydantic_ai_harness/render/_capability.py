@@ -24,7 +24,6 @@ from pydantic_ai.durable_exec import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets import FunctionToolset
 
 try:
     from render import Options, Retry, TaskContext, Workflows
@@ -39,9 +38,7 @@ except ModuleNotFoundError as _import_error:  # pragma: no cover - optional SDK 
 
 from ._compat import (
     RenderRunContextCodec,
-    ToolsetCallToolParams,
     function_tool_original_name,
-    prepare_function_call_params,
 )
 from ._context import activate_task_context, current_task_context
 from ._operation_backend import RenderOperationBackend
@@ -307,14 +304,3 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
         """Resolve a child task's model from this worker's model registry."""
         registry_key = model_id or 'default'
         return self._models_by_id.get(registry_key)
-
-    async def _prepare_function_call_params(
-        self,
-        toolset: FunctionToolset[AgentDepsT],
-        params: ToolsetCallToolParams,
-    ) -> ToolsetCallToolParams:
-        """Revalidate JSON-decoded arguments against the worker-local tool."""
-        agent = self._agent
-        if agent is None:  # pragma: no cover - binding always supplies the agent
-            raise UserError('`RenderWorkflows` must be bound before a function tool can run.')
-        return await prepare_function_call_params(agent, toolset, params)

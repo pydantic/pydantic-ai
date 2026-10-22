@@ -195,8 +195,13 @@ parameters; it is `None` when a suspended response is cancelled outside a run), 
 holds objects that cannot be serialized. Use [`DurableRunContext`][pydantic_ai.durable_exec.DurableRunContext] for it:
 `DurableRunContext.serialize_run_context(ctx)` returns a mapping of the fields that can cross,
 which the engine encodes with its own codec, and `DurableRunContext.restore(...)` rebuilds the
-context worker-side and re-attaches the worker's agent and workspace. Pass
-`rebuild_validation_context=True` to rebuild the run's validation context from the agent as well.
+context worker-side and re-attaches the worker's agent and workspace. The run's validation context
+is rebuilt from the agent's `validation_context` setting the first time it's read.
+
+Function tool arguments arrive as JSON-decoded values, not the Python values the tool's schema
+produces. Override `ParameterTransports.prepare_function_call` to return
+[`revalidate_function_call`][pydantic_ai.durable_exec.revalidate_function_call]'s result, which
+looks the tool up again when it wasn't transported and validates the arguments worker-side.
 Reading a field that wasn't carried raises a `UserError` instead of returning a default that could
 be mistaken for run state. Override `unavailable_field_message` to word that error for your engine.
 Your users can subclass your context and override `serialize_run_context` to carry more fields.

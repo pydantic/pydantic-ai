@@ -120,7 +120,7 @@ def test_public_engine_builder_exports() -> None:
         'ResultCodec',
         'ToolsetCallToolParams',
         'ToolsetGetToolsParams',
-        'validation_context_from_agent',
+        'revalidate_function_call',
         'WorkspaceCall',
         'WorkspaceCallParams',
         'WorkspaceCallResult',

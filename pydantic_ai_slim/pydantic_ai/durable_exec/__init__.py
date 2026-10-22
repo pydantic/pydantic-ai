@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from ._operation_names import DurableOperationNamer, JournalOperationNamer
     from ._run_context import DurableRunContext
     from ._spec import DurabilityEngineSpec
-    from ._toolset import CallToolResult, DynamicToolsResult, validation_context_from_agent
+    from ._toolset import CallToolResult, DynamicToolsResult, revalidate_function_call
     from ._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 
 __all__ = [
@@ -111,7 +111,7 @@ __all__ = [
     'ResultCodec',
     'ToolsetCallToolParams',
     'ToolsetGetToolsParams',
-    'validation_context_from_agent',
+    'revalidate_function_call',
     'WorkspaceCall',
     'WorkspaceCallParams',
     'WorkspaceCallResult',
@@ -164,7 +164,7 @@ _exports = {
     'ResultCodec': ('._operation', 'ResultCodec'),
     'ToolsetCallToolParams': ('._operation', 'ToolsetCallToolParams'),
     'ToolsetGetToolsParams': ('._operation', 'ToolsetGetToolsParams'),
-    'validation_context_from_agent': ('._toolset', 'validation_context_from_agent'),
+    'revalidate_function_call': ('._toolset', 'revalidate_function_call'),
     'WorkspaceCall': ('._workspace', 'WorkspaceCall'),
     'WorkspaceCallParams': ('._workspace', 'WorkspaceCallParams'),
     'WorkspaceCallResult': ('._workspace', 'WorkspaceCallResult'),

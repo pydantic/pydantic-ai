@@ -8,10 +8,17 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.durable_exec import JSON_CODEC, DurabilityEngineSpec, DurableRunContext
+from pydantic_ai.durable_exec import (
+    JSON_CODEC,
+    DurabilityEngineSpec,
+    DurableRunContext,
+    ToolsetCallToolParams,
+    revalidate_function_call,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CustomEvent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
@@ -80,3 +87,56 @@ async def test_subclass_carries_extra_fields():
 
     assert ctx.prompt == 'hello'
     assert ctx.agent is None
+
+
+async def test_validation_context_is_rebuilt_from_the_agent_on_first_read():
+    calls: list[str | None] = []
+
+    def build_validation_context(ctx: RunContext[str]) -> dict[str, str]:
+        calls.append(ctx.tool_name)
+        return {'tenant': ctx.deps}
+
+    payloads: list[dict[str, Any]] = []
+    agent = Agent(TestModel(), name='example', deps_type=str, validation_context=build_validation_context)
+
+    @agent.tool
+    def capture(ctx: RunContext[str]) -> str:
+        payloads.append(_round_trip(ctx))
+        return 'ok'
+
+    await agent.run('hello', deps='acme')
+    calls.clear()
+
+    ctx = DurableRunContext.restore(payloads[0], deps='acme', agent=agent, engine_spec=SPEC)
+    assert calls == []
+    assert ctx.validation_context == {'tenant': 'acme'}
+    assert ctx.validation_context == {'tenant': 'acme'}
+    assert calls == ['capture']
+
+    without_agent = DurableRunContext.restore(payloads[0], deps='acme', agent=None, engine_spec=SPEC)
+    assert without_agent.validation_context is None
+
+
+async def test_revalidate_function_call_rebuilds_the_tool_and_validated_arguments():
+    payloads: list[dict[str, Any]] = []
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def add(ctx: RunContext[None], a: int, b: int) -> int:
+        payloads.append(_round_trip(ctx))
+        return a + b
+
+    agent = Agent(TestModel(), name='example', deps_type=type(None), toolsets=[toolset])
+    await agent.run('hello')
+    ctx = DurableRunContext.restore(payloads[0], deps=None, agent=agent, engine_spec=SPEC)
+
+    params = await revalidate_function_call(
+        toolset, ToolsetCallToolParams('add', tool_args={'a': '1', 'b': 2}, ctx=ctx, tool=None), engine_name='Example'
+    )
+    assert params.tool is not None
+    assert params.tool_args == {'a': 1, 'b': 2}
+
+    with pytest.raises(UserError, match=r"Tool 'gone' not found in toolset .* not supported with Example"):
+        await revalidate_function_call(
+            toolset, ToolsetCallToolParams('gone', tool_args={}, ctx=ctx, tool=None), engine_name='Example'
+        )

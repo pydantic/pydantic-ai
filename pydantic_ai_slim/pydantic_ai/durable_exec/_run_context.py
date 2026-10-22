@@ -125,7 +125,9 @@ class DurableRunContext(RunContext[AgentDepsT]):
     (`available_tool_names`, `active_capability_ids`, [`tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind])
     answers from snapshots taken at dispatch time. A live `workspace` cannot cross the boundary either:
     only its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef] is serialized, and `restore` rebuilds
-    `workspace` from it through the agent's capabilities.
+    `workspace` from it through the agent's capabilities. `validation_context` isn't serialized, because it's an
+    arbitrary user object; it's rebuilt from the agent's `validation_context` setting the first time
+    it's read.
 
     Engines subclass this to word errors for their own runtime. Users of an engine subclass that to carry
     more fields: override `serialize_run_context` to add keys to the mapping, which reach `__init__` as
@@ -163,6 +165,14 @@ class DurableRunContext(RunContext[AgentDepsT]):
 
     def __getattribute__(self, name: str) -> Any:
         if name in _GUARDED_FIELDS and name not in object.__getattribute__(self, '__dataclass_fields__'):
+            if name == 'validation_context':
+                # Not carried, because it's an arbitrary user object: rebuilt on first read from the
+                # agent's `validation_context` setting (`None` without an agent), so a resolver that
+                # reads a field this context doesn't carry fails only where it's actually used.
+                value = validation_context_from_agent(object.__getattribute__(self, '__dict__').get('agent'))(self)
+                self.__dict__['validation_context'] = value
+                self._expose_field('validation_context')
+                return value
             raise UserError(self.unavailable_field_message(name))
         return super().__getattribute__(name)
 
@@ -326,7 +336,6 @@ class DurableRunContext(RunContext[AgentDepsT]):
         deps: Any,
         agent: AbstractAgent[Any, Any] | None,
         engine_spec: DurabilityEngineSpec,
-        rebuild_validation_context: bool = False,
     ) -> RunContext[Any]:
         """Rebuild a run context worker-side and attach the worker's agent.
 
@@ -336,18 +345,14 @@ class DurableRunContext(RunContext[AgentDepsT]):
         model stream inside the unit. The workspace is rebuilt from its serialized
         [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef], and `pending_messages` gets a guard so
         `ctx.enqueue()` raises the shared explanation worded with `engine_spec`'s nouns.
-
-        With `rebuild_validation_context`, `ctx.validation_context` is rebuilt from the agent's
-        `validation_context` setting for this context instead of raising as an uncarried field.
+        `ctx.validation_context` is rebuilt from the agent's `validation_context` setting the first
+        time it's read.
         """
         ctx = cls.deserialize_run_context(dict(serialized), deps=deps)
         if agent is not None:
             ctx.__dict__['agent'] = agent
             ctx.__dict__['root_capability'] = agent.root_capability
             _restore_workspace(ctx, agent, engine_spec)
-            if rebuild_validation_context:
-                ctx.__dict__['validation_context'] = validation_context_from_agent(agent)(ctx)
-                ctx._expose_field('validation_context')
         # `pending_messages` isn't serialized across the boundary, and any code running inside a unit
         # (a tool, a `process_tool_call` hook, an `event_stream_handler`) has its result replayed
         # without re-running it, so an enqueue would be dropped.
