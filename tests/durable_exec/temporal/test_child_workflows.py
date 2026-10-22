@@ -245,6 +245,53 @@ async def test_tool_call_runs_as_child_workflow(client: Client) -> None:
     ).replay_workflow(history)
 
 
+sub_agent = Agent(TestModel(), name='nested_sub_agent', capabilities=[TemporalDurability()])
+delegation_toolset = FunctionToolset[None](id='delegation_tools')
+
+
+@delegation_toolset.tool_plain(metadata={'temporal': {'child_workflow': ChildWorkflowConfig()}})
+async def delegate_to_sub_agent(task: str) -> str:
+    return (await sub_agent.run(task)).output
+
+
+delegating_agent = Agent(
+    TestModel(call_tools='all'),
+    name='delegating_agent',
+    toolsets=[delegation_toolset],
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class DelegatingAgentWorkflow:
+    __pydantic_ai_agents__ = [delegating_agent, sub_agent]
+
+    @workflow.run
+    async def run(self) -> str:
+        return (await delegating_agent.run('delegate this')).output
+
+
+def _scheduled_activity_types(history: WorkflowHistory) -> list[str]:
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+    ]
+
+
+async def test_child_workflow_runs_nested_durable_agent(client: Client) -> None:
+    workflow_id = 'test_child_workflow_runs_nested_durable_agent'
+    async with Worker(client, task_queue=TASK_QUEUE, workflows=[DelegatingAgentWorkflow]):
+        result = await client.execute_workflow(DelegatingAgentWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE)
+
+    assert 'success (no tool calls)' in result
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    child_history = await client.get_workflow_handle(_child_start(history).workflow_id).fetch_history()
+    # The nested agent's model request is a durable activity in the child's history, not the parent's.
+    assert _scheduled_activity_types(child_history) == ['agent__nested_sub_agent__model_request']
+    assert 'agent__nested_sub_agent__model_request' not in _scheduled_activity_types(history)
+
+
 class _ChildWorkflow(Protocol):
     async def run(self, params: None) -> str: ...
 

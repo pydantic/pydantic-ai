@@ -778,38 +778,72 @@ their Temporal activity, so `metadata={'temporal': False}` on an MCP tool raises
 
 An async function tool can run as a Temporal child workflow instead of an activity. This is useful
 when the tool runs a nested agent with its own `TemporalDurability`: the nested model requests and
-tool calls remain durable operations in the child's separate workflow history.
+tool calls remain durable operations with their own timeouts and retries, recorded in the child's
+separate workflow history instead of growing the parent's.
 
 Set the `'temporal'` metadata value to a dictionary whose only key is `'child_workflow'`. Its value
 accepts the same options as [`workflow.start_child_workflow()`](https://python.temporal.io/temporalio.workflow.html#start_child_workflow):
 
-```python {test="skip"}
+```python {title="temporal_child_workflow.py" test="skip"}
 from datetime import timedelta
 
+from temporalio import workflow
 from temporalio.workflow import ChildWorkflowConfig
 
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 from pydantic_ai.toolsets import FunctionToolset
 
-toolset = FunctionToolset(id='delegation')
+researcher = Agent(
+    '{{ openai:medium }}',
+    name='researcher',
+    capabilities=[TemporalDurability()],
+)
+
+delegation = FunctionToolset(id='delegation')
 
 
-@toolset.tool_plain(
+@delegation.tool_plain(
     metadata={
         'temporal': {
             'child_workflow': ChildWorkflowConfig(execution_timeout=timedelta(minutes=10))
         }
     }
 )
-async def delegate(task: str) -> str:
-    ...
+async def research(topic: str) -> str:
+    """Research a topic in depth."""
+    result = await researcher.run(f'Research: {topic}')
+    return result.output
+
+
+lead = Agent(
+    '{{ openai:medium }}',
+    name='lead',
+    toolsets=[delegation],
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class LeadWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [lead, researcher]
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await lead.run(prompt)
+        return result.output
 ```
 
-The child workflow ID is deterministic when omitted. The `id`, `task_queue`, `execution_timeout`,
-`run_timeout`, `task_timeout`, `id_reuse_policy`, `retry_policy`, `cron_schedule`,
-`cancellation_type`, `parent_close_policy`, `memo`, `search_attributes`, `versioning_intent`,
-`static_summary`, `static_details`, and `priority` options are passed through to Temporal. The tool
-body runs as deterministic workflow code, so it must delegate I/O to durable operations. Child
-workflows are not supported for sync, dynamic, or MCP tools.
+Each `research` call starts a child workflow, and the `researcher` agent's model requests and tool
+calls are activities in that child's history rather than the parent's. List both agents in
+`__pydantic_ai_agents__` (or pass an [`AgentPlugin`][pydantic_ai.durable_exec.temporal.AgentPlugin]
+for each) so the worker registers the nested agent's activities as well as the child workflow
+definition.
+
+When `id` is omitted, the child workflow ID is the parent's workflow ID followed by a UUID generated
+deterministically by the workflow. The other options are passed through to Temporal. The tool body
+runs as deterministic workflow code, so it must delegate I/O to durable operations, such as a nested
+agent's activities. Child workflows are not supported for sync, dynamic, or MCP tools.
 
 ## Activity Retries
 

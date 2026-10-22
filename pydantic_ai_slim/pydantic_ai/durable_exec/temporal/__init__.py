@@ -225,6 +225,7 @@ class PydanticAIPlugin(SimplePlugin):
                 config.get('activities', []),  # pyright: ignore[reportUnknownMemberType]
             )
         )
+        child_workflows: list[type] = []
 
         for workflow_class in workflows:
             agents = getattr(workflow_class, '__pydantic_ai_agents__', None)
@@ -247,10 +248,9 @@ class PydanticAIPlugin(SimplePlugin):
                             f'Agent {agent.name!r} listed in `__pydantic_ai_agents__` has no '
                             '`TemporalDurability` capability; add one to `capabilities=[...]`.'
                         )
-                    registrations = durability.temporal_registrations
-                    for registration in registrations:
+                    for registration in durability.temporal_registrations:
                         if inspect.isclass(registration):
-                            workflows.append(registration)
+                            child_workflows.append(registration)
                         else:
                             activities.append(registration)
                 else:
@@ -259,7 +259,7 @@ class PydanticAIPlugin(SimplePlugin):
                     )
 
         config['activities'] = activities
-        config['workflows'] = workflows
+        config['workflows'] = [*workflows, *child_workflows]
 
         return config
 
