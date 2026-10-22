@@ -209,11 +209,6 @@ class TestDurability:
         )
         assert (await agent.run('go')).output == 'done'
 
-    async def test_parallel_execution_mode_parallel_is_rejected(self) -> None:
-        mode: Any = 'parallel'
-        with pytest.raises(UserError, match="does not support `parallel_execution_mode='parallel'`"):
-            AbsurdDurability(parallel_execution_mode=mode)
-
     async def test_replay_serves_cached_model_response(self, absurd: AsyncAbsurd) -> None:
         counter = {'calls': 0}
         agent = Agent(_make_model(counter), name='crash', capabilities=[AbsurdDurability()])

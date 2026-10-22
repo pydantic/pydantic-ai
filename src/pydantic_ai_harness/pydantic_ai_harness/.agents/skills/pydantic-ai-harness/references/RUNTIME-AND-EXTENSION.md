@@ -301,8 +301,8 @@ async def analyse(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
 
 Parameters: `AbsurdDurability(*, models=None, event_stream_handler=None, name=None,
 parallel_execution_mode='sequential')`. `models` maps ids to extra models for `agent.run(model='<id>')`.
-`parallel_execution_mode` applies only inside a task and also accepts `'parallel_ordered_events'`;
-`'parallel'` raises `UserError`.
+`parallel_execution_mode` applies only inside a task and also accepts `'parallel_ordered_events'`,
+but not `'parallel'`.
 
 Gotchas:
 
