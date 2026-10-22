@@ -436,9 +436,9 @@ takes precedence when set.
 
 On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting
 (see [Thinking](../capabilities/thinking.md)) applies to models whose profile reports
-`supports_thinking`, including the `gpt-realtime-2` family. `True` uses the provider default and an
-effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning off. The
-GA `gpt-realtime` ignores the setting.
+`supports_thinking`, including the `gpt-realtime-2` family. `True` sends `reasoning.effort: 'medium'`
+and an effort string selects a level. `False` sends `reasoning.effort: 'none'`, which turns reasoning
+off. The GA `gpt-realtime` ignores the setting.
 
 Neither family streams readable reasoning as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s.
 GPT-Live does record the backend's encrypted reasoning ahead of each web search, so the history can
@@ -503,8 +503,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 
 - Before the session connects: `turn_detection`, `max_tokens`, `input_transcription_model`,
   `output_modality='text'` (the profile reports `supports_text_output=False`; see
-  [Shared settings](overview.md#shared-settings)), and a `tool_choice` of `'required'` or a list of
-  tool names.
+  [Shared settings](overview.md#shared-settings)), a `tool_choice` of `'required'` or a list of
+  tool names, and a [`profile=`](overview.md#provider-support) whose `audio_input_sample_rate` and
+  `audio_output_sample_rate` keys differ or aren't 16000 or 24000.
 - [`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio],
   [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio],
   [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response], and
@@ -512,7 +513,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 - An image sent without `respond=True`, text over the 500-token cap, and seeded history that contains
   audio or images.
 - A WebRTC sideband whose `message_history` differs from what the offer seeded, including none at all
-  when the offer seeded some.
+  when the offer seeded some, or that sets `openai_live_idle_audio`.
+- [`create_client_secret()`][pydantic_ai.agent.AgentRealtime.create_client_secret], since Live has no
+  client secrets.
 
 ### gpt-realtime {#gpt-realtime-feature-support-and-limitations}
 
@@ -542,7 +545,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 - When Live ends the session itself, the reply in progress is recorded as interrupted and the session
   raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError] with a code naming the reason:
   `live_session_expired` (the duration limit), `live_session_content` (the safety filter), or
-  `live_session_connection_lost`.
+  `live_session_connection_lost`. With a [`reconnect`](lifecycle.md#reconnecting) policy, an expired
+  or lost WebSocket session is re-opened instead while the policy's reconnects last; one the safety
+  filter ended stays ended.
 - A delegated backend that fails, stops short, or reports an error is surfaced as a recoverable
   [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent] instead: the call
   goes on. When Live reports such a failure only as a session-level error that names no delegation
@@ -556,8 +561,10 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   the [other providers](tools.md#function-tools): the call's output is the error history records,
   `{"error":"The tool raised an unhandled error."}`. The backend carries on (it may try the tool
   again), and Live speaks what it makes of it. The exception is still raised from the session as
-  usual, and a [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was
-  waiting still returns. When the exception is a
+  usual, but the exchange goes on as it would after a result that succeeded: a
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] that was waiting returns,
+  and [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] arrives, once
+  Live has spoken that answer. When the exception is a
   [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], nothing goes out, so the round
   doesn't make another request: Pydantic AI gives it up, and turn boundaries are inferred again. To
   give the model something better than the generic failure, turn the exception into a result with

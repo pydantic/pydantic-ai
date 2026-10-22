@@ -1380,7 +1380,7 @@ class TestEnqueueGuard:
             run_durable(lambda: agent.run('go'), context=ctx)
 
     def test_enqueue_from_an_event_handler_on_a_model_event_raises(self) -> None:
-        """Model events reach the handler inside the model step (`capture_event_stream`); a replay
+        """Model events reach the handler inside the model step (`consume_event_stream`); a replay
         serves the recorded step, so an enqueue there would be dropped. The first handler call is
         the model-request capture, so enqueuing after draining the stream raises on that path."""
 
