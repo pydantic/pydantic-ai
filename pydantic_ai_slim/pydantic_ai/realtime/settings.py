@@ -65,8 +65,8 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     Defines the common settings vocabulary used across realtime model providers. Whether a provider
     silently ignores a setting it can't apply or raises [`UserError`][pydantic_ai.exceptions.UserError]
-    before connecting depends on the provider and the setting (a forced `tool_choice` raises on most of
-    them): see each field's docs and the [provider pages](../realtime/overview.md#provider-support).
+    before connecting depends on the provider and the setting (a forced `tool_choice` raises on all but
+    Gemini): see each field's docs and the [provider pages](../realtime/overview.md#provider-support).
     Providers with additional generation parameters extend it, e.g.
     [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
@@ -113,7 +113,7 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     It is applied once, when the session is created, and holds for every response. `'none'` and
     function-tool allow-lists are enforced on every provider by restricting the tools advertised to the
-    model. OpenAI, Azure OpenAI, xAI, and ElevenLabs Agents raise
+    model. OpenAI, OpenAI GPT-Live, Azure OpenAI, xAI, Eleven Realtime, and ElevenLabs Agents raise
     [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a choice that forces a tool
     call (`'required'` or a list of tool names): applied to every response, including the one after a
     tool result, it would never let the model answer. Use `ToolOrOutput` to restrict the tools instead.
@@ -122,9 +122,7 @@ class RealtimeModelSettings(TypedDict, total=False):
     tools through its toggle-gated `tool_ids` conversation override.
 
     Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI,
-    ElevenLabs Agents (`'none'` and function-tool allow-lists only), and OpenAI GPT-Live, which raises for
-    `'required'` and lists of tool names: a session applies the choice to every response, including the
-    one after a tool result, so a forced call never lets the model answer.
+    Eleven Realtime, ElevenLabs Agents (`'none'` and function-tool allow-lists only), and OpenAI GPT-Live.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
@@ -163,9 +161,11 @@ class RealtimeModelSettings(TypedDict, total=False):
     """Enable or configure reasoning/thinking, mirroring the unified
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
 
-    `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
-    selects an effort level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI,
-    Azure AI Voice Live, and xAI).
+    `True` enables it at effort `'medium'` on OpenAI (including GPT-Live's backend), Azure OpenAI, and
+    Azure AI Voice Live, at the closest supported thinking level to `'medium'` on Gemini, and at `'high'`,
+    its only enabled effort, on xAI. `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'` selects an effort
+    level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI, Azure AI Voice Live,
+    and xAI).
     OpenAI and Gemini apply it only to models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
     silently ignore it. Providers with a richer native config expose it separately
