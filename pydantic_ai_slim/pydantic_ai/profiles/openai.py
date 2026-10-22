@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -222,6 +222,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     rejects such a turn before any response has thought, such as a step served without thinking: the field is then
     sent empty on every such turn whenever thinking is on for the request, through a setting or
     `thinking_enabled_by_default`."""
+
+    openai_chat_omit_thinking_extra_body: Mapping[str, object]
+    """The `extra_body` fields that ask a Chat Completions API not to return the model's thinking. Default: unset.
+
+    Sent when [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary] is `False`, beneath any
+    `extra_body` the request sets itself. Unset for an API with no such switch, where `thinking_summary=False` is
+    ignored. Set by OpenAI-compatible providers that have one, such as vLLM (`{'include_reasoning': False}`).
+    """
 
     openai_supports_strict_tool_definition: bool
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions. Default: `True`."""

@@ -695,8 +695,9 @@ def _openrouter_settings_to_openai_settings(
         extra_body['preset'] = preset
     if transforms := model_settings.pop('openrouter_transforms', None):
         extra_body['transforms'] = transforms
+    explicit_reasoning = 'openrouter_reasoning' in model_settings
     # Fall back to unified thinking when openrouter_reasoning is not set
-    if 'openrouter_reasoning' not in model_settings and model_request_parameters.thinking is not None:
+    if not explicit_reasoning and model_request_parameters.thinking is not None:
         thinking = model_request_parameters.thinking
         openrouter_reasoning: OpenRouterReasoning = {'effort': _OPENROUTER_EFFORT_MAP[thinking]}
         if thinking is not False:
@@ -716,7 +717,12 @@ def _openrouter_settings_to_openai_settings(
         if messages:
             model_settings['openrouter_cache_messages'] = ttl
 
-    if reasoning := model_settings.get('openrouter_reasoning'):
+    reasoning = model_settings.get('openrouter_reasoning')
+    if not explicit_reasoning and model_settings.get('thinking_summary') is False:
+        # Only on the wire: in `openrouter_reasoning`, `exclude` would read as a request to reason. Anthropic routes
+        # still return the thinking in `reasoning_details`.
+        reasoning = {**(reasoning or {}), 'exclude': True}
+    if reasoning:
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
         extra_body['usage'] = usage

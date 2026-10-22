@@ -116,7 +116,9 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
+    AnthropicThinkingDisplay,
     resolve_anthropic_effort,
+    resolve_anthropic_thinking_display,
 )
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -684,18 +686,16 @@ class BedrockModelSettings(ModelSettings, total=False):
     See more about it on <https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters.html>.
     """
 
-    bedrock_thinking_display: Literal['summarized', 'omitted']
-    """Whether to receive a summary of the model's thinking or only thinking signatures.
+    bedrock_thinking_display: AnthropicThinkingDisplay
+    """Whether to receive a summary of a Claude model's thinking or only thinking signatures.
 
-    Honored only for models that use the Anthropic thinking variant (Claude on Bedrock).
-    Ignored for OpenAI/Qwen variants — the underlying API has no equivalent knob — matching
-    the precedent of `bedrock_supports_adaptive_thinking`. Applied to the thinking block
-    emitted from the unified `thinking` setting; ignored when a raw `thinking` dict is
-    supplied via `bedrock_additional_model_requests_fields` (the raw dict wins).
+    Takes precedence over the unified [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary]
+    setting, which covers the same choice portably and is what most code should set. Honored only for Claude
+    models (the Anthropic thinking variant), and applied to the thinking block built from the unified
+    `thinking` setting (or, on models that think without one, to an explicit adaptive block); ignored when a
+    raw `thinking` dict is supplied via `bedrock_additional_model_requests_fields` (the raw dict wins).
 
-    Defaults vary by model — when the model defaults to `'omitted'`, `thinking=True`
-    produces empty thinking content unless this is set to `'summarized'`. The model
-    still thinks (and is billed for) the same number of tokens regardless.
+    The model still thinks (and is billed for) the same number of tokens either way.
 
     See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) for more information.
     """
@@ -1277,45 +1277,7 @@ class BedrockConverseModel(Model[BaseClient]):
             # blocks; Claude honors its native field when the Converse one is omitted.
             existing['tool_choice'] = {'type': 'none'}
 
-        thinking = model_request_parameters.thinking
-        if thinking is None:
-            return existing or None
-
-        variant = profile.get('bedrock_thinking_variant', None)
-
-        if variant == 'anthropic' and 'thinking' not in existing:
-            _add_anthropic_thinking_fields(existing, thinking, profile, model_settings.get('bedrock_thinking_display'))
-        elif variant == 'openai' and 'reasoning_effort' not in existing:
-            if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
-                existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
-        elif variant == 'qwen' and 'reasoning_config' not in existing:
-            if thinking is not False:
-                # Qwen only supports low/high; map others to closest
-                level_map: dict[ThinkingLevel, str] = {
-                    True: 'high',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'high',
-                    'high': 'high',
-                    'xhigh': 'high',
-                }
-                existing['reasoning_config'] = level_map[thinking]
-        elif variant == 'xai' and 'reasoning' not in existing:
-            # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
-            # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
-            if thinking is not False and not (thinking is True and profile.get('grok_default_effort_omitted', False)):
-                # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
-                # `True` picks `medium` like the other always-on effort-based variants.
-                effort_map: dict[ThinkingLevel, str] = {
-                    True: 'medium',
-                    'minimal': 'low',
-                    'low': 'low',
-                    'medium': 'medium',
-                    'high': 'high',
-                    'xhigh': 'xhigh',
-                }
-                existing['reasoning'] = {'effort': effort_map[thinking]}
-
+        _add_thinking_fields(existing, model_settings, model_request_parameters.thinking, profile)
         return existing or None
 
     @overload
@@ -2288,11 +2250,69 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise e  # pragma: lax no cover
 
 
+def _add_thinking_fields(
+    existing: dict[str, Any],
+    model_settings: BedrockModelSettings,
+    thinking: ThinkingLevel | None,
+    profile: ModelProfile,
+) -> None:
+    """Translate unified `thinking` and `thinking_summary` into the model family's request fields.
+
+    A field the caller already set in `bedrock_additional_model_requests_fields` wins.
+    """
+    thinking_summary = model_settings.get('thinking_summary')
+    variant = profile.get('bedrock_thinking_variant', None)
+
+    if variant == 'anthropic' and 'thinking' not in existing:
+        display = resolve_anthropic_thinking_display(model_settings.get('bedrock_thinking_display'), thinking_summary)
+        if thinking is not None:
+            # Summaries unless told otherwise, as on the direct Anthropic API.
+            _add_anthropic_thinking_fields(existing, thinking, profile, display or 'summarized')
+        elif display is not None and profile.get('thinking_enabled_by_default', False):
+            # These models think without a `thinking` field, so choosing what they return takes the adaptive
+            # block they'd use anyway, as on the direct Anthropic API.
+            existing['thinking'] = {'type': 'adaptive', 'display': display}
+    elif variant == 'openai':
+        # Bedrock doesn't accept reasoning_effort='none'
+        if thinking and 'reasoning_effort' not in existing:
+            existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
+        # Any `include_reasoning` value drops the reasoning block from gpt-oss's response (`True` included),
+        # so only `False` is sent.
+        if thinking_summary is False and 'include_reasoning' not in existing:
+            existing['include_reasoning'] = False
+    elif variant == 'qwen' and thinking and 'reasoning_config' not in existing:
+        # Qwen only supports low/high; map others to closest
+        level_map: dict[ThinkingLevel, str] = {
+            True: 'high',
+            'minimal': 'low',
+            'low': 'low',
+            'medium': 'high',
+            'high': 'high',
+            'xhigh': 'high',
+        }
+        existing['reasoning_config'] = level_map[thinking]
+    elif variant == 'xai' and thinking and 'reasoning' not in existing:
+        # Grok always reasons on Converse, so `thinking=False` is silently ignored (like gpt-oss). `True` leaves
+        # the effort out where the profile records that the model's own default applies then (Grok 4.7: `high`).
+        if not (thinking is True and profile.get('grok_default_effort_omitted', False)):
+            # Grok accepts `low`/`medium`/`high`/`xhigh` but not `minimal`, so that folds to `low`;
+            # `True` picks `medium` like the other always-on effort-based variants.
+            effort_map: dict[ThinkingLevel, str] = {
+                True: 'medium',
+                'minimal': 'low',
+                'low': 'low',
+                'medium': 'medium',
+                'high': 'high',
+                'xhigh': 'xhigh',
+            }
+            existing['reasoning'] = {'effort': effort_map[thinking]}
+
+
 def _add_anthropic_thinking_fields(
     existing: dict[str, Any],
     thinking: ThinkingLevel,
     profile: ModelProfile,
-    display: Literal['summarized', 'omitted'] | None = None,
+    display: AnthropicThinkingDisplay,
 ) -> None:
     """Translate unified `thinking` into the Anthropic `thinking` (and `output_config.effort`) request fields."""
     if profile.get('bedrock_supports_adaptive_thinking', False):
@@ -2302,9 +2322,7 @@ def _add_anthropic_thinking_fields(
             if profile.get('thinking_enabled_by_default', False):
                 existing['thinking'] = {'type': 'disabled'}
         else:
-            existing['thinking'] = {'type': 'adaptive'}
-            if display:
-                existing['thinking']['display'] = display
+            existing['thinking'] = {'type': 'adaptive', 'display': display}
             # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
             # The merged profile carries the Anthropic xhigh flag, so `xhigh` passes through on the same
             # models as the direct API. Bedrock rejects it on the other models, where it maps to `max`.
@@ -2320,9 +2338,11 @@ def _add_anthropic_thinking_fields(
     elif thinking is False:
         existing['thinking'] = {'type': 'disabled'}
     else:
-        existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
-        if display:
-            existing['thinking']['display'] = display
+        existing['thinking'] = {
+            'type': 'enabled',
+            'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking],
+            'display': display,
+        }
 
 
 def _effective_thinking_type(

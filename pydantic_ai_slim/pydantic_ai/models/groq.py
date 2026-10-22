@@ -332,12 +332,16 @@ class GroqModel(Model[AsyncGroq]):
         """Get reasoning format, falling back to unified thinking when provider-specific setting is not set."""
         if fmt := model_settings.get('groq_reasoning_format'):
             return fmt
+        if disable_via_effort:
+            # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
+            # so no reasoning format is needed.
+            return NOT_GIVEN
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
+        if thinking_summary is not None and self.profile.get('supports_thinking', False):
+            # Groq's reasoning models all reason by default, so this applies without a `thinking` setting too.
+            return 'parsed' if thinking_summary else 'hidden'
         if thinking is False:
-            if disable_via_effort:
-                # qwen3 truly disables reasoning via `reasoning_effort='none'` (set in `extra_body`),
-                # so no reasoning format is needed.
-                return NOT_GIVEN
             # Other reasoning models have no true disable; 'hidden' only suppresses reasoning output.
             return 'hidden'
         if thinking is not None:

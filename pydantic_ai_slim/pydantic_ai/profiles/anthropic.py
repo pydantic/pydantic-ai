@@ -202,6 +202,27 @@ def resolve_anthropic_effort(level: ThinkingEffort, *, supports_xhigh: bool) -> 
     return ANTHROPIC_THINKING_EFFORT_MAP[level]
 
 
+AnthropicThinkingDisplay: TypeAlias = Literal['summarized', 'omitted']
+"""Values Pydantic AI sends at `thinking.display`: a summary of the model's thinking, or only its signature."""
+
+
+def resolve_anthropic_thinking_display(
+    display: AnthropicThinkingDisplay | None, thinking_summary: bool | None
+) -> AnthropicThinkingDisplay | None:
+    """Resolve the `thinking.display` the settings ask for, or `None` when they leave it unset.
+
+    A provider-specific `display` setting wins over the unified `thinking_summary`. A thinking block built from the
+    unified `thinking` setting falls back to `'summarized'` when this returns `None`, since the newer Claude models
+    default to `'omitted'` and would otherwise return empty thinking.
+
+    Shared between the direct Anthropic path and Bedrock Converse for Claude models, like
+    [`resolve_anthropic_effort`][pydantic_ai.profiles.anthropic.resolve_anthropic_effort].
+    """
+    if display is not None or thinking_summary is None:
+        return display
+    return 'summarized' if thinking_summary else 'omitted'
+
+
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
     models_that_support_json_schema_output = (

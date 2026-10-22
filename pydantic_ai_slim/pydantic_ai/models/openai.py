@@ -660,6 +660,20 @@ def _drop_sampling_params_for_reasoning(
         model_settings.pop(k, None)
 
 
+def _chat_extra_body(profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings) -> object:
+    """The request's `extra_body`, over the profile's fields that hide thinking when `thinking_summary` is `False`."""
+    extra_body = model_settings.get('extra_body')
+    if model_settings.get('thinking_summary') is not False or not (
+        omit_thinking := profile.get('openai_chat_omit_thinking_extra_body')
+    ):
+        return extra_body
+    if extra_body is None:
+        return dict(omit_thinking)
+    if _is_str_dict(extra_body):
+        return {**omit_thinking, **extra_body}
+    return extra_body
+
+
 def _with_profile_unsupported_settings(unsupported: frozenset[str], profile: OpenAIModelProfile) -> frozenset[str]:
     """Add what the profile says a model or OpenAI-compatible provider rejects, so a dropped guarantee still warns."""
     return unsupported | frozenset(profile.get('openai_unsupported_model_settings', ()))
@@ -1582,7 +1596,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=_chat_extra_body(profile, model_settings),
                 )
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
@@ -3721,6 +3735,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 reasoning['context'] = reasoning_context
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
+        elif model_settings.get('thinking_summary') and self._request_thinks(model_settings, model_request_parameters):
+            # Every reasoning model accepts `auto`, unlike `concise`. Summaries aren't requested by default because
+            # they may require organization verification.
+            reasoning['summary'] = 'auto'
         return reasoning or OMIT
 
     def _request_thinks(

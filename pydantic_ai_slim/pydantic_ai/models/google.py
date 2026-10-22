@@ -1042,8 +1042,13 @@ class GoogleModel(Model[Client]):
         if config := model_settings.get('google_thinking_config'):
             return config
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
         if thinking is None:
+            # Thoughts are left out unless asked for, so only `True` changes anything, and only on a model that thinks.
+            if thinking_summary and self._request_thinks(model_settings, model_request_parameters):
+                return ThinkingConfigDict(include_thoughts=True)
             return None
+        include_thoughts = thinking_summary is not False
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
@@ -1056,7 +1061,7 @@ class GoogleModel(Model[Client]):
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
+                return ThinkingConfigDict(include_thoughts=include_thoughts)
             budget_map: dict[ThinkingEffort, int] = {
                 'minimal': 128,  # minimum for Gemini 2.5 Pro
                 'low': 2048,
@@ -1064,13 +1069,14 @@ class GoogleModel(Model[Client]):
                 'high': 24576,
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
             }
-            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+            return ThinkingConfigDict(include_thoughts=include_thoughts, thinking_budget=budget_map[thinking])
 
         # Default Gemini 3+ behaviour uses thinking_level
         if thinking is True:
-            return ThinkingConfigDict(include_thoughts=True)
+            return ThinkingConfigDict(include_thoughts=include_thoughts)
         return ThinkingConfigDict(
-            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+            include_thoughts=include_thoughts,
+            thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile)),
         )
 
     async def _build_content_and_config(

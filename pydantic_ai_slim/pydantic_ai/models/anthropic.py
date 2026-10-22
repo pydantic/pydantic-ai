@@ -90,7 +90,9 @@ from ..profiles.anthropic import (
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
+    AnthropicThinkingDisplay,
     resolve_anthropic_effort,
+    resolve_anthropic_thinking_display,
 )
 from ..providers import Provider, infer_provider
 from ..providers._bedrock_model_names import (
@@ -588,15 +590,15 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
     """
 
-    anthropic_thinking_display: Literal['summarized', 'omitted']
+    anthropic_thinking_display: AnthropicThinkingDisplay
     """Whether to receive a summary of the model's thinking or only thinking signatures.
 
-    Applied to the thinking block emitted from the unified `thinking` setting;
-    ignored when `anthropic_thinking` is set explicitly (the raw dict wins).
+    Takes precedence over the unified [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary]
+    setting, which covers the same choice portably and is what most code should set. Applied to the thinking
+    block built from the unified `thinking` setting (or, on models that think without one, to an explicit
+    adaptive block); ignored when `anthropic_thinking` is set explicitly (the raw dict wins).
 
-    Defaults vary by model — when the model defaults to `'omitted'`, `thinking=True`
-    produces empty thinking content unless this is set to `'summarized'`. The model
-    still thinks (and is billed for) the same number of tokens regardless.
+    The model still thinks (and is billed for) the same number of tokens either way.
 
     See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) for more information.
     """
@@ -1384,19 +1386,28 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
-        if thinking is False and self.profile.get('thinking_enabled_by_default', False):
+        thinks_by_default = self.profile.get('thinking_enabled_by_default', False)
+        if thinking is False and thinks_by_default:
             # Omitting `thinking` leaves it on for these models. `Model.prepare_request` has already dropped
-            # `False` for models that can't turn thinking off.
+            # `False` for models that can't turn thinking off. `display` is rejected on a disabled block.
             return {'type': 'disabled'}
+        display = resolve_anthropic_thinking_display(
+            model_settings.get('anthropic_thinking_display'), model_settings.get('thinking_summary')
+        )
         if thinking is None or thinking is False:
+            if thinking is None and display is not None and thinks_by_default:
+                # These models think without a `thinking` parameter, so choosing what they return takes the
+                # adaptive block they'd use anyway.
+                return {'type': 'adaptive', 'display': display}
             return OMIT  # type: ignore[return-value]
         result: BetaThinkingConfigParam
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
             result = {'type': 'adaptive'}
         else:
             result = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
-        if display := model_settings.get('anthropic_thinking_display'):
-            result['display'] = display
+        # Unified `thinking` asks for summaries unless told otherwise: newer models default to `'omitted'`, which
+        # returns the thinking blocks empty.
+        result['display'] = display or 'summarized'
         return result
 
     @overload
