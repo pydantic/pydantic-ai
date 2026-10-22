@@ -111,7 +111,8 @@ def _registered(module: ModuleType, *, keep: bool) -> Generator[None]:
     back, unless something else has replaced the module meanwhile.
     """
     name = module.__name__
-    previous = sys.modules.get(name)
+    # The entry itself, not `.get()`, so an entry holding `None` is put back too.
+    previous = {name: sys.modules[name]} if name in sys.modules else None
     sys.modules[name] = module
     kept = False
     try:
@@ -122,7 +123,7 @@ def _registered(module: ModuleType, *, keep: bool) -> Generator[None]:
             if previous is None:
                 del sys.modules[name]
             else:
-                sys.modules[name] = previous
+                sys.modules.update(previous)
 
 
 def _find_capability_class(module: ModuleType) -> type[AbstractCapability[object]]:

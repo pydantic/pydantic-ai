@@ -494,6 +494,21 @@ class UsesModels(AbstractCapability):
             validate_capability_file(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
         assert set(sys.modules) - before == set()
 
+    def test_failed_load_restores_an_entry_holding_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The same source fails on its second load, so both loads use one `sys.modules` key.
+        code = (
+            'from pathlib import Path\nif Path(__file__).with_name("fail").exists():\n    raise RuntimeError("boom")\n'
+        ) + VALID_CODE
+        path = _write(tmp_path, 'm', code)
+        name = type(load_capability_instance(path)).__module__
+        modules: dict[str, object] = vars(sys)['modules']
+        monkeypatch.setitem(modules, name, None)
+        (tmp_path / 'fail').touch()
+        with pytest.raises(CapabilityValidationError, match='boom'):
+            load_capability_instance(path)
+        assert name in sys.modules
+        assert modules[name] is None
+
     def test_concurrent_loads_of_one_file_run_one_at_a_time(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
