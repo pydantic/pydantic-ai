@@ -333,7 +333,7 @@ class WithNativeTools(AbstractCapability):
         'getter',
         [
             'def get_toolset(self):\n        return lambda ctx: None\n',
-            "def get_instructions(self):\n        return [lambda ctx: 'dynamic', InstructionPart(content='part', name='user')]\n",
+            "def get_instructions(self):\n        return [lambda ctx: 'dynamic', InstructionPart(content='part'), InstructionPart(content='named', name='user')]\n",
         ],
         ids=['toolset-function', 'callable-and-named-part-instructions'],
     )
