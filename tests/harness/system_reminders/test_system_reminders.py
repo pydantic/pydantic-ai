@@ -928,7 +928,8 @@ class TestLLMReminder:
         assert isinstance(result, GeneratedReminder)
         assert not hasattr(result, 'strip')
         with pytest.raises(TypeError):
-            operator.add('Note: ', result)
+            # The type checker already rejects this, which is the point; at runtime it raises too.
+            operator.add('Note: ', result)  # pyright: ignore[reportCallIssue,reportArgumentType]
         assert str(result) == _llm_reminder('refocus')
 
     async def test_a_wrapped_generated_reminder_is_still_quoted(self) -> None:
