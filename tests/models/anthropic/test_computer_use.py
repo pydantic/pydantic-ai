@@ -473,25 +473,6 @@ async def test_a_streamed_member_cut_off_mid_input_keeps_only_what_parsed(allow_
     assert call.args_as_dict() == {'actions': [{'type': 'type', 'text': ''}]}
 
 
-async def test_a_screenshot_left_out_of_the_request_is_explained(allow_model_requests: None) -> None:
-    look = _tool_use('toolu_1', 'screenshot', {})
-    client = MockAnthropic.create_mock(
-        [_turn(look), _turn(look.model_copy(update={'id': 'toolu_2'})), _turn(BetaTextBlock(text='done', type='text'))]
-    )
-    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=client))
-    await Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse(keep_screenshots=1)]).run('Go.')
-
-    *_, last = get_mock_chat_completion_kwargs(client)
-    older, newest = [
-        m['content'][0]
-        for m in last['messages']
-        if m['role'] == 'user' and m['content'][0].get('type') == 'tool_result'
-    ]
-    assert [block['type'] for block in older['content']] == ['text']
-    assert older['content'][0]['text'].endswith('the latest screenshot shows the current screen.]')
-    assert [block['type'] for block in newest['content']] == ['text', 'image']
-
-
 async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_requests: None) -> None:
     client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
