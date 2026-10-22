@@ -47,6 +47,7 @@ from pydantic_ai_harness import (
     OutputGuardrail,
     PostHog,
     Pylon,
+    RelevanceCompaction,
     RepoContext,
     Researcher,
     Shell,
@@ -197,6 +198,7 @@ FIXTURES: dict[str, Fixture] = {
     'ModalSandbox': lambda _: _modal_sandbox(),
     'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
     'RepoContext': _repo_context,
+    'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
     'Researcher': _workspace(Researcher),
     'Shell': _workspace(Shell),
     'Skills': _skills,
@@ -320,6 +322,9 @@ ALLOWED: dict[str, Allowed] = {
         'Clears superseded file reads in place, as documented, when the model reads a file again',
         (('messages', 'tool-return'),),
     ),
+    # With a 20-token trigger every request is over it, so each request with an older step outside the
+    # one-token tail judges and rewrites it: two in this conversation.
+    'RelevanceCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
     'SummarizingCompaction': Allowed(_COMPACTION, _HISTORY),
     # With a 10-token target every request is over it, so the tier clears each tool result as it ages out of

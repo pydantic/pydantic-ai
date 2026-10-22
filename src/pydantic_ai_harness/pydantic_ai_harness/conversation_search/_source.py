@@ -40,9 +40,9 @@ SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 
 Summaries are now a `CompactionPart`; this only recognizes ones in histories saved before that.
 
-Byte-for-byte mirror of `pydantic_ai_harness.compaction._summarizing_compaction._SUMMARY_PREFIX`,
+Byte-for-byte mirror of `pydantic_ai_harness.compaction._summarizing_compaction.SUMMARY_PREFIX`,
 including the blank line: that is the marker compaction itself matches on to recognize its own
-prior summaries (`_extract_previous_summary`), and `SystemPromptPart` carries no metadata field
+prior summaries (`extract_previous_summary`), and `SystemPromptPart` carries no metadata field
 to mark artifacts with instead. Matching the full literal keeps a user-authored system prompt
 that merely opens with the same sentence inside the corpus.
 

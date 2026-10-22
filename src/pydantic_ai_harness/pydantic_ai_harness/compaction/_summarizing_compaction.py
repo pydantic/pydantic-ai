@@ -7,7 +7,7 @@ import re
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.agent import EventStreamHandler
@@ -38,6 +38,7 @@ from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
     discover_transcript_handle,
     format_receipt,
+    is_receipt_message,
     is_receipt_part,
     make_receipt_part,
     record_receipt,
@@ -103,7 +104,7 @@ _DEFAULT_INSTRUCTIONS = (
     'You are a context summarization assistant. Extract the most important information from conversations.'
 )
 
-_SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
+SUMMARY_PREFIX = 'Summary of previous conversation:\n\n'
 """The text opening the summary `SystemPromptPart` that earlier releases wrote.
 
 Summaries are now a `CompactionPart`; this only recognizes ones in histories saved before that.
@@ -168,11 +169,6 @@ def _history_model_name(messages: Sequence[ModelMessage]) -> str | None:
     return None
 
 
-def _is_receipt_message(msg: ModelMessage) -> bool:
-    """Return True if *msg* is a request made up entirely of receipt parts."""
-    return isinstance(msg, ModelRequest) and bool(msg.parts) and all(is_receipt_part(p) for p in msg.parts)
-
-
 def _model_family(model: str | AbstractModel | None) -> str | None:
     """Reduce a model name to a coarse family token (e.g. `openai:gpt-4o` -> `gpt`).
 
@@ -226,7 +222,7 @@ def _truncate_with_marker(text: str, max_chars: int) -> str:
     return f'{text[: max_chars - len(marker)]}{marker}'
 
 
-def _format_messages(
+def format_transcript(
     messages: Sequence[ModelMessage],
     *,
     skip_previous_summary: bool = False,
@@ -248,15 +244,15 @@ def _format_messages(
             kept = _is_kept_user_message(msg)
             for part in msg.parts:
                 if isinstance(part, UserPromptPart) and (origin := _harness_data_origin(part)) is not None:
-                    elements.append(_harness_data_element(origin, _user_prompt_text(part), tool_return_max_chars))
+                    elements.append(_harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
                 elif kept or (isinstance(part, UserPromptPart) and _is_kept_user_part(part)):
                     # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
                     # earlier version kept is summarized instead, and `_kept_user_messages` drops it. A kept copy
                     # merged into a later request is recognized by the marker on its text.
                     continue
                 elif isinstance(part, UserPromptPart):
-                    elements.append(_message_element('user', _user_prompt_text(part)))
-                elif isinstance(part, SystemPromptPart) and not (skip_previous_summary and _is_legacy_summary(part)):
+                    elements.append(_message_element('user', user_prompt_text(part)))
+                elif isinstance(part, SystemPromptPart) and not (skip_previous_summary and is_legacy_summary(part)):
                     elements.append(_message_element('system', part.content))
                 elif isinstance(part, ToolReturnPart) and part.outcome != 'retried':
                     elements.append(
@@ -336,7 +332,7 @@ def _harness_data_origin(part: UserPromptPart) -> str | None:
             return None
 
 
-def _is_harness_data(part: ModelRequestPart) -> bool:
+def is_harness_data(part: ModelRequestPart) -> bool:
     """Whether *part* is user-channel content a harness capability added."""
     return isinstance(part, UserPromptPart) and _harness_data_origin(part) is not None
 
@@ -349,7 +345,7 @@ def _harness_data_element(origin: str, content: str, max_chars: int | None) -> s
     return f'<harness_data origin="{html.escape(origin)}">\n{body}\n</harness_data>'
 
 
-def _user_prompt_text(part: UserPromptPart) -> str:
+def user_prompt_text(part: UserPromptPart) -> str:
     """Extract text content from a user prompt part."""
     if isinstance(part.content, str):
         return part.content
@@ -369,7 +365,7 @@ def _extract_system_prompts(messages: list[ModelMessage]) -> list[SystemPromptPa
         if not isinstance(msg, ModelRequest):
             break
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart) and not _is_legacy_summary(part):
+            if isinstance(part, SystemPromptPart) and not is_legacy_summary(part):
                 parts.append(part)
             elif is_pinned(part) or is_receipt_part(part):
                 continue
@@ -385,7 +381,7 @@ def _first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
             isinstance(part, UserPromptPart)
             and not is_pinned(part)
             and not is_receipt_part(part)
-            and not _is_harness_data(part)
+            and not is_harness_data(part)
             for part in message.parts
         ):
             return message
@@ -410,19 +406,27 @@ def _kept_first_user_message(message: ModelRequest, system_parts: list[SystemPro
         part
         for part in first_turn
         if not is_receipt_part(part)
-        and not _is_harness_data(part)
-        and not (isinstance(part, SystemPromptPart) and (_is_legacy_summary(part) or part.content in carried))
+        and not is_harness_data(part)
+        and not (is_legacy_summary(part) or (isinstance(part, SystemPromptPart) and part.content in carried))
     ]
     return message if len(kept) == len(message.parts) else replace(message, parts=kept)
 
 
-def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
+def is_legacy_summary(part: ModelRequestPart) -> TypeGuard[SystemPromptPart]:
+    """Whether *part* is a summary written by a release that stored it as a system prompt.
+
+    Recognized by its text, so a user system prompt that opens with the same sentence counts too.
+    """
+    return isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
+
+
+def extract_previous_summary(messages: list[ModelMessage]) -> str | None:
     """Extract the most recent compaction summary from the message history.
 
     A summary is a `CompactionPart` marked as this capability's own (see `is_summary_part`); the last
     one in the history is the newest. A `CompactionPart` an application wrote itself is not one.
     Failing that, a history saved by an earlier release holds its summary as a `SystemPromptPart`
-    opening with `_SUMMARY_PREFIX`, and each pass put its own ahead of the older ones, so there the
+    opening with `SUMMARY_PREFIX`, and each pass put its own ahead of the older ones, so there the
     first one is the newest.
     """
     for msg in reversed(messages):
@@ -431,21 +435,17 @@ def _extract_previous_summary(messages: list[ModelMessage]) -> str | None:
                 return _without_bridge_prefix(part.content)
     for msg in messages:
         for part in msg.parts:
-            if isinstance(part, SystemPromptPart) and _is_legacy_summary(part):
-                return _without_bridge_prefix(part.content[len(_SUMMARY_PREFIX) :])
+            if is_legacy_summary(part):
+                return _without_bridge_prefix(part.content[len(SUMMARY_PREFIX) :])
     return None
 
 
-def _without_legacy_summaries(messages: list[ModelMessage]) -> list[ModelMessage]:
+def without_legacy_summaries(messages: list[ModelMessage]) -> list[ModelMessage]:
     """*messages* without summaries an earlier release stored as system prompts, keeping the rest of their requests."""
     out: list[ModelMessage] = []
     for message in messages:
-        if isinstance(message, ModelRequest) and any(
-            isinstance(part, SystemPromptPart) and _is_legacy_summary(part) for part in message.parts
-        ):
-            parts = [
-                part for part in message.parts if not (isinstance(part, SystemPromptPart) and _is_legacy_summary(part))
-            ]
+        if isinstance(message, ModelRequest) and any(is_legacy_summary(part) for part in message.parts):
+            parts = [part for part in message.parts if not is_legacy_summary(part)]
             if not parts:
                 continue
             message = replace(message, parts=parts)
@@ -453,9 +453,20 @@ def _without_legacy_summaries(messages: list[ModelMessage]) -> list[ModelMessage
     return out
 
 
-def _is_legacy_summary(part: SystemPromptPart) -> bool:
-    """Whether *part* is a summary written by a release that stored it as a system prompt."""
-    return part.content.startswith(_SUMMARY_PREFIX)
+def bridge_summary(
+    summarizer: SummarizingCompaction[AgentDepsT],
+    summary: str,
+    messages: list[ModelMessage],
+    ctx: RunContext[AgentDepsT],
+) -> str:
+    """Prefix *summary* with a cross-model handoff note when *summarizer*'s model family differs from the run's."""
+    if not summarizer.bridge_prefix:
+        return summary
+    run_family = _model_family(_history_model_name(messages) or ctx.model)
+    summarizer_family = _model_family(summarizer.model if summarizer.model is not None else ctx.model)
+    if run_family and summarizer_family and run_family != summarizer_family:
+        return f'{_BRIDGE_PREFIX}\n\n{_without_bridge_prefix(summary)}'
+    return summary
 
 
 def _without_bridge_prefix(summary: str) -> str:
@@ -769,12 +780,12 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             # re-summarizing only the earlier summary would then cost a model call on every request.
             return messages
 
-        previous_summary = _extract_previous_summary(messages) if self.incremental else None
+        previous_summary = extract_previous_summary(messages) if self.incremental else None
         written = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
         # A durable engine replays the time with the text, so the summary's metadata, which later requests
         # and tools are keyed on, is the same on a retry. A result recorded before the time was kept is a `str`.
         summary, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
-        summary = self._maybe_bridge_prefix(summary, messages, ctx)
+        summary = bridge_summary(self, summary, messages, ctx)
 
         # The summary is model-written text standing in for the turns it replaced, so it is a
         # `CompactionPart` in a request of its own: core sends it as framed user-voice text and treats
@@ -787,7 +798,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         if previous_summary is not None:
             # The new summary was written as an update of the newest earlier one, so it supersedes any
             # the cutoff kept. Without an anchor the new summary never saw them, so they stay.
-            preserved = _without_legacy_summaries(without_summaries(preserved))
+            preserved = without_legacy_summaries(without_summaries(preserved))
         before, after = ([], extra) if self.keep_user_messages else (extra, [])
         result: list[ModelMessage] = [*standing, *before, summary_message, *after, *preserved]
         result = reinject_pinned(messages, result, protected_tail=len(preserved) if self.keep_tokens else 0)
@@ -829,7 +840,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 continue
             if _is_kept_user_message(msg):
                 # A turn kept by an earlier compaction may hold harness data from before it was told apart.
-                genuine = [part for part in msg.parts if not _is_harness_data(part)]
+                genuine = [part for part in msg.parts if not is_harness_data(part)]
                 if len(genuine) == len(msg.parts):
                     out.append(msg)
                 elif genuine:
@@ -841,7 +852,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if isinstance(part, UserPromptPart)
                 and not is_pinned(part)
                 and not is_receipt_part(part)
-                and not _is_harness_data(part)
+                and not is_harness_data(part)
             ]
             if not user_parts:
                 continue
@@ -891,16 +902,6 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             bounded.append(truncated if isinstance(item, str) else replace(item, content=truncated))
         return bounded, changed
 
-    def _maybe_bridge_prefix(self, summary: str, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> str:
-        """Prefix *summary* with a cross-model handoff note when families differ."""
-        if not self.bridge_prefix:
-            return summary
-        run_family = _model_family(_history_model_name(messages) or ctx.model)
-        summarizer_family = _model_family(self.model if self.model is not None else ctx.model)
-        if run_family and summarizer_family and run_family != summarizer_family:
-            return f'{_BRIDGE_PREFIX}\n\n{_without_bridge_prefix(summary)}'
-        return summary
-
     def _insert_receipt(
         self,
         summary_message: ModelRequest,
@@ -912,7 +913,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
     ) -> list[ModelMessage]:
         """Insert a receipt after the summary, de-accumulating only outside the protected tail."""
         prefix_end = len(result) - protected_tail
-        deduped = [msg for msg in result[:prefix_end] if not _is_receipt_message(msg)]
+        deduped = [msg for msg in result[:prefix_end] if not is_receipt_message(msg)]
         deduped.extend(result[prefix_end:])
         dropped_tokens = estimate_token_count(to_summarize, self.tokenizer)
         handle = discover_transcript_handle(ctx)
@@ -984,58 +985,75 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         The return type keeps the `str` an earlier version recorded, so a durable run started before it replays.
         """
-        from pydantic_ai import Agent
-
-        formatted = _format_messages(
-            messages,
-            skip_previous_summary=previous_summary is not None,
-            tool_return_max_chars=self.tool_return_max_chars,
+        return WrittenSummary(
+            await write_summary(self, messages, ctx, previous_summary=previous_summary), datetime.now(UTC)
         )
-        prompt = self.summary_prompt.format(messages=formatted)
-        if any(_is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
-            prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
 
-        if previous_summary is not None:
-            prompt = (
-                f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
-                f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
-            )
 
-        model = self.model if self.model is not None else ctx.model
-        # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
-        # realtime run reaches here only when no summarizer `model=` was configured, so ask for
-        # one explicitly rather than handing `Agent` a model it cannot run with.
-        if is_realtime_model(model):
-            raise UserError(
-                'SummarizingCompaction needs a request-response model to write the summary, but '
-                f'the run uses {type(model).__name__}, which is not one. Set `model=` on '
-                'SummarizingCompaction to the model to summarize with when the run uses a realtime model.'
-            )
-        # Without `model=`, the summarizer is the run's model, which may be one that cannot write
-        # text at all, such as a decision model. Say so here rather than letting the summary run
-        # fail on core's generic "text output is not supported".
-        if self.model is None and not _writes_text(ctx.model):
-            raise UserError(
-                f'SummarizingCompaction writes its summary with a language model, but the run uses '
-                f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
-                'to a language model to summarize with.'
-            )
-        # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
-        # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
-        agent: Agent[None, str] = Agent(
-            cast('Model[Any] | str', model),
-            name='summarizing_compaction',
-            deps_type=type(None),
-            output_type=TextOutput(_non_empty_summary),
-            instructions=self.instructions,
-            model_settings=self.model_settings,
-            capabilities=list(self.summarization_capabilities),
+async def write_summary(
+    summarizer: SummarizingCompaction[AgentDepsT],
+    messages: list[ModelMessage],
+    ctx: RunContext[AgentDepsT],
+    *,
+    previous_summary: str | None = None,
+) -> str:
+    """Write *summarizer*'s summary of *messages* with its model, prompts and settings, inline.
+
+    `SummarizingCompaction._summarize` wraps this in its durable operation; another strategy that
+    reuses a summarizer's settings calls it inside an operation of its own.
+    """
+    from pydantic_ai import Agent
+
+    formatted = format_transcript(
+        messages,
+        skip_previous_summary=previous_summary is not None,
+        tool_return_max_chars=summarizer.tool_return_max_chars,
+    )
+    prompt = summarizer.summary_prompt.format(messages=formatted)
+    if any(is_harness_data(part) for msg in messages if isinstance(msg, ModelRequest) for part in msg.parts):
+        prompt = f'{prompt}\n\n{_HARNESS_DATA_INSTRUCTION}'
+
+    if previous_summary is not None:
+        prompt = (
+            f'{prompt}\n\n{_INCREMENTAL_UPDATE_INSTRUCTION}\n\n'
+            f'<previous-summary>\n{_neutralize_transcript_tags(previous_summary)}\n</previous-summary>'
         )
-        result = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-            event_stream_handler=self.event_stream_handler,
+
+    model = summarizer.model if summarizer.model is not None else ctx.model
+    # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
+    # realtime run reaches here only when no summarizer `model=` was configured, so ask for
+    # one explicitly rather than handing `Agent` a model it cannot run with.
+    if is_realtime_model(model):
+        raise UserError(
+            'SummarizingCompaction needs a request-response model to write the summary, but '
+            f'the run uses {type(model).__name__}, which is not one. Set `model=` on '
+            'SummarizingCompaction to the model to summarize with when the run uses a realtime model.'
         )
-        return WrittenSummary(result.output, datetime.now(UTC))
+    # Without `model=`, the summarizer is the run's model, which may be one that cannot write
+    # text at all, such as a decision model. Say so here rather than letting the summary run
+    # fail on core's generic "text output is not supported".
+    if summarizer.model is None and not _writes_text(ctx.model):
+        raise UserError(
+            f'SummarizingCompaction writes its summary with a language model, but the run uses '
+            f'{ctx.model.model_name!r}, which cannot produce text. Set `model=` on SummarizingCompaction '
+            'to a language model to summarize with.'
+        )
+    # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
+    # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
+    agent: Agent[None, str] = Agent(
+        cast('Model[Any] | str', model),
+        name='summarizing_compaction',
+        deps_type=type(None),
+        output_type=TextOutput(_non_empty_summary),
+        instructions=summarizer.instructions,
+        model_settings=summarizer.model_settings,
+        capabilities=list(summarizer.summarization_capabilities),
+    )
+    result = await agent.run(
+        prompt,
+        conversation_id=ctx.conversation_id,
+        usage=ctx.usage,
+        usage_limits=reserved_usage_limits(ctx.usage_limits),
+        event_stream_handler=summarizer.event_stream_handler,
+    )
+    return result.output
