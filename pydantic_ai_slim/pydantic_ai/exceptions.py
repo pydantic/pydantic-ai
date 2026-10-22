@@ -237,7 +237,7 @@ class RetryModelRequest(Exception):
     ```python
     from pydantic_ai import ModelResponse, RetryModelRequest, RunContext
     from pydantic_ai.capabilities import AbstractCapability
-    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai.exceptions import ModelOverloadedError
     from pydantic_ai.models import ModelRequestContext
 
 
@@ -245,7 +245,7 @@ class RetryModelRequest(Exception):
         async def on_model_request_error(
             self, ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
         ) -> ModelResponse:
-            if not isinstance(error, ModelHTTPError) or error.status_code != 529:
+            if not isinstance(error, ModelOverloadedError):
                 raise error
             if request_context.attempt == 1:
                 raise RetryModelRequest()  # the same model again

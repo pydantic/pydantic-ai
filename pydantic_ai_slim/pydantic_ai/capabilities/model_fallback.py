@@ -92,7 +92,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 agent has no model of its own, the first of these is used for the first attempt.
             fallback_on: Conditions that trigger fallback to the next model. Accepts:
 
-                - A tuple of exception types: `(ModelAPIError, RateLimitError)`
+                - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
                 - A response handler (sync or async): `def check(r: ModelResponse) -> bool`
                 - A sequence mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
