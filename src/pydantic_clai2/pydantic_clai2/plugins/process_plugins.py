@@ -125,7 +125,8 @@ class LiveRuntime:
 
         `changed` tells the process's `LiveSessions` that its state may have changed. `inputs` is the session's
         prompt, which holds the input waiting for its turn and steers that turn; `None` holds none and steers nothing.
-        `queued` counts the waiting input only while there is no prompt; with one, `queued` is its queue's length.
+        `queued` counts the waiting input when `inputs` returns `None`; otherwise the count is the prompt's own
+        queue length.
         """
         self._id = live_id
         self._host = host
