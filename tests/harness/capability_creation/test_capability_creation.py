@@ -333,9 +333,9 @@ class WithNativeTools(AbstractCapability):
         'getter',
         [
             'def get_toolset(self):\n        return lambda ctx: None\n',
-            "def get_instructions(self):\n        return [lambda ctx: 'dynamic', InstructionPart(content='part')]\n",
+            "def get_instructions(self):\n        return [lambda ctx: 'dynamic', InstructionPart(content='part', name='user')]\n",
         ],
-        ids=['toolset-function', 'callable-and-part-instructions'],
+        ids=['toolset-function', 'callable-and-named-part-instructions'],
     )
     def test_accepted_getter_shapes(self, tmp_path: Path, getter: str) -> None:
         code = (
