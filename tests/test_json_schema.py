@@ -2,12 +2,22 @@
 
 from __future__ import annotations as _annotations
 
+import re
 from copy import deepcopy
 from typing import Any
 
 import pytest
+from typing_extensions import TypeAliasType
 
-from pydantic_ai._json_schema import JsonSchemaTransformer
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, UserError
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchema, JsonSchemaTransformer
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+from ._inline_snapshot import snapshot
+
+Key = TypeAliasType('Key', str)
 
 
 class _PassthroughTransformer(JsonSchemaTransformer):
@@ -124,3 +134,773 @@ def test_simplify_nullable_union_with_boolean_member():
     schema = {'anyOf': [True, {'type': 'null'}]}
     result = _PassthroughTransformer(schema, simplify_nullable_unions=True).walk()
     assert result == {'anyOf': [True, {'type': 'null'}]}
+
+
+def test_allof_members_are_recursed():
+    """allOf composition members should be recursed into by the walker, like anyOf/oneOf.
+
+    This is a unit test because the walker is an internal helper and the regression is
+    about its recursion shape, not a provider payload a VCR cassette would catch.
+    """
+
+    visited: list[dict[str, Any]] = []
+
+    class _VisitingTransformer(JsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if 'type' in schema and schema.get('type') == 'object':
+                visited.append(schema)
+            return schema
+
+    schema = {
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+            {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+        ],
+    }
+
+    result = _VisitingTransformer(deepcopy(schema)).walk()
+
+    # Both allOf members were recursed into (their object subschemas were visited).
+    assert visited == [
+        {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+        {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+    ]
+
+    # The allOf structure is preserved with transformed members.
+    assert result == {
+        'allOf': [
+            {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+            {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+        ],
+    }
+
+
+def test_allof_with_refs_is_inlined():
+    """InlineDefsJsonSchemaTransformer should inline $ref members inside allOf.
+
+    Before the fix, allOf members were never recursed into, so $ref resolution and
+    inlining were bypassed for them. This is a unit test pinning the internal walk
+    shape because the schema transformer is an internal helper used by providers.
+    """
+
+    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+
+    schema = {
+        'allOf': [
+            {'$ref': '#/$defs/Foo'},
+            {'type': 'object', 'properties': {'b': {'type': 'integer'}}},
+        ],
+        '$defs': {
+            'Foo': {'type': 'object', 'properties': {'a': {'type': 'string'}}},
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    # The $ref inside allOf was inlined; no $defs should remain since there are no
+    # recursive refs and inlining is preferred.
+    assert '$defs' not in result
+    assert 'allOf' in result
+    assert result['allOf'][0] == {'type': 'object', 'properties': {'a': {'type': 'string'}}}
+    assert result['allOf'][1] == {'type': 'object', 'properties': {'b': {'type': 'integer'}}}
+
+
+def test_typed_schema_anyof_member_is_recursed_google():
+    """GoogleJsonSchemaTransformer should strip unsupported keys from anyOf members of a typed node.
+
+    Before the fix, composition members (allOf/anyOf/oneOf) were only recursed when the node
+    had no `type`. A typed node (e.g. `type: object`) with a sibling `anyOf` left its
+    members untransformed, so provider-specific cleanup (Google strips `title` and
+    `exclusiveMinimum`) was never applied to them.
+    """
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    schema = {
+        'type': 'object',
+        'properties': {'p': {'type': 'string'}},
+        'anyOf': [{'type': 'integer', 'title': 'Count', 'exclusiveMinimum': 0}],
+    }
+
+    result = GoogleJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    member = result['anyOf'][0]
+    assert member['type'] == 'integer'
+    assert 'title' not in member
+    assert 'exclusiveMinimum' not in member
+
+
+def test_typed_schema_anyof_member_is_recursed_openai_strict():
+    """OpenAIJsonSchemaTransformer strict should add strict fields to anyOf members of a typed node.
+
+    Before the fix, composition members of a typed node were never walked, so OpenAI strict
+    mode additions (`additionalProperties: false` and `required`) were missing from them.
+    """
+    schema = {
+        'type': 'object',
+        'properties': {'p': {'type': 'string'}},
+        'anyOf': [{'type': 'object', 'properties': {'q': {'type': 'integer'}}}],
+    }
+
+    result = OpenAIJsonSchemaTransformer(deepcopy(schema), strict=True).walk()
+
+    member = result['anyOf'][0]
+    assert member['type'] == 'object'
+    assert member['additionalProperties'] is False
+    assert member['required'] == ['q']
+
+
+def test_described_options_fold_into_one_enum_google():
+    """An `Enum` with member docstrings renders as `anyOf` of described `const`s; Gemini gets one `enum` again.
+
+    Gemini does not hold the model to an `anyOf` of one-value `enum`s the way it holds it to a plain `enum`,
+    so the options fold back together and each description moves into the parent's.
+    """
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    schema = {
+        'type': 'string',
+        'description': 'How urgent the ticket is.',
+        'anyOf': [
+            {'const': 'low', 'description': 'Can wait a week.'},
+            {'const': 'high', 'description': 'Needs attention today.'},
+            {'const': 'unknown'},
+        ],
+    }
+
+    assert GoogleJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {
+            'type': 'string',
+            'enum': ['low', 'high', 'unknown'],
+            'description': 'How urgent the ticket is.\nlow: Can wait a week.\nhigh: Needs attention today.',
+        }
+    )
+    # A union of real alternatives is left alone, and so is one of single values of different types.
+    mixed = {'anyOf': [{'const': 'low'}, {'type': 'integer'}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(mixed)).walk() == snapshot(
+        {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'type': 'integer'}]}
+    )
+    typed_apart = {'anyOf': [{'const': 'low'}, {'const': 1}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(typed_apart)).walk() == snapshot(
+        {'anyOf': [{'enum': ['low'], 'type': 'string'}, {'enum': [1], 'type': 'integer'}]}
+    )
+    # A parent with its own `enum`, or typed differently from its options, is left alone: folding would widen it.
+    own_enum = {'type': 'string', 'enum': ['low'], 'anyOf': [{'const': 'low'}, {'const': 'high'}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(own_enum)).walk() == snapshot(
+        {
+            'type': 'string',
+            'enum': ['low'],
+            'anyOf': [{'enum': ['low'], 'type': 'string'}, {'enum': ['high'], 'type': 'string'}],
+        }
+    )
+    typed_parent = {'type': 'string', 'anyOf': [{'const': 1}, {'const': 2}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(typed_parent)).walk() == snapshot(
+        {'type': 'string', 'anyOf': [{'enum': [1], 'type': 'integer'}, {'enum': [2], 'type': 'integer'}]}
+    )
+    # Options with no descriptions and no type fold into a bare `enum`, with nothing added to the description.
+    bare = {'anyOf': [{'enum': ['a']}, {'enum': ['b']}]}
+    assert GoogleJsonSchemaTransformer(deepcopy(bare)).walk() == snapshot({'enum': ['a', 'b']})
+
+
+def test_typeless_anyof_member_still_recursed():
+    """Control: typeless anyOf members continue to be recursed via _handle_union."""
+    from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+
+    schema = {
+        'anyOf': [{'type': 'integer', 'title': 'Count', 'exclusiveMinimum': 0}],
+    }
+
+    result = GoogleJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    # Single-member union collapses into the member, which is still transformed.
+    assert result == {'type': 'integer'}
+
+
+def test_list_form_items_are_walked():
+    """A draft-7 tuple, spelled as an `items` list rather than `prefixItems`, has each of its schemas walked.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    The walk runs before any request is built, so the transformer output is asserted directly.
+    """
+    schema = {
+        '$defs': {'Point': {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'items': [{'type': 'string', 'title': 'A'}, {'$ref': '#/$defs/Point'}]}
+        },
+    }
+
+    # OpenAI keeps `$defs` and strips `title` from each element.
+    assert OpenAIJsonSchemaTransformer(deepcopy(schema), strict=False).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {'pair': {'type': 'array', 'items': [{'type': 'string'}, {'$ref': '#/$defs/Point'}]}},
+            '$defs': {'Point': {'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        }
+    )
+    # Inlining resolves the `$ref` inside the list.
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'pair': {
+                    'type': 'array',
+                    'items': [
+                        {'type': 'string', 'title': 'A'},
+                        {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+                    ],
+                }
+            },
+        }
+    )
+
+
+def test_inline_defs_preserves_ref_sibling_keywords():
+    """Test internal schema walking, which has no provider request to cover with VCR."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'field': {'$ref': '#/$defs/Foo', 'description': 'field-level description', 'default': None},
+        },
+        '$defs': {
+            'Foo': {
+                'type': 'object',
+                'description': 'model-level description',
+                'default': 'model default',
+                'properties': {'x': {'type': 'integer'}},
+            }
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+    field = result['properties']['field']
+
+    # The referenced definition is inlined...
+    assert field['type'] == 'object'
+    assert field['properties'] == {'x': {'type': 'integer'}}
+    assert '$ref' not in field
+    # ...and the sibling keywords are preserved rather than dropped.
+    assert field['description'] == 'field-level description'
+    assert field['default'] is None
+
+
+# The schema pydantic emits for `Pet = TypeAliasType('Pet', Union[Cat, Dog])` used as two fields of one
+# model: a union-typed `$def` referenced more than once.
+SHARED_UNION_DEF_SCHEMA: dict[str, Any] = {
+    'type': 'object',
+    'title': 'Args',
+    'properties': {
+        'first': {'$ref': '#/$defs/Pet'},
+        'second': {'$ref': '#/$defs/Pet'},
+    },
+    'required': ['first', 'second'],
+    '$defs': {
+        'Cat': {
+            'type': 'object',
+            'title': 'Cat',
+            'properties': {'meow': {'type': 'string', 'title': 'Meow'}},
+            'required': ['meow'],
+        },
+        'Dog': {
+            'type': 'object',
+            'title': 'Dog',
+            'properties': {'woof': {'type': 'string', 'title': 'Woof'}},
+            'required': ['woof'],
+        },
+        'Pet': {'anyOf': [{'$ref': '#/$defs/Cat'}, {'$ref': '#/$defs/Dog'}]},
+    },
+}
+
+INLINED_PET: dict[str, Any] = {
+    'anyOf': [
+        {
+            'type': 'object',
+            'title': 'Cat',
+            'properties': {'meow': {'type': 'string', 'title': 'Meow'}},
+            'required': ['meow'],
+        },
+        {
+            'type': 'object',
+            'title': 'Dog',
+            'properties': {'woof': {'type': 'string', 'title': 'Woof'}},
+            'required': ['woof'],
+        },
+    ]
+}
+
+
+def test_inline_defs_repeated_union_ref():
+    """Every `$ref` to a union `$def` inlines the whole definition, not just the first one.
+
+    The first inline site used to walk the stored definition in place and pop its `anyOf` off it, so
+    every later `$ref` to the same definition inlined `{}` — a schema meaning "anything", silently
+    sent to the model. Unit test: the corruption is in the walker itself, and a cassette would only
+    pin one provider's copy of the resulting payload.
+    """
+    result = InlineDefsJsonSchemaTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA)).walk()
+
+    assert result['properties']['first'] == INLINED_PET
+    assert result['properties']['second'] == INLINED_PET
+
+
+def test_inlined_defs_are_independent_objects():
+    """Each inline site gets its own objects, so mutating one doesn't reach through to the others.
+
+    The missing copy that emptied union definitions also left object subtrees aliased across sites.
+    """
+    result = InlineDefsJsonSchemaTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA)).walk()
+    first = result['properties']['first']
+    second = result['properties']['second']
+
+    assert first is not second
+    first['anyOf'][0]['properties']['meow']['type'] = 'integer'
+    assert second['anyOf'][0]['properties']['meow']['type'] == 'string'
+
+
+def test_inline_defs_does_not_mutate_defs():
+    """Inlining reads the stored definitions without walking or transforming them in place."""
+    schema = deepcopy(SHARED_UNION_DEF_SCHEMA)
+    transformer = InlineDefsJsonSchemaTransformer(schema)
+    transformer.walk()
+
+    assert schema == SHARED_UNION_DEF_SCHEMA
+    assert transformer.defs == SHARED_UNION_DEF_SCHEMA['$defs']
+
+
+def test_inline_defs_walks_each_def_once():
+    """A `$def` is walked once per `walk()`, however many times it's referenced.
+
+    Inlining correctly means expanding the definition's whole subtree at every reference site, which
+    without this would repeat the walk once per site (and, transitively, once per nested `$ref`).
+    """
+    transformed: list[str] = []
+
+    class _TitleRecordingTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if title := schema.get('title'):
+                transformed.append(title)
+            return schema
+
+    _TitleRecordingTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA)).walk()
+
+    # `Cat` and `Dog` are each walked once even though `Pet` — itself walked once for both fields —
+    # references them, and each field inlines a copy of the result.
+    assert transformed == ['Meow', 'Cat', 'Woof', 'Dog', 'Args']
+
+
+def test_inline_defs_rewalks_defs_on_each_walk():
+    """Each `walk()` transforms definitions using the transformer's current state."""
+
+    class _StrictTitleTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if self.strict and (title := schema.get('title')):
+                schema['title'] = title.upper()
+            return schema
+
+    schema = {
+        'type': 'object',
+        'properties': {'value': {'$ref': '#/$defs/Value'}},
+        '$defs': {'Value': {'type': 'string', 'title': 'Value'}},
+    }
+    transformer = _StrictTitleTransformer(schema, strict=False)
+
+    assert transformer.walk()['properties']['value']['title'] == 'Value'
+
+    transformer.strict = True
+
+    assert transformer.walk()['properties']['value']['title'] == 'VALUE'
+
+
+def test_inline_defs_repeated_ref_with_siblings():
+    """`$ref` sibling keywords apply to their own site only, never to the shared definition."""
+    schema = {
+        'type': 'object',
+        'properties': {
+            'described': {'$ref': '#/$defs/Pet', 'description': 'field-level description'},
+            'plain': {'$ref': '#/$defs/Pet'},
+            'defaulted': {'$ref': '#/$defs/Pet', 'default': None},
+        },
+        '$defs': {'Pet': {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    pet = {'anyOf': [{'type': 'string'}, {'type': 'integer'}]}
+    assert result['properties']['described'] == {**pet, 'description': 'field-level description'}
+    assert result['properties']['plain'] == pet
+    assert result['properties']['defaulted'] == {**pet, 'default': None}
+
+
+def test_inline_defs_skips_keywords_without_matching_type():
+    """Object and array keywords are deliberately left as written, `$ref`s included, without a matching `type`.
+
+    They're walked only when `type` is exactly `'object'` or `'array'` respectively. The dangling `$ref` is the
+    documented output, not a bug: see the `InlineDefsJsonSchemaTransformer` docstring, and the comment in
+    `JsonSchemaTransformer._handle` for why these keywords aren't walked. Setting `type` to `'object'` gets the
+    reference inlined. Unit test: the behavior is the walker's own, and a cassette would only pin one provider's
+    copy of the payload.
+    """
+    schema = {
+        '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+        'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+    }
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {'properties': {'payload': {'$ref': '#/$defs/Payload'}}}
+    )
+    assert InlineDefsJsonSchemaTransformer({**deepcopy(schema), 'type': ['object', 'null']}).walk() == snapshot(
+        {'properties': {'payload': {'$ref': '#/$defs/Payload'}}, 'type': ['object', 'null']}
+    )
+    assert InlineDefsJsonSchemaTransformer(
+        {'$defs': deepcopy(schema['$defs']), 'items': {'$ref': '#/$defs/Payload'}}
+    ).walk() == snapshot({'items': {'$ref': '#/$defs/Payload'}})
+    assert InlineDefsJsonSchemaTransformer({**deepcopy(schema), 'type': 'object'}).walk() == snapshot(
+        {'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}, 'type': 'object'}
+    )
+
+
+def test_inline_defs_recursive_ref():
+    """A recursive `$def` is emitted as `$defs` + `$ref`, walked and transformed like the rest.
+
+    The definition emitted alongside the `$ref` used to be the object the walk had transformed in
+    place; now that inlining copies instead, it comes from the same walked-once definition the inline
+    sites are copied from. The transformer uppercases titles so a raw, unwalked definition would show.
+    """
+
+    class _TitleUpperTransformer(InlineDefsJsonSchemaTransformer):
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            if title := schema.get('title'):
+                schema['title'] = title.upper()
+            return schema
+
+    schema = {
+        'type': 'object',
+        'title': 'Wrapper',
+        'properties': {'a': {'$ref': '#/$defs/Node'}, 'b': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'title': 'Node',
+                'properties': {'children': {'type': 'array', 'title': 'Children', 'items': {'$ref': '#/$defs/Node'}}},
+            }
+        },
+    }
+
+    transformer = _TitleUpperTransformer(deepcopy(schema))
+    result = transformer.walk()
+
+    assert transformer.recursive_refs == {'Node'}
+    walked_node = {
+        'type': 'object',
+        'title': 'NODE',
+        'properties': {'children': {'type': 'array', 'title': 'CHILDREN', 'items': {'$ref': '#/$defs/Node'}}},
+    }
+    assert result == {
+        '$defs': {
+            'Node': walked_node,
+            'Wrapper': {
+                'type': 'object',
+                'title': 'WRAPPER',
+                # The first site unpacks one level of the recursion; from then on `Node` is known to
+                # be recursive, so the second site keeps its `$ref`.
+                'properties': {'a': walked_node, 'b': {'$ref': '#/$defs/Node'}},
+            },
+        },
+        '$ref': '#/$defs/Wrapper',
+    }
+
+
+def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
+    """A root whose title already names a recursive `$def` gets a distinct key, not an overwrite.
+
+    With recursive refs the output has to be `$defs` + `$ref`, and the root's key is derived from
+    its `title` when it has no `$ref` of its own. If that title happens to match a definition, the
+    root would otherwise clobber the definition it points at.
+    """
+    schema = {
+        'type': 'object',
+        'title': 'Node',
+        'properties': {'child': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Node': {
+                'type': 'object',
+                'title': 'Node',
+                'properties': {'child': {'$ref': '#/$defs/Node'}},
+            }
+        },
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert result['$ref'] == '#/$defs/Node_root'
+    assert set(result['$defs']) == {'Node', 'Node_root'}
+    # The definition the root points at is intact, not overwritten by the root.
+    assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
+
+
+ADDRESS_SCHEMA: dict[str, Any] = {
+    'type': 'object',
+    'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+    'required': ['street', 'city'],
+    'additionalProperties': False,
+}
+
+# The input schema the MCP TypeScript SDK sends for a zod v3 tool `{ from: Address, to: Address }`: its
+# `zod-to-json-schema` defaults point the reused subschema at its first occurrence instead of `$defs`.
+MCP_POINTER_REF_SCHEMA: dict[str, Any] = {
+    'type': 'object',
+    'properties': {'from': ADDRESS_SCHEMA, 'to': {'$ref': '#/properties/from'}},
+    'required': ['from', 'to'],
+    'additionalProperties': False,
+    '$schema': 'http://json-schema.org/draft-07/schema#',
+}
+
+
+@pytest.mark.parametrize(
+    'schema,expected',
+    [
+        pytest.param(
+            MCP_POINTER_REF_SCHEMA,
+            {**MCP_POINTER_REF_SCHEMA, 'properties': {'from': ADDRESS_SCHEMA, 'to': ADDRESS_SCHEMA}},
+            id='sibling-property',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'list': {'type': 'array', 'items': ADDRESS_SCHEMA},
+                    'one': {'$ref': '#/properties/list/items', 'description': 'One address'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'list': {'type': 'array', 'items': ADDRESS_SCHEMA},
+                    'one': {**ADDRESS_SCHEMA, 'description': 'One address'},
+                },
+            },
+            id='array-items-with-sibling-keyword',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'from': {'$ref': '#/definitions/Address'}},
+                'definitions': {'Address': ADDRESS_SCHEMA},
+            },
+            {
+                'type': 'object',
+                'properties': {'from': ADDRESS_SCHEMA},
+                'definitions': {'Address': ADDRESS_SCHEMA},
+            },
+            id='draft-07-definitions',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b~c': {'type': 'array', 'prefixItems': [{'type': 'integer'}, ADDRESS_SCHEMA]},
+                    'to': {'$ref': '#/properties/a~1b~0c/prefixItems/1'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b~c': {'type': 'array', 'prefixItems': [{'type': 'integer'}, ADDRESS_SCHEMA]},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='escaped-tokens-and-list-index',
+        ),
+    ],
+)
+def test_inline_defs_resolves_json_pointer_refs(schema: dict[str, Any], expected: dict[str, Any]):
+    """A local JSON-pointer `$ref` (RFC 6901) is inlined like a `$defs` one.
+
+    Unit test: the pointer is resolved by the walker itself; a cassette would only pin one provider's
+    copy of the resulting payload.
+    """
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == expected
+
+
+@pytest.mark.parametrize(
+    'schema,ref',
+    [
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'name': {'type': 'string'}, 'children': {'type': 'array', 'items': {'$ref': '#'}}},
+            },
+            '#',
+            id='root',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'tree': {
+                        'type': 'object',
+                        'properties': {'children': {'type': 'array', 'items': {'$ref': '#/properties/tree'}}},
+                    }
+                },
+            },
+            '#/properties/tree',
+            id='ancestor',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'tree': {'$ref': '#/definitions/Tree'}},
+                'definitions': {
+                    'Tree': {
+                        'type': 'object',
+                        'properties': {'children': {'type': 'array', 'items': {'$ref': '#/definitions/Tree'}}},
+                    }
+                },
+            },
+            '#/definitions/Tree',
+            id='draft-07-definitions',
+        ),
+    ],
+)
+def test_inline_defs_recursive_json_pointer_ref_raises(schema: dict[str, Any], ref: str):
+    """A recursive JSON pointer has no `$defs` name to keep it as a `$ref` under, so inlining refuses it.
+
+    Unit test: the walker raises before any request is built.
+    """
+    with pytest.raises(UserError, match=f'^Recursive JSON pointer `\\$ref` {re.escape(repr(ref))} '):
+        InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+
+@pytest.mark.parametrize(
+    'ref',
+    [
+        '#/properties/missing',
+        '#/required/9',
+        '#/properties/t/prefixItems/01',
+        '#/properties/t/prefixItems/\u0661',
+        '#/required/\u00b2',
+        pytest.param('#/properties/t/prefixItems/' + '1' * 4301, id='index-past-int-digit-limit'),
+        '#/required/0',
+        '#/$defs/Missing',
+    ],
+)
+def test_inline_defs_dangling_ref_raises(ref: str):
+    """A `$ref` that resolves to no schema object raises rather than inlining something else.
+
+    RFC 6901 array indexes are ASCII digits without a leading zero. Under a looser digit check, `01` and an
+    Arabic-Indic `1` would reach `prefixItems[1]`, and a superscript `2` passes `str.isdigit()` but crashes `int()`,
+    as does an index longer than Python's integer string conversion limit.
+    Unit test: the walker raises before any request is built.
+    """
+    schema = {
+        'type': 'object',
+        'properties': {
+            'a': {'type': 'string'},
+            't': {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'string'}]},
+            'b': {'$ref': ref},
+        },
+        'required': ['a'],
+    }
+
+    with pytest.raises(
+        UserError, match=f'^Could not find \\$ref definition for {re.escape(ref.removeprefix("#/$defs/"))}$'
+    ):
+        InlineDefsJsonSchemaTransformer(schema).walk()
+
+
+def test_non_inlining_transformer_keeps_json_pointer_refs():
+    """Only the inlining path resolves JSON pointers; every other transformer passes the `$ref` through.
+
+    Unit test: pins that the walker leaves the schema as it was, which no single provider request shows.
+    """
+    assert _PassthroughTransformer(deepcopy(MCP_POINTER_REF_SCHEMA)).walk() == MCP_POINTER_REF_SCHEMA
+
+
+def test_json_pointer_ref_tool_with_inlining_profile():
+    """A tool defined from an MCP-shaped schema with a JSON-pointer `$ref` reaches an inlining model.
+
+    `FunctionModel` rather than VCR: the profiles that inline `$defs` (Meta, Qwen, Amazon) are served
+    by many providers, and the failure is in preparing the request, before any provider is involved.
+    """
+
+    def ship_order(**kwargs: Any) -> str:
+        return 'shipped'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'from': {
+                        'type': 'object',
+                        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                        'required': ['street', 'city'],
+                        'additionalProperties': False,
+                    },
+                    'to': {
+                        'type': 'object',
+                        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                        'required': ['street', 'city'],
+                        'additionalProperties': False,
+                    },
+                },
+                'required': ['from', 'to'],
+                'additionalProperties': False,
+                '$schema': 'http://json-schema.org/draft-07/schema#',
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    tool = Tool.from_schema(ship_order, name='ship_order', description=None, json_schema=MCP_POINTER_REF_SCHEMA)
+    agent = Agent(FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')), tools=[tool])
+
+    assert agent.run_sync('ship it').output == 'done'
+
+
+def test_inline_defs_resolves_property_names_ref_through_tool_preparation():
+    """A named dict key type reaches the model with its property-name definition inlined."""
+
+    def accept_values(values: dict[Key, int]) -> str:
+        return 'accepted'  # pragma: no cover
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.function_tools[0].parameters_json_schema == snapshot(
+            {
+                'type': 'object',
+                'properties': {
+                    'values': {
+                        'type': 'object',
+                        'additionalProperties': {'type': 'integer'},
+                        'propertyNames': {'type': 'string'},
+                    }
+                },
+                'required': ['values'],
+                'additionalProperties': False,
+            }
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_function, profile=meta_model_profile('llama-3.3-70b')),
+        tools=[accept_values],
+    )
+    assert agent.run_sync('accept').output == 'done'
+
+
+def test_inline_defs_resolves_a_contains_ref():
+    """Pydantic does not emit `contains`, so this walker-only branch needs direct coverage."""
+    schema: JsonSchema = {
+        'type': 'array',
+        'contains': {'$ref': '#/$defs/Positive'},
+        '$defs': {'Positive': {'type': 'integer', 'minimum': 1}},
+    }
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == snapshot(
+        {'type': 'array', 'contains': {'type': 'integer', 'minimum': 1}}
+    )
+
+
+@pytest.mark.parametrize(('type_', 'keyword'), [('object', 'propertyNames'), ('array', 'contains')])
+@pytest.mark.parametrize('value', [True, False])
+def test_boolean_extra_subschemas_round_trip(type_: str, keyword: str, value: bool):
+    """Pydantic does not emit these boolean schemas, so exercise the walker directly."""
+    schema: JsonSchema = {'type': type_, keyword: value}
+    assert InlineDefsJsonSchemaTransformer(schema).walk() == schema

@@ -3,29 +3,94 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import re
-from typing import Any, Final
+import warnings
+from collections.abc import Mapping
+from typing import Any, Final, Literal, Required
 
-from typing_extensions import Required, TypedDict
+from typing_extensions import TypedDict
 
-from ...messages import ThinkingPart
+from ..._utils import is_str_dict
+from ...messages import (
+    RetryFeedbackPart,
+    RetryInfo,
+    ThinkingPart,
+    ToolPartKind,
+    ToolRetryCause,
+    _tool_return_text,  # pyright: ignore[reportPrivateUsage]
+    parse_tool_kind,
+    tool_return_content_ta,
+)
+from .._adapter import parse_tool_retry, retry_feedback_from_payload, retry_feedback_payload, tool_retry_payload
 
-REASONING_VERSION = (0, 1, 13)
-"""AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
+ENCRYPTED_VALUE_VERSION = (0, 1, 11)
+"""AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
+`ToolMessage` and `SystemMessage` alike).
+
+Gates the field-based `tool_kind`, tool-result `outcome` and retry-feedback round-trips in
+`dump_messages`/`load_messages`. The streaming carrier (`ReasoningEncryptedValueEvent`) is a separate
+`REASONING_*` event gated on `REASONING_VERSION` — see `tool_kind_encrypted_value`.
+"""
+
+REASONING_VERSION = (0, 1, 11)
+"""AG-UI version at and above which we emit `REASONING_*` events rather than `THINKING_*`.
+
+0.1.11 is where the whole reasoning surface landed: the `REASONING_*` events, `ReasoningMessage`,
+and `ReasoningEncryptedValueEvent`. So this also gates whether a `ThinkingPart` survives
+`dump_messages`, and whether thinking signatures, `tool_kind` and a non-`'success'` `outcome` have
+a streaming carrier at all. `THINKING_*` carries none of them, and is deprecated upstream in favor
+of `REASONING_*` ([ag-ui#1050](https://github.com/ag-ui-protocol/ag-ui/pull/1050)).
+
+Equal to `ENCRYPTED_VALUE_VERSION` because `encrypted_value` shipped in that same release. They
+stay separate constants because they gate different surfaces — the event family here, the
+`ToolCall`/`ToolMessage` field there — and nothing guarantees they move together again.
+"""
+
+REASONING_MESSAGE_ROLE_VERSION = (0, 1, 14)
+"""AG-UI version that changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
+
+The field is a `Literal`, so the value we emit has to match the *installed* model exactly or
+constructing the event raises — see `REASONING_MESSAGE_ROLE`.
+"""
 
 MULTIMODAL_VERSION = (0, 1, 15)
-"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document).
+"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document)."""
 
-Also changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
+ACTIVITY_EVENTS_VERSION = (0, 1, 19)
+"""AG-UI version that introduced activity snapshot and delta events."""
+
+INTERRUPTS_VERSION = (0, 1, 19)
+"""AG-UI version that introduced the interrupt-aware run lifecycle.
+
+`RunFinishedEvent.outcome` (`RunFinishedSuccessOutcome` | `RunFinishedInterruptOutcome`),
+`Interrupt`, `ResumeEntry`, and `RunAgentInput.resume` were added in
+[ag-ui-protocol#1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569).
 """
 
 BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
+INTERRUPT_ID_PREFIX: Final[str] = 'int-'
+"""Prefix used to derive an `Interrupt.id` from a `ToolCallPart.tool_call_id`.
+
+The same prefix is stripped on resume to map `ResumeEntry.interrupt_id` back to a `tool_call_id`.
+Keep this string stable — clients may persist `Interrupt.id` across page reloads.
+"""
+
 FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 """Activity type for agent-generated files stored as AG-UI ActivityMessages."""
 
+COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
+"""Activity type for compaction parts stored as AG-UI ActivityMessages."""
+
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
+
+TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
+"""Activity type for tool availability changes stored as AG-UI ActivityMessages."""
+
+ENQUEUED_MESSAGES_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_enqueued_messages'
+"""Activity type for messages delivered into the run by `RunContext.enqueue`, stored as AG-UI ActivityMessages."""
 
 
 class FileActivityContent(TypedDict, total=False):
@@ -36,6 +101,7 @@ class FileActivityContent(TypedDict, total=False):
     id: str
     provider_name: str
     provider_details: dict[str, Any]
+    vendor_metadata: dict[str, Any]
 
 
 class UploadedFileActivityContent(TypedDict, total=False):
@@ -45,7 +111,7 @@ class UploadedFileActivityContent(TypedDict, total=False):
     provider_name: Required[str]
     media_type: str
     identifier: str
-    vendor_metadata: Any
+    vendor_metadata: dict[str, Any]
 
 
 _AG_UI_VERSION_RE = re.compile(r'(\d+(?:\.\d+)*)')
@@ -79,7 +145,7 @@ DEFAULT_AG_UI_VERSION: str = detect_ag_ui_version()
 """The default AG-UI version, auto-detected from the installed `ag-ui-protocol` package."""
 
 REASONING_MESSAGE_ROLE: str = (
-    'reasoning' if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= MULTIMODAL_VERSION else 'assistant'
+    'reasoning' if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= REASONING_MESSAGE_ROLE_VERSION else 'assistant'
 )
 """The correct `role` value for `ReasoningMessageStartEvent`, based on the installed SDK version."""
 
@@ -96,3 +162,252 @@ def thinking_encrypted_metadata(part: ThinkingPart) -> dict[str, Any]:
     if part.provider_details is not None:
         encrypted['provider_details'] = part.provider_details
     return encrypted
+
+
+_ENCRYPTED_VALUE_NAMESPACE: Final = 'pydantic_ai'
+"""Top-level key our payload is nested under inside an AG-UI `encrypted_value` blob, so a genuine
+provider blob in the same slot is never mistaken for our data."""
+
+
+def _namespaced_encrypted_value(payload: Mapping[str, object]) -> str:
+    """Pack a payload into an AG-UI `encrypted_value` blob under the `pydantic_ai` namespace."""
+    return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
+
+
+def tool_kind_encrypted_value(
+    tool_kind: ToolPartKind | None,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
+    retry: RetryInfo[ToolRetryCause] | None = None,
+) -> str | None:
+    """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
+
+    AG-UI documents `encrypted_value` for opaque, client-echoed reasoning continuity, and its
+    standard reducer can attach it to a message or tool call. AG-UI has no generic per-tool metadata
+    event, so we also use that reducer-compatible carrier for Pydantic AI continuity claims. This is
+    a namespaced compatibility mechanism, not a claim that the payload is encrypted reasoning. Our
+    payload is nested under a `pydantic_ai` key so a genuine provider blob in the same slot (e.g.
+    Google's encrypted thinking on a tool call) is never read as our data. The claim is untrusted
+    coming back in: `parse_encrypted_tool_kind` returns it only when the key is present, and it
+    degrades to a plain part if it doesn't validate.
+
+    A non-`'success'` result outcome rides the same payload: a `ToolMessage` has no outcome slot,
+    so without the claim a dump/load round-trip would upgrade a failed/denied/interrupted return to
+    `'success'` — and since `outcome` can affect how a return is serialized to a provider (e.g. a
+    native error channel), that would silently change the request bytes and break the prompt-cache
+    prefix stability the repaired history is designed to keep. A retried return's `retry` rides along
+    too, so an application auditing rejected calls still sees it after a round-trip.
+    """
+    payload: dict[str, object] = {}
+    if tool_kind is not None:
+        payload['tool_kind'] = tool_kind
+    if outcome is not None and outcome != 'success':
+        payload['outcome'] = outcome
+    if retry is not None:
+        payload['retry'] = tool_retry_payload(retry)
+    if not payload:
+        return None
+    return _namespaced_encrypted_value(payload)
+
+
+class _EncryptedValueKwargs(TypedDict, total=False):
+    """`encrypted_value` kwarg for a `ToolCall`/`ToolMessage`, absent when there's nothing to carry."""
+
+    encrypted_value: str
+
+
+def tool_kind_encrypted_value_kwargs(
+    tool_kind: ToolPartKind | None,
+    *,
+    supported: bool,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
+    retry: RetryInfo[ToolRetryCause] | None = None,
+) -> _EncryptedValueKwargs:
+    """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
+
+    Carries `tool_kind` and an `'interrupted'` result outcome (see `tool_kind_encrypted_value`).
+    Empty when the target version predates the `encrypted_value` field (`supported=False`) or the part
+    has nothing to carry, so — like the streaming carrier — the field is only ever set when there's a
+    claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
+    """
+    value = tool_kind_encrypted_value(tool_kind, outcome, retry) if supported else None
+    return {'encrypted_value': value} if value is not None else {}
+
+
+def retry_feedback_encrypted_value_kwargs(part: RetryFeedbackPart, *, supported: bool) -> _EncryptedValueKwargs:
+    """Message kwargs carrying the `RetryFeedbackPart` the message's text was rendered from.
+
+    The same namespaced `encrypted_value` carrier as `tool_kind_encrypted_value`, used here because
+    neither a `SystemMessage` nor a `UserMessage` has another metadata slot. It is what tells our own
+    rendered feedback apart from a message the client wrote, and what restores the part's `cause` and
+    raw content — neither of which the rendered text alone can give back.
+
+    Empty when the target version predates the field (`supported=False`), in which case the message
+    reloads as a plain prompt part and `dump_messages` warns via
+    `warn_encrypted_value_not_persisted`.
+    """
+    if not supported:
+        return {}
+    return {'encrypted_value': _namespaced_encrypted_value({'retry_feedback': retry_feedback_payload(part)})}
+
+
+def warn_encrypted_value_not_persisted(ag_ui_version: str) -> None:
+    """Warn that the claims riding on `encrypted_value` are lost when dumping below `ENCRYPTED_VALUE_VERSION`.
+
+    The carrier only exists from 0.1.11, so on older versions features like lazy capabilities and tool
+    search silently forget their state across a round-trip, and harness retry feedback reloads as an
+    operator-authored system prompt or a user prompt, depending on the voice it was dumped in;
+    upgrading the client fixes both.
+    """
+    warnings.warn(
+        f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
+        'the claims Pydantic AI carries there cannot survive a dump/load round-trip: the `tool_kind` '
+        'of typed tool parts (e.g. lazy capabilities, tool search) is dropped and those parts reload '
+        'as their base classes, and a `RetryFeedbackPart` reloads as a plain `SystemPromptPart` or '
+        '`UserPromptPart`. '
+        'Upgrade the client to ag-ui-protocol >= 0.1.11 to preserve them.',
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+def _parse_encrypted_namespace(encrypted_value: str | None) -> dict[str, Any] | None:
+    """Extract the `pydantic_ai` namespace from an AG-UI `encrypted_value` blob, or `None`.
+
+    Client-supplied and untrusted: anything that isn't a JSON object with a `pydantic_ai` object
+    inside reads as `None`, so a genuine provider encrypted blob in the same slot is never read
+    as our data.
+    """
+    if not encrypted_value:
+        return None
+    try:
+        data = json.loads(encrypted_value)
+    except json.JSONDecodeError:
+        return None
+    if not is_str_dict(data):
+        return None
+    namespaced = data.get(_ENCRYPTED_VALUE_NAMESPACE)
+    return namespaced if is_str_dict(namespaced) else None
+
+
+def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | None:
+    """Read a `tool_kind` claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    A forged or unknown claim reads as `None`, so it degrades to a plain part.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return None
+    tool_kind = namespaced.get('tool_kind')
+    return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
+
+
+def parse_encrypted_outcome(
+    encrypted_value: str | None,
+) -> Literal['failed', 'denied', 'interrupted', 'retried'] | None:
+    """Read an outcome claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    Only non-`'success'` outcomes are ever carried (`'success'` is the default), so an absent or
+    unrecognized client-supplied value reads as `None` and the result loads as a regular
+    successful return.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return None
+    outcome = namespaced.get('outcome')
+    if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted' or outcome == 'retried':
+        return outcome
+    return None
+
+
+def parse_encrypted_tool_retry(
+    encrypted_value: str | None,
+) -> RetryInfo[ToolRetryCause] | None:
+    """Read a retried tool return's `retry` claim from the `pydantic_ai` namespace of an `encrypted_value` blob."""
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    return None if namespaced is None else parse_tool_retry(namespaced.get('retry'))
+
+
+def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedbackPart | None:
+    """Read a `RetryFeedbackPart` claim from the `pydantic_ai` namespace of an `encrypted_value` blob.
+
+    An absent, forged or malformed claim reads as `None`, so the message it rode on stays a plain
+    prompt part — see `retry_feedback_from_payload` for why the marker separates provenance rather
+    than proving it.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    if namespaced is None:
+        return None
+    return retry_feedback_from_payload(namespaced.get('retry_feedback'))
+
+
+def parse_builtin_tool_call_id(tool_call_id: str) -> tuple[str, str] | None:
+    """Split a builtin tool-call id into its `(provider_name, original_id)`.
+
+    Inverse of the `'|'.join([prefix, provider_name, original_id])` encoding. Returns
+    `None` when `tool_call_id` is not a well-formed builtin id, so a malformed
+    client-supplied id degrades to the plain tool-call path instead of raising on unpack.
+    """
+    if not tool_call_id.startswith(BUILTIN_TOOL_CALL_ID_PREFIX):
+        return None
+    parts = tool_call_id.split('|', 2)
+    if len(parts) != 3:
+        return None
+    return parts[1], parts[2]
+
+
+def dump_tool_return_content(content: Any) -> str:
+    """Serialize a tool-return `content` value into an AG-UI `ToolMessage.content` / `ToolCallResultEvent.content` string.
+
+    Inverse of [`rehydrate_tool_return_content`][pydantic_ai.ui.ag_ui._utils.rehydrate_tool_return_content],
+    kept symmetric with it so a `ToolReturnPart` round-trips faithfully. `.content` is the source of truth
+    (`.files` is derived from it), so dumping the full content — multimodal files included — and validating
+    it back reconstructs the part. Used for both history serialization (`dump_messages`) and the live event
+    stream, so a file a tool returns survives the round-trip through a streaming frontend and can be sent
+    back to the model on the next step.
+
+    - A plain string is emitted verbatim, not JSON-wrapped, so the loader hands the original string back.
+    - A mapping or sequence — structured returns and anything carrying files at any depth — is dumped
+      through `tool_return_content_ta`, so nested `BinaryContent`/`ImageUrl`/... become base64/URL dicts
+      that the loader restores to their subclasses. Nested raw `bytes` use UTF-8, so they can change the
+      model-facing text after a round trip; use `BinaryContent` for binary data.
+    - A scalar is JSON-dumped too, but reloads as its string form because AG-UI content is text-only. A
+      scalar whose JSON form is a string (a `datetime`, say) is emitted as the same unquoted text the model
+      sees, so the reloaded `str` renders to the model exactly as the original value did.
+    """
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ''
+    dumped = tool_return_content_ta.dump_json(content)
+    if dumped.startswith(b'"'):
+        # The model's adapter uses base64 for bytes; this adapter defaults to UTF-8.
+        return _tool_return_text(content)
+    return dumped.decode()
+
+
+def rehydrate_tool_return_content(content: Any) -> Any:
+    """Rehydrate an AG-UI tool-return `content` value into `ToolReturnContent`, restoring multimodal subclasses.
+
+    Inverse of [`dump_tool_return_content`][pydantic_ai.ui.ag_ui._utils.dump_tool_return_content].
+    Content is a string on the wire; for structured and file-bearing returns it's our own JSON dump, parsed
+    back through `tool_return_content_ta` so multimodal items nested in a mapping or list (`BinaryContent`,
+    `ImageUrl`, `UploadedFile`, ...) come back as their subclasses. Image `BinaryContent` is narrowed to
+    `BinaryImage`.
+
+    Only a parsed mapping or sequence is run back through the union, since nested multimodal items can
+    only live inside those. A non-JSON string (plain-text return) and a parsed JSON scalar (`'123'`,
+    `'true'`) are returned as the original string: content is text-only, so a scalar is indistinguishable
+    from a string on the wire and rehydrating it would silently turn `'123'` into `123`. An
+    already-structured (non-string) `content` is validated directly.
+    """
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return content
+        if not isinstance(parsed, (dict, list)):
+            return content
+        return tool_return_content_ta.validate_python(parsed)
+    if isinstance(content, (dict, list)):
+        return tool_return_content_ta.validate_python(content)
+    return content

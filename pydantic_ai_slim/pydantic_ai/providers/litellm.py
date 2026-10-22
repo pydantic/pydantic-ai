@@ -2,11 +2,8 @@ from __future__ import annotations as _annotations
 
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
@@ -19,18 +16,34 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the LiteLLM provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    )
 
 
-class LiteLLMProvider(Provider[AsyncOpenAI]):
+def _litellm_mistral_model_profile(model_name: str) -> ModelProfile:
+    """Mistral's profile, on the OpenAI defaults this provider assumes for a model no family profile describes.
+
+    Outside Magistral, the Mistral profile only constrains tool call IDs, so the rest of the profile still
+    comes from the OpenAI fallback that applied before it set anything.
+    """
+    profile = mistral_model_profile(model_name)
+    if model_name.startswith('magistral'):
+        return profile
+    return merge_profile(openai_model_profile(model_name), profile)
+
+
+class LiteLLMProvider(_OpenAICompatibleProvider):
     """Provider for LiteLLM API."""
 
     @property
@@ -52,8 +65,8 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
             'anthropic': anthropic_model_profile,
             'openai': openai_model_profile,
             'google': google_model_profile,
-            'mistralai': mistral_model_profile,
-            'mistral': mistral_model_profile,
+            'mistralai': _litellm_mistral_model_profile,
+            'mistral': _litellm_mistral_model_profile,
             'cohere': cohere_model_profile,
             'amazon': amazon_model_profile,
             'bedrock': amazon_model_profile,
@@ -78,9 +91,9 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         if profile is None:
             profile = openai_model_profile(model_name)
 
-        # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
+        # As LiteLLMProvider is used with OpenAIChatModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
 
     @overload
     def __init__(
@@ -96,7 +109,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         api_base: str | None = None,
-        http_client: AsyncHTTPClient,
+        http_client: _OpenAIHTTPClient,
     ) -> None: ...
 
     @overload
@@ -108,7 +121,7 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         api_key: str | None = None,
         api_base: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Initialize a LiteLLM provider.
 
@@ -124,17 +137,6 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
 
         # Create OpenAI client that will be used with LiteLLM's completion function
         # The actual API calls will be intercepted and routed through LiteLLM
-        if http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
-            )
-        else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(
-                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
-            )
-
-    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+        self._client = self._create_openai_client(
+            base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
+        )

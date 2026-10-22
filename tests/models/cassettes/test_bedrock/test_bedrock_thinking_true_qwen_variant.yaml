@@ -1,0 +1,52 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig":
+      {}, "additionalModelRequestFields": {"reasoning_config": "high"}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MGJkODJjYmItZGJhOS00YjRmLThmZjAtNWFmZmZjZmVmNGM1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '188'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-2.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '645'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 518
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                text: |2
+
+                  Okay, the user wants me to reply with the single word "ok". Let me check the instructions again. They said "Reply with the single word: ok". So I should just respond with "ok" without any additional text or explanation. No need to add anything else. Let me make sure there are no typos and that I'm following the format correctly. Alright, that's all.
+          - text: |2-
+
+
+              ok
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 15
+        outputTokens: 86
+        serverToolUsage: {}
+        totalTokens: 101
+    status:
+      code: 200
+      message: OK
+version: 1

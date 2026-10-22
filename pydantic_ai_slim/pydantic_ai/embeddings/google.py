@@ -1,13 +1,21 @@
-from collections.abc import Sequence
+import warnings
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+import httpx2
+
+from pydantic_ai import _model_errors
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
+from pydantic_ai.models import check_allow_model_requests
+from pydantic_ai.models._decode_errors import map_decode_errors
+from pydantic_ai.models._transport_errors import transport_error_message
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:
@@ -20,7 +28,32 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview']
+@contextmanager
+def _map_api_errors(model_name: str) -> Generator[None]:
+    try:
+        yield
+
+    except errors.APIError as e:
+        if (status_code := e.code) >= 400:
+            status = e.status if isinstance(e.status, str) else None
+            raise ModelHTTPError.for_category(
+                _model_errors.google_status_category(status, e.message)
+                or _model_errors.http_status_category(status_code, e.message),
+                status_code=status_code,
+                model_name=model_name,
+                body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                provider_error_code=status,
+            ) from e
+
+        raise
+    except httpx2.TransportError as e:
+        # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
+        timeout = isinstance(e, httpx2.TimeoutException)
+        raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
+
+
+LatestGoogleGLAEmbeddingModelNames = Literal['gemini-embedding-001', 'gemini-embedding-2-preview', 'gemini-embedding-2']
 """Latest Gemini API embedding models.
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -30,6 +63,7 @@ for available models and their capabilities.
 LatestGoogleVertexEmbeddingModelNames = Literal[
     'gemini-embedding-001',
     'gemini-embedding-2-preview',
+    'gemini-embedding-2',
     'text-embedding-005',
     'text-multilingual-embedding-002',
 ]
@@ -46,9 +80,48 @@ GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 """Possible Google embeddings model names."""
 
 
+GoogleEmbeddingTask = Literal[
+    'search result',
+    'question answering',
+    'fact checking',
+    'code retrieval',
+    'classification',
+    'clustering',
+    'sentence similarity',
+    'raw',
+]
+"""Task the embedding is optimized for, applied as a text prefix by `gemini-embedding-2`.
+
+Unlike other Google embedding models (which condition on the [`google_task_type`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_task_type]
+field), `gemini-embedding-2` is conditioned by prepending a task instruction to the input text.
+
+Asymmetric tasks prefix queries and documents differently, so the same task can be used for both
+sides of a retrieval pair:
+
+- `'search result'`: retrieval; find documents relevant to a search query (the default).
+- `'question answering'`: retrieval; find passages that answer a question.
+- `'fact checking'`: retrieval; find evidence that supports or refutes a claim.
+- `'code retrieval'`: retrieval; find code relevant to a natural-language query.
+
+Symmetric tasks prefix both inputs the same way, since both sides play the same role:
+
+- `'classification'`: assign inputs to predefined categories.
+- `'clustering'`: group inputs by similarity.
+- `'sentence similarity'`: measure semantic similarity between inputs.
+
+- `'raw'`: embed the text verbatim, without any prefix.
+"""
+
+_SYMMETRIC_TASKS: frozenset[GoogleEmbeddingTask] = frozenset({'classification', 'clustering', 'sentence similarity'})
+
+# The only model that conditions on a task via a text prefix rather than the `task_type` field.
+_TASK_PREFIX_MODEL = 'gemini-embedding-2'
+
+
 _MAX_INPUT_TOKENS: dict[GoogleEmbeddingModelName, int] = {
     'gemini-embedding-001': 2048,
     'gemini-embedding-2-preview': 8192,
+    'gemini-embedding-2': 8192,
     'text-embedding-005': 2048,
     'text-multilingual-embedding-002': 2048,
 }
@@ -62,6 +135,20 @@ class GoogleEmbeddingSettings(EmbeddingSettings, total=False):
     """
 
     # ALL FIELDS MUST BE `google_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+
+    google_task: GoogleEmbeddingTask
+    """Task to condition `gemini-embedding-2` on, applied as a text prefix.
+
+    Only supported by `gemini-embedding-2`; on other models it is ignored with a warning (they use
+    [`google_task_type`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_task_type] instead).
+    When unset on `gemini-embedding-2`, defaults to `'search result'`.
+
+    For asymmetric tasks the prefix depends on `input_type`: a `'query'` becomes `task: {task} | query: {text}`,
+    while a `'document'` becomes `title: {title} | text: {text}`, using
+    [`google_title`][pydantic_ai.embeddings.google.GoogleEmbeddingSettings.google_title] (or `none` when no
+    title is set). Symmetric tasks use the `task: {task} | query: {text}` form for both. `'raw'` embeds the
+    text verbatim. See [`GoogleEmbeddingTask`][pydantic_ai.embeddings.google.GoogleEmbeddingTask] for the per-task semantics.
+    """
 
     google_task_type: str
     """The task type for the embedding.
@@ -157,35 +244,63 @@ class GoogleEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(GoogleEmbeddingSettings, settings)
 
+        google_task = settings.get('google_task')
         google_task_type = settings.get('google_task_type')
-        if google_task_type is None:
-            google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
 
-        config = EmbedContentConfig(
-            task_type=google_task_type,
-            output_dimensionality=settings.get('dimensions'),
-            title=settings.get('google_title'),
-        )
+        if self._model_name == _TASK_PREFIX_MODEL:
+            if google_task_type is not None:
+                warnings.warn(
+                    f'`google_task_type` is not supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
+                    'this model conditions on a task via the `google_task` text prefix instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            task = google_task if google_task is not None else 'search result'
+            # `'raw'` opts out of conditioning (verbatim passthrough). Named `'raw'`, not `'none'`:
+            # the prefix is applied client-side (no provider API value to mirror, unlike VoyageAI's
+            # `'none'` which maps to a null `input_type`), and `'raw'` avoids the `google_task=None`
+            # footgun where `None` would silently fall back to the `'search result'` default.
+            if task == 'raw':
+                texts = inputs
+            elif input_type == 'document' and task not in _SYMMETRIC_TASKS:
+                title = settings.get('google_title') or 'none'
+                texts = [f'title: {title} | text: {text}' for text in inputs]
+            else:
+                texts = [f'task: {task} | query: {text}' for text in inputs]
+            config = EmbedContentConfig(
+                task_type=None,
+                output_dimensionality=settings.get('dimensions'),
+                title=None,
+            )
+        else:
+            if google_task is not None:
+                warnings.warn(
+                    f'`google_task` is only supported by `{_TASK_PREFIX_MODEL}` and is ignored; '
+                    f'`{self._model_name}` conditions on a task via the `google_task_type` setting instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if google_task_type is None:
+                google_task_type = 'RETRIEVAL_DOCUMENT' if input_type == 'document' else 'RETRIEVAL_QUERY'
+            texts = inputs
+            config = EmbedContentConfig(
+                task_type=google_task_type,
+                output_dimensionality=settings.get('dimensions'),
+                title=settings.get('google_title'),
+            )
 
-        contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in inputs]
+        contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in texts]
 
-        try:
+        with _map_api_errors(self._model_name), map_decode_errors(self._model_name, errors.UnknownApiResponseError):
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
                 contents=contents,
                 config=config,
             )
-        except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise  # pragma: no cover
 
         embeddings: list[list[float]] = [emb.values for emb in (response.embeddings or []) if emb.values is not None]
 
@@ -202,19 +317,13 @@ class GoogleEmbeddingModel(EmbeddingModel):
         return _MAX_INPUT_TOKENS.get(self._model_name)
 
     async def count_tokens(self, text: str) -> int:
-        try:
+        check_allow_model_requests()
+
+        with _map_api_errors(self._model_name), map_decode_errors(self._model_name, errors.UnknownApiResponseError):
             response = await self._client.aio.models.count_tokens(
                 model=self._model_name,
                 contents=text,
             )
-        except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise  # pragma: no cover
 
         if response.total_tokens is None:
             raise UnexpectedModelBehavior('Token counting returned no result')  # pragma: no cover
@@ -236,6 +345,7 @@ def _map_usage(
     if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
             if emb.statistics and emb.statistics.token_count:
-                total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover -- requires vertexai
+                # Requires Vertex AI.
+                total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover
 
     return RequestUsage(input_tokens=total_tokens)

@@ -1,0 +1,40 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig": {}}'
+    headers:
+      Content-Length:
+      - '126'
+      Content-Type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+      User-Agent:
+      - !!binary |
+        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
+        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vYiwz
+        LEQsWixOIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
+      amz-sdk-invocation-id:
+      - !!binary |
+        MDBjYTA3YmUtZGU0Yy00ODc2LWE4NWUtMGZmZDA3YjkwYmRl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
+  response:
+    body:
+      string: '{"metrics": {"latencyMs": 1230}, "output": {"message": {"content": [{"text": "ok"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 19, "outputTokens": 2, "serverToolUsage": {}, "totalTokens": 21}}'
+    headers:
+      Transfer-Encoding:
+      - chunked
+      content-type:
+      - application/json
+      date:
+      - Wed, 13 May 2026 22:52:37 GMT
+      via:
+      - 1.1 google
+      x-amzn-requestid:
+      - 9ed59709-3b35-46f0-88b4-4e1356a41286
+    status:
+      code: 200
+      message: OK
+version: 1

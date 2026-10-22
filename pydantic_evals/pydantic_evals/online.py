@@ -30,14 +30,16 @@ import asyncio
 import functools
 import inspect
 import threading
-from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, LiteralString, Protocol
 
 import anyio
 from opentelemetry import trace
-from typing_extensions import LiteralString, ParamSpec, TypeVar
+from typing_extensions import ParamSpec, TypeVar
+
+from pydantic_ai._utils import is_async_callable
 
 from . import _online as _online_internal, _task_run
 from ._online import CallbackSink, EvaluationSink, SinkPayload
@@ -153,7 +155,7 @@ _EVALUATION_DISABLED = _online_internal.EVALUATION_DISABLED
 
 
 @contextmanager
-def disable_evaluation() -> Iterator[None]:
+def disable_evaluation() -> Generator[None]:
     """Context manager to disable all online evaluation in the current context.
 
     When active, decorated functions still execute normally but no evaluators are dispatched.
@@ -259,6 +261,8 @@ class OnlineEvaluator:
     """
 
     def __post_init__(self) -> None:
+        if self.max_concurrency < 1:
+            raise ValueError(f'max_concurrency must be >= 1, got {self.max_concurrency}')
         self.semaphore = threading.Semaphore(self.max_concurrency)
 
 
@@ -311,8 +315,9 @@ async def run_evaluators(
     all_results: list[EvaluationResult] = []
     all_failures: list[EvaluatorFailure] = []
 
+    results_by_index: dict[int, list[EvaluationResult] | EvaluatorFailure] = {}
+
     async with anyio.create_task_group() as tg:
-        results_by_index: dict[int, list[EvaluationResult] | EvaluatorFailure] = {}
 
         async def _run(idx: int, evaluator: Evaluator) -> None:
             results_by_index[idx] = await run_evaluator(evaluator, context)
@@ -389,7 +394,7 @@ def _open_call_span(
     msg_template: str,
     span_name: str | None,
     recorded_inputs: dict[str, Any] | None,
-) -> Iterator[Any]:
+) -> Generator[Any]:
     """Open the span that represents the decorated function call.
 
     When logfire is installed, uses `logfire.span` so argument and return
@@ -580,7 +585,7 @@ class OnlineEvalConfig:
                 extract_args=resolved_extract_args,
                 record_return=record_return,
             )
-            if inspect.iscoroutinefunction(func):
+            if is_async_callable(func):
                 # ParamSpec can't distinguish async from sync return types — _wrap_async returns
                 # Callable[_P, Awaitable[_R]] but the decorator signature expects Callable[_P, _R]
                 return _wrap_async(func, sig, online_evals, self, resolved_target, call_span)  # pyright: ignore[reportReturnType]
@@ -684,7 +689,8 @@ def _wrap_async(
                         # observability, not a contract to fail the call.
                         try:
                             span.set_attribute('return', result)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)
@@ -758,7 +764,8 @@ def _wrap_sync(
                         # observability, not a contract to fail the call.
                         try:
                             span.set_attribute('return', result)
-                        except Exception:  # pragma: no cover - defensive
+                        except Exception:  # pragma: no cover
+                            # Defensive.
                             pass
             except Exception as e:
                 _dispatch_on_error(e, sampled, inputs, get_eval_context_kwargs, span, target, config)

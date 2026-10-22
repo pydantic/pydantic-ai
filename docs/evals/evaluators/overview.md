@@ -1,10 +1,14 @@
+---
+description: "Choose the right Pydantic Evals evaluators for your task, from fast deterministic checks to LLM judges and span-based evaluation, and combine them in a dataset."
+---
+
 # Evaluators Overview
 
 Evaluators are the core of Pydantic Evals. They analyze task outputs and provide scores, labels, or pass/fail assertions.
 
 ## When to Use Different Evaluators
 
-### Deterministic Checks (Fast & Reliable)
+### Deterministic Checks (Fast & Reliable) {#deterministic-checks-fast-reliable}
 
 Use deterministic evaluators when you can define exact rules:
 
@@ -16,6 +20,11 @@ Use deterministic evaluators when you can define exact rules:
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | Format validation |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | SLA compliance |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavior verification | Tool calls, code paths |
+| [`ToolCorrectness`][pydantic_evals.evaluators.ToolCorrectness] | Required tool coverage | Multiset of tool names invoked |
+| [`TrajectoryMatch`][pydantic_evals.evaluators.TrajectoryMatch] | Tool-call sequence quality | F1 against expected trajectory |
+| [`ArgumentCorrectness`][pydantic_evals.evaluators.ArgumentCorrectness] | Tool argument checks | Refund `order_id`, search query |
+| [`MaxToolCalls`][pydantic_evals.evaluators.MaxToolCalls] | Budget discipline | Tool-call budget |
+| [`MaxModelRequests`][pydantic_evals.evaluators.MaxModelRequests] | Budget discipline | Model-request budget |
 
 **Advantages:**
 
@@ -31,7 +40,7 @@ Use deterministic evaluators when you can define exact rules:
 - Performance requirements (latency, token counts)
 - Behavioral checks (which tools were called, which code paths executed)
 
-### LLM-as-a-Judge (Flexible & Nuanced)
+### LLM-as-a-Judge (Flexible & Nuanced) {#llm-as-a-judge-flexible-nuanced}
 
 Use [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] when evaluation requires understanding or judgment:
 
@@ -50,6 +59,13 @@ dataset = Dataset(
     ],
 )
 ```
+
+For metrics aligned with widely-used evaluation methods (G-Eval, the Ragas RAG metrics, GEMBA),
+see [Standard Quality Metrics](standard-quality-metrics.md): the
+[`GEval`][pydantic_evals.evaluators.GEval] evaluator plus ready-made
+[`LLMJudge`][pydantic_evals.evaluators.LLMJudge] rubrics you can copy and adapt. To plug in the
+*exact* upstream implementations of external frameworks, see
+[Third-Party Integrations](framework-integrations.md).
 
 **Advantages:**
 
@@ -395,7 +411,7 @@ All evaluators receive an [`EvaluatorContext`][pydantic_evals.evaluators.Evaluat
 - `ctx.expected_output` - Expected output (if provided)
 - `ctx.metadata` - Case metadata (if provided)
 - `ctx.duration` - Task execution time (seconds)
-- `ctx.span_tree` - OpenTelemetry spans (if logfire configured)
+- `ctx.span_tree` - OpenTelemetry spans (if Logfire is configured)
 - `ctx.metrics` - Custom metrics dict
 - `ctx.attributes` - Custom attributes dict
 
@@ -471,7 +487,9 @@ dataset = Dataset(
 
 - **[Native Evaluators](built-in.md)** - Complete reference of all provided evaluators
 - **[LLM Judge](llm-judge.md)** - Deep dive on LLM-as-a-Judge evaluation
+- **[Standard Quality Metrics](standard-quality-metrics.md)** - G-Eval, plus LLM judge rubrics for common RAG and translation metrics
 - **[Third-Party Integrations](framework-integrations.md)** - Wrap Ragas, DeepEval, and other metrics libraries
 - **[Custom Evaluators](custom.md)** - Write your own evaluation logic
 - **[Report Evaluators](report-evaluators.md)** - Experiment-wide analyses
 - **[Span-Based Evaluation](span-based.md)** - Evaluate using OpenTelemetry spans
+- **[Agentic Evaluators](agentic.md)** - Trajectory, tool-correctness, argument, and step-budget checks for agents

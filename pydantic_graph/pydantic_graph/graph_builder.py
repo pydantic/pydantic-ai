@@ -1,25 +1,16 @@
 """Builder-based graph API: builder, graph runner, and mermaid rendering.
 
 This module is the canonical home for the builder-based graph API:
-[`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] for declaratively
-constructing executable graphs, [`Graph`][pydantic_graph.graph_builder.Graph]
-and [`GraphRun`][pydantic_graph.graph_builder.GraphRun] for executing them, and
-the mermaid rendering helpers used by `Graph.render()`.
-
-The same public symbols are re-exported from `pydantic_graph` directly. The
-deprecated `pydantic_graph.beta.*` namespace also forwards here.
-
-The contents of three previously-separate modules are bundled here because they
-co-occupy the names (`graph`, `mermaid`) that the legacy `BaseNode`-based
-runner currently holds at the top level. In v2, after the legacy runner is
-removed, `Graph` and the mermaid helpers are expected to move out of this file
-to `pydantic_graph.graph` and `pydantic_graph.mermaid` respectively.
+[`GraphBuilder`][pydantic_graph.GraphBuilder] for declaratively constructing
+executable graphs, [`Graph`][pydantic_graph.Graph] and
+[`GraphRun`][pydantic_graph.GraphRun] for executing them, and the mermaid
+rendering helpers used by `Graph.render()`. The same public symbols are
+re-exported from `pydantic_graph` directly.
 """
 
 from __future__ import annotations as _annotations
 
 import inspect
-import sys
 from collections import Counter, defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, AsyncExitStack, ExitStack, asynccontextmanager, contextmanager
@@ -30,7 +21,9 @@ from typing import (
     Any,
     Generic,
     Literal,
+    Never,
     TypeGuard,
+    assert_never,
     cast,
     get_args,
     get_origin,
@@ -38,10 +31,10 @@ from typing import (
     overload,
 )
 
-from anyio import BrokenResourceError, CancelScope, create_memory_object_stream, create_task_group
+from anyio import BrokenResourceError, CancelScope, ClosedResourceError, create_memory_object_stream, create_task_group
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from typing_extensions import Never, TypeAliasType, TypeVar, assert_never
+from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_graph import _utils, exceptions
 from pydantic_graph._utils import UNSET, AbstractSpan, Unset, get_traceparent, infer_obj_name, logfire_span
@@ -76,12 +69,6 @@ from pydantic_graph.paths import (
 )
 from pydantic_graph.step import NodeStep, Step, StepContext, StepFunction, StepNode, StreamFunction
 from pydantic_graph.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
-
 
 # -- TypeVars ----------------------------------------------------------------
 
@@ -286,6 +273,37 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
                     assert isinstance(event, EndMarker), 'Graph run should end with an EndMarker.'
                     return cast(EndMarker[OutputT], event).value
 
+    def run_sync(
+        self,
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        inputs: InputT = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
+        infer_name: bool = True,
+    ) -> OutputT:
+        """Synchronously execute the graph and return the final output.
+
+        This is a convenience wrapper around [`run`][pydantic_graph.graph_builder.Graph.run] that runs the coroutine on the
+        current event loop via `loop.run_until_complete(...)`. As such, it cannot be called from inside async
+        code or when an event loop is already running.
+
+        Args:
+            state: The graph state instance
+            deps: The dependencies instance
+            inputs: The input data for the graph
+            span: Optional span for tracing/instrumentation
+            infer_name: Whether to infer the graph name from the calling frame.
+
+        Returns:
+            The final output from the graph execution
+        """
+        if infer_name and self.name is None:
+            inferred_name = infer_obj_name(self, depth=2)
+            if inferred_name is not None:  # pragma: no branch
+                self.name = inferred_name
+        return _utils.run_until_complete(self.run(state=state, deps=deps, inputs=inputs, span=span, infer_name=False))
+
     @asynccontextmanager
     async def iter(
         self,
@@ -295,7 +313,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         inputs: InputT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
         infer_name: bool = True,
-    ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
+    ) -> AsyncGenerator[GraphRun[StateT, DepsT, OutputT]]:
         """Create an iterator for step-by-step graph execution.
 
         This method allows for more fine-grained control over graph execution,
@@ -320,7 +338,11 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             entered_span: AbstractSpan | None = None
             if span is None:
                 if self.auto_instrument:
-                    entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
+                    # Preformat span name so non-Logfire OTel backends show
+                    # 'run graph my_graph' instead of the literal template.
+                    # See https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run graph {self.name}'
+                    entered_span = stack.enter_context(logfire_span(span_name, graph=self))
             else:
                 entered_span = stack.enter_context(span)  # pragma: lax no cover
             traceparent = None if entered_span is None else get_traceparent(entered_span)
@@ -681,20 +703,9 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             elif isinstance(maybe_overridden_result, JoinItem):
                                 result = maybe_overridden_result
                                 parent_fork_id = self.graph.get_parent_fork(result.join_id).fork_id
-                                for i, x in enumerate(result.fork_stack[::-1]):
-                                    if x.fork_id == parent_fork_id:
-                                        # For non-final joins (those that are intermediate nodes of other joins),
-                                        # preserve the fork stack so downstream joins can still associate with the same fork run
-                                        if self.graph.is_final_join(result.join_id):
-                                            # Final join: remove the parent fork from the stack
-                                            downstream_fork_stack = result.fork_stack[: len(result.fork_stack) - i]
-                                        else:
-                                            # Non-final join: preserve the fork stack
-                                            downstream_fork_stack = result.fork_stack
-                                        fork_run_id = x.node_run_id
-                                        break
-                                else:  # pragma: no cover
-                                    raise RuntimeError('Parent fork run not found')
+                                fork_run_id, downstream_fork_stack = self._resolve_join_fork_run(
+                                    result.join_id, result.fork_stack
+                                )
 
                                 join_node = self.graph.nodes[result.join_id]
                                 assert isinstance(join_node, Join), f'Expected a `Join` but got {join_node}'
@@ -752,6 +763,10 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                             # intermediate join J1 that shares the same parent fork run, we must finalize J1 first
                             # because it might produce items that feed into J2.
                             for (join_id, fork_run_id), join_state in list(self.active_reducers.items()):
+                                # An earlier join in this pass may have dispatched tasks that feed this join.
+                                if not self._is_fork_run_completed(self.active_tasks.values(), join_id, fork_run_id):
+                                    continue
+
                                 # Check if this join has any intermediate joins that are also active reducers
                                 should_skip = False
                                 intermediate_joins = self.graph.intermediate_join_nodes.get(join_id, set())
@@ -811,9 +826,7 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                                     self.active_tasks[new_task.task_id] = new_task
                                 new_task_ids = {t.task_id for t in maybe_overridden_result}
                                 for t in new_tasks:
-                                    # Same note as above about how this is theoretically reachable but we should
-                                    # just get coverage by unifying the code paths
-                                    if t.task_id not in new_task_ids:  # pragma: no cover
+                                    if t.task_id not in new_task_ids:
                                         await self._finish_task(t.task_id)
                                 self._handle_execution_request(maybe_overridden_result)
             except GeneratorExit:
@@ -848,8 +861,8 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                 # or ExceptionGroup). This preserves the original exception for the caller.
                 try:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
-                except BrokenResourceError:
-                    pass  # pragma: no cover
+                except (BrokenResourceError, ClosedResourceError):
+                    pass
                 return
             try:
                 if isinstance(result, _GraphTaskAsyncIterable):
@@ -858,9 +871,21 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, []))
                 else:
                     await self.iter_stream_sender.send(_GraphTaskResult(t_, result))
-            except BrokenResourceError:
-                # Can happen when an asyncio task is cancelled mid-send.
+            except (BrokenResourceError, ClosedResourceError):
+                # Can happen when an asyncio task is cancelled mid-send: the run's
+                # cleanup closes `iter_stream_sender` in another task while this
+                # task is still in-flight on `send`. Closing the sender raises
+                # `ClosedResourceError` (closing the receiver would raise
+                # `BrokenResourceError`); both are benign here — the result/error
+                # is no longer needed because the run is being torn down.
                 pass
+            except Exception as exc:
+                # Streaming errors must reach the caller through ErrorMarker too.
+                # Cancellation still propagates because it is not an Exception.
+                try:
+                    await self.iter_stream_sender.send(_GraphTaskResult(t_, [], error=exc))
+                except (BrokenResourceError, ClosedResourceError):
+                    pass
 
     async def _run_task(
         self,
@@ -880,7 +905,11 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         elif isinstance(node, Step):
             with ExitStack() as stack:
                 if self.graph.auto_instrument:
-                    stack.enter_context(logfire_span('run node {node_id}', node_id=node.id, node=node))
+                    # Preformat span name so non-Logfire OTel backends show
+                    # 'run node my_step' instead of the literal template.
+                    # See https://github.com/pydantic/pydantic-ai/issues/3173.
+                    span_name = f'run node {node.id}'
+                    stack.enter_context(logfire_span(span_name, node_id=node.id, node=node))
 
                 step_context = StepContext[StateT, DepsT, Any](state=state, deps=deps, inputs=inputs)
                 output = await node.call(step_context)
@@ -938,6 +967,22 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
             return EndMarker(next_node.data)
         else:
             assert_never(next_node)
+
+    def _resolve_join_fork_run(self, join_id: JoinID, fork_stack: ForkStack) -> tuple[NodeRunID, ForkStack]:
+        """Determine which parent fork run a join item belongs to, and the fork stack its output should run under."""
+        parent_fork_id = self.graph.get_parent_fork(join_id).fork_id
+        for i, x in enumerate(fork_stack[::-1]):
+            if x.fork_id == parent_fork_id:
+                if self.graph.is_final_join(join_id):
+                    # Final join: keep the stack up to and including the parent fork, dropping everything
+                    # below it (the fork that directly produced this item, and any deeper forks).
+                    downstream_fork_stack = fork_stack[: len(fork_stack) - i]
+                else:
+                    # Non-final join (an intermediate node of another join): preserve the fork stack so
+                    # downstream joins can still associate with the same fork run.
+                    downstream_fork_stack = fork_stack
+                return x.node_run_id, downstream_fork_stack
+        raise RuntimeError('Parent fork run not found')  # pragma: no cover
 
     def _get_completed_fork_runs(
         self,
@@ -1001,11 +1046,17 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         new_tasks: list[GraphTask] = []
         node_run_id = self.get_next_node_run_id()
         if node.is_map:
-            # If the map specifies a downstream join id, eagerly create a join state for it
+            # If the map specifies a downstream join id, eagerly create a join state for it so that the join
+            # still fires (with its initial value) even when the mapped iterable is empty and no items ever
+            # reach it.
             if (join_id := node.downstream_join_id) is not None:
                 join_node = self.graph.nodes[join_id]
                 assert isinstance(join_node, Join)
-                self.active_reducers[(join_id, node_run_id)] = JoinState(join_node.initial_factory(), fork_stack)
+                child_fork_stack = fork_stack + (ForkStackItem(node.id, node_run_id, 0),)
+                fork_run_id, downstream_fork_stack = self._resolve_join_fork_run(join_id, child_fork_stack)
+                self.active_reducers.setdefault(
+                    (join_id, fork_run_id), JoinState(join_node.initial_factory(), downstream_fork_stack)
+                )
 
             # Eagerly raise a clear error if the input value is not iterable as expected
             if _is_any_iterable(inputs):
@@ -1069,9 +1120,7 @@ def _is_any_async_iterable(x: Any) -> TypeGuard[AsyncIterable[Any]]:
 
 @contextmanager
 def _unwrap_exception_groups():
-    # I need to use a helper function for this because I can't figure out a way to get pyright
-    # to type-check the ExceptionGroup catching in both 3.13 and 3.10 without emitting type errors in one;
-    # if I try to ignore them in one, I get unnecessary-type-ignore errors in the other
+    # Pyright must see the ungrouped exception, while runtime catches an exception group.
     if TYPE_CHECKING:
         yield
     else:
@@ -1521,17 +1570,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         matches: Callable[[Any], bool] | None = None,
     ) -> DecisionBranch[SourceNodeT]:
-        """Create a decision branch for BaseNode subclasses.
+        """Create a decision branch for `BaseNode` subclasses.
 
-        This is similar to match() but specifically designed for matching
-        against BaseNode types from the v1 system.
+        This is similar to `match()` but specifically designed for matching against `BaseNode` types.
 
         Args:
-            source: The BaseNode subclass to match against
+            source: The `BaseNode` subclass to match against
             matches: Optional custom matching function
 
         Returns:
-            A DecisionBranch for the BaseNode type
+            A `DecisionBranch` for the `BaseNode` type
         """
         node = NodeStep(source)
         path = Path(items=[DestinationMarker(node.id)])
@@ -1541,16 +1589,16 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         self,
         node_type: type[BaseNode[StateT, DepsT, GraphOutputT]],
     ) -> EdgePath[StateT, DepsT]:
-        """Create an edge path from a BaseNode class.
+        """Create an edge path from a `BaseNode` class.
 
-        This method integrates v1-style BaseNode classes into the v2 graph
-        system by analyzing their type hints and creating appropriate edges.
+        This method integrates a `BaseNode` subclass into the builder graph by
+        analyzing its `run` return type hints and creating appropriate edges.
 
         Args:
-            node_type: The BaseNode subclass to integrate
+            node_type: The `BaseNode` subclass to integrate
 
         Returns:
-            An EdgePath representing the node and its connections
+            An `EdgePath` representing the node and its connections
 
         Raises:
             GraphSetupError: If the node type is missing required type hints
@@ -2045,7 +2093,7 @@ def _build_placeholder_node_id_remapping(nodes: dict[NodeID, AnyNode]) -> dict[N
 
 def _update_node_with_id_remapping(node: AnyNode, node_id_remapping: dict[NodeID, NodeID]) -> AnyNode:
     # Note: it's a bit awkward that we mutate the provided nodes, but this is necessary to ensure that
-    # calls to `.as_node` reference the correct node_ids when relying on compatibility with the v1 API.
+    # calls to `.as_node` reference the correct node_ids when bridging from `BaseNode` subclasses.
     # We only mutate placeholder IDs so I _think_ this should generally be okay. I guess we can
     # rework it more carefully if it causes issues in the future..
     if isinstance(node, Step):

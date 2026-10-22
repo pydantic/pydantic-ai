@@ -1,9 +1,16 @@
+---
+description: "Evaluate how an AI system behaved, not only what it returned, by querying the OpenTelemetry spans from a run with span-based evaluators in Pydantic Evals."
+---
+
 # Span-Based Evaluation
 
 Evaluate AI system behavior by analyzing OpenTelemetry spans captured during execution.
 
-!!! note "Requires Logfire"
-    Span-based evaluation requires `logfire` to be installed and configured:
+!!! note "Requires the logfire SDK"
+    These evaluators read the OpenTelemetry span tree captured during the run, so the
+    [`logfire`](../how-to/logfire-integration.md) SDK must be installed and configured. No Pydantic Logfire
+    account is needed: the SDK captures spans locally.
+
     ```bash
     pip install 'pydantic-evals[logfire]'
     ```
@@ -113,6 +120,18 @@ Match spans with specific attributes:
 {'has_attribute_keys': ['user_id', 'request_id']}
 ```
 
+### Status Conditions
+
+Match spans by their [status][pydantic_evals.otel.SpanStatus]:
+
+```python
+# Spans that recorded an error
+{'has_status': 'error'}
+
+# Spans explicitly marked OK (note: successful spans are typically 'unset', not 'ok')
+{'has_status': 'ok'}
+```
+
 ### Duration Conditions
 
 Match based on execution time:
@@ -169,7 +188,7 @@ Query relationships between spans:
 {'all_children_have': {'max_duration': 0.5}}
 
 # No children match query
-{'no_child_has': {'has_attributes': {'error': True}}}
+{'no_child_has': {'has_status': 'error'}}
 
 # Descendant queries (recursive)
 {'min_descendant_count': 5}
@@ -188,7 +207,7 @@ Query span hierarchy:
 # Ancestor queries
 {'some_ancestor_has': {'name_equals': 'agent_run'}}
 {'all_ancestors_have': {'max_duration': 10.0}}
-{'no_ancestor_has': {'has_attributes': {'error': True}}}
+{'no_ancestor_has': {'has_status': 'error'}}
 ```
 
 ### Stop Recursing
@@ -288,15 +307,26 @@ evaluators = [
 
 ### Error Detection
 
-Check for error conditions:
+Check for error conditions using span [status][pydantic_evals.otel.SpanStatus]:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
 
 evaluators = [
-    # No errors occurred
+    # An error occurred somewhere in the trace
     HasMatchingSpan(
-        query={'not_': {'has_attributes': {'error': True}}},
+        query={'has_status': 'error'},
+        evaluation_name='had_errors',
+    ),
+
+    # No errors occurred: since HasMatchingSpan passes if *any* span matches,
+    # anchor the query on the root span and check it and all its descendants
+    HasMatchingSpan(
+        query={
+            'name_equals': 'task_execution',
+            'not_': {'has_status': 'error'},
+            'no_descendant_has': {'has_status': 'error'},
+        },
         evaluation_name='no_errors',
     ),
 
@@ -386,9 +416,9 @@ from pydantic_evals.otel import SpanTree
 # Example API (requires span_tree from context)
 def example_api(span_tree: SpanTree) -> None:
     span_tree.find(lambda n: True)  # Find all matching nodes
+    span_tree.first({'name_contains': 'test'})  # Find the first matching node
     span_tree.any({'name_contains': 'test'})  # Check if any span matches
-    span_tree.all({'name_contains': 'test'})  # Check if all spans match
-    span_tree.count({'name_contains': 'test'})  # Count matching spans
+    len(span_tree.find({'name_contains': 'test'}))  # Count matching spans
 
     # Iteration
     for node in span_tree:
@@ -410,6 +440,7 @@ def example_properties(node: SpanNode) -> None:
     _ = node.attributes  # dict[str, AttributeValue]
     _ = node.start_timestamp  # datetime
     _ = node.end_timestamp  # datetime
+    _ = node.status  # 'unset' | 'ok' | 'error'
     _ = node.children  # list[SpanNode]
     _ = node.descendants  # list[SpanNode] (recursive)
     _ = node.ancestors  # list[SpanNode]
@@ -444,9 +475,10 @@ Test queries incrementally:
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
+from pydantic_evals.otel import SpanQuery
 
 # Start simple
-query = {'name_contains': 'tool'}
+query: SpanQuery = {'name_contains': 'tool'}
 
 # Add conditions gradually
 query = {'and_': [

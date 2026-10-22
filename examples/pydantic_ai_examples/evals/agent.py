@@ -4,8 +4,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Caching
 
-from .models import TimeRangeInputs, TimeRangeResponse
+from .models import (
+    TimeRangeBuilderError,
+    TimeRangeBuilderSuccess,
+    TimeRangeInputs,
+    TimeRangeResponse,
+)
 
 
 @dataclass
@@ -21,13 +27,15 @@ class TimeRangeDeps:
 
 
 time_range_agent = Agent[TimeRangeDeps, TimeRangeResponse](
-    'gpt-5.2',
-    output_type=TimeRangeResponse,  # type: ignore  # we can't yet annotate something as receiving a TypeForm
+    'openai:gpt-5.2',
+    # pass the union members directly: a `TimeRangeResponse` type alias isn't yet accepted as a `TypeForm` value (PEP-747)
+    output_type=TimeRangeBuilderSuccess | TimeRangeBuilderError,
     deps_type=TimeRangeDeps,
-    system_prompt="Convert the user's request into a structured time range.",
+    instructions="Convert the user's request into a structured time range.",
     retries=1,
-    instrument=True,
+    capabilities=[Caching()],
 )
+time_range_agent.instrument = True
 
 
 @time_range_agent.tool

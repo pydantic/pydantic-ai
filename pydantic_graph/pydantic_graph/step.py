@@ -2,7 +2,7 @@
 
 This module provides the core abstractions for step-based graph execution,
 including step contexts, step functions, and step nodes that bridge between
-the v1 and v2 graph execution systems.
+the declarative `BaseNode` API and the builder graph.
 """
 
 from __future__ import annotations
@@ -167,12 +167,12 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
 
 @dataclass
 class StepNode(BaseNode[StateT, DepsT, Any]):
-    """A base node that represents a step with bound inputs.
+    """A `BaseNode` that represents a builder step with bound inputs.
 
-    StepNode bridges between the v1 and v2 graph execution systems by wrapping
-    a [`Step`][pydantic_graph.step.Step] with bound inputs in a BaseNode interface.
-    It is not meant to be run directly but rather used to indicate transitions
-    to v2-style steps.
+    `StepNode` lets a [`BaseNode`][pydantic_graph.BaseNode] subclass hand off to a builder
+    [`Step`][pydantic_graph.step.Step] by wrapping the step together with the value it should
+    receive as `inputs`. It is not meant to be run directly; returning a `StepNode` from a
+    `BaseNode.run` method tells the graph builder which step to invoke next.
     """
 
     step: Step[StateT, DepsT, Any, Any]
@@ -194,18 +194,18 @@ class StepNode(BaseNode[StateT, DepsT, Any]):
             NotImplementedError: Always raised as StepNode is not meant to be run directly
         """
         raise NotImplementedError(
-            '`StepNode` is not meant to be run directly, it is meant to be used in `BaseNode` subclasses to indicate a transition to v2-style steps.'
+            '`StepNode` is not meant to be run directly, it is meant to be returned from a `BaseNode` subclass to indicate a transition to a builder step.'
         )
 
 
 # Note: we should make this into a frozen dataclass if https://github.com/python/mypy/issues/17623 gets resolved
 # Right now, it cannot be because that breaks variance inference in Python 3.13 due to __replace__
 class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]):
-    """A step that wraps a BaseNode type for execution.
+    """A step that wraps a `BaseNode` type for execution by the builder graph.
 
-    NodeStep allows v1-style BaseNode classes to be used as steps in the
-    v2 graph execution system. It validates that the input is of the expected
-    node type and runs it with the appropriate graph context.
+    `NodeStep` lets a [`BaseNode`][pydantic_graph.BaseNode] subclass participate as a step in the
+    builder graph. It validates that the input is an instance of the expected node type and runs
+    it with the appropriate graph context.
     """
 
     node_type: type[BaseNode[StateT, DepsT, Any]]

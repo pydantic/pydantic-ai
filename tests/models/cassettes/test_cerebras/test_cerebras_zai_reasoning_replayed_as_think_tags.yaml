@@ -1,0 +1,223 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '124'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 25 * 4? Think briefly first.
+        role: user
+      model: zai-glm-4.7
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2151'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-7a8879bf-5eca-4694-8673-441d7b669f8c
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 25 * 4 = 100.
+          reasoning: |-
+            The user wants me to solve the multiplication problem: "25 * 4".
+
+            1.  **Analyze the request:**
+                *   Operation: Multiplication.
+                *   Operands: 25 and 4.
+                *   Constraint: "Think briefly first." (This suggests I should perform the calculation mentally or break it down simply before providing the final answer).
+
+            2.  **Mental Calculation:**
+                *   Method 1: Standard multiplication.
+                    *   $5 * 4 = 20$ (write down 0, carry over 2).
+                    *   $2 * 4 = 8$.
+                    *   Add the carried over 2: $8 + 2 = 10$.
+                    *   Result: 100.
+                *   Method 2: Distributive property.
+                    *   $25 = 20 + 5$.
+                    *   $20 * 4 = 80$.
+                    *   $5 * 4 = 20$.
+                    *   $80 + 20 = 100$.
+                *   Method 3: Recognizing the quarter relationship.
+                    *   25 is one-quarter of 100.
+                    *   There are four quarters in a whole.
+                    *   So, $4 * 25$ equals 100.
+
+            3.  **Formulate the output:**
+                *   State the final answer clearly.
+                *   (Optional based on "Think briefly") Should I show the work? The prompt asks *me* to think briefly, not necessarily to show all my thinking, but usually, a simple confirmation or a short breakdown is helpful. However, for such a simple calculation, just the answer is often best. I will provide the answer directly.
+
+            4.  **Final Check:**
+                *   $25 * 4 = 100$. Correct.
+
+            5.  **Construct Response:**
+                *   "25 multiplied by 4 is 100."
+          role: assistant
+      created: 1781208276
+      id: chatcmpl-7a8879bf-5eca-4694-8673-441d7b669f8c
+      model: zai-glm-4.7
+      object: chat.completion
+      system_fingerprint: fp_ba34ecf90156e4888692
+      time_info:
+        completion_time: 0.80132127
+        created: 1781208276.514359
+        prompt_time: 0.004226939
+        queue_time: 0.000162202
+        total_time: 0.8083178997039795
+      usage:
+        completion_tokens: 415
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          reasoning_tokens: 406
+          rejected_prediction_tokens: 0
+        prompt_tokens: 17
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 432
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1679'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 25 * 4? Think briefly first.
+        role: user
+      - content: |-
+          <think>
+          The user wants me to solve the multiplication problem: "25 * 4".
+
+          1.  **Analyze the request:**
+              *   Operation: Multiplication.
+              *   Operands: 25 and 4.
+              *   Constraint: "Think briefly first." (This suggests I should perform the calculation mentally or break it down simply before providing the final answer).
+
+          2.  **Mental Calculation:**
+              *   Method 1: Standard multiplication.
+                  *   $5 * 4 = 20$ (write down 0, carry over 2).
+                  *   $2 * 4 = 8$.
+                  *   Add the carried over 2: $8 + 2 = 10$.
+                  *   Result: 100.
+              *   Method 2: Distributive property.
+                  *   $25 = 20 + 5$.
+                  *   $20 * 4 = 80$.
+                  *   $5 * 4 = 20$.
+                  *   $80 + 20 = 100$.
+              *   Method 3: Recognizing the quarter relationship.
+                  *   25 is one-quarter of 100.
+                  *   There are four quarters in a whole.
+                  *   So, $4 * 25$ equals 100.
+
+          3.  **Formulate the output:**
+              *   State the final answer clearly.
+              *   (Optional based on "Think briefly") Should I show the work? The prompt asks *me* to think briefly, not necessarily to show all my thinking, but usually, a simple confirmation or a short breakdown is helpful. However, for such a simple calculation, just the answer is often best. I will provide the answer directly.
+
+          4.  **Final Check:**
+              *   $25 * 4 = 100$. Correct.
+
+          5.  **Construct Response:**
+              *   "25 multiplied by 4 is 100."
+          </think>
+
+          25 * 4 = 100.
+        role: assistant
+      - content: Now divide that by 2.
+        role: user
+      model: zai-glm-4.7
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1068'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-f15f3b64-b343-485f-b3aa-07f6d13d1266
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: 100 / 2 = 50.
+          reasoning: |-
+            1.  **Identify the Core Task:** The user wants me to divide the result of the previous calculation (100) by 2.
+            2.  **Retrieve Previous Context:** The previous question was "25 * 4", which equals 100.
+            3.  **Perform the Operation:** $100 / 2$.
+            4.  **Calculate:** $100 / 2 = 50$.
+            5.  **Formulate Answer:** State the result clearly.
+          role: assistant
+      created: 1781208277
+      id: chatcmpl-f15f3b64-b343-485f-b3aa-07f6d13d1266
+      model: zai-glm-4.7
+      object: chat.completion
+      system_fingerprint: fp_ba34ecf90156e4888692
+      time_info:
+        completion_time: 0.136498275
+        created: 1781208277.7151854
+        prompt_time: 0.006911721999999995
+        queue_time: 0.675865906
+        total_time: 0.8205821514129639
+      usage:
+        completion_tokens: 106
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          reasoning_tokens: 97
+          rejected_prediction_tokens: 0
+        prompt_tokens: 35
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 141
+    status:
+      code: 200
+      message: OK
+version: 1

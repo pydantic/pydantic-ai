@@ -3,13 +3,11 @@
 # Exports gh-aw distributed traces (agent GenAI spans, setup/conclusion spans)
 # to Pydantic Logfire via OTLP/HTTP.
 #
-# gh-aw POSTs OTLP/HTTP JSON to {endpoint}/v1/traces, so the endpoint below is
-# the bare Logfire ingest base URL (no /v1/traces path). It MUST be a
-# compile-time literal: gh-aw adds the parsed static hostname to the AWF
-# network firewall allowlist at compile time, so it cannot be a ${{ vars.* }}
-# expression. This is the standard Pydantic Logfire ingest URL; if you use a
-# non-standard/self-hosted Logfire (i.e. a custom LOGFIRE_URL), update the
-# literal below to match and recompile.
+# gh-aw POSTs OTLP/HTTP JSON to {endpoint}/v1/traces, so this endpoint must be
+# the bare Logfire ingest base URL (no /v1/traces path).
+#
+# Use vars.LOGFIRE_URL to avoid hardcoding endpoints in each workflow. Keep
+# network allowlists in sync with the possible hosts for this variable.
 #
 # Required secret:
 #   LOGFIRE_TOKEN — a Logfire project write token. Used as the Authorization
@@ -21,7 +19,7 @@
 #     - shared/otel-logfire.md
 observability:
   otlp:
-    endpoint: https://logfire-api.pydantic.dev
+    endpoint: ${{ vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
     headers:
       Authorization: ${{ secrets.LOGFIRE_TOKEN }}
     if-missing: warn

@@ -10,20 +10,20 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypeVar
+from typing import Annotated, Any, Literal, LiteralString, TypeVar
 
 import fastapi
 import logfire
 from fastapi import Depends, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from typing_extensions import LiteralString, ParamSpec, TypedDict
+from typing_extensions import ParamSpec, TypedDict
 
 from pydantic_ai import (
     Agent,
@@ -35,12 +35,13 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import Caching
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
 logfire.instrument_pydantic_ai()
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('openai:gpt-5.2', capabilities=[Caching()])
 THIS_DIR = Path(__file__).parent
 
 
@@ -117,7 +118,7 @@ async def post_chat(
             json.dumps(
                 {
                     'role': 'user',
-                    'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                    'timestamp': datetime.now(tz=UTC).isoformat(),
                     'content': prompt,
                 }
             ).encode('utf-8')
@@ -159,9 +160,9 @@ class Database:
     @asynccontextmanager
     async def connect(
         cls, file: Path = THIS_DIR / '.chat_app_messages.sqlite'
-    ) -> AsyncIterator[Database]:
+    ) -> AsyncGenerator[Database]:
         with logfire.span('connect to DB'):
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             executor = ThreadPoolExecutor(max_workers=1)
             con = await loop.run_in_executor(executor, cls._connect, file)
             slf = cls(con, loop, executor)
@@ -212,10 +213,10 @@ class Database:
     async def _asyncify(
         self, func: Callable[P, R], *args: P.args, **kwargs: P.kwargs
     ) -> R:
-        return await self._loop.run_in_executor(  # type: ignore
+        return await self._loop.run_in_executor(  # pyright: ignore[reportUnknownVariableType]
             self._executor,
             partial(func, **kwargs),
-            *args,  # type: ignore
+            *args,  # pyright: ignore[reportCallIssue]
         )
 
 

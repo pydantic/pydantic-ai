@@ -1,37 +1,47 @@
 import os
 from collections.abc import Iterator
-from functools import partial
 from typing import Any, Literal, get_args
 
 import httpx
 import pytest
 from typing_extensions import TypedDict
 
-from pydantic_ai.models import KnownModelName
+from pydantic_ai.models import KnownModelName, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModelName
+    from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
+    from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
     from pydantic_ai.models.cohere import CohereModelName
+    from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
     from pydantic_ai.models.groq import GroqModelName
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import DEPRECATED_OPENAI_MODELS, OpenAIModelName
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModelName
+    from pydantic_ai.models.snowflake import SnowflakeModelName
+    from pydantic_ai.models.typesafe import TypeSafeModelName
     from pydantic_ai.models.xai import XaiModelName
+    from pydantic_ai.models.zai import ZaiModelName
     from pydantic_ai.providers.deepseek import DeepSeekModelName
-    from pydantic_ai.providers.grok import GrokModelName
+    from pydantic_ai.providers.meta import MetaModelName
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
 if not imports_successful():  # pragma: lax no cover
     # Define placeholders so the module can be loaded for test collection
-    AnthropicModelName = BedrockModelName = CohereModelName = GoogleModelName = None
+    AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
+    OpenAIDecisionsModelName = None
+    DEPRECATED_ANTHROPIC_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
     DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset()  # pyright: ignore[reportConstantRedefinition]
-    DeepSeekModelName = GrokModelName = XaiModelName = MoonshotAIModelName = None
+    CrusoeModelName = None
+    DeepSeekModelName = XaiModelName = MoonshotAIModelName = ZaiModelName = SnowflakeModelName = None
+    MetaModelName = None
+    TypeSafeModelName = None
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -39,59 +49,75 @@ pytestmark = [
 ]
 
 
-def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
-    for header in response['headers'].copy():
-        assert isinstance(header, str)
-        if header.lower() in filter_headers:
-            del response['headers'][header]
-    return response
-
-
 @pytest.fixture(scope='module')
-def vcr_config():  # pragma: lax no cover
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:  # pragma: lax no cover
+    """Re-record the provider model lists whenever a developer with the keys runs the module."""
     if os.getenv('CI') or not os.getenv('CEREBRAS_API_KEY'):
-        return {'record_mode': 'none'}
-
-    return {
-        'record_mode': 'rewrite',
-        'filter_headers': ['accept-encoding'],
-        'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
-    }
+        return vcr_config
+    return {**vcr_config, 'record_mode': 'rewrite'}
 
 
 _PROVIDER_TO_MODEL_NAMES = {
     'anthropic': AnthropicModelName,
     'bedrock': BedrockModelName,
+    'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
+    'crusoe': CrusoeModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,
     'google-cloud': GoogleModelName,
-    'grok': GrokModelName,
     'xai': XaiModelName,
     'groq': GroqModelName,
     'huggingface': HuggingFaceModelName,
+    'meta': MetaModelName,
     'mistral': MistralModelName,
     'moonshotai': MoonshotAIModelName,
     'openai': OpenAIModelName,
     'openai-chat': OpenAIModelName,
+    'openai-decisions': OpenAIDecisionsModelName,
+    'snowflake': SnowflakeModelName,
+    'typesafe': TypeSafeModelName,
+    'zai': ZaiModelName,
 }
 
 _PROVIDER_DEPRECATED_MODELS: dict[str, frozenset[str]] = {
+    'anthropic': DEPRECATED_ANTHROPIC_MODELS,
     'openai': DEPRECATED_OPENAI_MODELS,
     'openai-chat': DEPRECATED_OPENAI_MODELS,
 }
 
+# Confirmed against the native OpenAI API: these succeed through Chat Completions but return
+# HTTP 404 `Model not found` through Responses.
+_OPENAI_CHAT_ONLY_MODEL_NAMES = frozenset(
+    {
+        'gpt-3.5-turbo-16k',
+        'gpt-4o-mini-search-preview',
+        'gpt-4o-mini-search-preview-2025-03-11',
+        'gpt-4o-search-preview',
+        'gpt-4o-search-preview-2025-03-11',
+    }
+)
+
 UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
     {
+        'gateway/anthropic:claude-mythos-5',
+        'gateway/anthropic:claude-mythos-5-1',
+        'gateway/anthropic:claude-mythos-preview',
         'gateway/bedrock:amazon.titan-text-express-v1',
         'gateway/bedrock:amazon.titan-text-lite-v1',
         'gateway/bedrock:amazon.titan-tg1-large',
         'gateway/bedrock:anthropic.claude-3-5-haiku-20241022-v1:0',
+        'gateway/bedrock:anthropic.claude-3-5-sonnet-20240620-v1:0',
         'gateway/bedrock:anthropic.claude-3-5-sonnet-20241022-v2:0',
         'gateway/bedrock:anthropic.claude-3-7-sonnet-20250219-v1:0',
         'gateway/bedrock:anthropic.claude-3-opus-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-3-sonnet-20240229-v1:0',
         'gateway/bedrock:anthropic.claude-haiku-4-5-20251001-v1:0',
+        # Gateway returns HTTP 400 for the bare Haiku 5.5 id and the au./jp./us. profiles.
+        'gateway/bedrock:anthropic.claude-haiku-5-5',
+        'gateway/bedrock:au.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:jp.anthropic.claude-haiku-5-5',
+        'gateway/bedrock:us.anthropic.claude-haiku-5-5',
         'gateway/bedrock:anthropic.claude-instant-v1',
         'gateway/bedrock:anthropic.claude-opus-4-20250514-v1:0',
         'gateway/bedrock:anthropic.claude-sonnet-4-20250514-v1:0',
@@ -103,6 +129,10 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:cohere.command-r-plus-v1:0',
         'gateway/bedrock:cohere.command-r-v1:0',
         'gateway/bedrock:cohere.command-text-v14',
+        # Gateway rejects the geographic GPT-5.6 IDs with "The provided model identifier is invalid."
+        # The global IDs succeed through the same route.
+        'gateway/bedrock:in.openai.gpt-5.6-luna',
+        'gateway/bedrock:in.openai.gpt-5.6-terra',
         'gateway/bedrock:meta.llama3-1-405b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-70b-instruct-v1:0',
         'gateway/bedrock:meta.llama3-1-8b-instruct-v1:0',
@@ -135,19 +165,27 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/bedrock:us.meta.llama3-2-3b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-2-90b-instruct-v1:0',
         'gateway/bedrock:us.meta.llama3-3-70b-instruct-v1:0',
+        'gateway/bedrock:us.openai.gpt-5.6-luna',
+        'gateway/bedrock:us.openai.gpt-5.6-sol',
+        'gateway/bedrock:us.openai.gpt-5.6-terra',
         'gateway/google-cloud:gemini-2.0-flash',
         'gateway/google-cloud:gemini-2.0-flash-lite',
         'gateway/google-cloud:gemini-2.5-flash-preview-09-2025',
+        'gateway/google-cloud:gemini-3-pro-image-preview',
         'gateway/google-cloud:gemini-3-pro-preview',
+        'gateway/google-cloud:gemini-3.1-flash-image-preview',
         'gateway/google-cloud:gemini-flash-latest',
         'gateway/google-cloud:gemini-flash-lite-latest',
+        'gateway/google:gemini-2.0-flash',
+        'gateway/google:gemini-2.0-flash-lite',
+        'gateway/google:gemini-2.5-flash-preview-09-2025',
+        'gateway/google:gemini-3-pro-image-preview',
+        'gateway/google:gemini-3-pro-preview',
+        'gateway/google:gemini-3.1-flash-image-preview',
+        'gateway/google:gemini-flash-latest',
+        'gateway/google:gemini-flash-lite-latest',
         'gateway/groq:meta-llama/llama-prompt-guard-2-22m',
         'gateway/groq:meta-llama/llama-prompt-guard-2-86m',
-        'gateway/groq:meta-llama/llama-guard-4-12b',
-        'gateway/groq:meta-llama/llama-4-maverick-17b-128e-instruct',
-        'gateway/groq:playai-tts',
-        'gateway/groq:playai-tts-arabic',
-        'gateway/groq:qwen/qwen-3-32b',
         'gateway/groq:whisper-large-v3',
         'gateway/groq:whisper-large-v3-turbo',
         'gateway/openai:chatgpt-4o-latest',
@@ -171,28 +209,22 @@ UNSUPPORTED_GATEWAY_MODEL_NAMES = frozenset(
         'gateway/openai:gpt-4o-audio-preview-2025-06-03',
         'gateway/openai:gpt-4o-mini-audio-preview',
         'gateway/openai:gpt-4o-mini-audio-preview-2024-12-17',
+        'gateway/openai:gpt-5-chat-latest',
         'gateway/openai:gpt-5-codex',
-        'gateway/openai:gpt-5-pro',
-        'gateway/openai:gpt-5-pro-2025-10-06',
+        'gateway/openai:gpt-5.1-chat-latest',
         'gateway/openai:gpt-5.1-codex',
         'gateway/openai:gpt-5.1-codex-max',
         'gateway/openai:gpt-5.1-mini',
-        'gateway/openai:gpt-5.2-pro',
-        'gateway/openai:gpt-5.2-pro-2025-12-11',
-        'gateway/openai:gpt-5.3-chat-latest',
         'gateway/openai:o1-mini',
         'gateway/openai:o1-mini-2024-09-12',
         'gateway/openai:o1-preview',
         'gateway/openai:o1-preview-2024-09-12',
-        'gateway/openai:o1-pro',
-        'gateway/openai:o1-pro-2025-03-19',
         'gateway/openai:o3-deep-research',
         'gateway/openai:o3-deep-research-2025-06-26',
-        'gateway/openai:o3-pro',
-        'gateway/openai:o3-pro-2025-06-10',
         'gateway/openai:o4-mini-deep-research',
         'gateway/openai:o4-mini-deep-research-2025-06-26',
     }
+    | {f'gateway/openai:{model_name}' for model_name in _OPENAI_CHAT_ONLY_MODEL_NAMES}
 )
 
 
@@ -213,6 +245,7 @@ def test_known_model_names():  # pragma: lax no cover
         for provider, model_names in _PROVIDER_TO_MODEL_NAMES.items()
         for n in get_model_names(model_names)
         if not is_deprecated(provider, n)
+        if provider != 'openai' or n not in _OPENAI_CHAT_ONLY_MODEL_NAMES
     ]
 
     cerebras_names = get_cerebras_model_names()
@@ -227,19 +260,33 @@ def test_known_model_names():  # pragma: lax no cover
 
     extra_names = ['test']
 
-    generated_names = sorted(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
+    # Sets, not sorted lists: an id an SDK-lag `Literal` bridges is generated twice once the SDK catches
+    # up and lists it too, and `KnownModelName` is a single flat `Literal`, which cannot repeat a member.
+    # Comparing lists would fail on that duplicate with both difference reports empty.
+    generated_names = set(all_generated_names + gateway_names + heroku_names + cerebras_names + extra_names)
 
-    known_model_names = sorted(get_args(KnownModelName.__value__))
+    known_names = set(known_model_names())
 
-    if generated_names != known_model_names:
+    if generated_names != known_names:
         errors: list[str] = []
-        missing_names = set(generated_names) - set(known_model_names)
+        missing_names = generated_names - known_names
         if missing_names:
             errors.append(f'Missing names: {missing_names}')
-        extra_names = set(known_model_names) - set(generated_names)
+        extra_names = known_names - generated_names
         if extra_names:
             errors.append(f'Extra names: {extra_names}')
         raise AssertionError('\n'.join(errors))
+
+
+def test_known_model_names_accessor():
+    """`known_model_names()` exposes exactly the `KnownModelName` members, verbatim."""
+    assert known_model_names() == get_args(KnownModelName.__value__)
+
+
+def test_grok_4_7_is_known_model_name():
+    """`grok-4.7` is a bridged `XaiModelName` and a `KnownModelName` member."""
+    assert 'grok-4.7' in get_args(get_args(XaiModelName)[-1])
+    assert 'xai:grok-4.7' in known_model_names()
 
 
 class HerokuModel(TypedDict):

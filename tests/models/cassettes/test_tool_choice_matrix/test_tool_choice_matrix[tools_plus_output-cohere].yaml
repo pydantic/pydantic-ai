@@ -1,0 +1,208 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '702'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Paris and summarize
+        role: user
+      model: command-r7b-12-2024
+      stream: false
+      tool_choice: REQUIRED
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '485'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '7183'
+      num_tokens:
+      - '103'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: TOOL_CALL
+      id: 2db88225-f4e2-47f5-b3f6-3d2d0e4b3a5b
+      message:
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_mvsbdckzn39c
+          type: function
+        tool_plan: I will use one or more of the available tools to find the answer
+      usage:
+        billed_units:
+          input_tokens: 81
+          output_tokens: 22
+        cached_tokens: 1024
+        tokens:
+          input_tokens: 1530
+          output_tokens: 33
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '967'
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Get weather for Paris and summarize
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris"}'
+            name: get_weather
+          id: get_weather_mvsbdckzn39c
+          type: function
+      - content: Sunny, 22C in Paris
+        role: tool
+        tool_call_id: get_weather_mvsbdckzn39c
+      model: command-r7b-12-2024
+      stream: false
+      tool_choice: REQUIRED
+      tools:
+      - function:
+          description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        type: function
+      - function:
+          description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            title: CityInfo
+            type: object
+        type: function
+    uri: https://api.cohere.com/v2/chat
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-length:
+      - '514'
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - '7617'
+      num_tokens:
+      - '122'
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    parsed_body:
+      finish_reason: TOOL_CALL
+      id: 60f8006b-4528-4586-bc9f-3fc03da47dac
+      message:
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Paris","summary":"Sunny, 22C"}'
+            name: final_result
+          id: final_result_5ey6n45w0dgv
+          type: function
+        tool_plan: I will use one or more of the available tools to find the answer
+      usage:
+        billed_units:
+          input_tokens: 91
+          output_tokens: 31
+        cached_tokens: 1024
+        tokens:
+          input_tokens: 1622
+          output_tokens: 44
+    status:
+      code: 200
+      message: OK
+version: 1

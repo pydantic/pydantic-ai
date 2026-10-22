@@ -1,0 +1,138 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '4023'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant.
+            You are a helpful assistant. You are a helpful assistant.
+          type: text
+        role: system
+      - content:
+        - text: 'Context block one. Context block one. Context block one. Context block one. Context block one. Context block
+            one. Context block one. Context block one. Context block one. Context block one. Context block one. Context block
+            one. Context block one. Context block one. Context block one. Context block one. Context block one. Context block
+            one. Context block one. Context block one. '
+          type: text
+        - text: 'Context block two. Context block two. Context block two. Context block two. Context block two. Context block
+            two. Context block two. Context block two. Context block two. Context block two. Context block two. Context block
+            two. Context block two. Context block two. Context block two. Context block two. Context block two. Context block
+            two. Context block two. Context block two. '
+          type: text
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: 'Context block three. Context block three. Context block three. Context block three. Context block three.
+            Context block three. Context block three. Context block three. Context block three. Context block three. Context
+            block three. Context block three. Context block three. Context block three. Context block three. Context block
+            three. Context block three. Context block three. Context block three. Context block three. '
+          type: text
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: 'Context block four. Context block four. Context block four. Context block four. Context block four. Context
+            block four. Context block four. Context block four. Context block four. Context block four. Context block four.
+            Context block four. Context block four. Context block four. Context block four. Context block four. Context block
+            four. Context block four. Context block four. Context block four. '
+          type: text
+        - cache_control:
+            ttl: 5m
+            type: ephemeral
+          text: 'Context block five. Context block five. Context block five. Context block five. Context block five. Context
+            block five. Context block five. Context block five. Context block five. Context block five. Context block five.
+            Context block five. Context block five. Context block five. Context block five. Context block five. Context block
+            five. Context block five. Context block five. Context block five. '
+          type: text
+        - text: Summarize everything in one sentence.
+          type: text
+        role: user
+      model: anthropic/claude-sonnet-4.6
+      stream: false
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+      connection:
+      - keep-alive
+      content-length:
+      - '1005'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The context consists of five repeated blocks, each simply identifying itself by number (one through five)
+            without containing any substantive information.
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: end_turn
+      created: 1777098359
+      id: gen-1777098359-XUJuKiy27BCP5jjvhOSq
+      model: anthropic/claude-4.6-sonnet-20260217
+      object: chat.completion
+      provider: Google
+      system_fingerprint: null
+      usage:
+        completion_tokens: 29
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.002583
+        cost_details:
+          upstream_inference_completions_cost: 0.000435
+          upstream_inference_cost: 0.002583
+          upstream_inference_prompt_cost: 0.002148
+        is_byok: false
+        prompt_tokens: 716
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 745
+    status:
+      code: 200
+      message: OK
+version: 1

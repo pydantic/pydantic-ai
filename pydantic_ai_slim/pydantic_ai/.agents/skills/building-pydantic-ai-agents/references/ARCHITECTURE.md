@@ -10,6 +10,7 @@ Detailed decision trees, comparison tables, and architecture overview for Pydant
   - [Choosing an Output Mode](#choosing-an-output-mode)
   - [Choosing a Multi-Agent Pattern](#choosing-a-multi-agent-pattern)
   - [Choosing How to Extend Agent Behavior](#choosing-how-to-extend-agent-behavior)
+  - [Choosing What to Load Eagerly](#choosing-what-to-load-eagerly)
   - [Choosing a Capability](#choosing-a-capability)
   - [Choosing a Testing Approach](#choosing-a-testing-approach)
 - [Comparison Tables](#comparison-tables)
@@ -28,6 +29,7 @@ If the user already knows what they want to do, load the narrower task guide ins
 
 - [AGENTS-CORE.md](./AGENTS-CORE.md)
 - [CAPABILITIES-AND-HOOKS.md](./CAPABILITIES-AND-HOOKS.md)
+- [ON-DEMAND-CAPABILITIES.md](./ON-DEMAND-CAPABILITIES.md)
 - [TOOLS-CORE.md](./TOOLS-CORE.md)
 - [NATIVE-TOOLS.md](./NATIVE-TOOLS.md)
 - [TOOLS-ADVANCED.md](./TOOLS-ADVANCED.md)
@@ -65,7 +67,9 @@ Need structured data with Pydantic validation?
         └── Yes → Use output_type=str [default]
 
 Dynamic schema at runtime?
-└── Yes → Use StructuredDict(json_schema)
+├── Pick one of a set of options built at runtime?
+│   └── Yes → Use Choices({key: description}) [Choice(description, value=...) to pick an action]
+└── Otherwise → Use StructuredDict(json_schema)
 ```
 
 ### Choosing a Multi-Agent Pattern
@@ -85,7 +89,7 @@ Child agent returns result to parent?
 
 ```
 Need reusable behavior across agents (tools + hooks + instructions)?
-├── Yes → Build a custom capability (subclass AbstractCapability)
+├── Yes → Build a custom capability, then consider whether `defer_loading=True` should be the default
 └── No → Just intercepting lifecycle events?
     ├── Yes → Complex interception needing tools/instructions too?
     │   ├── Yes → Subclass AbstractCapability
@@ -96,6 +100,26 @@ Need reusable behavior across agents (tools + hooks + instructions)?
             ├── Yes → Use @agent.tool or Toolset
             └── Pass args directly to Agent constructor
 ```
+
+### Choosing What to Load Eagerly
+
+```
+Is this part of a capability?
+├── Yes → First consider `defer_loading=True`; would eager loading improve most turns or be required for hooks/settings?
+│   ├── Yes → Keep it eager in an always-on capability
+│   └── No → Use capabilities on demand with `defer_loading=True`
+└── No → Will this information/tool schema improve most model turns?
+    ├── Yes → Keep it eager in the base agent or hot-path toolset
+    └── No → Is it a named workflow with instructions plus tools?
+        ├── Yes → Use capabilities on demand with `defer_loading=True`
+        └── No → Is it one of many individually discoverable tools?
+            ├── Yes → Use tool-level `defer_loading=True` and ToolSearch
+            └── No → Can the caller fetch it outside the agent and pass only the relevant slice?
+                ├── Yes → Keep it out of the agent; inject the slice through deps, prompt, or retrieval
+                └── No → Reconsider whether the agent actually needs this context
+```
+
+Be opinionated here. Any capability should at least be evaluated for deferral; eager loading is a choice to justify, not the unexamined default. Pydantic AI agents should not carry large optional policy text, rarely used schemas, or specialist runbooks in the eager prompt just because they are available. Prefer progressive disclosure unless the information is genuinely universal.
 
 ### Choosing a Capability
 
@@ -122,7 +146,7 @@ Need deterministic, fast tests?
 └── Need specific tool call behavior?
     ├── Yes → Use FunctionModel
     └── Testing against real API (integration)?
-        └── Yes → Use pytest-recording with VCR cassettes
+        └── Yes → Use cassetter with recorded cassettes
 ```
 
 ## Comparison Tables
@@ -147,20 +171,32 @@ Need deterministic, fast tests?
 | Groq | `groq:` | `groq:llama-3.3-70b-versatile` |
 | Mistral | `mistral:` | `mistral:mistral-large-latest` |
 | Cohere | `cohere:` | `cohere:command-r-plus-08-2024` |
+| TypeSafe (Jev, structured output only) | `typesafe:` | `typesafe:jev-latest` |
+| OpenAI Decisions API (text and image input; structured output only) | `openai-decisions:` | `openai-decisions:gpt-6-luna` |
+| Decision models on the `/v1/systemone` API (CLM, Laya; structured output only; needs `SYSTEM_ONE_BASE_URL`) | `system-one:` | `system-one:clm-latest` |
 | AWS Bedrock | `bedrock:` | `bedrock:anthropic.claude-sonnet-4-6` |
+| AWS Bedrock Mantle | `bedrock-mantle:` | `bedrock-mantle:openai.gpt-oss-120b` |
 | Azure | `azure:` | `azure:gpt-5.2` |
 | OpenRouter | `openrouter:` | `openrouter:anthropic/claude-sonnet-4-6` |
-| xAI | `xai:` | `xai:grok-3` |
-| DeepSeek | `deepseek:` | `deepseek:deepseek-chat` |
+| xAI | `xai:` | `xai:grok-4.3` |
+| DeepSeek | `deepseek:` | `deepseek:deepseek-v4-flash` |
 | Fireworks | `fireworks:` | `fireworks:accounts/fireworks/models/llama-v3p3-70b-instruct` |
 | Together | `together:` | `together:meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo` |
 | Ollama (local) | `ollama:` | `ollama:llama3.2` |
-| GitHub Models | `github:` | `github:openai/gpt-5.2` |
+| vLLM (local or remote) | `vllm:` | `vllm:Qwen/Qwen3.8-27B` |
+| GitHub Copilot | `github-copilot:` | `github-copilot:claude-haiku-4.5` |
 | Hugging Face | `huggingface:` | `huggingface:meta-llama/Llama-3.3-70B-Instruct` |
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
+| Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
+| Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
+| Meta (Muse; Responses API) | `meta:` | `meta:muse-spark-1.3` |
 
-**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `outlines:`, `moonshotai:`. For truly custom providers, subclass `Model` or use `OpenAIChatModel` with a custom `base_url`.
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`. For a backend that answers typed yes/no, pick-one and rubric questions rather than writing text, like TypeSafe's Jev, subclass `DecisionModel` from `pydantic_ai.models.decision` and implement `decide`; see the [Decision models guide](https://pydantic.dev/docs/ai/models/decision/).
+
+For GitHub Copilot device login, use `GitHubCopilotOAuthFlow(client_id=...)` from `pydantic_ai.providers.github_copilot`. Call `start()`, display the returned `verification_uri` and `user_code`, then await `wait_for_authorization()`. Pass its `access_token` to `GitHubCopilotProvider(api_key=...)`. The application must have device flow enabled; GitHub authorization does not establish Copilot entitlement or acceptance of that application's token. Browser opening, credential storage, and renewal stay application-owned. See the [Copilot provider guide](https://pydantic.dev/docs/ai/models/github-copilot/#device-login).
+
+To let the users of an open-source or local app run it on their own ChatGPT plan, use `OpenAIChatGPTOAuthFlow(app_name=..., host_id=...)` from `pydantic_ai.providers.openai_chatgpt`: open `authorization_url()` in the browser and await `exchange_code_from_callback()`, which listens on `http://127.0.0.1:1455/auth/callback`. Persist the returned credentials, including the issued `client_id` that later sign-ins pass back, and give them to `OpenAIChatGPTProvider` with an `OpenAIResponsesModel`. Credentials without plan usage (`plan_usage_granted` is `False`) are refused. See the [ChatGPT plan usage guide](https://pydantic.dev/docs/ai/models/openai-chatgpt/).
 
 ### Tool Decorator Comparison
 
@@ -176,10 +212,12 @@ Need deterministic, fast tests?
 |---|---|:---:|
 | `Thinking` | Model thinking/reasoning at configurable effort | Yes |
 | `Hooks` | Decorator-based lifecycle hook registration | No |
+| `RaiseContentFilterError` | Raises `ContentFilterError` for model responses with `finish_reason='content_filter'` | Yes |
 | `WebSearch` | Web search — native when supported, local fallback | Yes |
 | `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
-| `ImageGeneration` | Image generation — native when supported, custom fallback | Yes |
+| `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
 | `MCP` | MCP server — native when supported, direct connection | Yes |
+| `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
@@ -195,6 +233,7 @@ Need deterministic, fast tests?
 | Writing a CLI tool, script, or Jupyter notebook (no async) | `agent.run_sync()` |
 | Streaming final text word-by-word to a UI | `agent.run_stream()` |
 | Synchronous streaming for CLI tools or scripts (no async) | `agent.run_stream_sync()` |
+| Delegating to another agent from a tool or output function | `await agent.run()` in an `async def` function; the sync run methods cannot be used inside an agent run |
 | Receiving an async iterable of typed events (tool calls, results, final output) | `agent.run_stream_events()` |
 | Inspecting or modifying state between agent steps, human-in-the-loop approval | `agent.iter()` |
 
@@ -218,7 +257,7 @@ See [Run Methods and Streaming](./AGENTS-CORE.md#run-methods-and-streaming) for 
 
 **Capabilities** are the primary extension point — they bundle tools, lifecycle hooks, instructions, and model settings into reusable units. Built-in capabilities include `Thinking`, `WebSearch`, `WebFetch`, `Hooks`, `MCP`, and more.
 
-**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage: `before_run` → `before_model_request` → `before_tool_execute` → `after_tool_execute` → `after_model_request` → `after_run`
+**Lifecycle hooks** (via `Hooks` or `AbstractCapability`) intercept every stage. Each stage follows `wrap_X(handler: before_X → core operation / on_X_error recovery → after_X)`: `wrap_X` is outermost, and a wrapper that does not call its handler skips the inner lifecycle. `agent.run_stream()` is the node-hook exception: it fires `before_node_run` before streaming, wraps only later graph advancement for non-final nodes, and skips `wrap_node_run`/`after_node_run` for the final streamed `ModelRequestNode`.
 
 **Model string format:** `"provider:model-name"` (e.g., `"openai:gpt-5.2"`, `"anthropic:claude-sonnet-4-6"`, `"google:gemini-3-pro-preview"`)
 

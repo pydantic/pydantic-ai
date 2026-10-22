@@ -2,19 +2,27 @@
 
 import json
 from collections import defaultdict
-from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, cast
+from functools import cached_property
+from typing import Any, Literal, assert_never, cast
 
-from typing_extensions import assert_never
-
-from .. import ModelHTTPError, _utils
-from .._output import OutputObjectDefinition
+from .. import _model_errors, _utils
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
-from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelServerError,
+    ModelUnavailableError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -24,6 +32,8 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -32,7 +42,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -48,27 +58,30 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
-from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
-from ..profiles import ModelProfileSpec
-from ..profiles.grok import GrokModelProfile
+from ..native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    MCPServerTool,
+    WebSearchTool,
+    XSearchTool,
+)
+from ..output import OutputObjectDefinition
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
+from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._tool_choice import resolve_tool_choice
-
-XAI_EFFORT_MAP: dict[ThinkingLevel, Literal['low', 'high']] = {
-    True: 'high',
-    'minimal': 'low',
-    'low': 'low',
-    'medium': 'high',
-    'high': 'high',
-    'xhigh': 'high',
-}
-"""Maps unified thinking values to xAI reasoning_effort. xAI only supports 'low' and 'high'."""
+from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
     import grpc
@@ -85,21 +98,10 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-@contextmanager
-def _map_api_errors(model_name: str) -> Iterator[None]:
-    try:
-        yield
-    except grpc.RpcError as e:
-        status_code = _GRPC_STATUS_TO_HTTP.get(e.code())
-        details = e.details() or str(e)
-        if status_code is not None:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
-        raise ModelAPIError(model_name=model_name, message=details) from e
-
-
 _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.UNAUTHENTICATED: 401,
     grpc.StatusCode.PERMISSION_DENIED: 403,
+    grpc.StatusCode.INVALID_ARGUMENT: 400,
     grpc.StatusCode.NOT_FOUND: 404,
     grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
     grpc.StatusCode.INTERNAL: 500,
@@ -107,25 +109,115 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
-XaiModelName = str | ChatModel
-"""Possible xAI model names."""
 
-_FINISH_REASON_MAP: dict[str, FinishReason] = {
-    'stop': 'stop',
-    'length': 'length',
-    'content_filter': 'content_filter',
-    'max_output_tokens': 'length',
-    'cancelled': 'error',
-    'failed': 'error',
+@contextmanager
+def _map_api_errors(model_name: str, *, in_stream: bool = False) -> Generator[None]:
+    """Turn a gRPC error into the framework's HTTP-shaped errors, mapping its status code to the HTTP equivalent.
+
+    `in_stream` marks an error that ended a stream after it had started sending responses.
+    """
+    try:
+        yield
+    except grpc.RpcError as e:
+        grpc_status = e.code()
+        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
+        details = e.details() or str(e)
+        category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
+        if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
+            category = ModelContextWindowExceededError
+        elif grpc_status == grpc.StatusCode.UNAVAILABLE and _model_errors.says_overloaded(details):
+            category = ModelOverloadedError
+        if status_code is not None:
+            raise ModelHTTPError.for_category(
+                category,
+                status_code=status_code,
+                model_name=model_name,
+                body=details,
+                provider_error_code=grpc_status.name,
+                in_stream=in_stream,
+            ) from e
+        # Every status with a category also has an HTTP equivalent, so this one is unclassified.
+        raise ModelAPIError(
+            model_name=model_name,
+            message=details,
+            body=details,
+            provider_error_code=grpc_status.name,
+            in_stream=in_stream,
+        ) from e
+
+
+_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] = {
+    grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
+    grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
+    grpc.StatusCode.INTERNAL: ModelServerError,
 }
+"""Error categories for gRPC status codes.
 
-# `GetChatCompletionResponse.outputs[*].finish_reason` uses the proto enum (ints), not the string values returned by
-# `Response.finish_reason`.
+`DEADLINE_EXCEEDED` is left out: it can mean the client's own deadline or the server's, so it isn't classified as a
+timeout.
+"""
+
+
+XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-4.7', 'grok-build-0.1']
+"""Possible xAI model names.
+
+The ids in the local `Literal` are bridged because `xai_sdk`'s `ChatModel` doesn't list them at the
+floor the `xai` extra declares: `grok-build-0.1` arrived in 1.15.0, `grok-4.5`/`grok-4.5-latest` in
+1.17.1, and `grok-4.6` in 1.18.0. `grok-4.7` is absent from the latest released `ChatModel` (1.20.0).
+Drop each bridge once the floor is bumped past the release that adds it to `ChatModel`.
+https://github.com/xai-org/xai-sdk-python/blob/main/CHANGELOG.md
+"""
+
+# `provider_name` values accepted on history replay. Includes the current `'xai'` plus the pre-v2
+# `'grok'` alias (when `GrokProvider` existed) so persisted messages from before the rename still
+# route their thinking and native-tool parts back to this provider.
+_XAI_PROVIDER_NAMES = frozenset({'xai', 'grok'})
+_ATTACHMENT_SEARCH_TOOL_NAME = 'attachment_search'
+
+
+def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) -> GrokReasoningEffort | None:
+    """Map unified thinking values to the xAI `reasoning_effort` values a model accepts."""
+    supported_efforts = profile.get('grok_reasoning_efforts', frozenset())
+    if not supported_efforts:
+        return None
+
+    if thinking is False:
+        return 'none' if 'none' in supported_efforts else None
+    if thinking is True:
+        # `True` requests reasoning at the model's default level rather than a specific effort.
+        # Grok 4.3 accepts `'none'`; Grok 4.7's profile also records that its documented `high` default
+        # applies when `reasoning_effort` is omitted. Other always-on models fall back to `'medium'`
+        # (consistent with OpenAI), normalized to the nearest supported value below.
+        if 'none' in supported_efforts or profile.get('grok_default_effort_omitted', False):
+            return None
+        thinking = 'medium'
+
+    if thinking in ('minimal', 'low'):
+        return 'low'
+    elif thinking == 'medium':
+        return 'medium' if 'medium' in supported_efforts else 'high'
+    elif thinking in ('high', 'xhigh'):
+        return 'high'
+    else:
+        assert_never(thinking)
+
+
+# Keyed on the proto enum ints from `outputs[*].finish_reason`, not the enum names (e.g. 'REASON_STOP')
+# that the `Response.finish_reason` string property returns. `REASON_INVALID`, the proto default meaning
+# "not finished yet", is deliberately unmapped so intermediate streaming chunks map to `None`.
 _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
     sample_pb2.FinishReason.REASON_STOP: 'stop',
     sample_pb2.FinishReason.REASON_MAX_LEN: 'length',
+    sample_pb2.FinishReason.REASON_MAX_CONTEXT: 'length',
     sample_pb2.FinishReason.REASON_TOOL_CALLS: 'tool_call',
+    sample_pb2.FinishReason.REASON_TIME_LIMIT: 'error',
 }
+
+
+def _map_finish_reason(response: chat_types.Response) -> FinishReason | None:
+    """Map the final output's finish reason, `None` if unfinished (`REASON_INVALID`) or unknown."""
+    outputs = response.proto.outputs
+    return _FINISH_REASON_PROTO_MAP.get(outputs[-1].finish_reason) if outputs else None
 
 
 class XaiModelSettings(ModelSettings, total=False):
@@ -191,10 +283,39 @@ class XaiModelSettings(ModelSettings, total=False):
     Corresponds to the `collections_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
-    xai_reasoning_effort: Literal['low', 'high']
+    xai_include_attachment_search_output: bool
+    """Whether to include the attachment search results in the response.
+
+    Defaults to `False`.
+
+    Corresponds to `INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT` in the xAI SDK.
+    """
+
+    xai_reasoning_effort: GrokReasoningEffort
     """Reasoning effort level for Grok reasoning models.
 
     See https://docs.x.ai for details.
+    """
+
+    xai_max_turns: int
+    """Maximum number of agentic turns xAI's server-side tool loop may take.
+
+    Only affects requests that use xAI's server-side native tools (e.g. web search, code
+    execution, X search): xAI iterates up to this many turns — calling those server-side tools
+    and processing their results — before returning a final response. It has no effect on ordinary
+    client-side tools or on Pydantic AI's own agent loop; use [`UsageLimits`][pydantic_ai.usage.UsageLimits]
+    to bound those.
+
+    With parallel tool calls enabled, multiple tool calls can occur within a single turn, so
+    `xai_max_turns` does not necessarily equal the total number of tool calls made.
+    """
+
+    xai_agent_count: int
+    """Number of agents for xAI multi-agent models (e.g. `grok-4.20-multi-agent`).
+
+    Forwarded to `chat.create(agent_count=...)`. Documented values are `4` and `16`; more
+    agents increase token usage and latency. Only affects multi-agent models; other models
+    ignore it. The multi-agent API is in beta, so the accepted values may change.
     """
 
 
@@ -208,17 +329,27 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'parallel_tool_calls': 'parallel_tool_calls',
     'presence_penalty': 'presence_penalty',
     'frequency_penalty': 'frequency_penalty',
+    'seed': 'seed',
     'xai_logprobs': 'logprobs',
     'xai_top_logprobs': 'top_logprobs',
     'xai_user': 'user',
     'xai_store_messages': 'store_messages',
     'xai_previous_response_id': 'previous_response_id',
     'xai_reasoning_effort': 'reasoning_effort',
+    'xai_max_turns': 'max_turns',
+    'xai_agent_count': 'agent_count',
 }
 
 
 class XaiModel(Model[AsyncClient]):
     """A model that uses the xAI SDK to interact with xAI models."""
+
+    # The xAI SDK has no audio or video content.
+    _unsupported_file_inputs = frozenset({'audio', 'video'})
+
+    unsupported_settings = frozenset(
+        {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
+    )
 
     _model_name: str
     _provider: Provider[AsyncClient]
@@ -234,7 +365,7 @@ class XaiModel(Model[AsyncClient]):
         """Initialize the xAI model.
 
         Args:
-            model_name: The name of the xAI model to use (e.g., "grok-4-1-fast-non-reasoning")
+            model_name: The name of the xAI model to use (e.g., "grok-4.3")
             provider: The provider to use for API calls. Defaults to `'xai'`.
             profile: Optional model profile specification. Defaults to a profile picked by the provider based on the model name.
             settings: Optional model settings.
@@ -245,7 +376,7 @@ class XaiModel(Model[AsyncClient]):
             provider = infer_provider(provider)
         self._provider = provider
 
-        super().__init__(settings=settings, profile=profile or provider.model_profile(model_name))
+        super().__init__(settings=settings, profile=profile)
 
     @property
     def client(self) -> 'AsyncClient':
@@ -261,10 +392,20 @@ class XaiModel(Model[AsyncClient]):
         """The model provider."""
         return 'xai'
 
+    @cached_property
+    def profile(self) -> GrokModelProfile:
+        return cast(GrokModelProfile, super().profile)
+
     @classmethod
-    def supported_native_tools(cls) -> frozenset[type]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        """Return `native_tool`'s restricting settings other than the domain filters xAI's web search applies."""
+        if isinstance(native_tool, WebSearchTool):
+            return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains'}
+        return frozenset()
 
     async def _map_messages(
         self,
@@ -311,9 +452,9 @@ class XaiModel(Model[AsyncClient]):
     ) -> list[chat_types.chat_pb2.Message]:
         """Map ModelRequest parts to xAI messages."""
         xai_messages: list[chat_types.chat_pb2.Message] = []
-        tool_results: list[ToolReturnPart | RetryPromptPart] = []
+        tool_results: list[ToolReturnPart] = []
 
-        for part in parts:
+        for part in _sendable_request_parts(parts):
             if isinstance(part, SystemPromptPart):
                 xai_messages.append(system(part.content))
             elif isinstance(part, UserPromptPart):
@@ -321,11 +462,13 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user_msg)
             elif isinstance(part, ToolReturnPart):
                 tool_results.append(part)
-            elif isinstance(part, RetryPromptPart):
-                if part.tool_name is None:
-                    xai_messages.append(user(part.model_response()))
-                else:
-                    tool_results.append(part)
+            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
+                raise _unprojected_instruction_delta_error()
+            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+                raise _unprepared_part_error(part)
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
 
@@ -335,12 +478,9 @@ class XaiModel(Model[AsyncClient]):
             tool_results.sort(key=lambda p: order.get(p.tool_call_id, float('inf')))
             file_content: list[UserContent] = []
             for part in tool_results:
-                if isinstance(part, ToolReturnPart):
-                    text, files = part.model_response_str_and_user_content()
-                    xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
-                    file_content.extend(files)
-                else:
-                    xai_messages.append(tool_result(part.model_response(), tool_call_id=part.tool_call_id))
+                text, files = part.model_response_str_and_user_content()
+                xai_messages.append(tool_result(text, tool_call_id=part.tool_call_id))
+                file_content.extend(files)
             if file_content and (
                 user_msg := await self._map_user_prompt(UserPromptPart(content=file_content))
             ):  # pragma: no branch
@@ -366,7 +506,7 @@ class XaiModel(Model[AsyncClient]):
                 self._append_tool_call(messages, client_side_tool_call)
             elif isinstance(item, NativeToolCallPart):
                 builtin_call = self._map_builtin_tool_call_part(item)
-                if item.provider_name == self.system and builtin_call:
+                if item.provider_name in _XAI_PROVIDER_NAMES and builtin_call:
                     self._append_tool_call(messages, builtin_call)
                     # Track specific tool calls for status updates
                     # Note: tool_call_id is always truthy here since _map_builtin_tool_call_part
@@ -374,34 +514,61 @@ class XaiModel(Model[AsyncClient]):
                     if item.tool_call_id:  # pragma: no branch
                         builtin_calls[item.tool_call_id] = builtin_call
             elif isinstance(item, NativeToolReturnPart):
-                if (
-                    item.provider_name == self.system
-                    and item.tool_call_id
-                    and (details := item.provider_details) is not None
-                    and details.get('status') == 'failed'
-                    and (call := builtin_calls.get(item.tool_call_id))
-                ):
-                    call.status = chat_types.chat_pb2.TOOL_CALL_STATUS_FAILED
-                    if error_msg := details.get('error'):
-                        call.error_message = str(error_msg)
+                if (tool_msg := self._map_builtin_tool_return_part(item, builtin_calls)) is not None:
+                    messages.append(tool_msg)
             elif isinstance(item, FilePart):
                 # Files generated by models (e.g., from CodeExecutionTool) are not sent back
                 pass
             elif isinstance(item, CompactionPart):  # pragma: no cover
                 # Compaction parts are not sent back to models that don't support compaction.
                 pass
+            elif isinstance(item, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(item)
 
         return messages
 
     @staticmethod
-    def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
-        """Append a tool call to the most recent tool-call assistant message, or create a new one.
+    def _map_builtin_tool_return_part(
+        item: NativeToolReturnPart, builtin_calls: dict[str, chat_types.chat_pb2.ToolCall]
+    ) -> chat_types.chat_pb2.Message | None:
+        """Apply a return part to its call, and map its encrypted result to a tool message if it has one.
 
-        We keep tool calls grouped to avoid generating one assistant message per tool call.
+        A failed return marks its call as failed. An encrypted result is replayed as the tool turn it came in as,
+        paired with its call by `tool_call_id`, matching `xai_sdk`'s `Chat.append`.
         """
-        if messages and messages[-1].tool_calls:
+        if (
+            item.provider_name not in _XAI_PROVIDER_NAMES
+            or not item.tool_call_id
+            or (call := builtin_calls.get(item.tool_call_id)) is None
+        ):
+            return None
+        details = item.provider_details or {}
+        if details.get('status') == 'failed':
+            call.status = chat_types.chat_pb2.TOOL_CALL_STATUS_FAILED
+            if error_msg := details.get('error'):
+                call.error_message = str(error_msg)
+        if not (encrypted_content := details.get('encrypted_content')):
+            return None
+        return chat_types.chat_pb2.Message(
+            role=chat_types.chat_pb2.MessageRole.ROLE_TOOL,
+            content=[chat_types.text('')],
+            encrypted_content=encrypted_content,
+            tool_calls=[call],
+            tool_call_id=item.tool_call_id,
+        )
+
+    @staticmethod
+    def _append_tool_call(messages: list[chat_types.chat_pb2.Message], tool_call: chat_types.chat_pb2.ToolCall) -> None:
+        """Attach a tool call to the most recent assistant message, or create a new one.
+
+        Attaching to the preceding assistant message keeps an encrypted reasoning trace grouped with
+        the tool calls it produced, matching `xai_sdk`'s `Chat.append`. A replayed server-side tool
+        result is a tool message, which a following call must not be attached to.
+        """
+        if messages and messages[-1].role == chat_types.chat_pb2.MessageRole.ROLE_ASSISTANT:
             messages[-1].tool_calls.append(tool_call)
         else:
             msg = assistant('')
@@ -414,7 +581,7 @@ class XaiModel(Model[AsyncClient]):
         - Native xAI thinking (with optional signature) is sent via `reasoning_content`/`encrypted_content`
         - Non-xAI (or non-native) thinking is preserved by wrapping in the model profile's thinking tags
         """
-        if item.provider_name == self.system and (item.content or item.signature):
+        if item.provider_name in _XAI_PROVIDER_NAMES and (item.content or item.signature):
             msg = assistant('')
             if item.content:
                 msg.reasoning_content = item.content
@@ -422,7 +589,7 @@ class XaiModel(Model[AsyncClient]):
                 msg.encrypted_content = item.signature
             return msg
         elif item.content:
-            start_tag, end_tag = self.profile.thinking_tags
+            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
             return assistant('\n'.join([start_tag, item.content, end_tag]))
         else:
             return None
@@ -504,6 +671,17 @@ class XaiModel(Model[AsyncClient]):
                     arguments=item.args_as_json_str(),
                 ),
             )
+        elif item.tool_name == _ATTACHMENT_SEARCH_TOOL_NAME:
+            function_name = (item.provider_details or {}).get('function_name', _ATTACHMENT_SEARCH_TOOL_NAME)
+            return chat_types.chat_pb2.ToolCall(
+                id=item.tool_call_id,
+                type=chat_types.chat_pb2.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
+                status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
+                function=chat_types.chat_pb2.FunctionCall(
+                    name=function_name,
+                    arguments=item.args_as_json_str(),
+                ),
+            )
         return None
 
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
@@ -516,7 +694,8 @@ class XaiModel(Model[AsyncClient]):
         Returns:
             The file ID from xAI
         """
-        uploaded_file = await self._provider.client.files.upload(data, filename=filename)
+        with _map_api_errors(self.model_name):
+            uploaded_file = await self._provider.client.files.upload(data, filename=filename)
         return uploaded_file.id
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:  # noqa: C901
@@ -574,11 +753,7 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, VideoUrl):
                 raise NotImplementedError('VideoUrl is not supported in xAI user prompts')
             elif isinstance(item, UploadedFile):
-                if item.provider_name != self.system:
-                    raise UserError(
-                        f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with XaiModel. '
-                        f'Expected `provider_name` to be `{self.system!r}`.'
-                    )
+                self._validate_uploaded_file_provider(item)
                 content_items.append(file(item.file_id))
             elif isinstance(item, CachePoint):
                 # xAI doesn't support prompt caching via CachePoint, so we filter it out
@@ -591,6 +766,15 @@ class XaiModel(Model[AsyncClient]):
 
         return None
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        # `xai_reasoning_effort` takes precedence over unified thinking, as in `_create_chat`.
+        reasoning_effort = cast(XaiModelSettings, model_settings or {}).get('xai_reasoning_effort')
+        if reasoning_effort is not None:
+            return reasoning_effort != 'none'
+        return super()._request_thinks(model_settings, model_request_parameters)
+
     def _get_tool_choice(
         self,
         model_settings: XaiModelSettings,
@@ -602,19 +786,31 @@ class XaiModel(Model[AsyncClient]):
             A tuple of (filtered_tool_defs, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
-        profile = GrokModelProfile.from_profile(self.profile)
+        forcing = resolved_tool_choice == 'required' or (
+            isinstance(resolved_tool_choice, tuple) and resolved_tool_choice[0] == 'required'
+        )
+        supports_forcing = forcing and support_tool_forcing(
+            self.model_name,
+            model_settings,
+            tool_forcing_unavailable_reason(
+                self.profile,
+                thinking=self._request_thinks(model_settings, model_request_parameters),
+                thinking_remedy="Disable thinking with `thinking=False` or `xai_reasoning_effort='none'`",
+            ),
+            disables_thinking=self._forced_tool_choice_disables_thinking(model_settings, model_request_parameters),
+        )
 
         tool_choice: Literal['none', 'required', 'auto'] | chat_pb2.ToolChoice
         if resolved_tool_choice in ('auto', 'none'):
             tool_choice = resolved_tool_choice
         elif resolved_tool_choice == 'required':
-            tool_choice = 'required' if profile.grok_supports_tool_choice_required else 'auto'
+            tool_choice = 'required' if supports_forcing else 'auto'
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if profile.grok_supports_tool_choice_required:
+                if supports_forcing:
                     tool_choice = required_tool(next(iter(tool_names)))
                 else:
                     # Forcing not supported: filter so the model can only see the requested tool.
@@ -623,7 +819,7 @@ class XaiModel(Model[AsyncClient]):
                     tool_choice = 'auto'
             else:
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
-                if tool_choice_mode == 'required' and profile.grok_supports_tool_choice_required:
+                if tool_choice_mode == 'required' and supports_forcing:
                     tool_choice = 'required'
                 else:
                     tool_choice = 'auto'
@@ -635,7 +831,7 @@ class XaiModel(Model[AsyncClient]):
 
         return tool_defs, tool_choice
 
-    async def _create_chat(
+    async def _create_chat(  # noqa: C901
         self,
         messages: list[ModelMessage],
         model_settings: XaiModelSettings,
@@ -670,7 +866,7 @@ class XaiModel(Model[AsyncClient]):
             tool_choice = None
 
         # Set response_format based on the output_mode
-        profile = GrokModelProfile.from_profile(self.profile)
+        profile = self.profile
         response_format: chat_pb2.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
@@ -679,18 +875,18 @@ class XaiModel(Model[AsyncClient]):
         elif (
             model_request_parameters.output_mode == 'prompted'
             and not tools_param
-            and profile.supports_json_object_output
+            and profile.get('supports_json_object_output', False)
         ):  # pragma: no branch
             response_format = _map_json_object()
 
         # Map model settings to xAI SDK parameters
         xai_settings = _map_model_settings(model_settings)
 
-        # Fall back to unified thinking when xai_reasoning_effort is not set
+        # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
-            thinking = model_request_parameters.thinking
-            if thinking is not False:
-                xai_settings['reasoning_effort'] = XAI_EFFORT_MAP[thinking]
+            reasoning_effort = _map_reasoning_effort(model_request_parameters.thinking, profile)
+            if reasoning_effort is not None:
+                xai_settings['reasoning_effort'] = reasoning_effort
 
         # Populate use_encrypted_content and include based on model settings
         include: list[chat_pb2.IncludeOption] = []
@@ -702,11 +898,13 @@ class XaiModel(Model[AsyncClient]):
         if model_settings.get('xai_include_inline_citations'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
         if model_settings.get('xai_include_x_search_output') or any(
-            isinstance(bt, XSearchTool) and bt.include_output for bt in model_request_parameters.native_tools
+            isinstance(tool, XSearchTool) and tool.include_output for tool in model_request_parameters.native_tools
         ):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_collections_search_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_attachment_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
         if model_settings.get('xai_include_mcp_output'):
             include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
@@ -747,7 +945,7 @@ class XaiModel(Model[AsyncClient]):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         """Make a streaming request to the xAI model."""
         check_allow_model_requests()
         model_settings, model_request_parameters = self.prepare_request(
@@ -779,9 +977,16 @@ class XaiModel(Model[AsyncClient]):
         for output in outputs:
             message = output.message
 
+            # A server-side tool's result comes encrypted on its `ROLE_TOOL` output. It belongs on the return part
+            # so it can be replayed as a tool turn paired with its call, not as reasoning.
+            encrypted_result = (
+                message.encrypted_content if message.role == chat_types.chat_pb2.MessageRole.ROLE_TOOL else ''
+            )
+            encrypted_reasoning = '' if encrypted_result else message.encrypted_content
+
             # Add reasoning/thinking content if present
-            if message.reasoning_content or message.encrypted_content:
-                signature = message.encrypted_content or None
+            if message.reasoning_content or encrypted_reasoning:
+                signature = encrypted_reasoning or None
                 parts.append(
                     ThinkingPart(
                         content=message.reasoning_content or '',
@@ -806,6 +1011,10 @@ class XaiModel(Model[AsyncClient]):
                     self.system,
                     message_role=message.role,
                 )
+                if encrypted_result and isinstance(part, NativeToolReturnPart):
+                    # `xai_sdk` pairs a tool output with its first call, so only that return part carries the result.
+                    _attach_encrypted_result(part, encrypted_result)
+                    encrypted_result = ''
                 parts.append(part)
 
         # xAI returns x_search results as top-level `response.citations` (URL strings) rather than
@@ -819,18 +1028,6 @@ class XaiModel(Model[AsyncClient]):
         # Convert usage with detailed token information
         usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
-        # Map finish reason.
-        #
-        # The xAI SDK exposes `response.finish_reason` as a *string* for the overall response, but in
-        # multi-output responses (e.g. server-side tools) it can reflect an intermediate TOOL_CALLS
-        # output rather than the final STOP output. We derive the finish reason from the final output
-        # when available.
-        if outputs:
-            last_reason = outputs[-1].finish_reason
-            finish_reason = _FINISH_REASON_PROTO_MAP.get(last_reason, 'stop')
-        else:  # pragma: no cover
-            finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
-
         return ModelResponse(
             parts=parts,
             usage=usage,
@@ -839,7 +1036,7 @@ class XaiModel(Model[AsyncClient]):
             provider_name=self.system,
             provider_url=self._provider.base_url,
             provider_response_id=response.id,
-            finish_reason=finish_reason,
+            finish_reason=_map_finish_reason(response),
         )
 
     async def _process_streamed_response(
@@ -884,18 +1081,7 @@ class XaiStreamedResponse(StreamedResponse):
         return (grpc.RpcError,)
 
     async def close_stream(self) -> None:
-        # In xai-sdk 1.5.0, `chat.stream()` returns a Python async generator that
-        # wraps the underlying gRPC `GetCompletionChunk(...)` call.
-        #
-        # Calling `aclose()` shuts down that local async-generator wrapper and
-        # stops consumption on our side, but the SDK does not expose the inner
-        # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
-        # RPC cancellation hook.
-        try:
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        except RuntimeError as exc:
-            if not _utils.is_async_generator_already_running(exc):
-                raise
+        await self._response.aclose()
 
     @property
     def system(self) -> str:
@@ -916,60 +1102,64 @@ class XaiStreamedResponse(StreamedResponse):
         if response.id and self.provider_response_id is None:
             self.provider_response_id = response.id
 
-        # Handle finish reason (SDK Response always provides a finish_reason)
-        self.finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
+        # Only assign when a real reason is present. Intermediate chunks carry REASON_INVALID (-> None),
+        # and a trailing chunk can regress the accumulated proto back to REASON_INVALID after the real
+        # reason arrived, so the guard also preserves the last real value.
+        if (finish_reason := _map_finish_reason(response)) is not None:
+            self.finish_reason = finish_reason
 
     def _collect_reasoning_events(
         self,
-        *,
-        response: chat_types.Response,
-        prev_reasoning_content: str,
-        prev_encrypted_content: str,
-    ) -> tuple[str, str, list[ModelResponseStreamEvent]]:
-        """Collect thinking/reasoning events and return updated previous values.
+        chunk: chat_types.Chunk,
+        encrypted_contents: dict[int, str],
+        tool_output_indices: set[int],
+        tool_output_calls: dict[int, str],
+        tool_return_parts: dict[str, NativeToolReturnPart],
+    ) -> Iterator[ModelResponseStreamEvent]:
+        """Collect thinking events from this chunk's output deltas, one thinking part per output.
 
-        Note: xAI exposes reasoning via the accumulated Response object (not the per-chunk delta), so we compute
-        deltas ourselves to avoid re-emitting the entire accumulated content on every chunk.
+        With server-side tools, one response has several outputs (e.g. reasoning and a tool call, the tool result,
+        then more reasoning and the answer), each with its own reasoning and encrypted content, like
+        `XaiModel._process_response` builds one `ThinkingPart` per output. `encrypted_contents` accumulates each
+        output's encrypted content, which can arrive in pieces, as the signature replaces the previous one.
+
+        A `ROLE_TOOL` output's encrypted content is the tool's result, not reasoning: it goes on the return part of
+        the call it answers, kept up to date as pieces arrive so a stream cut short still records what it got.
         """
-        events: list[ModelResponseStreamEvent] = []
-
-        if response.reasoning_content and response.reasoning_content != prev_reasoning_content:
-            if response.reasoning_content.startswith(prev_reasoning_content):
-                reasoning_delta = response.reasoning_content[len(prev_reasoning_content) :]
-            else:
-                reasoning_delta = response.reasoning_content
-            prev_reasoning_content = response.reasoning_content
-            if reasoning_delta:  # pragma: no branch
-                events.extend(
-                    self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='reasoning',
-                        content=reasoning_delta,
-                        # Only set provider_name when we have an encrypted signature to send back.
-                        provider_name=self.system if response.encrypted_content else None,
-                    )
-                )
-
-        if response.encrypted_content and response.encrypted_content != prev_encrypted_content:
-            prev_encrypted_content = response.encrypted_content
-            events.extend(
-                self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning',
-                    signature=response.encrypted_content,
-                    provider_name=self.system,
-                )
+        for output in chunk.proto.outputs:
+            delta = output.delta
+            if delta.role == chat_pb2.MessageRole.ROLE_TOOL:
+                tool_output_indices.add(output.index)
+            if not delta.reasoning_content and not delta.encrypted_content:
+                continue
+            if delta.encrypted_content:
+                encrypted_contents[output.index] = encrypted_contents.get(output.index, '') + delta.encrypted_content
+            if output.index in tool_output_indices:
+                if delta.encrypted_content and (tool_call_id := tool_output_calls.get(output.index)):
+                    _attach_encrypted_result(tool_return_parts[tool_call_id], encrypted_contents[output.index])
+                continue
+            signature = encrypted_contents.get(output.index)
+            yield from self._parts_manager.handle_thinking_delta(
+                vendor_part_id=f'reasoning-{output.index}',
+                content=delta.reasoning_content or None,
+                signature=signature if delta.encrypted_content else None,
+                # Only set provider_name when we have an encrypted signature to send back.
+                provider_name=self.system if signature else None,
             )
-
-        return prev_reasoning_content, prev_encrypted_content, events
 
     def _handle_server_side_tool_call(
         self,
         *,
         tool_call: chat_pb2.ToolCall,
         delta: chat_pb2.Delta,
+        output_index: int,
         seen_tool_call_ids: set[str],
         seen_tool_return_ids: set[str],
         last_tool_return_content: dict[str, dict[str, Any] | str | None],
         x_search_return_parts: dict[str, NativeToolReturnPart],
+        encrypted_contents: dict[int, str],
+        tool_output_calls: dict[int, str],
+        tool_return_parts: dict[str, NativeToolReturnPart],
     ) -> Iterator[ModelResponseStreamEvent]:
         """Handle a single server-side tool call delta, yielding stream events."""
         builtin_tool_name = _get_builtin_tool_name(tool_call)
@@ -1014,40 +1204,47 @@ class XaiStreamedResponse(StreamedResponse):
             )
             if builtin_tool_name == XSearchTool.kind:
                 x_search_return_parts[return_vendor_id] = return_part
+            # `xai_sdk` pairs a tool output with its first call, so only that return part carries the result.
+            first_call_id = tool_output_calls.setdefault(output_index, tool_call.id)
+            tool_return_parts[tool_call.id] = return_part
+            if first_call_id == tool_call.id and (encrypted_result := encrypted_contents.get(output_index)):
+                _attach_encrypted_result(return_part, encrypted_result)
             yield self._parts_manager.handle_part(vendor_part_id=return_vendor_id, part=return_part)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, in_stream=True):
             # Local state to avoid re-emmiting duplicate events.
-            prev_reasoning_content = ''
-            prev_encrypted_content = ''
+            encrypted_contents: dict[int, str] = {}
             seen_tool_call_ids: set[str] = set()
             seen_tool_return_ids: set[str] = set()
             last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
-            # Track previous tool call args to compute deltas (like we do for reasoning content).
+            # Track previous tool call args to compute deltas from the accumulated response.
             prev_tool_call_args: dict[str, str] = {}
             # xAI exposes x_search results as top-level `response.citations` that only arrive with the
             # final chunk. Track the emitted x_search return parts so we can backfill their content
             # once the stream completes.
             x_search_return_parts: dict[str, NativeToolReturnPart] = {}
             last_citations: Sequence[str] = ()
+            # A server-side tool's encrypted result arrives on its `ROLE_TOOL` output, possibly in pieces. Track
+            # those outputs, the call each one answers, and that call's latest return part, which carries the result
+            # received so far.
+            tool_output_indices: set[int] = set()
+            tool_output_calls: dict[int, str] = {}
+            tool_return_parts: dict[str, NativeToolReturnPart] = {}
 
             async for response, chunk in self._response:
                 self._update_response_state(response)
                 last_citations = response.citations
 
-                prev_reasoning_content, prev_encrypted_content, reasoning_events = self._collect_reasoning_events(
-                    response=response,
-                    prev_reasoning_content=prev_reasoning_content,
-                    prev_encrypted_content=prev_encrypted_content,
-                )
-                for event in reasoning_events:
+                for event in self._collect_reasoning_events(
+                    chunk, encrypted_contents, tool_output_indices, tool_output_calls, tool_return_parts
+                ):
                     yield event
 
                 # Handle text content (property filters for ROLE_ASSISTANT)
                 if chunk.content:
                     for event in self._parts_manager.handle_text_delta(
-                        vendor_part_id='content',
+                        vendor_part_id=None,
                         content=chunk.content,
                     ):
                         yield event
@@ -1069,16 +1266,20 @@ class XaiStreamedResponse(StreamedResponse):
                             for event in self._handle_server_side_tool_call(
                                 tool_call=tool_call,
                                 delta=delta,
+                                output_index=output_chunk.index,
                                 seen_tool_call_ids=seen_tool_call_ids,
                                 seen_tool_return_ids=seen_tool_return_ids,
                                 last_tool_return_content=last_tool_return_content,
                                 x_search_return_parts=x_search_return_parts,
+                                encrypted_contents=encrypted_contents,
+                                tool_output_calls=tool_output_calls,
+                                tool_return_parts=tool_return_parts,
                             ):
                                 yield event
                         else:
                             # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
                             # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
-                            # and compute the delta like we do for reasoning content.
+                            # and compute the delta.
                             accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
                             accumulated_args = (
                                 accumulated.function.arguments
@@ -1168,12 +1369,17 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
     tools: list[chat_types.chat_pb2.Tool] = []
     for builtin_tool in model_request_parameters.native_tools:
         if isinstance(builtin_tool, WebSearchTool):
-            # Note: user_location and search_context_size are not supported by xAI
+            # Note: `search_context_size` is not supported by xAI.
+            user_location = builtin_tool.user_location or {}
             tools.append(
                 web_search(
                     excluded_domains=builtin_tool.blocked_domains,
                     allowed_domains=builtin_tool.allowed_domains,
                     enable_image_understanding=False,
+                    user_location_country=user_location.get('country'),
+                    user_location_city=user_location.get('city'),
+                    user_location_region=user_location.get('region'),
+                    user_location_timezone=user_location.get('timezone'),
                 )
             )
         elif isinstance(builtin_tool, CodeExecutionTool):
@@ -1201,7 +1407,14 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         elif isinstance(builtin_tool, FileSearchTool):
-            tools.append(collections_search(collection_ids=list(builtin_tool.file_store_ids)))
+            tools.append(
+                collections_search(
+                    collection_ids=list(builtin_tool.file_store_ids),
+                    limit=builtin_tool.max_num_results,
+                    instructions=builtin_tool.instructions,
+                    retrieval_mode=builtin_tool.retrieval_mode,
+                )
+            )
         else:  # pragma: no cover
             supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
             raise UserError(
@@ -1237,6 +1450,8 @@ def _get_builtin_tool_name(tool_call: chat_types.chat_pb2.ToolCall) -> str:
         return XSearchTool.kind
     elif tool_type == 'collections_search_tool':
         return FileSearchTool.kind
+    elif tool_type == 'attachment_search_tool':
+        return _ATTACHMENT_SEARCH_TOOL_NAME
     else:
         # Unknown tool type - use function name
         return tool_call.function.name
@@ -1257,6 +1472,7 @@ def _map_server_side_tools_used_to_name(server_side_tool: usage_pb2.ServerSideTo
         usage_pb2.SERVER_SIDE_TOOL_MCP: MCPServerTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_X_SEARCH: XSearchTool.kind,
         usage_pb2.SERVER_SIDE_TOOL_COLLECTIONS_SEARCH: FileSearchTool.kind,
+        usage_pb2.SERVER_SIDE_TOOL_ATTACHMENT_SEARCH: _ATTACHMENT_SEARCH_TOOL_NAME,
         usage_pb2.SERVER_SIDE_TOOL_VIEW_IMAGE: 'view_image',
         usage_pb2.SERVER_SIDE_TOOL_VIEW_X_VIDEO: 'view_x_video',
     }
@@ -1324,6 +1540,11 @@ def _extract_usage(
         extracted.output_tokens = usage_data['completion_tokens']
 
     return extracted
+
+
+def _attach_encrypted_result(part: NativeToolReturnPart, encrypted_result: str) -> None:
+    """Store a server-side tool's encrypted result on its return part, for `_map_response_parts` to replay."""
+    part.provider_details = {**(part.provider_details or {}), 'encrypted_content': encrypted_result}
 
 
 def _attach_x_search_citations(

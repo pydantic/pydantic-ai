@@ -3,14 +3,15 @@
 from __future__ import annotations as _annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Self, TypeAlias
 
 import anyio
 from opentelemetry.trace import Tracer, get_tracer
-from typing_extensions import Self
+
+from .exceptions import UserError
 
 __all__ = (
     'AbstractConcurrencyLimiter',
@@ -18,6 +19,16 @@ __all__ = (
     'ConcurrencyLimit',
     'AnyConcurrencyLimit',
 )
+
+
+def _validate_max_running(max_running: int) -> None:
+    if max_running < 1:
+        raise UserError(f'max_running must be >= 1, got {max_running}. Use None for no concurrency limiting.')
+
+
+def _validate_max_queued(max_queued: int | None) -> None:
+    if max_queued is not None and max_queued < 0:
+        raise UserError(f'max_queued must be >= 0, got {max_queued}. Use None for unlimited queue.')
 
 
 class AbstractConcurrencyLimiter(ABC):
@@ -58,7 +69,11 @@ class AbstractConcurrencyLimiter(ABC):
 
     @abstractmethod
     def release(self) -> None:
-        """Release a slot."""
+        """Release a slot.
+
+        This can run on a different task than the matching `acquire()`: a streamed model response
+        is iterated and closed on whichever task consumes it.
+        """
         ...
 
 
@@ -67,21 +82,29 @@ class ConcurrencyLimit:
     """Configuration for concurrency limiting with optional backpressure.
 
     Args:
-        max_running: Maximum number of concurrent operations allowed.
-        max_queued: Maximum number of operations waiting in the queue.
+        max_running: Maximum number of concurrent operations allowed. Must be >= 1.
+        max_queued: Maximum number of operations waiting in the queue. Must be >= 0.
             If None, the queue is unlimited. If exceeded, raises `ConcurrencyLimitExceeded`.
     """
 
     max_running: int
     max_queued: int | None = None
 
+    def __post_init__(self) -> None:
+        _validate_max_running(self.max_running)
+        _validate_max_queued(self.max_queued)
+
 
 class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     """A concurrency limiter that tracks waiting operations for observability.
 
-    This class wraps an anyio.CapacityLimiter and tracks the number of waiting operations.
+    This class wraps an anyio.Semaphore and tracks the number of waiting operations.
     When an operation has to wait to acquire a slot, a span is created for
     observability purposes.
+
+    Slots are not owned by tasks. Each successful `acquire()` must be paired with one
+    `release()`, which can run on a different task. Calling `acquire()` again consumes another
+    slot and waits if none is available.
     """
 
     def __init__(
@@ -95,13 +118,21 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         """Initialize the ConcurrencyLimiter.
 
         Args:
-            max_running: Maximum number of concurrent operations.
-            max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded.
+            max_running: Maximum number of concurrent operations. Must be >= 1.
+            max_queued: Maximum queue depth before raising ConcurrencyLimitExceeded. Must be >= 0.
             name: Optional name for this limiter, used for observability when sharing
                 a limiter across multiple models or agents.
             tracer: OpenTelemetry tracer for span creation.
+
+        Raises:
+            UserError: If `max_running` is less than 1, or `max_queued` is less than 0.
         """
-        self._limiter = anyio.CapacityLimiter(max_running)
+        _validate_max_running(max_running)
+        _validate_max_queued(max_queued)
+        # A semaphore rather than `anyio.CapacityLimiter`, which ties each slot to the task that took it:
+        # `release()` must work from any task.
+        self._limiter = anyio.Semaphore(max_running, max_value=max_running)
+        self._max_running = max_running
         self._max_queued = max_queued
         self._name = name
         self._tracer = tracer
@@ -150,17 +181,17 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     @property
     def running_count(self) -> int:
         """Number of operations currently running."""
-        return self._limiter.statistics().borrowed_tokens
+        return self._max_running - self._limiter.value
 
     @property
     def available_count(self) -> int:
         """Number of slots available."""
-        return int(self._limiter.available_tokens)
+        return self._limiter.value
 
     @property
     def max_running(self) -> int:
         """Maximum concurrent operations allowed."""
-        return int(self._limiter.total_tokens)
+        return self._max_running
 
     def _get_tracer(self) -> Tracer:
         """Get the tracer, falling back to global tracer if not set."""
@@ -206,7 +237,7 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
             attributes: dict[str, str | int] = {
                 'source': source,
                 'waiting_count': self._waiting_count,
-                'max_running': int(self._limiter.total_tokens),
+                'max_running': self._max_running,
             }
             if self._name is not None:
                 attributes['limiter_name'] = self._name
@@ -238,13 +269,13 @@ Can be:
 
 
 @asynccontextmanager
-async def _null_context() -> AsyncIterator[None]:
+async def _null_context() -> AsyncGenerator[None]:
     """A no-op async context manager."""
     yield
 
 
 @asynccontextmanager
-async def _limiter_context(limiter: AbstractConcurrencyLimiter, source: str) -> AsyncIterator[None]:
+async def _limiter_context(limiter: AbstractConcurrencyLimiter, source: str) -> AsyncGenerator[None]:
     """Context manager that acquires and releases a limiter with the given source."""
     await limiter.acquire(source)
     try:

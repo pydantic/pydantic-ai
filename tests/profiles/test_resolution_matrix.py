@@ -1,0 +1,2805 @@
+"""Regression matrix for resolved `ModelProfile` flags across providers, gateways, and routing.
+
+Captures the resolved `Provider.model_profile(model_name)` output for every interesting
+(provider, model_name) combination — every gateway (OpenRouter, Azure, Vertex), every
+inference provider (Cerebras, Groq, Together, etc.), and every cross-provider routing case
+(Bedrock-Anthropic, OpenRouter-Google, etc.).
+
+The snapshots are the comparison artifact: any change to a provider profile, an upstream
+profile, or `merge_profile()` semantics that affects a resolved flag must show up as a
+diff here. The PR author then has to confront the diff and decide whether each delta is
+intentional. Without this matrix, a one-line tweak to an upstream profile can silently
+change behavior on a downstream routing case (e.g. an OpenAI profile change quietly
+flipping a flag for the Azure-OpenAI route), and nobody on the PR is thinking about that.
+
+Provider classes that do `merge_profile(fallback, upstream, override)` (3-layer) are the
+densest here, because they have the most layers where an ordering change can silently
+invert a flag.
+
+The `_normalize` helper strips canonical default values (everything in `DEFAULT_PROFILE`
+plus the subclass defaults), so each snapshot shows only the deltas the provider/gateway
+is opinionating about. Snapshots stay scannable — a real diff stands out.
+
+To regenerate after an intentional change: `pytest tests/profiles/test_resolution_lockin.py --inline-snapshot=fix`.
+"""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from textwrap import dedent
+from typing import Any
+
+import pytest
+
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
+    AdvisorTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    ImageGenerationTool,
+    MCPServerTool,
+    MemoryTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+
+from .._inline_snapshot import snapshot
+from ..conftest import try_import
+
+with try_import() as anthropic_imports:
+    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer, AnthropicProvider
+
+with try_import() as bedrock_imports:
+    from pydantic_ai.providers.bedrock import (
+        BedrockJsonSchemaTransformer,
+        BedrockProvider,
+        # Name the concrete transformer in profile snapshots.
+        _BedrockAnthropicJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+        _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
+    )
+
+with try_import() as cohere_imports:
+    from pydantic_ai.providers.cohere import CohereProvider
+
+with try_import() as google_imports:
+    from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as groq_imports:
+    from pydantic_ai.providers.groq import GroqProvider
+
+with try_import() as huggingface_imports:
+    from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+with try_import() as mistral_imports:
+    from pydantic_ai.providers.mistral import MistralProvider
+
+with try_import() as xai_imports:
+    from pydantic_ai.providers.xai import XaiProvider
+
+with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.alibaba import AlibabaProvider
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.crusoe import CrusoeProvider
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.meta import MetaProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.nebius import NebiusProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+    from pydantic_ai.providers.openrouter import (
+        OpenRouterProvider,
+        # OpenRouter installs its own Google transformer; importable so inline_snapshot can name it.
+        _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+    from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.together import TogetherProvider
+    from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
+
+# Canonical defaults — matches `DEFAULT_PROFILE` on both dataclass v1 and TypedDict v2.
+# Defined locally so the test is stable across the migration: anything matching these
+# values gets stripped from the snapshot, leaving only the non-default fields.
+_CANONICAL_DEFAULTS: dict[str, Any] = {
+    # Top-level `ModelProfile` defaults
+    'supports_tools': True,
+    'supports_text_output': True,
+    'supports_tool_return_schema': False,
+    'supports_json_schema_output': False,
+    'supports_json_object_output': False,
+    'supports_image_output': False,
+    'supports_inline_system_prompts': False,
+    'supports_request_scoped_system_prompts': False,
+    'default_structured_output_mode': 'tool',
+    'prompted_output_template': dedent(
+        """
+        Always respond with a JSON object that's compatible with this schema:
+
+        {schema}
+
+        Don't include any text or Markdown fencing before or after.
+        """
+    ),
+    'native_output_requires_schema_in_instructions': False,
+    'json_schema_transformer': None,
+    'default_cache_retention': None,
+    'supports_thinking': False,
+    'thinking_always_enabled': False,
+    'thinking_enabled_by_default': False,
+    'supports_forced_tool_choice': True,
+    'supports_forced_tool_choice_with_thinking': True,
+    'thinking_tags': ('<think>', '</think>'),
+    'mimics_assistant_message_formatting': False,
+    'ignore_streamed_leading_whitespace': False,
+    'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    # OpenAIModelProfile subclass defaults
+    'openai_chat_thinking_field': None,
+    'openai_chat_send_back_thinking_parts': 'auto',
+    'openai_chat_thinking_requires_field_on_tool_calls': False,
+    'openai_supports_strict_tool_definition': True,
+    'openai_unsupported_model_settings': (),
+    'openai_system_prompt_role': None,
+    'openai_chat_supports_multiple_system_messages': True,
+    'openai_chat_supports_web_search': False,
+    'openai_chat_audio_input_encoding': 'base64',
+    'openai_chat_supports_file_urls': False,
+    'openai_supports_encrypted_reasoning_content': False,
+    'openai_supports_reasoning': False,
+    'openai_supports_reasoning_effort_none': False,
+    'openai_supports_minimal_reasoning_effort': True,
+    'openai_responses_supports_reasoning_mode': False,
+    'openai_responses_supports_reasoning_context': False,
+    'openai_responses_requires_function_call_status_none': False,
+    'openai_supports_phase': False,
+    'openai_supports_prompt_cache_breakpoints': False,
+    'openai_responses_supports_prompt_cache_diagnostics': False,
+    'openai_chat_supports_document_input': True,
+    # AnthropicModelProfile subclass defaults
+    'anthropic_supports_fast_speed': False,
+    'anthropic_supports_adaptive_thinking': False,
+    'anthropic_supports_effort': False,
+    'anthropic_supports_xhigh_effort': False,
+    'anthropic_supports_dynamic_filtering': False,
+    'anthropic_disallows_budget_thinking': False,
+    'anthropic_disallows_sampling_settings': False,
+    'anthropic_default_code_execution_tool_version': '20250825',
+    'anthropic_supported_code_execution_tool_versions': ('20250825',),
+    'anthropic_supports_task_budgets': False,
+    # GoogleModelProfile subclass defaults
+    'google_supports_tool_combination': False,
+    'google_supports_server_side_tool_invocations': False,
+    'google_supported_mime_types_in_tool_returns': (),
+    'google_supports_thinking_level': True,
+    'google_supports_minimal_thinking_level': True,
+    'google_supports_strict_tool_definition': False,
+    # GrokModelProfile subclass defaults
+    'grok_supports_builtin_tools': False,
+    'grok_reasoning_efforts': frozenset(),
+    # GroqModelProfile subclass defaults
+    'groq_always_has_web_search_builtin_tool': False,
+    # BedrockModelProfile subclass defaults
+    'bedrock_supports_tool_choice': False,
+    'bedrock_tool_result_format': 'text',
+    'bedrock_send_back_thinking_parts': False,
+    'bedrock_supports_prompt_caching': False,
+    'bedrock_supports_tool_caching': False,
+    'bedrock_supported_media_kinds_in_tool_returns': frozenset({'image'}),
+    'bedrock_thinking_variant': None,
+}
+
+
+def _normalize(profile: Any) -> dict[str, Any] | None:
+    """Reduce a `ModelProfile` `TypedDict` to a dict of non-default fields.
+
+    Strips keys whose value matches `_CANONICAL_DEFAULTS`, so each snapshot
+    shows only what the provider/gateway actually contributes.
+    """
+    if profile is None:
+        return None
+    return {k: v for k, v in profile.items() if k not in _CANONICAL_DEFAULTS or v != _CANONICAL_DEFAULTS[k]}
+
+
+# =============================================================================
+# Direct labs — single-layer profile functions (no gateway merging)
+# =============================================================================
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+def test_anthropic_claude_sonnet_4_6():
+    profile = AnthropicProvider.model_profile('claude-sonnet-4-6')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'supports_thinking': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_supports_effort': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'tool_deferral_mode': 'standalone',
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'supports_auto_cache': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+def test_anthropic_claude_opus_4_7():
+    profile = AnthropicProvider.model_profile('claude-opus-4-7')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'supports_thinking': True,
+            'anthropic_supports_fast_speed': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_xhigh_effort': True,
+            'anthropic_disallows_budget_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_disallows_sampling_settings': True,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'anthropic_supports_task_budgets': True,
+            'tool_deferral_mode': 'standalone',
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'supports_auto_cache': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+def test_anthropic_claude_haiku_4_5():
+    profile = AnthropicProvider.model_profile('claude-haiku-4-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'supports_thinking': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 64000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'supports_auto_cache': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+def test_anthropic_claude_3_5_sonnet_legacy():
+    """Older model — no structured output, no tool search."""
+    profile = AnthropicProvider.model_profile('claude-3-5-sonnet-20240620')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'supports_thinking': True,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': None,
+            'anthropic_rejects_max_tokens_beyond_context_window': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
+            ),
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'supports_auto_cache': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_gpt_5_4():
+    profile = OpenAIProvider.model_profile('gpt-5.4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_supports_phase': True,
+            'tool_addition_mode': 'with_definitions',
+            'tool_deferral_mode': 'with_tool_search',
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4-nano', 'gpt-5.4-nano-2026-03-17'])
+def test_openai_gpt_5_4_nano(model_name: str):
+    """gpt-5.4-nano resolves gpt-5.4's profile minus native `tool_search`, which OpenAI rejects on it with a 400."""
+    expected = _normalize(OpenAIProvider.model_profile('gpt-5.4'))
+    assert expected is not None
+    expected['supported_native_tools'] -= {ToolSearchTool}
+    assert _normalize(OpenAIProvider.model_profile(model_name)) == expected
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_gpt_5_6():
+    """Not a VCR test: this pins the resolved GPT-5.6 profile against drift.
+
+    GPT-5.6 reasons on by default at 'medium' (`thinking_enabled_by_default`) yet can be
+    turned off via `effort='none'` (`openai_supports_reasoning_effort_none`), so it is NOT
+    `thinking_always_enabled` (that flag is derived to False). `phase` is on (GPT-5.6 responses
+    label messages with it) and native `tool_search` is on (verified live). Reasoning behavior
+    verified against the Responses API.
+    """
+
+    profile = OpenAIProvider.model_profile('gpt-5.6-sol')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'thinking_enabled_by_default': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_responses_supports_reasoning_mode': True,
+            'tool_addition_mode': 'with_definitions',
+            'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
+            'tool_deferral_mode': 'with_tool_search',
+            'openai_supports_minimal_reasoning_effort': False,
+            'default_cache_retention': timedelta(seconds=1800),
+            'supports_cache': True,
+            'supported_cache_retentions': ('30m',),
+            'openai_responses_supports_prompt_cache_diagnostics': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_gpt_6_astra():
+    """Not a VCR test: this pins the resolved GPT-6 Astra profile against drift.
+
+    Reasons by default with no `effort='none'`, supports `reasoning.mode` and
+    `reasoning.context='all_turns'`, native `tool_search`, image generation, prompt cache
+    breakpoints, and no `minimal` effort.
+    """
+
+    profile = OpenAIProvider.model_profile('gpt-6-astra')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool, ToolSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'thinking_enabled_by_default': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_responses_supports_reasoning_mode': True,
+            'tool_addition_mode': 'with_definitions',
+            'openai_supports_phase': True,
+            'openai_supports_prompt_cache_breakpoints': True,
+            'tool_deferral_mode': 'with_tool_search',
+            'openai_supports_minimal_reasoning_effort': False,
+            'default_cache_retention': timedelta(seconds=1800),
+            'supports_cache': True,
+            'supported_cache_retentions': ('30m',),
+            'openai_responses_supports_prompt_cache_diagnostics': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-sol-2026-09-22', 'gpt-6-luna-2026-09-22'],
+)
+def test_openai_gpt_6_sol_luna(model_name: str):
+    """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots."""
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'openai/gpt-6-sol',
+        'openai/gpt-6-sol-pro',
+        'openai/gpt-6-sol-20260922',
+        'openai/gpt-6-luna',
+        'openai/gpt-6-luna-pro',
+        'openai/gpt-6-luna-20260922',
+    ],
+)
+def test_openrouter_gpt_6_sol_luna(model_name: str):
+    """OpenRouter's published GPT-6 routes retain the OpenAI reasoning capabilities."""
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_supports_reasoning_effort_none') is True
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-6.1-sol', 'gpt-6.1-sol-2026-09-29'])
+def test_openai_gpt_6_1_sol(model_name: str):
+    """GPT-6.1 Sol resolves GPT-6 Astra's capabilities, not GPT-6 Sol's: it rejects `effort='none'`."""
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro', 'openai/gpt-6.1-sol-20260929'])
+def test_openrouter_gpt_6_1_sol(model_name: str):
+    """OpenRouter's published GPT-6.1 Sol routes retain the OpenAI reasoning capabilities."""
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_always_enabled') is True
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
+def test_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name',
+    ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna', 'openai/gpt-6-astra'],
+)
+def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
+def test_azure_gpt_5_6_reasoning_mode(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_mode') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-6-astra'])
+def test_openai_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['openai/gpt-5.4', 'openai/gpt-5.5', 'openai/gpt-5.6-sol', 'openai/gpt-6-astra'])
+def test_openrouter_openai_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize('model_name', ['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-6-astra'])
+def test_azure_gpt_5_reasoning_context(model_name: str):
+    """Not a VCR test: this validates local provider-profile capability resolution."""
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_supports_reasoning_context') is True
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_gpt_4o():
+    profile = OpenAIProvider.model_profile('gpt-4o')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'tool_addition_mode': 'with_definitions',
+            'tool_deferral_mode': 'with_tool_search',
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_o3_mini():
+    profile = OpenAIProvider.model_profile('o3-mini')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'thinking_enabled_by_default': True,
+            'openai_supports_reasoning': True,
+            'tool_addition_mode': 'with_definitions',
+            'tool_deferral_mode': 'with_tool_search',
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_codex_gpt_5_6():
+    """The Codex subscription backend: the first-party OpenAI profile plus the narrower wire dialect."""
+
+    profile = OpenAICodexProvider.model_profile('gpt-5.6-luna')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'thinking_enabled_by_default': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_mode': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_phase': True,
+            'openai_supports_minimal_reasoning_effort': False,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'tool_addition_mode': 'with_definitions',
+            'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
+            'default_cache_retention': timedelta(seconds=1800),
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openai_responses_requires_streaming': True,
+            'openai_responses_requires_store_false': True,
+            'openai_supports_input_token_counting': False,
+            'tool_deferral_mode': 'with_tool_search',
+        }
+    )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_3_pro():
+    profile = GoogleProvider.model_profile('gemini-3.0-pro')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_tool_return_schema': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'google_supports_tool_combination': True,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_2_5_flash():
+    profile = GoogleProvider.model_profile('gemini-2.5-flash')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_tool_return_schema': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'google_supports_thinking_level': False,
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_2_5_flash_image():
+    # `gemini-2.5-flash-image` is both a thinking (2.5) and an image model, so the `not is_image_model`
+    # term in the profile's strict-support guard is load-bearing: it flips the flag from True back to
+    # False. The explicit assert (not just the snapshot, which strips the default `False`) guards against
+    # a silent inversion of that guard, which 100% line coverage would otherwise hide.
+    profile = GoogleProvider.model_profile('gemini-2.5-flash-image')
+    assert profile is not None
+    assert profile.get('google_supports_strict_tool_definition') is False
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_image_output': True,
+            'supports_tools': False,
+            'supports_video_input': False,
+            'supports_thinking': True,
+            'google_supports_thinking_level': False,
+            'google_web_search_billed_per_prompt': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not google_imports(), reason='google not installed')
+def test_google_gemini_3_7_flash_thinking_levels():
+    # The level set must survive the provider `model_profile()` path, not just `google_model_profile()`.
+    profile = GoogleProvider.model_profile('gemini-3.7-flash')
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
+    assert _normalize(profile) == snapshot(
+        {
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_minimal_thinking_level': False,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supports_strict_tool_definition': True,
+            'supports_video_input': True,
+            'google_supports_tool_combination': True,
+            'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'google_web_search_billed_per_prompt': False,
+            'supports_tool_return_schema': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_grok_4():
+    profile = XaiProvider.model_profile('grok-4')
+    assert _normalize(profile) == snapshot(
+        {'supports_json_schema_output': True, 'supports_json_object_output': True, 'grok_supports_builtin_tools': True}
+    )
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_grok_3_mini():
+    profile = XaiProvider.model_profile('grok-3-mini')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_reasoning_efforts': frozenset({'low', 'high'}),
+            'supported_native_tools': frozenset(),
+        }
+    )
+
+
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
+def test_mistral_mistral_large():
+    profile = MistralProvider.model_profile('mistral-large-latest')
+    assert _normalize(profile) == snapshot({'tool_call_id_length': 9, 'supports_inline_system_prompts': True})
+
+
+@pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')
+def test_mistral_small_latest():
+    """Small 4 / Medium 3.5 advertise adjustable (opt-in) reasoning, unlike always-on magistral."""
+    profile = MistralProvider.model_profile('mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {'tool_call_id_length': 9, 'supports_thinking': True, 'supports_inline_system_prompts': True}
+    )
+
+
+@pytest.mark.skipif(not cohere_imports(), reason='cohere not installed')
+def test_cohere_command_r_plus():
+    profile = CohereProvider.model_profile('command-r-plus')
+    assert _normalize(profile) == snapshot({'supports_inline_system_prompts': True})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_deepseek_provider_deepseek_chat():
+    """DeepSeek's own provider (OpenAI-compat) — three-layer merge."""
+
+    profile = DeepSeekProvider.model_profile('deepseek-chat')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning_content',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_requires_field_on_tool_calls': True,
+            'openai_responses_supports_interleaved_function_calls': False,
+            'openai_responses_supports_json_schema_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_deepseek_provider_deepseek_reasoner():
+    """`deepseek-reasoner` overrides `supports_forced_tool_choice=False`."""
+
+    profile = DeepSeekProvider.model_profile('deepseek-reasoner')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_thinking_field': 'reasoning_content',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_requires_field_on_tool_calls': True,
+            'openai_responses_supports_interleaved_function_calls': False,
+            'supports_forced_tool_choice': False,
+            'thinking_enabled_by_default': True,
+            'openai_responses_supports_json_schema_output': True,
+        }
+    )
+
+
+# =============================================================================
+# Bedrock — cross-provider routing (Anthropic, Mistral, Amazon, Cohere, Meta,
+# DeepSeek, OpenAI, Qwen). Highest-risk migration surface.
+# =============================================================================
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_anthropic_claude_sonnet_4_5():
+    """Anthropic via Bedrock: upstream Anthropic profile + Bedrock overrides (notably `supports_json_schema_output=False`)."""
+    profile = BedrockProvider.model_profile('anthropic.claude-sonnet-4-5-20250929-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_effort': False,
+            'bedrock_top_k_variant': 'anthropic',
+            'bedrock_tool_choice_none_variant': 'anthropic',
+            'bedrock_document_cache_point_variant': 'anthropic',
+            'bedrock_send_back_thinking_parts': True,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'supports_json_schema_output': True,
+            'bedrock_supports_prompt_caching': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'bedrock_supports_tool_caching': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 64000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'bedrock_thinking_variant': 'anthropic',
+            'tool_deferral_mode': 'standalone',
+            'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        ('us.anthropic.claude-sonnet-4-6', True),
+        ('us.anthropic.claude-sonnet-5', True),
+        ('us.anthropic.claude-opus-4-6-v1', True),
+        ('us.anthropic.claude-opus-5', True),
+        ('us.anthropic.claude-fable-5-1', False),
+    ],
+)
+def test_bedrock_anthropic_adaptive_thinking_tool_choice_support(model_name: str, expected: bool):
+    """Bedrock preserves the underlying Anthropic model's adaptive-thinking tool-choice support."""
+    profile = BedrockProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('bedrock_supports_tool_choice', False) is True
+    assert profile.get('supports_forced_tool_choice', False) is expected
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize(
+    'model_id',
+    [
+        'us.anthropic.claude-fable-5-1',
+        'global.anthropic.claude-fable-5-1',
+        'us.anthropic.claude-fable-5-1-20260115-v1:0',
+    ],
+)
+def test_bedrock_anthropic_fable_5_1_binds_through_the_id_split(model_id: str):
+    """The binding flag is a `startswith` on the bare id, so it rests on the geo/version split."""
+    profile = BedrockProvider.model_profile(model_id)
+    assert profile is not None
+    assert profile.get('anthropic_binds_thinking_blocks') is True
+    assert profile.get('supports_forced_tool_choice') is False
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_anthropic_with_geo_prefix():
+    profile = BedrockProvider.model_profile('us.anthropic.claude-haiku-4-5-20251001-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'bedrock_send_back_thinking_parts': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supports_prompt_caching': True,
+            'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_effort': False,
+            'bedrock_top_k_variant': 'anthropic',
+            'bedrock_tool_choice_none_variant': 'anthropic',
+            'bedrock_document_cache_point_variant': 'anthropic',
+            'bedrock_supports_tool_caching': True,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'supports_json_schema_output': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 64000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'bedrock_thinking_variant': 'anthropic',
+            'tool_deferral_mode': 'standalone',
+            'json_schema_transformer': _BedrockAnthropicJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_anthropic_legacy_claude_3():
+    """Older Claude via Bedrock — should still resolve, no JSON schema."""
+    profile = BedrockProvider.model_profile('anthropic.claude-3-5-sonnet-20240620-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m',),
+            'bedrock_send_back_thinking_parts': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supports_prompt_caching': True,
+            'bedrock_supports_adaptive_thinking': False,
+            'bedrock_supports_effort': False,
+            'bedrock_top_k_variant': 'anthropic',
+            'bedrock_tool_choice_none_variant': 'anthropic',
+            'bedrock_document_cache_point_variant': 'anthropic',
+            'bedrock_supports_tool_caching': True,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': None,
+            'anthropic_rejects_max_tokens_beyond_context_window': True,
+            'bedrock_thinking_variant': 'anthropic',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_mistral_large():
+    profile = BedrockProvider.model_profile('mistral.mistral-large-2407-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
+            'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_amazon_nova_pro():
+    profile = BedrockProvider.model_profile('us.amazon.nova-pro-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': True,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_prompt_caching': True,
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m',),
+            'bedrock_top_k_variant': 'nova',
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_amazon_nova_2_lite():
+    """Nova 2 adds `CodeExecutionTool` to `supported_native_tools` — verifies the strip-then-restore pattern."""
+    profile = BedrockProvider.model_profile('us.amazon.nova-2-lite-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': True,
+            'supported_native_tools': frozenset({CodeExecutionTool}),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_prompt_caching': True,
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m',),
+            'bedrock_top_k_variant': 'nova',
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_amazon_nova_micro():
+    """Nova Micro is the text-only model in the family, so it is the one Nova that reads no video."""
+    profile = BedrockProvider.model_profile('us.amazon.nova-micro-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_prompt_caching': True,
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m',),
+            'bedrock_top_k_variant': 'nova',
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_amazon_titan():
+    """Titan models — basic Amazon profile, no Nova-specific overrides."""
+    profile = BedrockProvider.model_profile('amazon.titan-text-express-v1')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_video_input': False,
+            'supported_native_tools': frozenset(),
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_cohere_command():
+    profile = BedrockProvider.model_profile('cohere.command-r-plus-v1:0')
+    assert _normalize(profile) == snapshot({'supported_native_tools': frozenset()})
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_meta_llama3():
+    profile = BedrockProvider.model_profile('meta.llama3-70b-instruct-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'image', 'document'}),
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_deepseek_r1():
+    """`bedrock_send_back_thinking_parts=True` applied for `r1` models via separate function."""
+    profile = BedrockProvider.model_profile('us.deepseek.r1-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'ignore_streamed_leading_whitespace': True,
+            'supported_native_tools': frozenset(),
+            'bedrock_send_back_thinking_parts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_openai():
+    """Bedrock-hosted OpenAI — only has the `openai` thinking variant, no upstream profile."""
+    profile = BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')
+    assert _normalize(profile) == snapshot(
+        {'supports_thinking': True, 'bedrock_thinking_variant': 'openai', 'thinking_always_enabled': True}
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_qwen_qwq():
+    profile = BedrockProvider.model_profile('qwen.qwq-32b-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_leading_assistant_message': True,
+            'supports_thinking': True,
+            'bedrock_thinking_variant': 'qwen',
+            'thinking_always_enabled': True,
+            'bedrock_supports_strict_tool_definition': False,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_zai_glm():
+    """Z.AI GLM via Bedrock: upstream `zai_model_profile` (thinking) + Bedrock tool/output overrides."""
+    profile = BedrockProvider.model_profile('zai.glm-5')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'zai_supports_reasoning_effort': False,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
+            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_moonshotai_kimi():
+    """Moonshot AI Kimi via Bedrock (both `moonshot.` and `moonshotai.` prefixes share one profile)."""
+    profile = BedrockProvider.model_profile('moonshotai.kimi-k2.5')
+    assert _normalize(profile) == snapshot(
+        {
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_tool_choice': True,
+            'bedrock_supports_leading_assistant_message': True,
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_writer_palmyra():
+    """Writer Palmyra via Bedrock — no upstream profile; isolates `toolResult` in its own turn."""
+    profile = BedrockProvider.model_profile('writer.palmyra-x4-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'supported_native_tools': frozenset(),
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supports_tool_result_status': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize('region', ['us', 'global'])
+def test_bedrock_xai_grok(region: str):
+    """xAI Grok via Bedrock: upstream `grok_model_profile` + the `xai` thinking variant.
+
+    The upstream `supports_json_schema_output` / `supports_json_object_output` are turned off because
+    Converse has no structured output for Grok 4.6, and stay off on Grok 4.7 until it's verified there;
+    prompt caching stays at the default (`False`) because explicit `cachePoint` blocks are rejected.
+    """
+    profiles = {
+        version: _normalize(BedrockProvider.model_profile(f'{region}.xai.grok-{version}')) for version in ('4.6', '4.7')
+    }
+    assert profiles == snapshot(
+        {
+            '4.6': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
+            },
+            '4.7': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'grok_default_effort_omitted': True,
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
+            },
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_unknown_provider_returns_none():
+    """Bedrock model IDs from an unknown provider prefix → `None`."""
+    assert BedrockProvider.model_profile('unknown.foo-v1:0') is None
+
+
+# =============================================================================
+# OpenRouter — cross-provider routing via the OpenAI-compat surface.
+# Three-layer merge: OpenAI transformer fallback / lab upstream / OpenRouter overrides.
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_anthropic_claude_sonnet_4_6():
+    """Anthropic via OpenRouter — relays Anthropic's profile through OpenAI chat."""
+
+    profile = OpenRouterProvider.model_profile('anthropic/claude-sonnet-4-6')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'supports_thinking': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'tool_deferral_mode': 'standalone',
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': True,
+            'openrouter_supports_tool_cache': True,
+            'openrouter_supports_dynamic_instruction_cache': True,
+            'openrouter_max_cache_points': 4,
+            'supports_forced_tool_choice_with_thinking': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_openai_gpt_5_4():
+    profile = OpenRouterProvider.model_profile('openai/gpt-5.4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_supports_phase': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_google_gemini_3_pro():
+    """Google via OpenRouter — uses `_OpenRouterGoogleJsonSchemaTransformer` (lab wins over OpenAI fallback)."""
+
+    profile = OpenRouterProvider.model_profile('google/gemini-3.0-pro')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_tool_return_schema': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'google_supports_tool_combination': True,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_cache': True,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+            'default_cache_retention': timedelta(seconds=300),
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_google_gemini_3_8_flash_thinking_levels():
+    """Google via OpenRouter — the restricted level set survives the three-layer merge."""
+
+    profile = OpenRouterProvider.model_profile('google/gemini-3.8-flash')
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
+    assert _normalize(profile) == snapshot(
+        {
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_minimal_thinking_level': False,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supports_strict_tool_definition': True,
+            'supports_video_input': True,
+            'google_supports_tool_combination': True,
+            'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
+            'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'google_web_search_billed_per_prompt': False,
+            'openai_chat_supports_web_search': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openrouter_max_cache_points': None,
+            'openrouter_supports_cache_control': True,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_supports_tool_cache': False,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'supports_tool_return_schema': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'supports_cache': True,
+            'supported_cache_retentions': (),
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_mistral_large():
+    profile = OpenRouterProvider.model_profile('mistralai/mistral-large-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_zai_glm_5_3():
+    """OpenRouter inlines GLM-5.3 schemas while retaining its own reasoning settings."""
+    profile = OpenRouterProvider.model_profile('z-ai/glm-5.3')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_thinking': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_xai_grok_4():
+    profile = OpenRouterProvider.model_profile('x-ai/grok-4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'grok_supports_builtin_tools': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+# GitHub Copilot resolves families from a bare id prefix rather than a `provider/model` split, so
+# these six cover each branch of that table plus the no-family fallback. The dot-to-hyphen rewrite is
+# Anthropic-only: the Grok and Kimi entries below are dotted on purpose and would lose their family
+# profile if it were applied globally.
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_anthropic_claude_haiku_4_5():
+    """Anthropic via GitHub Copilot — relays Anthropic's profile through OpenAI chat."""
+    profile = GitHubCopilotProvider.model_profile('claude-haiku-4.5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 64000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+            'openai_chat_supports_max_completion_tokens': True,
+            'openai_chat_thinking_field': 'reasoning_text',
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_openai_gpt_5_4():
+    profile = GitHubCopilotProvider.model_profile('gpt-5.4')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_phase': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_chat_supports_max_completion_tokens': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_google_gemini_3_pro():
+    """Google via GitHub Copilot — the overlay replaces the Gemini transformer with the OpenAI one."""
+    profile = GitHubCopilotProvider.model_profile('gemini-3.0-pro')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_tool_return_schema': True,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'google_supports_tool_combination': True,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
+            'openai_chat_supports_max_completion_tokens': True,
+            'openai_chat_thinking_field': 'reasoning_text',
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_xai_grok_4_5():
+    profile = GitHubCopilotProvider.model_profile('grok-4.5')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_supports_builtin_tools': True,
+            'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+            'openai_chat_supports_max_completion_tokens': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_moonshotai_kimi_k3():
+    profile = GitHubCopilotProvider.model_profile('kimi-k3')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'openai_chat_supports_max_completion_tokens': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_copilot_unknown_model():
+    """An id from no known family gets the OpenAI-compatible fallback and the overlay, nothing else."""
+    profile = GitHubCopilotProvider.model_profile('some-future-copilot-model')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'openai_chat_supports_max_completion_tokens': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name',
+    ['o1-mini', 'o3-mini', 'o4-mini', 'mai-1', 'oswe-mini', 'raptor-mini', 'exec-agent-mini'],
+)
+def test_github_copilot_openai_family_prefix_arms(model_name: str):
+    """Pin every remaining OpenAI-family arm of the Copilot prefix table.
+
+    A typo'd key would silently fall through to the capability-less fallback and strip the family's
+    structured-output, native-tool and inline-system-prompt support — and, on the o-series and
+    `oswe` arms, its reasoning support too; asserting each prefix resolves to the same-id
+    `openai_model_profile` (plus the Copilot overlay) makes any future reroute fail loudly.
+    """
+    expected = _normalize(openai_model_profile(model_name))
+    assert expected is not None
+    expected['openai_chat_supports_max_completion_tokens'] = True
+    assert _normalize(GitHubCopilotProvider.model_profile(model_name)) == expected
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_qwen():
+    profile = OpenRouterProvider.model_profile('qwen/qwen3-235b-a22b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_deepseek():
+    profile = OpenRouterProvider.model_profile('deepseek/deepseek-chat')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_meta_llama():
+    profile = OpenRouterProvider.model_profile('meta-llama/llama-3.3-70b-instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_moonshotai():
+    profile = OpenRouterProvider.model_profile('moonshotai/kimi-k2-0905')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openrouter_unknown_provider_falls_back_to_overlay_only():
+    """Unknown lab → no upstream profile, but OpenRouter overrides still apply."""
+
+    profile = OpenRouterProvider.model_profile('unknown-lab/unknown-model')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_supports_web_search': True,
+            'openai_chat_supports_file_urls': True,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'supports_cache': False,
+            'supported_cache_retentions': (),
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_cache_ttl': False,
+            'openrouter_supports_tool_cache': False,
+            'openrouter_supports_dynamic_instruction_cache': False,
+            'openrouter_max_cache_points': None,
+        }
+    )
+
+
+# =============================================================================
+# Azure — three-layer merge, prefix-based lab dispatch
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_openai_gpt_5():
+    """Azure OpenAI — bare model name."""
+    profile = AzureProvider.model_profile('gpt-5.4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_supports_phase': True,
+            'openai_chat_supports_document_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_mistral_prefix():
+    profile = AzureProvider.model_profile('mistral-large-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_mistral_small_latest():
+    """Azure reuses the shared Mistral profile, so `thinking` is ignored: adjustable reasoning is native-provider-only."""
+    profile = AzureProvider.model_profile('mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_ministral_3b():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile."""
+    profile = AzureProvider.model_profile('ministral-3b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_magistral_small_latest():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile (magistral additionally sets thinking flags)."""
+    profile = AzureProvider.model_profile('magistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_cohere_prefix():
+    profile = AzureProvider.model_profile('cohere-command-r-plus')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_grok_prefix():
+    profile = AzureProvider.model_profile('grok-4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'grok_supports_builtin_tools': True,
+            'openai_chat_supports_document_input': False,
+        }
+    )
+
+
+# =============================================================================
+# Groq (inference provider — runs models themselves) — three-layer merge
+# =============================================================================
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_moonshotai_kimi():
+    """Groq's MoonshotAI route — `supports_json_object_output` and `supports_json_schema_output`
+    are pre-set as fallbacks (upstream Moonshot profile wins if it sets them)."""
+    profile = GroqProvider.model_profile('moonshotai/kimi-k2-0905')
+    assert _normalize(profile) == snapshot(
+        {
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_meta_llama4_maverick():
+    """Special-cased Llama 4 Maverick gets `supports_json_object_output=True` overlay."""
+    profile = GroqProvider.model_profile('llama-4-maverick-17b-128e-instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_meta_llama3_no_overlay():
+    """Older Llama models don't get the structured-output overlay."""
+    profile = GroqProvider.model_profile('llama-3.3-70b-versatile')
+    assert _normalize(profile) == snapshot(
+        {
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_deepseek():
+    profile = GroqProvider.model_profile('deepseek-r1-distill-llama-70b')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': False,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_gpt_oss():
+    """Groq's gpt-oss reasons always-on with graded `reasoning_effort` (`low`/`medium`/`high`);
+    the Groq profile's reasoning flags override the generic OpenAI family profile."""
+    profile = GroqProvider.model_profile('openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'supports_inline_system_prompts': True,
+            'supports_json_object_output': True,
+            'supports_json_schema_output': True,
+        }
+    )
+
+
+# =============================================================================
+# xAI (native, single-layer post-M4)
+# =============================================================================
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_provider_grok_4():
+    profile = XaiProvider.model_profile('grok-4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'grok_supports_builtin_tools': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not xai_imports(), reason='xai not installed')
+def test_xai_provider_grok_3_mini():
+    profile = XaiProvider.model_profile('grok-3-mini')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'grok_reasoning_efforts': frozenset({'low', 'high'}),
+            'supported_native_tools': frozenset(),
+        }
+    )
+
+
+# =============================================================================
+# Ollama — three-layer merge with strict-mode override
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_ollama_gpt_oss():
+    profile = OllamaProvider.model_profile('gpt-oss:20b')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'ignore_streamed_leading_whitespace': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+            'supports_forced_tool_choice': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_ollama_unknown_falls_back_to_overlay_only():
+    profile = OllamaProvider.model_profile('some-unknown-model')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_thinking_field': 'reasoning',
+            'openai_supports_strict_tool_definition': False,
+        }
+    )
+
+
+# =============================================================================
+# vLLM — three-layer merge, Hugging Face repo IDs, single-system-message merge
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vllm_gpt_oss_hf_namespace():
+    profile = VLLMProvider.model_profile('openai/gpt-oss-20b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vllm_qwen_hf_namespace():
+    profile = VLLMProvider.model_profile('Qwen/Qwen3-32B')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_thinking': True,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vllm_gemma_video_is_up_to_the_model_class():
+    """Gemma reads video, but neither OpenAI API has a video part, so the model class turns the flag off.
+
+    The provider profile keeps the family's answer; OpenRouter, which maps `video_url`, keeps it too.
+    """
+    family = VLLMProvider.model_profile('google/gemma-3-27b-it')
+    assert family is not None and family.get('supports_video_input') is True
+    provider = VLLMProvider(base_url='http://localhost:8000/v1', api_key='test')
+    chat = OpenAIChatModel('google/gemma-3-27b-it', provider=provider)
+    responses = OpenAIResponsesModel('google/gemma-3-27b-it', provider=provider)
+    openrouter = OpenRouterModel('google/gemma-3-27b-it', provider=OpenRouterProvider(api_key='test'))
+    assert {
+        'chat': chat.profile.get('supports_video_input'),
+        'responses': responses.profile.get('supports_video_input'),
+        'openrouter': openrouter.profile.get('supports_video_input'),
+    } == snapshot({'chat': False, 'responses': False, 'openrouter': True})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vllm_unknown_falls_back_to_overlay_only():
+    profile = VLLMProvider.model_profile('some-unknown-model')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_multiple_system_messages': False,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'native_output_requires_schema_in_instructions': True,
+        }
+    )
+
+
+# =============================================================================
+# Cerebras — three-layer merge with reasoning detection
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_qwen_reasoning():
+    profile = CerebrasProvider.model_profile('qwen-3-235b-a22b-thinking-2507')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_unsupported_model_settings': ('logit_bias',),
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_cerebras_llama_non_reasoning():
+    profile = CerebrasProvider.model_profile('llama-3.3-70b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_unsupported_model_settings': ('logit_bias',),
+        }
+    )
+
+
+# =============================================================================
+# OpenAI-compat passthrough gateways — two-layer merge: gateway transformer fallback + upstream wins
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_litellm_openai_gpt():
+    profile = LiteLLMProvider.model_profile('gpt-5.4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_supports_phase': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_litellm_magistral():
+    """Magistral's always-on flags survive the LiteLLM route. The sparse family profile skips the
+    OpenAI baseline (structured output), a pre-existing gap shared with deepseek and cohere."""
+
+    profile = LiteLLMProvider.model_profile('mistral/magistral-medium-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'tool_call_id_length': 9,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_litellm_mistral_small_latest():
+    """LiteLLM must not advertise thinking for adjustable Mistral ids (it rejects `reasoning_effort`
+    for them); the route falls back to the plain OpenAI profile."""
+
+    profile = LiteLLMProvider.model_profile('mistral/mistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'tool_call_id_length': 9,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_fireworks_llama():
+    profile = FireworksProvider.model_profile('accounts/fireworks/models/llama-v3p3-70b-instruct')
+    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_together_qwen():
+    profile = TogetherProvider.model_profile('Qwen/Qwen2.5-72B-Instruct-Turbo')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_sambanova_llama():
+    profile = SambaNovaProvider.model_profile('Meta-Llama-3.3-70B-Instruct')
+    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_ovhcloud_llama():
+    profile = OVHcloudProvider.model_profile('llama-3.3-70b-instruct')
+    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_alibaba_qwen():
+    profile = AlibabaProvider.model_profile('qwen3-235b-a22b-thinking-2507')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_alibaba_qwen_audio():
+    """Alibaba audio models get `openai_chat_audio_input_encoding='uri'`."""
+
+    profile = AlibabaProvider.model_profile('qwen3-audio-0809-online')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
+    )
+
+
+# =============================================================================
+# Default-only providers (no per-model variation in the profile function)
+# =============================================================================
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+def test_anthropic_unknown_model_returns_some_profile():
+    """Anthropic profile function returns *something* for unknown names — locks the default."""
+    profile = AnthropicProvider.model_profile('some-future-claude')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'supports_thinking': True,
+            'mimics_assistant_message_formatting': True,
+            'default_cache_retention': timedelta(seconds=300),
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': None,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, MCPServerTool, MemoryTool, WebFetchTool, WebSearchTool}
+            ),
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m', '1h'),
+            'supports_auto_cache': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_meta_muse():
+    assert _normalize(MetaProvider.model_profile('muse-spark-1.3')) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_forced_tool_choice': False,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_phase': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'openai_chat_supports_web_search': True,
+            'supported_native_tools': frozenset({WebSearchTool}),
+            'context_window': 1048576,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_meta_non_text_model():
+    """Image and transcription models only get the endpoint-wide facts, not the Muse text-model profile."""
+    assert _normalize(MetaProvider.model_profile('muse-image-1.0')) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'supports_forced_tool_choice': False}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_moonshotai_kimi():
+    profile = MoonshotAIProvider.model_profile('kimi-k2-0905')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'openai_chat_thinking_field': 'reasoning_content',
+            'openai_chat_send_back_thinking_parts': 'field',
+            'supports_forced_tool_choice': False,
+        }
+    )
+
+
+# =============================================================================
+# GitHub Models — multi-lab routing via OpenAIChatModel, 2-layer merge
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_openai_bare_name():
+    """Bare model names (no `/` prefix) route to `openai_model_profile`."""
+
+    profile = GitHubProvider.model_profile('gpt-5.4')  # pyright: ignore[reportDeprecated]
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_supports_phase': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_xai_grok():
+    profile = GitHubProvider.model_profile('xai/grok-4')  # pyright: ignore[reportDeprecated]
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'grok_supports_builtin_tools': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_meta_llama():
+    profile = GitHubProvider.model_profile('meta/llama-3.3-70b-instruct')  # pyright: ignore[reportDeprecated]
+    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_github_deepseek():
+    profile = GitHubProvider.model_profile('deepseek/deepseek-r1')  # pyright: ignore[reportDeprecated]
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'ignore_streamed_leading_whitespace': True,
+        }
+    )
+
+
+# =============================================================================
+# Vercel — multi-lab routing via OpenAIChatModel
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vercel_unknown_bare_name():
+    """Bare names get OpenAI transformer overlay only."""
+
+    profile = VercelProvider.model_profile('gpt-5.4')
+    assert _normalize(profile) == snapshot({'json_schema_transformer': OpenAIJsonSchemaTransformer})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vercel_anthropic_claude_sonnet():
+    profile = VercelProvider.model_profile('anthropic/claude-sonnet-4-6')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'mimics_assistant_message_formatting': True,
+            'supports_thinking': True,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vercel_openai_gpt():
+    profile = VercelProvider.model_profile('openai/gpt-5.4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_image_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_inline_system_prompts': True,
+            'supports_thinking': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
+            ),
+            'openai_supports_encrypted_reasoning_content': True,
+            'openai_supports_reasoning': True,
+            'openai_responses_supports_reasoning_context': True,
+            'openai_supports_reasoning_effort_none': True,
+            'openai_supports_phase': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vercel_vertex_gemini():
+    """Vercel routes `vertex/...` through `google_model_profile`."""
+
+    profile = VercelProvider.model_profile('vertex/gemini-3.0-pro')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_tool_return_schema': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': GoogleJsonSchemaTransformer,
+            'supports_video_input': True,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'google_supports_tool_combination': True,
+            'google_supports_server_side_tool_invocations': True,
+            'google_supported_mime_types_in_tool_returns': (
+                'image/png',
+                'image/jpeg',
+                'image/webp',
+                'application/pdf',
+                'text/plain',
+            ),
+            'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vercel_xai_grok():
+    profile = VercelProvider.model_profile('xai/grok-4')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'grok_supports_builtin_tools': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_vercel_groq_gpt_oss():
+    """Vercel routes `groq/...` through `groq_model_profile` (#7550).
+
+    The suffix after the first `/` keeps its own `openai/gpt-oss` prefix, which is what
+    `groq_model_profile` gates on.
+    """
+
+    profile = VercelProvider.model_profile('groq/openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'groq_supports_reasoning_disable': False,
+            'groq_supports_graded_reasoning_effort': True,
+        }
+    )
+
+
+# =============================================================================
+# Heroku — routes model names through family profiles (issue #6022)
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_heroku_returns_openai_transformer():
+    """Heroku routes the model name through its family profile (here: Anthropic),
+    merged onto the OpenAI-compatible base so thinking isn't dropped (#6022)."""
+
+    profile = HerokuProvider.model_profile('claude-sonnet-4-6')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
+            'supports_json_schema_output': True,
+            'supports_thinking': True,
+            'forced_tool_choice_disables_thinking': True,
+            'anthropic_supports_adaptive_thinking': True,
+            'anthropic_supports_effort': True,
+            'anthropic_supports_dynamic_filtering': True,
+            'anthropic_disallows_top_effort_when_thinking_disabled': False,
+            'anthropic_default_code_execution_tool_version': '20260120',
+            'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'anthropic_binds_thinking_blocks': False,
+            'anthropic_max_output_tokens': 128000,
+            'anthropic_rejects_max_tokens_beyond_context_window': False,
+            'supported_native_tools': frozenset(
+                {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
+            ),
+            'tool_deferral_mode': 'standalone',
+        }
+    )
+
+
+# =============================================================================
+# Nebius — multi-lab routing
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_nebius_bare_name():
+    profile = NebiusProvider.model_profile('some-model')
+    assert _normalize(profile) == snapshot({'json_schema_transformer': OpenAIJsonSchemaTransformer})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_nebius_meta_llama():
+    profile = NebiusProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
+    assert _normalize(profile) == snapshot({'json_schema_transformer': InlineDefsJsonSchemaTransformer})
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_nebius_deepseek():
+    profile = NebiusProvider.model_profile('deepseek-ai/DeepSeek-R1')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'ignore_streamed_leading_whitespace': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_nebius_qwen():
+    profile = NebiusProvider.model_profile('Qwen/Qwen3-235B-A22B')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_nebius_moonshotai():
+    profile = NebiusProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+    )
+
+
+# =============================================================================
+# Crusoe — multi-lab routing, structured output forced on for every model
+# =============================================================================
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_crusoe_bare_name():
+    profile = CrusoeProvider.model_profile('some-model')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_crusoe_meta_llama():
+    profile = CrusoeProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_crusoe_deepseek():
+    profile = CrusoeProvider.model_profile('deepseek-ai/DeepSeek-V3-0324')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_crusoe_zai():
+    """GLM's own profile doesn't claim structured output support; the Crusoe overlay adds it."""
+
+    profile = CrusoeProvider.model_profile('zai/GLM-5.2')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'zai_supports_reasoning_effort': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_crusoe_harmony():
+    profile = CrusoeProvider.model_profile('openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'supports_forced_tool_choice': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
+    )
+
+
+# =============================================================================
+# Hugging Face — multi-lab routing, no OpenAI overlay
+# =============================================================================
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_bare_name_returns_none():
+    """HF requires `provider/model` form; bare name → `None`."""
+
+    assert _normalize(HuggingFaceProvider.model_profile('some-model')) is None
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_meta_llama():
+    profile = HuggingFaceProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
+    assert _normalize(profile) == snapshot(
+        {'json_schema_transformer': InlineDefsJsonSchemaTransformer, 'supports_inline_system_prompts': True}
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_deepseek():
+    profile = HuggingFaceProvider.model_profile('deepseek-ai/DeepSeek-R1')
+    assert _normalize(profile) == snapshot(
+        {
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_qwen():
+    profile = HuggingFaceProvider.model_profile('Qwen/Qwen3-235B-A22B')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'supports_inline_system_prompts': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_moonshotai():
+    profile = HuggingFaceProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
+    assert _normalize(profile) == snapshot(
+        {'ignore_streamed_leading_whitespace': True, 'supports_inline_system_prompts': True}
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_unknown_provider_returns_none():
+    """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
+
+    assert _normalize(HuggingFaceProvider.model_profile('unknown/some-model')) is None
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'model_name,supported',
+    [
+        ('claude-opus-5', True),
+        ('claude-opus-4-8', True),
+        ('claude-fable-5', True),
+        ('claude-fable-5-1', True),
+        # Serves the `system` role but rejects tool deltas — the two capabilities are independent.
+        ('claude-sonnet-5', False),
+        ('claude-sonnet-4-6', False),
+        ('claude-haiku-4-5', False),
+        ('claude-opus-4-7', False),
+        ('claude-opus-4-6', False),
+    ],
+)
+def test_anthropic_tool_availability_delta_support(model_name: str, supported: bool):
+    """Pins the live-verified per-model matrix for `tool_addition` / `tool_removal`.
+
+    Not derivable from a version cutoff: `claude-sonnet-5` is newer than `claude-opus-4-8` and rejects
+    the blocks, so every entry was checked against the API rather than inferred.
+    """
+    profile = AnthropicProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('tool_addition_mode') == ('by_reference' if supported else None)
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'],
+)
+def test_openai_tool_availability_delta_support(model_name: str):
+    """Every model on the first-party provider gets Responses `additional_tools`, including old ones.
+
+    OpenAI documents a model restriction for the sibling `tool_search` tool and none for this item, and
+    13 models from `gpt-4o-mini` up each called a tool that only an `additional_tools` item declared,
+    against a control with the item removed that never did. A previous version of this test pinned
+    `gpt-5.4` and `gpt-5` as unsupported on the strength of a probe whose prompt named the tool and asked
+    for it by name — which a model that never received the declaration can satisfy from the prompt alone.
+
+    The gate that remains is the provider, not the model: `openai_model_profile` is shared with
+    OpenAI-compatible endpoints that speak the Responses API without necessarily implementing the item,
+    and they keep the `False` default.
+    """
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('tool_addition_mode') == 'with_definitions'
+
+
+def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
+    """The shared model profile stays off, so only the first-party provider opts in.
+
+    `additional_tools` is measured against OpenAI itself; an Azure, OpenRouter or vLLM deployment speaking
+    the same API hasn't been, and sending an item it doesn't implement would drop an availability change
+    silently rather than loudly.
+    """
+    profile = openai_model_profile('gpt-5.6')
+    assert profile.get('tool_addition_mode') is None
+
+
+@pytest.mark.skipif(not (anthropic_imports() and openai_imports() and bedrock_imports()), reason='extras not installed')
+@pytest.mark.parametrize(
+    ('provider_name', 'model_name'),
+    [
+        ('anthropic', 'claude-opus-5-5'),
+        ('bedrock', 'us.anthropic.claude-opus-5-5'),
+        ('openrouter', 'anthropic/claude-opus-5.5'),
+        ('vercel', 'anthropic/claude-opus-5-5'),
+        ('github-copilot', 'claude-opus-5.5'),
+        ('heroku', 'claude-opus-5-5'),
+        ('litellm', 'anthropic/claude-opus-5-5'),
+        ('snowflake', 'claude-opus-5-5'),
+    ],
+)
+def test_forced_tool_choice_support_follows_the_model_on_every_route(provider_name: str, model_name: str):
+    """Claude Opus 5.5 rejects a forced `tool_choice` whichever provider serves it, so every provider that merges the
+    Anthropic profile carries `supports_forced_tool_choice=False` over."""
+    provider_classes = {
+        'anthropic': AnthropicProvider,
+        'bedrock': BedrockProvider,
+        'openrouter': OpenRouterProvider,
+        'vercel': VercelProvider,
+        'github-copilot': GitHubCopilotProvider,
+        'heroku': HerokuProvider,
+        'litellm': LiteLLMProvider,
+        'snowflake': SnowflakeProvider,
+    }
+    profile = provider_classes[provider_name].model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_forced_tool_choice') is False

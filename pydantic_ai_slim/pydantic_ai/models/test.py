@@ -1,18 +1,17 @@
 from __future__ import annotations as _annotations
 
-import re
+import itertools
 import string
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import InitVar, dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 
-import httpx
 import pydantic_core
-from typing_extensions import assert_never
 
 from .. import _utils
+from .._json_schema import resolve_json_pointer
 from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
@@ -25,7 +24,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    SpeechPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -35,7 +34,7 @@ from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
-from ..tools import ToolDefinition
+from ..tools import ObjectJsonSchema, ToolDefinition
 from ..usage import RequestUsage
 from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
@@ -70,6 +69,12 @@ class TestModel(Model):
     Apart from `__init__` derived by the `dataclass` decorator, all methods are private or match those
     of the base class.
     """
+
+    # A test double has no wire, so its "renderer" is whatever the test simulates: declaring every
+    # mode makes the `profile=` handed to it the whole simulation (no claim still means no channel),
+    # instead of requiring a subclass to restate what the profile already says.
+    supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
+    supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
 
     # NOTE: Avoid test discovery by pytest.
     __test__ = False
@@ -125,7 +130,11 @@ class TestModel(Model):
         )
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
-        model_response.usage = _estimate_usage([*messages, model_response])
+        model_response.usage = _estimate_usage(
+            [*messages, model_response],
+            allow_tool_availability_deltas=self.tool_addition_mode is not None,
+        )
+        model_response.provider_name = self._system
         return model_response
 
     @asynccontextmanager
@@ -135,7 +144,7 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         model_settings, model_request_parameters = self.prepare_request(
             model_settings,
             model_request_parameters,
@@ -149,6 +158,7 @@ class TestModel(Model):
             _structured_response=model_response,
             _messages=messages,
             _provider_name=self._system,
+            _allow_tool_availability_deltas=self.tool_addition_mode is not None,
         )
 
     @property
@@ -179,11 +189,32 @@ class TestModel(Model):
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
     def _get_tool_calls(self, model_request_parameters: ModelRequestParameters) -> list[tuple[str, ToolDefinition]]:
+        # `declared_function_tools` alone would exclude `'via_history'` tools — revealed deferred
+        # tools on a `tool_addition_mode='with_definitions'` profile, whose definitions travel via
+        # history rather than the `tools` collection. They are callable, so the simulation must
+        # include them; only `'withheld'` tools are invisible to the model.
+        callable_function_tools = [
+            tool
+            for tool in model_request_parameters.function_tools
+            if model_request_parameters.visibility_of(tool.name) != 'withheld'
+        ]
         if self.call_tools == 'all':
-            return [(r.name, r) for r in model_request_parameters.function_tools]
+            return [(r.name, r) for r in callable_function_tools]
         else:
-            function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
-            tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
+            function_tools_lookup = {t.name: t for t in callable_function_tools}
+            all_function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
+            tools_to_call: list[ToolDefinition] = []
+            for name in self.call_tools:
+                if tool_def := function_tools_lookup.get(name):
+                    tools_to_call.append(tool_def)
+                elif tool_def := all_function_tools_lookup.get(name):
+                    raise UserError(
+                        f'Tool {name!r} has visibility '
+                        f'{model_request_parameters.visibility_of(name)!r}; it must be revealed '
+                        'or configured without deferred loading before `TestModel` can call it.'
+                    )
+                else:
+                    raise UserError(f'TestModel was configured to call unknown tool {name!r}.')
             return [(r.name, r) for r in tools_to_call]
 
     def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
@@ -225,20 +256,32 @@ class TestModel(Model):
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(name, self.gen_tool_args(args), tool_call_id=f'pyd_ai_tool_call_id__{name}')
-                    for name, args in tool_calls
-                ],
-                model_name=self._model_name,
-            )
+            # Multiple calls to the same tool would otherwise share the documented
+            # `pyd_ai_tool_call_id__{name}` id, which tool execution rejects as ambiguous, so
+            # uniquify only on collision, including with a tool whose own name ends in `__<n>`.
+            emitted_ids: set[str] = set()
+            parts: list[ToolCallPart] = []
+            for name, args in tool_calls:
+                base_id = f'pyd_ai_tool_call_id__{name}'
+                tool_call_id = next(
+                    candidate
+                    for candidate in itertools.chain([base_id], (f'{base_id}__{n}' for n in itertools.count(2)))
+                    if candidate not in emitted_ids
+                )
+                emitted_ids.add(tool_call_id)
+                parts.append(ToolCallPart(name, self.gen_tool_args(args), tool_call_id=tool_call_id))
+            return ModelResponse(parts=parts, model_name=self._model_name)
 
         if messages:  # pragma: no branch
             last_message = messages[-1]
             assert isinstance(last_message, ModelRequest), 'Expected last message to be a `ModelRequest`.'
 
-            # check if there are any retry prompts, if so retry them
-            new_retry_names = {p.tool_name for p in last_message.parts if isinstance(p, RetryPromptPart)}
+            # check if there are any retries, if so retry them. `prepare_messages` has already
+            # translated every retry, so a tool-bound one is a `'retried'` tool return and a
+            # tool-less one is the system-voice part it renders as.
+            new_retry_names = {
+                p.tool_name for p in last_message.parts if isinstance(p, ToolReturnPart) and p.outcome == 'retried'
+            }
             if new_retry_names:
                 # Handle retries for both function tools and output tools
                 # Check function tools first
@@ -273,10 +316,14 @@ class TestModel(Model):
                                 output[part.tool_name] = part.content
                 if output:
                     return ModelResponse(
-                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self._model_name
+                        parts=[TextPart(pydantic_core.to_json(output).decode())],
+                        model_name=self._model_name,
                     )
                 else:
-                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self._model_name)
+                    return ModelResponse(
+                        parts=[TextPart('success (no tool calls)')],
+                        model_name=self._model_name,
+                    )
             else:
                 return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
         else:
@@ -308,6 +355,10 @@ class TestModel(Model):
                 )
 
 
+class _StreamCancelled(Exception):
+    pass
+
+
 @dataclass
 class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
@@ -317,10 +368,11 @@ class TestStreamedResponse(StreamedResponse):
     _messages: InitVar[Iterable[ModelMessage]]
     _provider_name: str
     _provider_url: str | None = None
+    _allow_tool_availability_deltas: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
-        self._usage = _estimate_usage(_messages)
+        self._usage = _estimate_usage(_messages, allow_tool_availability_deltas=self._allow_tool_availability_deltas)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):
@@ -339,7 +391,7 @@ class TestStreamedResponse(StreamedResponse):
                     # Simulate the transport error that real providers raise
                     # when the HTTP connection is closed mid-stream by cancel().
                     if self._cancelled:
-                        raise httpx.StreamClosed()
+                        raise _StreamCancelled()
                     self._usage += _get_string_usage(word)
                     for event in self._parts_manager.handle_text_delta(vendor_part_id=i, content=word):
                         yield event
@@ -365,6 +417,9 @@ class TestStreamedResponse(StreamedResponse):
             elif isinstance(part, CompactionPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate CompactionPart on TestModel.
                 assert False, "This should be unreachable — we don't generate CompactionPart on TestModel."
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # NOTE: There's no way to reach this part of the code, since `SpeechPart`s are converted in `Model.prepare_messages`.
+                assert False, 'This should be unreachable — `SpeechPart`s are converted in `Model.prepare_messages`.'
             else:
                 assert_never(part)
 
@@ -387,6 +442,9 @@ class TestStreamedResponse(StreamedResponse):
         # TestModel has no underlying connection to close.
         pass
 
+    def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
+        return (_StreamCancelled,)
+
     @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
@@ -402,7 +460,7 @@ class _JsonSchemaTestData:
     This tries to generate the minimal viable data for the schema.
     """
 
-    def __init__(self, schema: _utils.ObjectJsonSchema, seed: int = 0):
+    def __init__(self, schema: ObjectJsonSchema, seed: int = 0):
         self.schema = schema
         self.defs = schema.get('$defs', {})
         self.seed = seed
@@ -411,20 +469,24 @@ class _JsonSchemaTestData:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 
-    def _gen_any(self, schema: dict[str, Any]) -> Any:
+    def _gen_any(self, schema: dict[str, Any] | bool) -> Any:  # noqa: C901
         """Generate data for any JSON Schema."""
-        if const := schema.get('const'):
-            return const
+        if isinstance(schema, bool):
+            # a boolean schema has no structure to generate from
+            return self._char()
+        elif 'const' in schema:
+            return schema['const']
         elif enum := schema.get('enum'):
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
             return examples[self.seed % len(examples)]
         elif ref := schema.get('$ref'):
-            key = re.sub(r'^#/\$defs/', '', ref)
-            js_def = self.defs[key]
-            return self._gen_any(js_def)
+            return self._gen_any(self._resolve_ref(ref))
         elif any_of := schema.get('anyOf'):
             return self._gen_any(any_of[self.seed % len(any_of)])
+        elif schema.get('oneOf') and 'type' not in schema:
+            # a `oneOf` beside a `type` narrows that type, so the `type` drives generation
+            return self._one_of_gen(schema)
 
         type_ = schema.get('type')
         if type_ is None:
@@ -437,7 +499,7 @@ class _JsonSchemaTestData:
         elif type_ == 'integer':
             return self._int_gen(schema)
         elif type_ == 'number':
-            return float(self._int_gen(schema))
+            return self._number_gen(schema)
         elif type_ == 'boolean':
             return self._bool_gen()
         elif type_ == 'array':
@@ -446,6 +508,32 @@ class _JsonSchemaTestData:
             return None
         else:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
+
+    def _resolve_ref(self, ref: str) -> dict[str, Any]:
+        """Look up a JSON Schema `$ref` in the schema's `$defs`, or as a local JSON pointer like `#/properties/from`."""
+        name = ref.removeprefix('#/$defs/')
+        if name not in self.defs and (target := resolve_json_pointer(self.schema, ref)) is not None:
+            return target
+        return self.defs[name]
+
+    def _one_of_gen(self, schema: dict[str, Any]) -> Any:
+        """Generate data for a JSON Schema `oneOf`."""
+        one_of = schema['oneOf']
+        member = one_of[self.seed % len(one_of)]
+        if not _utils.is_str_dict(member):
+            # a boolean subschema has no structure to generate from
+            return self._char()
+        # Pydantic leaves a defaulted discriminator tag out of `required`, but validation needs it to pick the
+        # member. A nested union passes on the `required` its parent union added.
+        required = schema.get('required', [])
+        discriminator = schema.get('discriminator')
+        if _utils.is_str_dict(discriminator) and (tag := discriminator.get('propertyName')):
+            required = [*required, tag]
+        if required:
+            if ref := member.get('$ref'):
+                member = self._resolve_ref(ref)
+            member = {**member, 'required': [*member.get('required', []), *required]}
+        return self._gen_any(member)
 
     def _object_gen(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Generate data for a JSON Schema object."""
@@ -461,10 +549,7 @@ class _JsonSchemaTestData:
             add_prop_key = 'additionalProperty'
             while add_prop_key in data:
                 add_prop_key += '_'
-            if addition_props is True:
-                data[add_prop_key] = self._char()
-            else:
-                data[add_prop_key] = self._gen_any(addition_props)
+            data[add_prop_key] = self._gen_any(addition_props)
 
         return data
 
@@ -486,25 +571,67 @@ class _JsonSchemaTestData:
     def _int_gen(self, schema: dict[str, Any]) -> int:
         """Generate an integer from a JSON Schema integer."""
         maximum = schema.get('maximum')
+        minimum = schema.get('minimum')
+        if minimum is not None and maximum == minimum:
+            return minimum
+
         if maximum is None:
             exc_max = schema.get('exclusiveMaximum')
             if exc_max is not None:
                 maximum = exc_max - 1
 
-        minimum = schema.get('minimum')
         if minimum is None:
             exc_min = schema.get('exclusiveMinimum')
             if exc_min is not None:
                 minimum = exc_min + 1
 
         if minimum is not None and maximum is not None:
-            return minimum + self.seed % (maximum - minimum)
+            span = maximum - minimum
+            if span == 0:
+                # Exclusive-bound adjustments can collapse a valid narrow range.
+                return minimum
+            if (
+                schema.get('type') == 'integer'
+                and minimum % 1 == 0
+                and maximum % 1 == 0
+                and 'exclusiveMinimum' not in schema
+                and 'exclusiveMaximum' not in schema
+                and span > 0
+            ):
+                minimum = int(minimum)
+                span = int(maximum) - minimum + 1
+            return minimum + self.seed % span
         elif minimum is not None:
             return minimum + self.seed
         elif maximum is not None:
             return maximum - self.seed
         else:
             return self.seed
+
+    def _number_gen(self, schema: dict[str, Any]) -> float:
+        """Generate a float from a JSON Schema number."""
+        minimum = schema.get('minimum')
+        if (exclusive_minimum := schema.get('exclusiveMinimum')) is not None:
+            minimum = exclusive_minimum if minimum is None else max(minimum, exclusive_minimum)
+        maximum = schema.get('maximum')
+        if (exclusive_maximum := schema.get('exclusiveMaximum')) is not None:
+            maximum = exclusive_maximum if maximum is None else min(maximum, exclusive_maximum)
+        if minimum is not None and maximum is not None:
+            if minimum == maximum:
+                return float(minimum)
+            span = maximum - minimum
+            value = minimum + self.seed % span
+            if value == schema.get('exclusiveMinimum'):
+                value = minimum + span / 2
+            return float(value)
+        elif minimum is not None:
+            offset = 1 if 'exclusiveMinimum' in schema else 0
+            return float(minimum + self.seed + offset)
+        elif maximum is not None:
+            offset = 1 if 'exclusiveMaximum' in schema else 0
+            return float(maximum - self.seed - offset)
+        else:
+            return float(self.seed)
 
     def _bool_gen(self) -> bool:
         """Generate a boolean from a JSON Schema boolean."""
@@ -514,14 +641,21 @@ class _JsonSchemaTestData:
         """Generate an array from a JSON Schema array."""
         data: list[Any] = []
         unique_items = schema.get('uniqueItems')
-        if prefix_items := schema.get('prefixItems'):
-            for item in prefix_items:
-                data.append(self._gen_any(item))
-                if unique_items:
-                    self.seed += 1
-
-        items_schema = schema.get('items', {})
+        max_items = schema.get('maxItems')
+        prefix_items: list[dict[str, Any] | bool] | None = schema.get('prefixItems')
+        items_schema: dict[str, Any] | bool | list[dict[str, Any] | bool] = schema.get('items', {})
+        if isinstance(items_schema, list):
+            # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
+            prefix_items, items_schema = prefix_items or items_schema, {}
         min_items = schema.get('minItems', 0)
+        for index, item in enumerate(prefix_items or []):
+            # stop at `maxItems`, compared as for `items` below, unless `minItems` asks for more
+            if isinstance(max_items, (int, float)) and not max_items > index and not min_items > index:
+                break
+            data.append(self._gen_any(item))
+            if unique_items:
+                self.seed += 1
+
         if min_items > len(data):
             for _ in range(min_items - len(data)):
                 data.append(self._gen_any(items_schema))
@@ -529,7 +663,6 @@ class _JsonSchemaTestData:
                     self.seed += 1
         elif items_schema:
             # if there is an `items` schema, add an item unless it would break `maxItems` rule
-            max_items = schema.get('maxItems')
             if max_items is None or max_items > len(data):
                 data.append(self._gen_any(items_schema))
                 if unique_items:

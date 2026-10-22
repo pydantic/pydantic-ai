@@ -10,16 +10,6 @@ commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Regression Detector
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)). It is a `uv` workspace; the
-checkout has full git history (`fetch-depth: 0`).
-
 ## Objective
 
 Find one **behavioral regression** — something that worked in a recent
@@ -37,6 +27,20 @@ upgrade-blocking bug class for users.
 3. Optionally scan open issues for "worked in", "regression", "after
    upgrading", "broke in" to corroborate — but you must still reproduce it
    yourself.
+
+## Candidate Stop Rule
+
+After release-diff triage, choose one specific user-visible candidate. Use one
+minimal reproduction to compare `OLD` and `NEW`, then check whether the change
+was intentional and whether an issue already tracks it. Stop after that
+candidate. Do not switch providers, start another probe, or repair a broad probe
+when the evidence fails.
+
+If the candidate lacks sufficient evidence, or the five-minute remaining-time
+notice appears, call `mcp__safeoutputs__noop` with an honest summary of the
+inspected scope. Reserve the remaining time for publication and verification.
+Use `report_incomplete` only for tool or infrastructure failure, not ordinary
+inconclusive investigation.
 
 ## How to Verify — mandatory
 
@@ -59,6 +63,34 @@ only "looks risky" in the diff is not a finding.
   `v2`-labeled work) — those are not regressions.
 - Speculation without an old-passes/new-fails reproduction.
 - Behavior already tracked by an open issue — **search issues first**.
+
+## Deduplication — mandatory BEFORE filing an issue
+
+Open issues were prefetched before the sandbox started. First narrow the local
+corpus to regression-labelled issues; this covers both prior
+`[regression-detector]` findings and human-filed regression reports:
+
+```
+jq '.[] | select(any(.labels[]; .name == "regression")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "regression" and the affected symbol:
+
+```
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
+
+If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
+
+- Use the native `Grep` tool for codebase search.
 
 ## Quality Gate — When to Noop
 
@@ -86,3 +118,9 @@ test that passes on `OLD` and fails on `NEW`, with both outputs captured.
 >
 > ## Evidence
 > - [Captured outputs for both versions; `path:line` of the change]
+>
+> ## Adversarial review
+> - **Reproduced on OLD and NEW:** [commands + real outputs for both versions]
+> - **Change was NOT intentional:** [found the commit/PR that changed it and confirmed it wasn't a deliberate behavior change — the #1 reason regression reports get rejected]
+> - **Existing tests checked:** [NEW-version tests read; none assert the new behavior as intended]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

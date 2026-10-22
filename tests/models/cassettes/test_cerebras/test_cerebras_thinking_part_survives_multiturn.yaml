@@ -1,0 +1,151 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '124'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2? Think briefly first.
+        role: user
+      model: gpt-oss-120b
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '808'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-82d1c33a-3015-4a2e-a4e4-210e901e89f9
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: '4.'
+          reasoning: 'User asks simple: "What is 2 + 2? Think briefly first." Answer: 4. Probably straightforward.'
+          role: assistant
+      created: 1781021261
+      id: chatcmpl-82d1c33a-3015-4a2e-a4e4-210e901e89f9
+      model: gpt-oss-120b
+      object: chat.completion
+      system_fingerprint: fp_46358675aa6b1ba4d98d
+      time_info:
+        completion_time: 0.017746517
+        created: 1781021261.165281
+        prompt_time: 0.002785251
+        queue_time: 0.008762771
+        total_time: 0.03152036666870117
+      usage:
+        completion_tokens: 37
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          reasoning_tokens: 25
+          rejected_prediction_tokens: 0
+        prompt_tokens: 79
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 116
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '326'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2? Think briefly first.
+        role: user
+      - content: '4.'
+        reasoning: 'User asks simple: "What is 2 + 2? Think briefly first." Answer: 4. Probably straightforward.'
+        role: assistant
+      - content: Now add 3 to that.
+        role: user
+      model: gpt-oss-120b
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '804'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-29163be5-3f68-4495-b9d4-d69c1d4ddc39
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: \(4 + 3 = 7\).
+          reasoning: User asks "Now add 3 to that." previous answer was 4. So 4+3 = 7. Simple.
+          role: assistant
+      created: 1781021261
+      id: chatcmpl-29163be5-3f68-4495-b9d4-d69c1d4ddc39
+      model: gpt-oss-120b
+      object: chat.completion
+      system_fingerprint: fp_46358675aa6b1ba4d98d
+      time_info:
+        completion_time: 0.020534819
+        created: 1781021261.7155337
+        prompt_time: 0.003218958
+        queue_time: 0.005742914
+        total_time: 0.05470848083496094
+      usage:
+        completion_tokens: 47
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          reasoning_tokens: 27
+          rejected_prediction_tokens: 0
+        prompt_tokens: 98
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 145
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -24,7 +23,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -48,12 +46,6 @@ def test_together_provider_need_api_key(env: TestEnv) -> None:
         TogetherProvider()
 
 
-def test_together_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = TogetherProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
 def test_together_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = TogetherProvider(openai_client=openai_client)
@@ -73,28 +65,40 @@ def test_together_provider_model_profile(mocker: MockerFixture):
     deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('supports_forced_tool_choice', True) is True
+
+    deepseek_v4_profile = provider.model_profile('deepseek-ai/DeepSeek-V4-Flash-0731')
+    deepseek_model_profile_mock.assert_called_with('deepseek-v4-flash-0731')
+    assert deepseek_v4_profile is not None
+    assert deepseek_v4_profile.get('supports_forced_tool_choice', True) is False
 
     meta_profile = provider.model_profile('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct-fp8')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('Qwen/QwQ-32B')
     qwen_model_profile_mock.assert_called_with('qwq-32b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     mistral_profile = provider.model_profile('mistralai/Devstral-Small-2505')
     mistral_model_profile_mock.assert_called_with('devstral-small-2505')
     assert mistral_profile is not None
-    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     google_profile = provider.model_profile('google/gemma-3-27b-it')
     google_model_profile_mock.assert_called_with('gemma-3-27b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # A model name without a `/` must not crash (regression for the unguarded `split('/', 1)`
+    # unpack); it falls back to the OpenAI-compatible default like the other providers.
+    no_slash_profile = provider.model_profile('gpt-4o-mini')
+    assert no_slash_profile is not None
+    assert no_slash_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer

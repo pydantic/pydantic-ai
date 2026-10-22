@@ -1,0 +1,55 @@
+name: CI Duration Report
+
+# Label-triggered CI duration report. Adding `trigger:ci-duration-report` to a
+# PR compares that PR's latest CI run against recent successful `main` and PR
+# runs, then updates one sticky comment on the PR. This workflow never checks
+# out or executes PR head code.
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target is required so fork PRs can
+  # receive comments from a base-repo token. The workflow is gated on a maintainer-applied
+  # label and only reads GitHub Actions metadata.
+  pull_request_target:
+    types: [labeled]
+
+permissions: {}
+
+concurrency:
+  group: ci-duration-report-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    if: github.event.label.name == 'trigger:ci-duration-report'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Create or update CI duration report
+        run: uv run --no-project --with certifi python .github/scripts/ci_duration.py report --poll-seconds 600
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+      - name: Remove trigger label
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh api -X DELETE "repos/${REPO}/issues/${PR_NUMBER}/labels/trigger:ci-duration-report" || true

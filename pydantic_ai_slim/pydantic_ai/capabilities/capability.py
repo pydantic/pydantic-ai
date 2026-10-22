@@ -1,0 +1,481 @@
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import KW_ONLY, dataclass, field
+from typing import Any, overload
+
+from pydantic.json_schema import GenerateJsonSchema
+
+from pydantic_ai._instructions import (
+    AgentInstructions,
+    InstructionFunc,
+    SourcedInstruction,
+    normalize_instructions,
+    validate_instruction_id_segment,
+    validate_instruction_name,
+)
+from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    InstructionChangePolicy,
+    InstructionId,
+    InstructionPart,
+    ToolKind,
+    ToolKindLike,
+    ToolPartKind,
+    _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
+)
+from pydantic_ai.tools import (
+    ArgsValidatorFunc,
+    DocstringFormat,
+    GenerateToolJsonSchema,
+    KindArgsT,
+    KindContentT,
+    KindedToolDecorator,
+    KindedToolPlainDecorator,
+    Tool,
+    ToolFuncContext,
+    ToolFuncEither,
+    ToolFuncPlain,
+    ToolParams,
+    ToolPrepareFunc,
+)
+from pydantic_ai.toolsets import AbstractToolset, AgentToolset, FunctionToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.combined import CombinedToolset
+
+
+@dataclass(init=False)
+class Capability(AbstractCapability[AgentDepsT]):
+    """Convenience capability for bundling instructions, tools, and toolsets without subclassing.
+
+    This groups related instructions, descriptions, function tools, and toolsets under
+    a capability identity. Instructions passed via `instructions=` are available through
+    `get_instructions()`;
+    [`instructions`][pydantic_ai.capabilities.Capability.instructions] is the decorator
+    for registering instruction functions. The constructor accepts static or callable
+    `description=` values. For model settings, lifecycle hooks, native tools, wrapper
+    toolsets, or custom per-run logic, subclass
+    [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability].
+    """
+
+    _: KW_ONLY
+
+    toolsets: Sequence[AgentToolset[AgentDepsT]] = ()
+    """Toolsets to register with the agent. Combined via [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset] when more than one is provided."""
+
+    tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = ()
+    """Function tools to register with the agent."""
+
+    description: str | None = None
+    """Static description mirrored on the instance.
+
+    The constructor also accepts callable descriptions, stored internally and returned
+    from `get_description()`.
+    """
+
+    _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
+    _instructions: list[SourcedInstruction[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
+    _description: CapabilityDescription[AgentDepsT] | None = field(init=False, repr=False, default=None)
+
+    def __init__(
+        self,
+        *,
+        instructions: AgentInstructions[AgentDepsT] | None = None,
+        toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        id: str | None = None,
+        description: CapabilityDescription[AgentDepsT] | None = None,
+        defer_loading: bool = False,
+    ) -> None:
+        """Build a capability from instructions, tools, toolsets, and an optional description.
+
+        Args:
+            instructions: Static instructions and/or instruction function(s), available via
+                `get_instructions()`. Pass an [`InstructionPart`][pydantic_ai.messages.InstructionPart]
+                to declare a part's [`name`][pydantic_ai.messages.InstructionPart.name] or mark it
+                [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic]. Register more with the
+                [`instructions`][pydantic_ai.capabilities.Capability.instructions] decorator.
+            toolsets: Toolsets to register with the agent.
+            tools: Function tools to register with the agent.
+            id: Stable identifier for the capability. Required when `defer_loading=True`, so the
+                model's `load_capability` call can reference it.
+            description: Static string or callable description, returned from `get_description()`.
+                For a deferred capability it is shown to the model so it can decide whether to load it.
+            defer_loading: When `True`, the capability's tools and instructions stay hidden until the
+                model loads it on demand via the `load_capability` tool; requires `id`.
+        """
+        resolved_toolsets: tuple[AgentToolset[AgentDepsT], ...]
+        if toolsets is not None:
+            resolved_toolsets = tuple(toolsets)
+        else:
+            resolved_toolsets = ()
+        if id is not None:
+            validate_instruction_id_segment(id, kind='Capability id')
+        self.id = id
+        self.description = description if isinstance(description, str) else None
+        self._description = description
+        self.defer_loading = defer_loading
+        self.toolsets = resolved_toolsets
+        self.tools = tools
+        # Stamp the capability's `id` onto its contributed function toolset so it can be used with
+        # durable execution, which wraps leaf toolsets by `id` at construction time (see
+        # `docs/capabilities/`). User-provided `toolsets=` keep their own ids and are never overwritten.
+        self._function_toolset = FunctionToolset[AgentDepsT](tools, id=id)
+        self._instructions = [
+            self._attribute_instruction(instruction) for instruction in normalize_instructions(instructions)
+        ]
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        # Not spec-constructible: holds function tools, instructions, and callable
+        # descriptions that don't round-trip through YAML/JSON. Matches the other
+        # non-serializable capabilities (`Hooks`, `PrefixTools`, `WrapperCapability`, ...).
+        return None
+
+    def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
+        return self._description
+
+    def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
+        return [sourced.instruction for sourced in self._instructions] or None
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        if type(self).get_instructions is not Capability.get_instructions:
+            # A subclass computes its own instructions, so there are no declared names to resolve.
+            return super()._collect_instructions()
+        return list(self._instructions)
+
+    def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
+        # Numbered over `self.toolsets` alone, so whether `tools=` happens to be populated when
+        # this is called doesn't shift the ids of the callables the user passed.
+        leaves: list[AbstractToolset[AgentDepsT]] = [
+            ts
+            if isinstance(ts, AbstractToolset)
+            else DynamicToolset[AgentDepsT](toolset_func=ts, id=self._toolset_id(index))
+            for index, ts in enumerate(self.toolsets)
+        ]
+        materialized: list[AbstractToolset[AgentDepsT]] = (
+            [self._function_toolset, *leaves] if self._function_toolset.tools else leaves
+        )
+
+        if not materialized:
+            # Return the live (currently-empty) function toolset rather than `None` so tools
+            # registered after construction via `@tool`/`@tool_plain` still surface: the agent
+            # wires in this reference once, and `None` would drop it and hide late additions.
+            return self._function_toolset
+        if len(materialized) == 1:
+            return materialized[0]
+        return CombinedToolset[AgentDepsT](materialized)
+
+    def _toolset_id(self, index: int) -> str | None:
+        """The `id` for the leaf toolset this capability builds around the callable at `index`.
+
+        Durable execution identifies a leaf toolset by `id`, so a capability the user named has to
+        pass that name down or the toolset it contributes stays anonymous and unusable there
+        (#7274). One capability can contribute several leaves, though -- `tools=` builds a
+        `FunctionToolset` that already took the bare `id` -- so the position within this
+        capability's own arguments distinguishes them. That position is stable because it is the
+        order the user wrote in `toolsets=`, not an order the run happened to compose, and not one
+        that shifts when a `@tool` is registered later.
+
+        Pass a `DynamicToolset` with its own `id` instead of a bare callable to name one yourself.
+        """
+        return None if self.id is None else f'{self.id}_{index}'
+
+    @overload
+    def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool_plain(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
+
+    def tool_plain(
+        self,
+        func: ToolFuncPlain[ToolParams] | None = None,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> Any:
+        """Decorator to register a plain (no-[`RunContext`][pydantic_ai.tools.RunContext]) function tool on this capability.
+
+        Mirrors [`Agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain]: the tool is added to this
+        capability's function toolset and registered with the agent whenever the capability is active.
+        """
+        decorator = self._function_toolset.tool_plain(
+            name=name,
+            description=description,
+            retries=retries,
+            prepare=prepare,
+            args_validator=args_validator,
+            docstring_format=docstring_format,
+            require_parameter_descriptions=require_parameter_descriptions,
+            schema_generator=schema_generator,
+            strict=strict,
+            sequential=sequential,
+            requires_approval=requires_approval,
+            metadata=metadata,
+            tool_kind=_tool_kind_id(tool_kind),
+            timeout=timeout,
+            defer_loading=defer_loading,
+            include_return_schema=include_return_schema,
+        )
+        return decorator if func is None else decorator(func)
+
+    @overload
+    def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
+
+    @overload
+    def tool(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ...] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKind[KindArgsT, KindContentT],
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
+
+    @overload
+    def tool(
+        self,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolPartKind | None = None,
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
+
+    def tool(
+        self,
+        func: ToolFuncContext[AgentDepsT, ToolParams] | None = None,
+        /,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        args_validator: ArgsValidatorFunc[AgentDepsT, ToolParams] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
+        sequential: bool = False,
+        requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
+        tool_kind: ToolKindLike | None = None,
+        timeout: float | None = None,
+        defer_loading: bool = False,
+        include_return_schema: bool | None = None,
+    ) -> Any:
+        """Decorator to register a function tool (taking [`RunContext`][pydantic_ai.tools.RunContext]) on this capability.
+
+        Mirrors [`Agent.tool`][pydantic_ai.agent.Agent.tool]: the tool is added to this capability's
+        function toolset and registered with the agent whenever the capability is active.
+        """
+        decorator = self._function_toolset.tool(
+            name=name,
+            description=description,
+            retries=retries,
+            prepare=prepare,
+            args_validator=args_validator,
+            docstring_format=docstring_format,
+            require_parameter_descriptions=require_parameter_descriptions,
+            schema_generator=schema_generator,
+            strict=strict,
+            sequential=sequential,
+            requires_approval=requires_approval,
+            metadata=metadata,
+            tool_kind=_tool_kind_id(tool_kind),
+            timeout=timeout,
+            defer_loading=defer_loading,
+            include_return_schema=include_return_schema,
+        )
+        return decorator if func is None else decorator(func)
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], str | None], /) -> Callable[[], str | None]: ...
+
+    @overload
+    def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], str | InstructionPart | None], /
+    ) -> Callable[[RunContext[AgentDepsT]], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[RunContext[AgentDepsT]], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], str | InstructionPart | None], /
+    ) -> Callable[[], str | InstructionPart | None]: ...
+
+    @overload
+    def instructions(
+        self, func: Callable[[], Awaitable[str | InstructionPart | None]], /
+    ) -> Callable[[], Awaitable[str | InstructionPart | None]]: ...
+
+    @overload
+    def instructions(
+        self, /, *, name: str | None = None, on_change: InstructionChangePolicy = 'rewrite'
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]]: ...
+
+    def instructions(
+        self,
+        func: InstructionFunc[AgentDepsT] | None = None,
+        /,
+        *,
+        name: str | None = None,
+        on_change: InstructionChangePolicy = 'rewrite',
+    ) -> Callable[[InstructionFunc[AgentDepsT]], InstructionFunc[AgentDepsT]] | InstructionFunc[AgentDepsT]:
+        """Decorator to register an instructions function on this capability.
+
+        Mirrors `Agent.instructions`: the function may take
+        [`RunContext`][pydantic_ai.tools.RunContext] (or no arguments), may be sync or async, and is
+        appended to any instructions provided via the `instructions=` field.
+
+        Example:
+        ```python
+        from pydantic_ai import RunContext
+        from pydantic_ai.capabilities import Capability
+
+        cap = Capability[str](instructions='base instructions')
+
+        @cap.instructions
+        async def dynamic(ctx: RunContext[str]) -> str:
+            return f'extra: {ctx.deps}'
+        ```
+
+        Args:
+            func: The instructions function to register.
+            name: An optional name for the instruction part this function produces, keyed as
+                `'capability:<capability id>:<name>'` on
+                [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an application can
+                address this part specifically, where the capability's own key addresses everything it
+                contributes. Requires the capability to have an
+                [`id`][pydantic_ai.capabilities.AbstractCapability.id] — without one there is no source
+                key to qualify the name against, so the part stays unaddressable. See
+                [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
+                Use `'append'` for instructions that change mid-conversation, to keep the cached
+                prefix; see [appending instruction changes](../agent.md#appending-instruction-changes).
+                Build the text only from state you control; see [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
+        """
+        if name is not None:
+            validate_instruction_name(name)
+
+        def decorator(
+            func_: InstructionFunc[AgentDepsT],
+        ) -> InstructionFunc[AgentDepsT]:
+            source = CapabilityInstructionSource(self.id) if self.id is not None else None
+            self._instructions.append(
+                SourcedInstruction(
+                    func_,
+                    name=name,
+                    id=InstructionId(source, name=name) if source is not None else None,
+                    source=source,
+                    dynamic=True,
+                    on_change=on_change,
+                )
+            )
+            return func_
+
+        return decorator if func is None else decorator(func)

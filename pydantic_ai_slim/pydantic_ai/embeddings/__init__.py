@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -38,10 +38,12 @@ KnownEmbeddingModelName = TypeAliasType(
     Literal[
         'google-cloud:gemini-embedding-001',
         'google-cloud:gemini-embedding-2-preview',
+        'google-cloud:gemini-embedding-2',
         'google-cloud:text-embedding-005',
         'google-cloud:text-multilingual-embedding-002',
         'google:gemini-embedding-001',
         'google:gemini-embedding-2-preview',
+        'google:gemini-embedding-2',
         'openai:text-embedding-ada-002',
         'openai:text-embedding-3-small',
         'openai:text-embedding-3-large',
@@ -104,6 +106,9 @@ def infer_embedding_model(
         'openai',
         # For now, we assume that every chat and completions-compatible provider also
         # supports the embeddings endpoint, as at worst the user would get an `ModelHTTPError`.
+        # `openai-chat` / `openai-responses` aren't listed: there's no chat-vs-responses split
+        # for the embeddings API, and `normalize_gateway_provider` returns `gateway/openai`
+        # as `openai`, so the canonical name suffices.
         *get_args(OpenAIChatCompatibleProvider.__value__),
         *get_args(OpenAIResponsesCompatibleProvider.__value__),
     ):
@@ -118,7 +123,7 @@ def infer_embedding_model(
         from .bedrock import BedrockEmbeddingModel
 
         return BedrockEmbeddingModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-gla', 'google-vertex', 'google-cloud'):
+    elif model_kind in ('google', 'google-cloud'):
         from .google import GoogleEmbeddingModel
 
         return GoogleEmbeddingModel(model_name, provider=provider)
@@ -134,7 +139,10 @@ def infer_embedding_model(
         raise UserError(f'Unknown embeddings model: {model}')  # pragma: no cover
 
 
-@dataclass(init=False)
+# `eq=False`: a facade over a live model and the provider client behind it compares by identity.
+# `instrument` is its only dataclass field, so generated field equality would compare two embedders
+# over different models as equal, and would leave the class unhashable.
+@dataclass(init=False, eq=False)
 class Embedder:
     """High-level interface for generating text embeddings.
 
@@ -164,7 +172,7 @@ class Embedder:
     If this isn't set, then the last value set by
     [`Embedder.instrument_all()`][pydantic_ai.embeddings.Embedder.instrument_all]
     will be used, which defaults to False.
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False
@@ -224,7 +232,7 @@ class Embedder:
         self,
         *,
         model: EmbeddingModel | KnownEmbeddingModelName | str | _utils.Unset = _utils.UNSET,
-    ) -> Iterator[None]:
+    ) -> Generator[None]:
         """Context manager to temporarily override the embedding model.
 
         Useful for testing or dynamically switching models.
@@ -345,27 +353,27 @@ class Embedder:
         self, query: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query]."""
-        return _utils.get_event_loop().run_until_complete(self.embed_query(query, settings=settings))
+        return _utils.run_until_complete(self.embed_query(query, settings=settings))
 
     def embed_documents_sync(
         self, documents: str | Sequence[str], *, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents]."""
-        return _utils.get_event_loop().run_until_complete(self.embed_documents(documents, settings=settings))
+        return _utils.run_until_complete(self.embed_documents(documents, settings=settings))
 
     def embed_sync(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
         """Synchronous version of [`embed()`][pydantic_ai.embeddings.Embedder.embed]."""
-        return _utils.get_event_loop().run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))
+        return _utils.run_until_complete(self.embed(inputs, input_type=input_type, settings=settings))
 
     def max_input_tokens_sync(self) -> int | None:
         """Synchronous version of [`max_input_tokens()`][pydantic_ai.embeddings.Embedder.max_input_tokens]."""
-        return _utils.get_event_loop().run_until_complete(self.max_input_tokens())
+        return _utils.run_until_complete(self.max_input_tokens())
 
     def count_tokens_sync(self, text: str) -> int:
         """Synchronous version of [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens]."""
-        return _utils.get_event_loop().run_until_complete(self.count_tokens(text))
+        return _utils.run_until_complete(self.count_tokens(text))
 
     def _get_model(self) -> EmbeddingModel:
         """Create a model configured for this embedder.

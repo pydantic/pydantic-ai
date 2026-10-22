@@ -1,8 +1,8 @@
 """Tests for xAI model integration.
 
 The xAI SDK uses gRPC for all calls (including executing built-in tools like `code_execution`,
-`web_search`, and `mcp_server` server-side). Since VCR doesn't support gRPC, we cannot
-record/replay these interactions like we do with HTTP APIs.
+`web_search`, and `mcp_server` server-side), so these calls don't go through the HTTP cassettes
+the other model tests use.
 
 Instead, we use two strategies:
 - A **custom recorder** for xAI SDK interactions where possible (gRPC-aware recording/replay)
@@ -17,9 +17,9 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -45,13 +45,13 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -60,13 +60,12 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
-from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
+    AgentStreamEvent,
     CachePoint,
+    FinishReason,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -76,7 +75,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -99,31 +98,46 @@ from .mock_xai import (
 )
 
 with try_import() as imports_successful:
+    import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
         XaiModel,
         XaiModelSettings,
-        XaiStreamedResponse,
         _extract_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.xai import XaiProvider
 
+    from .xai_proto_cassettes import get_recorded_request_messages
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
+
+
+def test_xai_hidden_tools_stay_off_the_wire():
+    """Guard xAI's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tool_defs, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert list(tool_defs) == ['visible']
+
 
 # Test model constants
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
@@ -156,21 +170,22 @@ async def test_xai_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -181,13 +196,14 @@ async def test_xai_request_simple_success(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -212,7 +228,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_cost_calculation(allow_model_requests: None):
@@ -230,8 +246,7 @@ async def test_xai_cost_calculation(allow_model_requests: None):
     assert result.output == 'world'
 
     # Verify cost is calculated via genai-prices
-    last_message = result.all_messages()[-1]
-    assert isinstance(last_message, ModelResponse)
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.000045'))
 
 
@@ -272,7 +287,9 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=420, cache_read_tokens=157, output_tokens=16),
+                usage=RequestUsage(
+                    input_tokens=420, cache_read_tokens=157, output_tokens=16, cost=Decimal('0.00006845')
+                ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -304,7 +321,9 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=448, cache_read_tokens=436, output_tokens=36),
+                usage=RequestUsage(
+                    input_tokens=448, cache_read_tokens=436, output_tokens=36, cost=Decimal('0.0000422')
+                ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -383,6 +402,262 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
                         'function': {'name': 'tool_b', 'arguments': '{}'},
                     },
                 ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A reasoning `ThinkingPart` followed by `ToolCallPart`s maps to one assistant message.
+
+    The encrypted reasoning trace must stay attached to the tool calls it produced — matching
+    `xai_sdk`'s `Chat.append` — rather than splitting into a reasoning message and a separate
+    tool-call message.
+    """
+    response1 = create_response(
+        reasoning_content='Let me call the tools',
+        encrypted_content='encrypted_signature_123',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+                'reasoning_content': 'Let me call the tools',
+                'encrypted_content': 'encrypted_signature_123',
+            }
+        ]
+    )
+
+
+async def test_xai_text_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A `TextPart` followed by `ToolCallPart`s maps to one assistant message carrying both.
+
+    The relaxed grouping also packs text with the tool calls it precedes — matching `xai_sdk`'s
+    `Chat.append`, which puts `content` and `tool_calls` on a single assistant message — rather
+    than splitting them into a text message and a separate tool-call message.
+    """
+    response1 = create_response(
+        content='Calling the tools',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': 'Calling the tools'}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end proof for #5329: the real xAI API accepts grouped reasoning + tool-call history.
+
+    Turn 1 on a reasoning model (with `xai_include_encrypted_content=True`) returns a `ThinkingPart`
+    carrying an encrypted signature AND a `ToolCallPart` in the same response. After the tool runs,
+    turn 2 sends that history back: `_append_tool_call` packs the encrypted reasoning and the tool
+    call onto ONE assistant message, and xAI accepts it and continues the run. The mock grouping
+    tests pin the exact mapped request shape; this proves the grouped shape round-trips against the
+    live API — the orphaned-reasoning split #5329 reports would make turn 2 fail.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return 'It is sunny and 25°C.'
+
+    result = await agent.run('What is the weather in London? Use the get_weather tool, then answer.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in London? Use the get_weather tool, then answer.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"London"}',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=221,
+                    cache_read_tokens=128,
+                    output_tokens=122,
+                    output_reasoning_tokens=111,
+                    details={'reasoning_tokens': 111},
+                    cost=Decimal('0.0000860'),
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='It is sunny and 25°C.',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The tool returned: "It is sunny and 25°C."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='It is sunny and 25°C in London.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=358,
+                    cache_read_tokens=192,
+                    output_tokens=57,
+                    output_reasoning_tokens=47,
+                    details={'reasoning_tokens': 47},
+                    cost=Decimal('0.0000713'),
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # The grouped single assistant message that xAI accepted on the second request.
+    requests = get_recorded_request_messages(xai_provider.client)
+    assert len(requests) == 2
+    assistant_msgs = [msg for msg in requests[1] if msg.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'get_weather', 'arguments': '{"city":"London"}'},
+                    }
+                ],
+                'reasoning_content': 'The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                'encrypted_content': IsStr(),
             }
         ]
     )
@@ -485,14 +760,18 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
         # Intentionally shuffled, but these are tool-results too (tool_name is set).
         ModelRequest(
             parts=[
-                RetryPromptPart(content='retry tool_b', tool_name='tool_b', tool_call_id='tool_b'),
-                RetryPromptPart(content='retry tool_a', tool_name='tool_a', tool_call_id='tool_a'),
-                RetryPromptPart(content='retry tool_c', tool_name='tool_c', tool_call_id='tool_c'),
+                legacy_retry_prompt_part(content='retry tool_b', tool_name='tool_b', tool_call_id='tool_b'),
+                legacy_retry_prompt_part(content='retry tool_a', tool_name='tool_a', tool_call_id='tool_a'),
+                legacy_retry_prompt_part(content='retry tool_c', tool_name='tool_c', tool_call_id='tool_c'),
             ]
         ),
     ]
 
-    await m.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+    await m.request(
+        m.prepare_messages(messages, ModelRequestParameters()),
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
 
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
@@ -525,17 +804,17 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
                         ],
                     },
                     {
-                        'content': [{'text': 'retry tool_a\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_a"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_a',
                     },
                     {
-                        'content': [{'text': 'retry tool_c\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_c"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_c',
                     },
                     {
-                        'content': [{'text': 'retry tool_b\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_b"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_b',
                     },
@@ -574,7 +853,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                 parts=[
                     UserPromptPart(
                         content='What is the largest city in the user country?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -583,7 +862,9 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=439, cache_read_tokens=314, output_tokens=16),
+                usage=RequestUsage(
+                    input_tokens=439, cache_read_tokens=314, output_tokens=16, cost=Decimal('0.0000487')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -599,7 +880,7 @@ async def test_xai_request_structured_response_native_output(allow_model_request
                         tool_name='get_user_country',
                         content='Mexico',
                         tool_call_id=IsStr(),
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -608,7 +889,9 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=467, cache_read_tokens=455, output_tokens=13),
+                usage=RequestUsage(
+                    input_tokens=467, cache_read_tokens=455, output_tokens=13, cost=Decimal('0.00003165')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -651,8 +934,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=351,
                     cache_read_tokens=148,
-                    output_tokens=53,
+                    output_tokens=276,
+                    output_reasoning_tokens=223,
                     details={'reasoning_tokens': 223},
+                    cost=Decimal('0.0001860'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -665,11 +950,13 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -691,8 +978,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=670,
                     cache_read_tokens=601,
-                    output_tokens=63,
+                    output_tokens=146,
+                    output_reasoning_tokens=83,
                     details={'reasoning_tokens': 83},
+                    cost=Decimal('0.00011685'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -711,8 +1000,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             cache_read_tokens=749,
             input_tokens=1021,
             details={'reasoning_tokens': 306},
-            output_tokens=116,
+            output_reasoning_tokens=306,
+            output_tokens=422,
             tool_calls=1,
+            cost=Decimal('0.00030285'),
         )
     )
 
@@ -751,7 +1042,7 @@ async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
 
     result = await agent.run('Get data for KEY_1 and process data returning the output')
     assert result.output == 'the result is: 5'
-    assert result.usage == snapshot(RunUsage(requests=3, tool_calls=2))
+    assert result.usage == snapshot(RunUsage(requests=3, cost=Decimal('0.00'), tool_calls=2))
     assert tool_was_called_get
     assert tool_was_called_process
 
@@ -802,7 +1093,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     """Test that tool_choice falls back to 'auto' when 'required' is not supported."""
     # Create a profile that doesn't support tool_choice='required'
-    profile = GrokModelProfile(grok_supports_tool_choice_required=False)
+    profile = GrokModelProfile(supports_forced_tool_choice=False)
 
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
@@ -937,6 +1228,190 @@ async def test_tool_choice_multiple_tools_filters(allow_model_requests: None) ->
     )
 
 
+async def test_xai_web_search_user_location(allow_model_requests: None) -> None:
+    """`WebSearchTool.user_location` should be forwarded to xAI's `web_search` location fields.
+
+    This pins the outgoing tool payload directly. The proto-cassette replay client
+    (see `test_xai_web_search_user_location_recorded`) ignores the request it's handed,
+    so a regression that dropped `user_location` would still replay green — only this
+    payload assertion catches it.
+    """
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(
+                user_location={
+                    'city': 'San Francisco',
+                    'country': 'US',
+                    'region': 'California',
+                    'timezone': 'America/Los_Angeles',
+                }
+            )
+        ]
+    )
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'web_search': {
+                    'enable_image_understanding': False,
+                    'user_location': {
+                        'country': 'US',
+                        'city': 'San Francisco',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    },
+                    'enable_image_search': False,
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_web_search_user_location_partial(allow_model_requests: None) -> None:
+    """A partially-populated `user_location` forwards only the set fields.
+
+    `user_location.get(...)` yields `None` for the unset fields, and the xAI SDK omits
+    `None` values from the `WebSearchUserLocation` proto — so only `country` reaches the wire.
+    """
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(
+                user_location={
+                    'country': 'US',
+                }
+            )
+        ]
+    )
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'web_search': {
+                    'enable_image_understanding': False,
+                    'user_location': {
+                        'country': 'US',
+                    },
+                    'enable_image_search': False,
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_web_search_user_location_recorded(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Live-recorded proof that xAI accepts `WebSearchTool.user_location` fields.
+
+    Recorded against the real xAI API (proto cassette); the committed cassette's request
+    payload shows the `user_location` fields xAI accepted without error. The mapping itself
+    is pinned by `test_xai_web_search_user_location` — the replay client ignores the request.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    user_location={
+                        'city': 'San Francisco',
+                        'country': 'US',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    }
+                )
+            )
+        ],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,
+            xai_include_web_search_output=True,
+        ),
+    )
+
+    result = await agent.run('Search the web for one popular tourist attraction near me and name it.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Search the web for one popular tourist attraction near me and name it.',
+                        timestamp=IsNow(tz=UTC),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "Search the web for one popular tourist attraction near me and name it."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'popular tourist attractions San Francisco', 'num_results': '5'},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=None,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                        provider_details={
+                            'encrypted_content': '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'
+                        },
+                    ),
+                    ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
+                    TextPart(
+                        content='**Golden Gate Bridge** is one of the most popular tourist attractions near you in San Francisco.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2747,
+                    cache_read_tokens=1280,
+                    output_tokens=260,
+                    output_reasoning_tokens=237,
+                    details={'reasoning_tokens': 237, 'server_side_tools_web_search': 1},
+                    cost=Decimal('0.0004874'),
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_xai_stream_text(allow_model_requests: None):
     stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
     mock_client = MockXai.create_mock_stream([stream])
@@ -947,7 +1422,7 @@ async def test_xai_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_stream_text_finish_reason(allow_model_requests: None):
@@ -1019,7 +1494,9 @@ async def test_xai_stream_structured(allow_model_requests: None):
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
-    assert agent_run.usage == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
+    assert agent_run.usage == snapshot(
+        RunUsage(input_tokens=20, output_tokens=1, requests=1, cost=Decimal('0.0000045'))
+    )
 
     # Verify event types: one PartStartEvent, then PartDeltaEvents for args
     # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
@@ -1127,7 +1604,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_none_delta(allow_model_requests: None):
@@ -1144,7 +1621,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
@@ -1187,29 +1664,6 @@ async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
     assert result.output == 'test response'
 
 
-async def test_xai_unified_thinking(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking='high' flows through to xAI reasoning_effort."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': 'high'})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-    # Verify we get thinking parts (reasoning model with high effort)
-    response_messages = [m for m in result.all_messages() if isinstance(m, ModelResponse)]
-    assert len(response_messages) >= 1
-    # The reasoning model should produce some output
-    assert result.output
-
-
-async def test_xai_unified_thinking_false(allow_model_requests: None, xai_provider: XaiProvider):
-    """Test that unified thinking=False on a reasoning model is silently ignored (no reasoning_effort sent)."""
-    m = XaiModel('grok-3-mini', provider=xai_provider)
-    agent = Agent(m, model_settings={'thinking': False})
-
-    result = await agent.run('What is 2+2?')
-    assert '4' in result.output
-
-
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
     """Test that instructions are passed through to xAI SDK as a system message."""
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
@@ -1232,7 +1686,9 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, cache_read_tokens=162, output_tokens=27),
+                usage=RequestUsage(
+                    input_tokens=181, cache_read_tokens=162, output_tokens=27, cost=Decimal('0.0000254')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1270,7 +1726,9 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, cache_read_tokens=180, output_tokens=27),
+                usage=RequestUsage(
+                    input_tokens=181, cache_read_tokens=180, output_tokens=27, cost=Decimal('0.0000227')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1393,7 +1851,9 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, cache_read_tokens=314, output_tokens=15),
+                usage=RequestUsage(
+                    input_tokens=356, cache_read_tokens=314, output_tokens=15, cost=Decimal('0.0000316')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1420,7 +1880,9 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a single raw potato.')],
-                usage=RequestUsage(input_tokens=657, cache_read_tokens=371, output_tokens=8),
+                usage=RequestUsage(
+                    input_tokens=657, cache_read_tokens=371, output_tokens=8, cost=Decimal('0.00007975')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1682,7 +2144,7 @@ async def test_uploaded_file_wrong_provider_xai(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with XaiModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with XaiModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1768,10 +2230,7 @@ async def test_xai_response_with_logprobs(allow_model_requests: None):
 
     result = await agent.run('What is the capital of Minas Gerais?')
     messages = result.all_messages()
-    response_msg = messages[1]
-    assert isinstance(response_msg, ModelResponse)
-    text_part = response_msg.parts[0]
-    assert isinstance(text_part, TextPart)
+    text_part = message_part(messages, TextPart, message_index=1)
     assert text_part.provider_details is not None
     assert 'logprobs' in text_part.provider_details
     assert text_part.provider_details['logprobs'] == snapshot(
@@ -1812,7 +2271,7 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 parts=[
                     UserPromptPart(
                         content='Return just the day of week for the date of Jan 1 in 2026?',
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -1833,17 +2292,15 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                         provider_name='xai',
                         provider_details={'function_name': 'web_search'},
                     ),
-                    ThinkingPart(
-                        content='',
-                        signature=IsStr(),
-                        provider_name='xai',
-                    ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
+                        provider_details={
+                            'encrypted_content': '3kWcnk1vBD6Kl86VOyiPLyzJrBAgsi7EJ2qvRgC65/YLQJn/UJhUpQ5MB4eKvvL2yBza5O0RP18v5rlJw1ryssBkMUix10a7dwM+UP9BrRGBegcFHE6Mq4BKAWFLDizbztVKuhrePoqaIMcofZ4XS9437HmjitJ0Gd0qHmxi71bZ4wx/BWvyH68S9fr18m5ucMCTq36PuJq5Dms7OSBa5S8XNEzAaB9CJk3+SrnkUWqClbpPVlthR/ttLSJuvph6EU6Sis/diPXzsTfyoKjmFDFpIgSoMEsM/sbnv+CeK8VCGE0ksoJMq/cVMD4gkON6YLf68L6iXxOs8V//g3ClbNBowLffNf4g8qJtdXjcp2vR0AuXbmk2jjeD2tQFURtCZOWYQRWpddSC2asl55Fr0CxBeJBsoD5hYbaFgK0GV8j9n8d+uCWof0DfkxqnMYx4hHTQwLwOvEt1/g7VzcUhXhuPhUxqLxf3ExhYqY96F4U7qkS1Ywc0jMcOJyJXsBZRezg3e0RvFHz6irzWTDZmHw7h7/tq9svygcDPA0Zesqm6Bingup9yRTuHqd81hkfq+DSIGM5gT8b/9L1gVrkHPwkIEThncxgIM2bG7/OC/zC9Q6MZyjfaeUhlMLHc8FluF5wHBAkEnRS6S+kr5SYlxpEr8dQvQuRm1N2qRWbnGgpnNWQMxP7EQ7zYF4DQ/LWwrNcqX2rTjM3dbUOIZLVbjvFQTEipRcVKrG0aC7NhC8aJ7+m3no+p9t4c35vmX8vNuUIaBD5nJ53UjYne/ymIN/S9yGc5H3ZG6IsEzRaP6bFA8DJpZTb7FzpfuZ7yTt/1DjBYizeJiDO6PBfdIZ15QlIGe4+V1tMlOW0ZAYdMOs7clNguTn84ET/me6lIHN+fLPqF0fo3qypN3vRDFvMaPhyEkzWw59K4ikW8aoWqfeUTfVcjobJ3CTTADz5vtIBAftMKMM2ykld9SDSGTivRYwlYkCgk/Qnh0UD1+uqwf5n8qjFLLXkGdGLYy6EeP0fBcWcdQ0WgTCRf0ObWD71guP3KOGF1O42x+qzPkviIZB34FWlL7vwqG06FqOZy70sXy+kZEZpJYl34BHWBLeFKNLYdkgbtk4QgOfYAl7ktQC/xdHu0UJqU/doJdnw8YvD3w+pMJbLz9hsOXAyG1uraO2k17bOoc8ymyLg7qLx2QFa/40TBNkRQcKk3uR+LtHilUzX8cjFXKGAWf0z9nVsMiguh6Ij/Bzw1hcJXTrvXnYB9Xu7/mQFWdXT/DkjDDhvC4+xmR5NvdaqOM82RkhYiAMg+da4P9FdMb8pzh3eRpA0vVZh/zDhmjCsRi4IEEN3KU7tiDQj6D03r+7HO58sC5hB6q0Z20XKhXOBKgz+fnQznNpceUYk6x72PzclhQzMXVV/7Y9I3DH7+By/4vPnt/BqCF6xQVxQKFwcFPq8GxqPpcAi6VYlkGrS9Bk5Ict6q2roM8Jsr9Q1qdzAD+OB/XN9E4Wk7gOH9FdZ8HCbUXiA8KuFug+M4ziPk1P2oP1uQdrPKEkZTwLrK6nFoM7oU2qbhKJBtVIh2hxnnuxnD+0fnC537Ia8lTwWxsNcNydkcFfE0Lyfk5D4QTMz2gR/ize+1UO8et6eO9T3/CBI8u67xkCJYZH2ZY5GNkmb4DHIusLshLhE04jWGAPk6auZzYeWOAE12rNOx+JwIPmJ5w1O30Ttvf/w8PU9CduOjYiJcNdjUMcdAwHBBehifv8uFOM8Rxn/DUZ+vTqb4J/Fq41Y4nFDf2t6jH3V1zNEAnxZ6VZCfXyiBQ8Klee95G5H5qACwdRYAVuE6zb+w+AQMD7w8NjsUnGOx69ZQYBizPhPkiv2trgz9rPbqBqrd8fh+Rp9ja+Y6kiOP4iwbBs87N/F4wzb8L53yFE7KDaYUCe+47JOBdJkdc1ob0TDg/Yzf1MFjn7lIsotUrJjYRcLhTkl2esxRqC01kTbWzS+kmtj+arfxlRsHvJGO5cbUpflx3ixiv93K0IccB0ykkhdaoJv9lGUApGZPruOSl+NNbtRBmwq/9jXZ/BegwPkXaubSbxLC3wy+IbWGGIYAF14/AYLWXUo5QlHiG6a+5VyE0UNQMPKB41sWd0CQyAwXDor4n6343KAycMG2j4gKM+CNmc+M7wEI0lS4ytFw5iZZaEqhdF6+ronYIuQXBYz8t/KgdkbV/EPuwF2B7AIOnZYC4CoVt3mL9En8GprxGyK1g3Ot4eVxTwqhYU4IWBoI9wsJZmg+B0vha3y5cDMmCglt3WbD1ZQWqHikaS1LJD+955YgPVWlrl2iJTEegV2S9/nFDRmieieKpKfOV37zvi8TVa3sHlbiZ0crxkjOcEzBYjse2WFf6C/NNCwoYhiFPslJ5C1eYxSbO/2ezfDT+BnD9Y9Y7aT7h8wRzK6GdBg5+7bQaiLNgVpNBGOnDjIdrKkAnrXeBWSqgp6uXMM7twD26vQ2za1OdqVpjekJsdTbb5zyZw/5e2n8FKMMP9yHVYndhOFokOSU0SkLSuPqqY+8tD23vwb9Y3Vw3m386FlLJmYaVUw69ku8A5RWJOwJxl3b9b3l/9WHOuHpcZkIVjs/GCzhLmtoH38qQkMz5a+Hr3tkCPWwuCQkywgKKFx0WcrS7kqKCnvWofEx4RH3xG1ggmR6JfU7hOs+QSfKlpDBKYhpTiHbSNfbuqclMiwdtjuaqFRowLPyhsN4Nh1OG2Hutjqoj+cbnF0EMGrDGO1tdx75PQROFOZ85iPAxbIsm710/UoC8dM7QWTyaYYbxKP+IiHl+fA+JX93Rv72cl0uHWQPyes3Uem+ToYyH9fH4SBXG12k0GRZqoAcIEhSZkggqIJ/Jnkvx0gzyASFxB19oaNZolRpthhgRs0z/mjCm/i95t+RsDaUj/8pw277BaEEJaX6zgjmIzLdJRrFQBh1dGzR3FpDBtDyNT5nBRUHzEqZhebY5QTEInB2aoUaHJJRiBCSyH+NY9Tz3cqcnp82wetZJZq6ey0N6V+XHHXJgwOllD6Wu+ycZ8/x43Fm5gFnd0bYvEWUPjCpO6H1bJcKMdBvmUUaDBEhbTJZPbufC9WqAlaza0PmT8ve2A1lWaIdprgFa8UCxy96z/KgZjQ1JFMW6J69OdfFWC9jeo1gI3qgPipKo5ye/gunVCW/1BnT0quyWjtKrbCxrd+wRbr/AanFTYWPqQjClW+TiuGWhnwzQ5ZA5UeW/xf/Arzkp9yybdRhmh6yfMC3lYAerL2F9OL+qahYa2ODZk5wtPv7uWutcQO9xe8jO3bSjBpWef5qW3pijqFCM0R+tqm3lxAtk9M4W/EuFVbEuhCYDHjsRI3y5nXXhJeunG+xCR9fQ97kGDhzh8mJZpLbCiXvw0Ew+teplGPJIdGcvnaFGKg2ULvxXzeg6ug3EQN7yL9pcldqzYIs6UW0Bl1pyQr0ckkojgU9yXw+CZywifeFg1p0ZI7H4YCih7kj1d8E/X4Nl6hWKGfcenasUN8B4udSX4bZaXCtPb0DQ/b7OCnohynl1QlwTWAdynACQ3/ljrABjY6pGZd6spDL7+I+v9+121gHH/0OOZ/JCAfrznH0qwRbnEAUVSfyjzA3O5gDglA2UDzJq9iQstLi2sEgCn28Loe1ddic'
+                        },
                     ),
                     ThinkingPart(
                         content='',
@@ -1855,11 +2312,13 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 usage=RequestUsage(
                     input_tokens=2332,
                     cache_read_tokens=1540,
-                    output_tokens=38,
+                    output_tokens=348,
+                    output_reasoning_tokens=310,
                     details={
                         'reasoning_tokens': 310,
                         'server_side_tools_web_search': 1,
                     },
+                    cost=Decimal('0.0004094'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -1915,7 +2374,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 parts=[
                     ThinkingPart(
                         content='',
-                        signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                        signature='qBsbOpXt0iGLuYsVE7NyapPz/aM46HSgPDWPirBkao7k1PC/Kr8cCkd8X7kIKzvoyNsXaXRuUlaX/HIeSWM+Z1WX4D7zkUugOj+9wpiI3yuOVvpcgH9ZR8jHXDVl2l3wOuJ1MJLN3ksDfzEe8jXdp2eFqjphqMe4L2F+0CztjBAA8t3JrChA5WOMNCi+7J/ilrMj/Vb5ziC2OYdnoZgKo0tw5g8MD79sSBZI4gccCkyWtepj/Tq5raR5HZbXVXKLbPJSHBe2OHbN3QNnm8Kru+D268Y4g0FviU0FfVGF+VaQvkbHyfj0khheg/e0haj7AssXkH5b6YYOVbxe2qCtQOCSUAw37gAW77nqG9EQc74kk4eobmi8eoeDCVMnQ1C2TqhMaL7bvJ1/YIEQoQ9MZKIMyHSYgsrn6GsEZXza01NAqKrO8tK03UFGR19TphM7ybDzs9dB5VMyg0OhlS+4ZJFTSNg0mrz578hqhp3/iNfgAMD04L8EOA5HdoCS60khfF+LHir0syt+4aN6Dxotm5UK3SMtbnAf26kPLAp/C1TIIBoC2cU+rHOyylXY47w7VrgQVPrYDmuOnt4C2bqGb3W/HYcgg/f4c9pG1nqWdEu8CgvyNtOsHGFilTJJ/7wnZYeA48YtV5yP1GpWKmK1ukSod6YuAjyHFiguBIbLnqVN/c1gJcSm40COikR9B87vzOawR0IgdQjf04ASyucZpTW7MJ3DM+NT5FOHMIg6bqQt2xdkwtPaQSrTMvvFBpIO4FMip103f/1DrFpW+8sQqR7GXcpJi824jHQmb+rqIEjQ1BgsyQNtZuInhXNx31snZgpTkG5cFVl9W/2DaH9PTZkhQP1xibQqpQaPgF83c7j+o2fWYH39kgbEMZMlfxa4BIjHqm2ryFwzhLByfoafpnAyS4u2IRenO3CRr3mFatUGssLs0GjB/sG7zJjqfn7aORhBK4M03uQaW4UaAW4H+p9dbZRomOsh2mubWZG3rrDnjQoMoJv9YqvE78IhNkfInhP98IaFxHRTQpWMTzIkAlBdXyYlz/zxKfV4N4/4ZwQ4kwk1PhH769O7xiQa0PiNSg5dK28LULR0Z8WHz1KMSC6F3IA',
                         provider_name='xai',
                     ),
                     NativeToolCallPart(
@@ -1931,6 +2390,14 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
+                        provider_details={
+                            'encrypted_content': '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'
+                        },
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
+                        provider_name='xai',
                     ),
                     NativeToolCallPart(
                         tool_name='web_search',
@@ -1945,6 +2412,14 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
+                        provider_details={
+                            'encrypted_content': 'DToYBFUjR6BjxiqLM6MM7KYXoTIxzVXk0GaeiHxpkkR0y3ED3TPajEXxbrP3J/SSXBbbCBQCING5DIqli2sYqtwb7EnCgVLavbr0M2MYKi5NWFHdghAG7qKEUufi67XlJJRvjRArv3x+5TEqNFpoY6YSs7adU+bWt2QryfaFOEUWMPVysrnolTS3eviH9APQWrvaE9VVKRxyNv2xb/lCf7lh0JVujG9609GxPFLeyS0H0Pf+aTBM5lHEKExjSMK84DA6EhItMUJKP3BpYLXhtwrw3DnWW4Mk7Kz2NqkmNIzLYbIgUgQ0jXxMP0n8636439sAWyV+YD53X+TFN0KP5UzICz7XI8oPoAgZISFd7XfytW4gq1T2FF20SY+2VnJgouCBvdO8E0/GgA'
+                        },
+                    ),
+                    ThinkingPart(
+                        content='',
+                        signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                        provider_name='xai',
                     ),
                     TextPart(
                         content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
@@ -1953,11 +2428,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 usage=RequestUsage(
                     input_tokens=4441,
                     cache_read_tokens=2530,
-                    output_tokens=135,
+                    output_tokens=766,
+                    output_reasoning_tokens=631,
                     details={
                         'reasoning_tokens': 631,
                         'server_side_tools_web_search': 2,
                     },
+                    cost=Decimal('0.0008917'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2021,17 +2498,32 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
+                    provider_details={
+                        'encrypted_content': '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'
+                    },
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc'
-                ),
-            ),
             PartStartEvent(
                 index=3,
+                part=ThinkingPart(
+                    content='',
+                    signature='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-return',
+            ),
+            PartEndEvent(
+                index=3,
+                part=ThinkingPart(
+                    content='',
+                    signature='ech7t8FxCgEqI/eDeHo8Xd6VMDvsoYAuJZ7CwcXDJzLoflFyJRVo6l+sVq0kcryWOARaEtn8D8CTYhIH0NBDmnzAyPE25xNQdqkdVOQTxeQnRPFrbnBmjgXcEJmiIF3Ym2wuQm5t2c02XDd/O2va9ZjBMwGz/OR0SWUg7GlohlTMvpxvDmYbWl1/Co21yBuxk/7ghDX+E1WP3wlML7G6aAkQYM8GFUmk3Nz4Y+xM8JywizY8PPsbF7gsRs5vGqho3z5HAddTOKANUJzLcPPbeKips2K9ctbS2Wj6yYyD/yODpFzyf77fMk2w4UxMHfugzOmYej8GTRFHjMw5VDM9LGWNOYLVnE/08GTsuCSYgzww+iWdQ+Z1+BkjkFQKlOB9hTYmybKfhw8nvTi7DJEMIoRPaYn725I181Q8jHNwZmdRQcXAu+Gdnee9vdFBUILoB4zvKN+gn5KvtYFnFQ3frIURiJZXTy73g7CIQdhXGNRhJKbsQASvtyINBFTscbmnkX871dWA7UYqLrxy5ePhnXjrhyQd84Bco0JwUqaPt8Rqw44EBkeF5fC+zj7lzsjoR2NjvwXI3xkjJQ+uBnbZ+4uGGMvW1vwmi+aAoNFlYDIaXP0KIiyyGrZoGmjm/X+B1O614OkrZK6cisdbvtu9BHogQ8bzXAKB6kIIJWWt6j6j7oASgb5yAtiS7yCkYg3+L+EJUCOjaeecfBNtSCzIDb3i8RTrvquW/ZiEJj7ZSgiZL134zzEWO6ENL5tZWcE3kWm2LeFb3mOOuQnmzIDT0iDK0LxepAwnv4L8FgE7JD/qVZvMaVGUs0e2qnUsmbw7P4rKMcU0NtVFNLGYVRJaNSqZxxB/l0xfzcv0trmBVhw/YzjSlJUt77T2ZMZm0Y9KQJATd9EdVifzuZrjHUr1DPDRz3cfnBifTZTAIr/UcysQUGr6dAB6wEBRiQK0KoT/F2rhgIyJ2N0sqE0sUpKLGN1wcWkO+cbNER0rtyq2tapCREaZPsDgjZ4T+SLMxMraePnJodzfpDB1mLC3sBmYP66gx0Ay9iTo+2CwnueAFNjsq+fEtTTKu/WAGEEl/fVBvLDZnaNstXqxpBskHK6RKc+y+1TlXXfmWC38grI1oGC7VvzY+TJRGVBvtxU0YJ17IwWdtHgbjqCAx2btanfTWvigsObzRztA10ifWVLQwHKW5GYCn3YGjVzhwFwQJp7jj1/hmwCWwFM4Ijivolc5kPsWVUylbB6TUjIg4Y7zZO6ZryMXKNIJhbA7t6Vaej/E+0cfTFn6ACzFGnqqXxu62GLyte8NBGCEgvh4Bxhc+DoenauWKlCNktSR+i1M+mjg3pkgDcR0J5QiLNHvKhRblh5NGdHapYOphUDbWcwqdJ07VOwo9CHZ1WTox4VuVVSVz84Siag9ibuf18Z7XKd56MortTH7WAATHE6LB6RY8OG5+n1ZY9TWiHE3Mo6vKbHRKcEkbB2k/S5L28CL1a4C4yuAy5nNERL/+IRFhRpEUSH6GFQ4uIWcOcD62Zc',
+                    provider_name='xai',
+                ),
+                next_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=4,
                 part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
@@ -2039,10 +2531,10 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     provider_name='xai',
                     provider_details={'function_name': 'browse_page'},
                 ),
-                previous_part_kind='builtin-tool-return',
+                previous_part_kind='thinking',
             ),
             PartEndEvent(
-                index=3,
+                index=4,
                 part=NativeToolCallPart(
                     tool_name='web_search',
                     args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
@@ -2053,97 +2545,76 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 next_part_kind='builtin-tool-return',
             ),
             PartStartEvent(
-                index=4,
+                index=5,
                 part=NativeToolReturnPart(
                     tool_name='web_search',
                     content=None,
                     tool_call_id=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='xai',
+                    provider_details={
+                        'encrypted_content': 'DToYBFUjR6BjxiqLM6MM7KYXoTIxzVXk0GaeiHxpkkR0y3ED3TPajEXxbrP3J/SSXBbbCBQCING5DIqli2sYqtwb7EnCgVLavbr0M2MYKi5NWFHdghAG7qKEUufi67XlJJRvjRArv3x+5TEqNFpoY6YSs7adU+bWt2QryfaFOEUWMPVysrnolTS3eviH9APQWrvaE9VVKRxyNv2xb/lCf7lh0JVujG9609GxPFLeyS0H0Pf+aTBM5lHEKExjSMK84DA6EhItMUJKP3BpYLXhtwrw3DnWW4Mk7Kz2NqkmNIzLYbIgUgQ0jXxMP0n8636439sAWyV+YD53X+TFN0KP5UzICz7XI8oPoAgZISFd7XfytW4gq1T2FF20SY+2VnJgouCBvdO8E0/GgA'
+                    },
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(
-                    signature_delta='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo'
+            PartStartEvent(
+                index=6,
+                part=ThinkingPart(
+                    content='',
+                    signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                    provider_name='xai',
                 ),
+                previous_part_kind='builtin-tool-return',
             ),
-            PartStartEvent(index=5, part=TextPart(content='Today'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' in')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' San')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Francisco')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' the')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' current')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' temperature')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='7')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' Expect')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' high')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='16')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' low')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' of')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='7')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='°C')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' partly')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' cloudy')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta=' conditions')),
-            PartDeltaEvent(index=5, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(
-                index=5,
+                index=6,
+                part=ThinkingPart(
+                    content='',
+                    signature='DCSdJov0KqNTAiL+A6ioyn70PGRCLsIt3PRq4htAiEqlpTrAZvYxgY3Z22z69UNf30XmThQ6i8OzHILTc5t260s0YS8mrTBzlwtf60lp1o+5SE3BrAtT/iA9DMmMUfgvSe75iVaqrk54sGmxmpbUKzvnpcqBU01Nl1l3l+lssigniKZgD0VB7W/7fGSasp/ysO9BVAgrVTfn8aDGMYh7FOH8ItJCW5AdzPERnITXiL8YmiaeieqdlZBGCLg2datmkj4IldOyhIjF4AAfv+0p8Lv1vcWVAEv35ZI1PF7NMDMyxmyANUBDS+6ZanmMMeQB4hfFFf86d5cQUIF6VItRf4uahuDnmczDMo4W7Ho2xCFdPU8AEKOMndXA8yNeq8pwX3VRguYPzKCTDgaCIn3zBX+YWIfdXujB87L6rZ04FqlLoN1BPtoC+hal6O4OsyfZj3NVh6/P2nwJlgi7ntop4j/S7FxnttWDCtxWxSKMnrBrAO4V+fDaitEtokkxAnID8sPqdWXqN4vk49ZuBufUAG62ASqg88sfZq9up6afYkfONwnhRgv8kqmpqoSDABG79ZRLAvb/ipDrDkSjkfGd/jB6dGQAesTUGyzVLLC5v/NAkiLxVQQP9ADTymxSdJ/MlmScf6xlEIH1RhVsR2XdAst0aJENkWjtH5HjBJIemghkd4LQeIX9JFEd6XWqR5mjA9wMKHKAez7P/uQgD4SU4Yq1HFGHpync4NAOwD1/dLlNp1/qrrEUhGBMXM6uZokb2PYxCBVK4zPRinHfb+DnIvxjFQ6aSAtD88LZDeTpQYgGgflq9o8seGYnMGiLyv6faHyz4TUtmKE0X5T0PtS2iNqGDKn4xPqVxPZc5ErRm2JglnUs6XVkFAo',
+                    provider_name='xai',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=7, part=TextPart(content='Today'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' in')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' San')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' Francisco')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' the')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' current')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' temperature')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='7')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' Expect')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' high')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='16')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' low')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' of')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='7')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='°C')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' partly')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' cloudy')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta=' conditions')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=7,
                 part=TextPart(
                     content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                 ),
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'San Francisco weather today Celsius'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'web_search'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'browse_page'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
             ),
         ]
     )
@@ -2177,7 +2648,7 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 parts=[
                     UserPromptPart(
                         content=prompt,
-                        timestamp=IsNow(tz=timezone.utc),
+                        timestamp=IsNow(tz=UTC),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2211,11 +2682,13 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 usage=RequestUsage(
                     input_tokens=1889,
                     cache_read_tokens=1347,
-                    output_tokens=52,
+                    output_tokens=213,
+                    output_reasoning_tokens=161,
                     details={
                         'reasoning_tokens': 161,
                         'server_side_tools_code_execution': 1,
                     },
+                    cost=Decimal('0.00028225'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2287,6 +2760,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                     cache_read_tokens=1037,
                     output_tokens=31,
                     details={'server_side_tools_code_execution': 1},
+                    cost=Decimal('0.00020355'),
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2336,24 +2810,6 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             PartStartEvent(index=2, part=TextPart(content='4'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=2, part=TextPart(content='4')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': 'print(2 + 2)'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -2408,17 +2864,15 @@ Return just the final number with no other text.\
                         provider_name='xai',
                         provider_details={'function_name': 'web_search_with_snippets'},
                     ),
-                    ThinkingPart(
-                        content='',
-                        signature=IsStr(),
-                        provider_name='xai',
-                    ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
+                        provider_details={
+                            'encrypted_content': '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'
+                        },
                     ),
                     NativeToolCallPart(
                         tool_name='code_execution',
@@ -2444,6 +2898,7 @@ Return just the final number with no other text.\
                         'server_side_tools_web_search': 1,
                         'server_side_tools_code_execution': 1,
                     },
+                    cost=Decimal('0.00130995'),
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2523,8 +2978,10 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=743,
                     cache_read_tokens=170,
-                    output_tokens=15,
+                    output_tokens=498,
+                    output_reasoning_tokens=483,
                     details={'reasoning_tokens': 483},
+                    cost=Decimal('0.0003721'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2563,17 +3020,15 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                         provider_name='xai',
                         provider_details={'function_name': 'web_search'},
                     ),
-                    ThinkingPart(
-                        content='',
-                        signature=IsStr(),
-                        provider_name='xai',
-                    ),
                     NativeToolReturnPart(
                         tool_name='web_search',
                         content=None,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                         provider_name='xai',
+                        provider_details={
+                            'encrypted_content': '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'
+                        },
                     ),
                     ThinkingPart(
                         content='',
@@ -2587,11 +3042,13 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=2973,
                     cache_read_tokens=1506,
-                    output_tokens=150,
+                    output_tokens=318,
+                    output_reasoning_tokens=168,
                     details={
                         'reasoning_tokens': 168,
                         'server_side_tools_web_search': 1,
                     },
+                    cost=Decimal('0.0005277'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2731,11 +3188,13 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 usage=RequestUsage(
                     input_tokens=1844,
                     cache_read_tokens=771,
-                    output_tokens=140,
+                    output_tokens=342,
+                    output_reasoning_tokens=202,
                     details={
                         'reasoning_tokens': 202,
                         'server_side_tools_mcp_server': 1,
                     },
+                    cost=Decimal('0.00042415'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2852,6 +3311,11 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                         timestamp=IsDatetime(),
                         provider_name='xai',
                     ),
+                    ThinkingPart(
+                        content='',
+                        signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                        provider_name='xai',
+                    ),
                     TextPart(
                         content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                     ),
@@ -2859,11 +3323,13 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 usage=RequestUsage(
                     input_tokens=1783,
                     cache_read_tokens=853,
-                    output_tokens=141,
+                    output_tokens=403,
+                    output_reasoning_tokens=262,
                     details={
                         'reasoning_tokens': 262,
                         'server_side_tools_mcp_server': 1,
                     },
+                    cost=Decimal('0.00043015'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2959,149 +3425,114 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 ),
                 previous_part_kind='builtin-tool-call',
             ),
-            PartDeltaEvent(
-                index=0,
-                delta=ThinkingPartDelta(signature_delta=IsStr()),
+            PartStartEvent(
+                index=3,
+                part=ThinkingPart(
+                    content='',
+                    signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-return',
             ),
-            PartStartEvent(index=3, part=TextPart(content='P'), previous_part_kind='builtin-tool-return'),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='/p')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-ai')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' is')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gen')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='AI')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Framework')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' built')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' on')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' P')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='yd')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='antic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' creating')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' type')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-safe')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Gener')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ative')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' AI')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' applications')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' It')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' un')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ifies')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' interactions')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' LL')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='Ms')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' from')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' providers')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' like')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Open')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='AI')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Anthrop')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ic')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' Google')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' others')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=';')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' supports')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' orchestration')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' graph')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-based')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' execution')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' tools')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' durable')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' workflows')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' multi')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-agent')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' patterns')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=" It's")),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' a')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' mon')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='ore')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='po')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' with')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' core')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' packages')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' for')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' slim')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' framework')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' graphs')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=',')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' and')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta=' ev')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='als')),
-            PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(
                 index=3,
+                part=ThinkingPart(
+                    content='',
+                    signature='nAARcuG1WrrOihjyhaPpVRYnz2tyTOiZ4uCSybvcYy0gk2HXRvtRj5InGSI5zGKbv7Wq6ht2scPbFguvb/a+fCQlHqs7EojklFK7VQdd61WS92PUXQ0c/poPXRYSgK5oUlgl79LF/Iji1wjyYSNuC5O8AwCpNsIG0l+WGVa1uVXg2S/hzGQgJed0Gx9wRksxVhf/uTCPaUnaPBgaVvqJKx3slXdTxeqCPNqRIBbJQQON16f040d3JmVtX5fNk2xUjYDrrz5+djSalxk7kItObuta+KgStN3sk9RuTerKW31nYP1OA1G9/+Sg3txT8GggUrV8MmW6LkLg9YuKjjBlzOBRID45LLuw2g5w7nd+8TvA1B2I7ChInwMDSHI+ztt6mtREoSqSpKCTfqkndS3qvfL3G+NAcA4GvRji8BjFGdyF4kPY44qnVDHh+1xh/xc8sp6t1+qNS6MsttXR4A/owsMJNk/Zx0eBgCxe7jcCy44xg2j8g/IqIgNa9qgRYptO/4GbxakdEQ',
+                    provider_name='xai',
+                ),
+                next_part_kind='text',
+            ),
+            PartStartEvent(index=4, part=TextPart(content='P'), previous_part_kind='thinking'),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='/p')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-ai')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' is')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Gen')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='AI')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Agent')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Framework')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' built')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' on')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' P')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='yd')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='antic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' creating')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' type')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-safe')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Gener')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ative')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' AI')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' applications')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' It')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' un')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ifies')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' interactions')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' LL')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='Ms')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' from')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' providers')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' like')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Open')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='AI')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Anthrop')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ic')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' Google')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' others')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=';')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' supports')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' agent')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' orchestration')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' graph')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-based')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' execution')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' tools')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' durable')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' workflows')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' multi')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='-agent')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' patterns')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=" It's")),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' a')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' mon')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='ore')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='po')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' with')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' core')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' packages')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' slim')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' framework')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' graphs')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=',')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' and')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' ev')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='als')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.')),
+            PartEndEvent(
+                index=4,
                 part=TextPart(
                     content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                 ),
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='mcp_server:deepwiki',
-                    args={
-                        'action': 'call_tool',
-                        'tool_name': 'ask_question',
-                        'tool_args': {
-                            'repoName': 'pydantic/pydantic-ai',
-                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
-                        },
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'deepwiki.ask_question'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='mcp_server:deepwiki',
-                    content="""\
-This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
-
-## Purpose
-The primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework . It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic .
-
-## Main Features
-The `pydantic-ai` repository offers several core features:
-*   **Agent System**: The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks . Agents can be configured with generic types for dependency injection and output validation, ensuring type safety throughout the application .
-*   **Model Integration**: The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace . Each model integration follows a consistent settings pattern with provider-specific prefixes .
-*   **Graph-based Execution**: Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine .
-*   **Tool System**: Function tools enable models to perform actions and retrieve additional information . Tools can be registered using decorators like `@agent.tool` or `@agent.tool_plain` .
-*   **Output Handling**: The framework supports various output types, including `TextOutput`, `ToolOutput`, `NativeOutput`, and `PromptedOutput` .
-*   **Durable Execution**: Pydantic AI integrates with durable execution systems like DBOS and Temporal, allowing agents to maintain state and resume execution after failures or restarts .
-*   **Multi-Agent Patterns and Integrations**: The repository supports multi-agent applications and various integrations, including Pydantic Evals, Pydantic Graph, Logfire, Agent-User Interaction (AG-UI), Agent2Agent (A2A), and Clai .
-
-## Notes
-The repository is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools) . The documentation is built using MkDocs  and includes API references and examples .
-
-Wiki pages you might want to explore:
-- [OpenAI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)
-- [Google Gemini and Vertex AI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.4)
-
-View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
-""",
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
             ),
         ]
     )
@@ -3157,12 +3588,14 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             top_p=0.95,
             presence_penalty=0.1,
             frequency_penalty=0.2,
+            seed=123,
             # xAI-specific settings
             xai_logprobs=True,
             xai_top_logprobs=5,
             xai_user='test-user-123',
             xai_store_messages=True,
             xai_previous_response_id='prev-resp-456',
+            xai_max_turns=3,
         ),
     )
 
@@ -3186,15 +3619,48 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'top_p': 0.95,
                 'presence_penalty': 0.1,
                 'frequency_penalty': 0.2,
+                'seed': 123,
                 # xAI-specific settings (mapped from xai_* to SDK parameter names)
                 'logprobs': True,
                 'top_logprobs': 5,
                 'user': 'test-user-123',
                 'store_messages': True,
                 'previous_response_id': 'prev-resp-456',
+                'max_turns': 3,
             }
         ]
     )
+
+
+@pytest.mark.parametrize('agent_count', [4, 16])
+async def test_xai_agent_count_forwarded(allow_model_requests: None, agent_count: int):
+    """xai_agent_count is forwarded to the SDK as agent_count when set."""
+    response = create_response(content='response with agent count')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=XaiModelSettings(xai_agent_count=agent_count),
+    )
+
+    result = await agent.run('hello')
+    assert result.output == 'response with agent count'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['agent_count'] == agent_count
+
+
+async def test_xai_agent_count_unset(allow_model_requests: None):
+    """agent_count is not sent when xai_agent_count is unset (server default applies)."""
+    response = create_response(content='response without agent count')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert 'agent_count' not in kwargs
 
 
 async def test_xai_model_properties():
@@ -3217,7 +3683,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is 2+2? Return just number.', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What is 2+2? Return just number.', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3227,6 +3693,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
                     ThinkingPart(content='...', signature='sig-123', provider_name='xai'),
                     TextPart(content='4'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3253,13 +3720,14 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='What is 2+2? Return just "4".', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What is 2+2? Return just "4".', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='', signature='sig-abc', provider_name='xai'), TextPart(content='4')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3345,8 +3813,10 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                 usage=RequestUsage(
                     input_tokens=165,
                     cache_read_tokens=151,
-                    output_tokens=40,
+                    output_tokens=161,
+                    output_reasoning_tokens=121,
                     details={'reasoning_tokens': 121},
+                    cost=Decimal('0.00009085'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3451,9 +3921,11 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.usage == snapshot(
         RunUsage(
             input_tokens=10,
-            output_tokens=2,
+            output_tokens=9,
             requests=1,
+            output_reasoning_tokens=7,
             details={'reasoning_tokens': 7},
+            cost=Decimal('0.0000065'),
         )
     )
 
@@ -3473,7 +3945,7 @@ async def test_xai_usage_without_details(allow_model_requests: None):
     assert result.output == 'Simple answer'
 
     # Verify usage without details (empty dict when no additional usage info)
-    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1, cost=Decimal('0.000009')))
 
 
 def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
@@ -3503,7 +3975,11 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
     mock_usage = create_usage(
         prompt_tokens=50,
         completion_tokens=30,
-        server_side_tools_used=[usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH, usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH],
+        server_side_tools_used=[
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_WEB_SEARCH,
+            usage_pb2.SERVER_SIDE_TOOL_ATTACHMENT_SEARCH,
+        ],
     )
     response = create_response(
         content='The answer based on web search',
@@ -3518,7 +3994,13 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
 
     # Verify usage includes server_side_tools_used in details
     assert result.usage == snapshot(
-        RunUsage(input_tokens=50, output_tokens=30, details={'server_side_tools_web_search': 2}, requests=1)
+        RunUsage(
+            input_tokens=50,
+            output_tokens=30,
+            details={'server_side_tools_web_search': 2, 'server_side_tools_attachment_search': 1},
+            requests=1,
+            cost=Decimal('0.000025'),
+        )
     )
 
 
@@ -3572,7 +4054,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
                         },
                     )
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3621,7 +4103,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3670,7 +4152,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3736,7 +4218,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3750,8 +4232,9 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
     )
 
 
-async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
-    """Test that RetryPromptPart with tool_name=None is sent as a user message."""
+async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: None):
+    """A tool-less retry is sent in the harness's voice: xAI takes no mid-conversation system
+    message, so the rendered system prompt degrades to `<system>`-tagged user text."""
     # First response triggers a ModelRetry
     response1 = create_response(content='Invalid')
     # Second response succeeds
@@ -3770,7 +4253,7 @@ async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
     result = await agent.run('Hello')
     assert result.output == 'Valid response'
 
-    # Verify the kwargs sent to xAI - second call should have RetryPrompt mapped as user message
+    # Verify the kwargs sent to xAI - second call carries the feedback as `<system>`-tagged user text
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
@@ -3791,10 +4274,10 @@ async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
                         'content': [
                             {
                                 'text': """\
-Validation feedback:
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
 Please provide a valid response
-
-Fix the errors and try again.\
+</retry_feedback>\
 """
                             }
                         ],
@@ -3810,11 +4293,11 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify the retry prompt was sent as a user message
+    # The history keeps the model-neutral part; only the wire shows the rendering above.
     messages = result.all_messages()
-    assert len(messages) == 4  # UserPrompt, ModelResponse, RetryPrompt, ModelResponse
-    assert isinstance(messages[2].parts[0], RetryPromptPart)
-    assert messages[2].parts[0].tool_name is None
+    assert len(messages) == 4  # UserPrompt, ModelResponse, RetryFeedback, ModelResponse
+    part = message_part(messages, RetryFeedbackPart, message_index=2)
+    assert part.retry.cause == 'model_retry'
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
@@ -3889,14 +4372,14 @@ First reasoning
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='First reasoning'), TextPart(content='first response')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3917,18 +4400,14 @@ First reasoning
                 run_id=None,
             ),
             ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Second question <think>user think</think>', timestamp=IsNow(tz=timezone.utc)
-                    )
-                ],
+                parts=[UserPromptPart(content='Second question <think>user think</think>', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4005,7 +4484,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4015,7 +4494,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                     ThinkingPart(content='First reasoning', signature=IsStr(), provider_name='xai'),
                     TextPart(content='first response'),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4026,14 +4505,14 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4105,7 +4584,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4115,7 +4594,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                     ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
                     TextPart(content='first response'),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4126,14 +4605,14 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Second question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4208,7 +4687,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Calculate 2+2', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4231,6 +4710,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4241,14 +4721,14 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What was the result?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What was the result?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The result was 4')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4281,7 +4761,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -4298,6 +4778,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     ),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4405,14 +4886,14 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='I understand the tool failed')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4441,6 +4922,7 @@ async def test_xai_include_settings(allow_model_requests: None):
         'xai_include_inline_citations': True,
         'xai_include_x_search_output': True,
         'xai_include_collections_search_output': True,
+        'xai_include_attachment_search_output': True,
         'xai_include_mcp_output': True,
     }
     result = await agent.run('Hello', model_settings=settings)
@@ -4462,6 +4944,7 @@ async def test_xai_include_settings(allow_model_requests: None):
                     chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT,
                     chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
                 ],
             }
@@ -4535,6 +5018,108 @@ async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_r
     assert builtin_returns[0].tool_call_id == 'server_tool_1'
 
 
+def _interleaved_text_and_server_tool_stream():
+    """Build a streamed response where text surrounds a server-side tool call and return.
+
+    Each text run arrives as two adjacent chunks so delta coalescing is exercised.
+    Live xAI streams emit server-side tool deltas mid-response (#7153); text after
+    the tool return is an adapter-level sequence, not a documented xAI ordering.
+    """
+    server_tool_call = create_server_tool_call(
+        tool_name='web_search',
+        arguments={'query': 'What is the weather?'},
+        tool_call_id='server_tool_1',
+    )
+    tool_output_json = json.dumps({'status': 'ok'})
+    return [
+        (
+            create_response(content='Checking', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='Checking'),
+        ),
+        (
+            create_response(content='Checking now...', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content=' now...'),
+        ),
+        (
+            create_response(content='', tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[server_tool_call]),
+        ),
+        (
+            create_response(content=tool_output_json, tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(
+                role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[server_tool_call], content=tool_output_json
+            ),
+        ),
+        (
+            create_response(content='72 and ', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='72 and '),
+        ),
+        (
+            create_response(content='72 and sunny.', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='sunny.'),
+        ),
+    ]
+
+
+async def test_xai_stream_text_after_server_side_tool_call_returns_output(allow_model_requests: None):
+    """Text streamed after a server-side tool call is kept as a separate part (#7923).
+
+    With a constant text vendor part id, the post-call text merged into the already-ended
+    first text part, `CallToolsNode` then discarded it as pre-call text, and the run
+    failed with `UnexpectedModelBehavior: Exceeded maximum output retries`.
+    """
+    mock_client = MockXai.create_mock_stream([_interleaved_text_and_server_tool_stream()])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, output_type=str | None, capabilities=[NativeTool(WebSearchTool())])
+
+    async with agent.run_stream('What is the weather?') as result:
+        async for _ in result.stream_response(debounce_by=None):
+            pass
+
+        assert await result.get_output() == '72 and sunny.'
+        assert [type(part).__name__ for part in result.all_messages()[-1].parts] == [
+            'TextPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'TextPart',
+        ]
+        assert result.usage.requests == 1
+
+
+async def test_xai_stream_interleaved_text_part_lifecycle_events(allow_model_requests: None):
+    """Each interleaved text run gets its own part start/end events; deltas coalesce."""
+    mock_client = MockXai.create_mock_stream([_interleaved_text_and_server_tool_stream()])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, output_type=str | None, capabilities=[NativeTool(WebSearchTool())])
+
+    events: list[AgentStreamEvent] = []
+    async with agent.iter(user_prompt='What is the weather?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        events.append(event)
+
+    part_events = [event for event in events if isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent)]
+    text_starts = [
+        event for event in part_events if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+    ]
+    text_ends = [event for event in part_events if isinstance(event, PartEndEvent) and isinstance(event.part, TextPart)]
+    text_deltas = [event for event in part_events if isinstance(event, PartDeltaEvent)]
+
+    assert [event.index for event in text_starts] == [0, 3]
+    assert [event.index for event in text_ends] == [0, 3]
+    assert text_ends[-1].part == TextPart(content='72 and sunny.')
+    assert [event.index for event in text_deltas] == [0, 3]
+
+    ended_indexes: set[int] = set()
+    for event in part_events:
+        if isinstance(event, PartEndEvent):
+            ended_indexes.add(event.index)
+        elif isinstance(event, PartDeltaEvent):
+            assert event.index not in ended_indexes
+
+
 async def test_xai_stream_server_side_tool_call_ignored_for_unknown_role(allow_model_requests: None):
     """Server-side tool deltas with an unknown role should be ignored."""
 
@@ -4600,7 +5185,7 @@ async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: N
                 final_response = response
 
     assert final_response is not None
-    assert not any(isinstance(p, ToolCallPart) for p in final_response.parts)
+    assert not final_response.tool_calls
 
 
 async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_missing_or_empty(
@@ -4652,7 +5237,7 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
                 final_response = response
 
     assert final_response is not None
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == '{"first": "One"}' for p in tool_calls)
 
@@ -4690,27 +5275,27 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
     assert final_response is not None
     # The tool call part should have args that include both delta applications
     # (the behavior is to concatenate, so we get 'ABCXYZ')
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == 'ABCXYZ' for p in tool_calls)
 
 
-async def test_xai_stream_reasoning_delta_non_prefix_path(allow_model_requests: None):
-    """Force the reasoning-delta fallback path where accumulated reasoning resets mid-stream."""
-    # Frame 1: reasoning starts.
-    r1 = create_response(content='', reasoning_content='abc')
-    c1 = create_stream_chunk(reasoning_content='abc')
-
-    # Frame 2: accumulated reasoning changes to a different non-prefix string, forcing the fallback branch.
-    r2 = create_response(content='done', reasoning_content='XYZ', finish_reason='stop')
-    c2 = create_stream_chunk(content='done', reasoning_content='XYZ', finish_reason='stop')
+async def test_xai_stream_encrypted_content_split_across_chunks(allow_model_requests: None):
+    """An output's encrypted content that arrives in pieces becomes one signature, like the SDK accumulates it."""
+    r1 = create_response(content='', reasoning_content='abc', encrypted_content='sig-')
+    c1 = create_stream_chunk(reasoning_content='abc', encrypted_content='sig-')
+    r2 = create_response(content='done', reasoning_content='abc', encrypted_content='sig-123', finish_reason='stop')
+    c2 = create_stream_chunk(content='done', encrypted_content='123', finish_reason='stop')
 
     mock_client = MockXai.create_mock_stream([[(r1, c1), (r2, c2)]])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
     async with agent.run_stream('') as result:
         assert [t async for t in result.stream_text(debounce_by=None)] == ['done']
+    assert result.all_messages()[-1].parts == snapshot(
+        [ThinkingPart(content='abc', signature='sig-123', provider_name='xai'), TextPart(content='done')]
+    )
 
 
 async def test_xai_map_builtin_tool_call_part_unknown_tool_name_ignored(allow_model_requests: None):
@@ -4731,7 +5316,7 @@ async def test_xai_map_builtin_tool_call_part_unknown_tool_name_ignored(allow_mo
                 )
             ],
             model_name=XAI_NON_REASONING_MODEL,
-            timestamp=IsNow(tz=timezone.utc),
+            timestamp=IsNow(tz=UTC),
             provider_name='xai',
         )
     ]
@@ -4750,7 +5335,7 @@ async def test_xai_prompted_output_json_object(allow_model_requests: None):
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     # Use PromptedOutput explicitly - uses json_object mode when no tools
-    agent: Agent[None, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
+    agent: Agent[object, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
 
     result = await agent.run('What is the meaning of life?')
     assert result.output == SimpleResult(answer='42')
@@ -4861,14 +5446,14 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='First question', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='First')],
-                usage=RequestUsage(input_tokens=5, output_tokens=2),
+                usage=RequestUsage(input_tokens=5, output_tokens=2, cost=Decimal('0.000002')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4879,14 +5464,14 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content=[CachePoint()], timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content=[CachePoint()], timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Second')],
-                usage=RequestUsage(input_tokens=5, output_tokens=2),
+                usage=RequestUsage(input_tokens=5, output_tokens=2, cost=Decimal('0.000002')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4928,14 +5513,14 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='No usage tracked')],
-                usage=RequestUsage(),  # Empty usage
+                usage=RequestUsage(cost=Decimal('0.00')),  # Empty usage
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4947,7 +5532,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
 
 
 async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
@@ -4990,7 +5575,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search for something', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5006,6 +5591,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
                     ),
                     TextPart(content='Search complete'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5120,7 +5706,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
             {
                 'model': XAI_NON_REASONING_MODEL,
                 'messages': [{'content': [{'text': 'Search for test'}], 'role': 'ROLE_USER'}],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5145,7 +5731,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     {'content': [{'text': 'Tool completed successfully.'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What did you find?'}], 'role': 'ROLE_USER'},
                 ],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5157,7 +5743,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search for test', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Search for test', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5180,6 +5766,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5190,14 +5777,14 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What did you find?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What did you find?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='The search found results')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5275,7 +5862,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
     assert result2.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Get MCP data', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Get MCP data', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5298,6 +5885,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5308,14 +5896,14 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What did MCP return?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What did MCP return?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='MCP returned data')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5389,14 +5977,14 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
-                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='What happened?', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5527,6 +6115,26 @@ async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requ
     )
 
 
+async def test_xai_file_upload_error_is_mapped(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """A gRPC error from the document upload is mapped like one from the chat request, not raised raw."""
+    mock_client = MockXai.create_mock([create_response(content='unused')])
+
+    async def failing_upload(data: bytes, filename: str) -> Any:
+        raise grpc.aio.AioRpcError(
+            grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.aio.Metadata(), grpc.aio.Metadata(), details='upload quota'
+        )
+
+    monkeypatch.setattr(mock_client, 'files_upload', failing_upload)
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(['Process this document', BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == 'upload quota'
+    assert isinstance(exc_info.value.__cause__, grpc.aio.AioRpcError)
+
+
 async def test_xai_document_url_without_data_type(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
     """Test DocumentUrl handling when data_type is missing or empty."""
     response = create_response(content='Document processed')
@@ -5626,28 +6234,27 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
 
 
 async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
-    """Test handling of unknown tool types uses the function name."""
-    attachment_search_tool_call = chat_pb2.ToolCall(
-        id='attachment_001',
-        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
+    """Unknown server-side tool types should fall back to their function name."""
+    unknown_tool_call = chat_pb2.ToolCall(
+        id='unknown_001',
+        type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_INVALID,
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
         function=chat_pb2.FunctionCall(
-            name='attachment_search',
-            arguments='{"query": "my attachments"}',
+            name='custom_server_tool',
+            arguments='{"query": "test"}',
         ),
     )
 
-    response = create_mixed_tools_response([attachment_search_tool_call], text_content='Found your attachments.')
+    response = create_mixed_tools_response([unknown_tool_call], text_content='Completed the custom tool call.')
     mock_client = MockXai.create_mock([response])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
 
-    result = await agent.run('Search my attachments')
+    result = await Agent(model).run('Use the custom server tool')
 
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
-                parts=[UserPromptPart(content='Search my attachments', timestamp=IsNow(tz=timezone.utc))],
+                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=UTC))],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5655,14 +6262,15 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
             ModelResponse(
                 parts=[
                     NativeToolCallPart(
-                        tool_name='attachment_search',
-                        args={'query': 'my attachments'},
-                        tool_call_id=IsStr(),
+                        tool_name='custom_server_tool',
+                        args={'query': 'test'},
+                        tool_call_id='unknown_001',
                         provider_name='xai',
-                        provider_details={'function_name': 'attachment_search'},
+                        provider_details={'function_name': 'custom_server_tool'},
                     ),
-                    TextPart(content='Found your attachments.'),
+                    TextPart(content='Completed the custom tool call.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5699,70 +6307,103 @@ role: ROLE_USER
 """)
 
 
-async def test_stream_cancel(allow_model_requests: None):
-    stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
+async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: None):
+    """`provider_name='grok'` from 1.x histories (when `GrokProvider` existed) must still route through the native xAI paths on replay."""
+    response = create_response(content='second response', usage=create_usage(prompt_tokens=20, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    # Hardcoded `provider_name='grok'` simulates a history serialized in 1.x with the old `GrokProvider`.
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='legacy reasoning', signature='sig-legacy', provider_name='grok'),
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind,
+                    args={'query': 'legacy query'},
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                NativeToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content=None,
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                TextPart(content='first response'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+            provider_name='grok',
+        ),
+    ]
+    result = await agent.run('Second question', message_history=message_history)
+    assert result.output == 'second response'
+
+    sent_messages = get_mock_chat_create_kwargs(mock_client)[0]['messages']
+    assistant_msgs = [m for m in sent_messages if m['role'] == 'ROLE_ASSISTANT']
+    # The `ThinkingPart(provider_name='grok')` must surface as native `reasoning_content` + `encrypted_content`,
+    # NOT wrapped in `<think>` tags (which is the fallback for foreign providers).
+    native_thinking = [m for m in assistant_msgs if m.get('reasoning_content') or m.get('encrypted_content')]
+    assert len(native_thinking) == 1, (
+        f'Expected exactly one assistant message with native thinking content; got {assistant_msgs!r}'
+    )
+    assert native_thinking[0]['reasoning_content'] == 'legacy reasoning'
+    assert native_thinking[0]['encrypted_content'] == 'sig-legacy'
+    # The `NativeToolCallPart(provider_name='grok')` must be forwarded as a native xAI builtin tool call.
+    tool_call_msgs = [m for m in assistant_msgs if m.get('tool_calls')]
+    assert len(tool_call_msgs) == 1
+    tool_calls = tool_call_msgs[0]['tool_calls']
+    assert len(tool_calls) == 1
+    assert tool_calls[0]['id'] == 'legacy-call-1'
+    # No `<think>...</think>` fallback text should appear in any assistant content.
+    for m in assistant_msgs:
+        for part in m.get('content', []):
+            assert '<think>' not in part.get('text', '')
+
+
+@pytest.mark.parametrize('finish_reason', ['stop', 'length', 'tool_call', 'error'])
+async def test_xai_stream_finish_reason_matches_non_stream(allow_model_requests: None, finish_reason: FinishReason):
+    """Streamed and non-streamed responses must map the same xAI finish reason to the same value."""
+    mock_client = MockXai.create_mock([create_response(content='hello world', finish_reason=finish_reason)])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    non_stream_result = await Agent(m).run('')
+
+    stream = [get_grok_text_chunk('hello ', ''), get_grok_text_chunk('world', finish_reason)]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    async with Agent(m).run_stream('') as result:
+        await result.get_output()
+
+    assert result.response.finish_reason == non_stream_result.response.finish_reason == finish_reason
+
+
+async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_model_requests: None):
+    """Intermediate streaming chunks (REASON_INVALID) must not report a premature 'stop'."""
+    stream = [
+        get_grok_text_chunk('hello ', ''),
+        get_grok_text_chunk('world', ''),
+        get_grok_text_chunk('.', 'stop'),
+    ]
     mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
+    finish_reasons: list[FinishReason | None] = []
     async with agent.run_stream('') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
+        async for response in result.stream_response(debounce_by=None):
+            finish_reasons.append(response.finish_reason)
 
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1),
-                model_name='grok-4-fast-non-reasoning',
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id='grok-123',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
+    # Unset while the two intermediate chunks arrive, 'stop' from the finishing chunk onwards.
+    assert finish_reasons[:2] == [None, None]
+    assert all(reason == 'stop' for reason in finish_reasons[2:])
 
 
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_xai_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = XaiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='grok-4-fast-non-reasoning',
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _timestamp=datetime.now(timezone.utc),
-        _provider=cast(Any, type('ProviderStub', (), {'name': 'xai', 'base_url': 'https://api.x.ai/v1'})()),
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
+def test_xai_finish_reason_proto_map_covers_all_enum_members():
+    """Every proto finish reason except REASON_INVALID ("not finished yet") must be mapped."""
+    unmapped = set(sample_pb2.FinishReason.values()) - set(xai_module._FINISH_REASON_PROTO_MAP)  # pyright: ignore[reportPrivateUsage]
+    assert unmapped == {sample_pb2.FinishReason.REASON_INVALID}
 
 
 # End of tests

@@ -1,13 +1,18 @@
 from __future__ import annotations as _annotations
 
-import logging
 import re
 from collections.abc import Callable
-from contextlib import contextmanager
 from inspect import Signature
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from griffe import Docstring, DocstringSectionKind, GoogleOptions, Object as GriffeObject
+from griffe import (
+    Docstring,
+    DocstringSectionKind,
+    GoogleOptions,
+    NumpyOptions,
+    Object as GriffeObject,
+    SphinxOptions,
+)
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat
@@ -42,11 +47,14 @@ def doc_descriptions(
     parent = cast(GriffeObject, sig)
 
     docstring_style = _infer_docstring_style(doc) if docstring_format == 'auto' else docstring_format
-    # These options are only valid for Google-style docstrings
-    # https://mkdocstrings.github.io/griffe/reference/docstrings/#google-options
-    parser_options = (
-        GoogleOptions(returns_named_value=False, returns_multiple_items=False) if docstring_style == 'google' else None
-    )
+    # `warnings=False` stops griffe logging about docstrings it can't fully parse; that is the author's
+    # business, not something to surface every time a tool is built.
+    if docstring_style == 'google':
+        parser_options = GoogleOptions(returns_named_value=False, returns_multiple_items=False, warnings=False)
+    elif docstring_style == 'numpy':
+        parser_options = NumpyOptions(warnings=False)
+    else:
+        parser_options = SphinxOptions(warnings=False)
     docstring = Docstring(
         doc,
         lineno=1,
@@ -54,8 +62,7 @@ def doc_descriptions(
         parent=parent,
         parser_options=parser_options,
     )
-    with _disable_griffe_logging():
-        sections = docstring.parse()
+    sections = docstring.parse()
 
     params = {}
     if parameters := next((p for p in sections if p.kind == DocstringSectionKind.parameters), None):
@@ -167,12 +174,3 @@ _docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
         'numpy',
     ),
 ]
-
-
-@contextmanager
-def _disable_griffe_logging():
-    # Hacky, but suggested here: https://github.com/mkdocstrings/griffe/issues/293#issuecomment-2167668117
-    old_level = logging.root.getEffectiveLevel()
-    logging.root.setLevel(logging.ERROR)
-    yield
-    logging.root.setLevel(old_level)

@@ -13,12 +13,19 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import WebSearchTool
 
-agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(WebSearchTool())])
+agent = Agent('openai-responses:gpt-5.2', name='web_search_agent', capabilities=[NativeTool(WebSearchTool())])
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
 print(result.output)
 ```
 
 For OpenAI web search, use the Responses API model prefix (`openai-responses:`), not `openai:`.
+Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
+or indexed content.
+
+Restricting settings (`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` on web search;
+the first three on web fetch) are not dropped silently. On a model whose native tool can't apply one that is set
+(Gemini applies none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
+`optional=True` tool is left out, and `UserError` is raised otherwise.
 
 ## Native Tool Defaults
 
@@ -31,6 +38,7 @@ Reach for these when the provider supports them:
 - `MemoryTool`
 - `MCPServerTool`
 - `FileSearchTool`
+- `AdvisorTool` (Anthropic, OpenRouter; lets a faster executor model consult a stronger advisor model mid-generation)
 
 ## Dynamic Native Tool Configuration
 
@@ -50,10 +58,17 @@ async def prepared_web_search(ctx: RunContext[dict]) -> WebSearchTool | None:
 
 agent = Agent(
     'openai-responses:gpt-5.2',
+    name='dynamic_web_search_agent',
     capabilities=[NativeTool(prepared_web_search)],
     deps_type=dict,
 )
 ```
+
+Returning `None` omits the tool for that step. `XSearch` and `ImageGeneration` are the exception when
+`fallback_subagent_model` is set: they route unsupported models to a subagent rather than a local tool, and their
+`native=` factory is resolved a second time when that subagent runs. Once `fallback_subagent_model` is set, returning
+`None` no longer omits anything — the subagent tool stays offered and calling it raises `UserError`.
+Return a configured tool instance, or drop `fallback_subagent_model`.
 
 ## When to Use Native Tools vs Provider-Adaptive Capabilities
 
@@ -67,7 +82,7 @@ Use provider-adaptive capabilities — `WebSearch()`, `WebFetch()`, `MCP()`, `Im
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebSearch
 
-agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[WebSearch()])
+agent = Agent('anthropic:claude-sonnet-4-6', name='adaptive_web_search_agent', capabilities=[WebSearch()])
 ```
 
 Use native tools (`NativeTool(WebSearchTool(...))`) when:

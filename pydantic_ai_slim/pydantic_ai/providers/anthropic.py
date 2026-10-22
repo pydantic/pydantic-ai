@@ -3,15 +3,14 @@ from __future__ import annotations as _annotations
 import os
 import warnings
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypeAlias, overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
-from pydantic_ai.providers import Provider
+from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
@@ -19,10 +18,10 @@ from .._json_schema import JsonSchema, JsonSchemaTransformer
 try:
     from anthropic import (
         AsyncAnthropic,
-        AsyncAnthropicBedrock,
-        AsyncAnthropicBedrockMantle,
+        AsyncAnthropicBedrock,  # pyright: ignore[reportPrivateImportUsage]
+        AsyncAnthropicBedrockMantle,  # pyright: ignore[reportPrivateImportUsage]
         AsyncAnthropicFoundry,
-        AsyncAnthropicVertex,
+        AsyncAnthropicVertex,  # pyright: ignore[reportPrivateImportUsage]
     )
 except ImportError as _import_error:
     raise ImportError(
@@ -30,10 +29,57 @@ except ImportError as _import_error:
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
+# Below the guard on purpose: `anthropic` requires `httpx2`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx2`.
+import httpx2
 
 AsyncAnthropicClient: TypeAlias = (
     AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle | AsyncAnthropicFoundry | AsyncAnthropicVertex
 )
+
+_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
+
+This is the list Anthropic publishes for the feature, and accepting the entry is not the same as
+honoring it. Older models reject it outright (`role 'system' is not supported on this model`), but
+`claude-sonnet-5` returns 200 and then ignores it — the docs say the feature "is not available on
+Claude Sonnet 5; use the top-level `system` field instead", and measuring agrees: asked to lift a
+restriction the top-level prompt set, it refuses every time where Opus 5 complies every time, and on
+a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
+entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
+
+`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
+top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
+so the entry costs nothing measurable and keeps the instruction's operator authority.
+
+`claude-mythos-5` is published as supported but isn't reachable with our credentials.
+"""
+
+_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-4-8',
+    'claude-opus-5',
+    'claude-sonnet-5-5',
+    'claude-haiku-5-5',
+)
+"""Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
+
+The list Anthropic publishes for the `mid-conversation-tool-changes-2026-07-01` beta, and it happens
+to match `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` — the two remain separate settings because they're
+separate features, one GA and one beta, that could diverge again. Models predating the beta reject
+the blocks with `requires a model that supports ...`, and `claude-sonnet-5` rejects them outright
+(`tool_addition/tool_removal is not supported on this model`) rather than accepting and ignoring them
+the way it does a plain system entry. Verified live per model, including `claude-haiku-5-5`, except
+`claude-mythos-5`, which isn't reachable with our credentials and is included on the strength of the published list.
+"""
 
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
@@ -62,14 +108,55 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
         profile = anthropic_model_profile(model_name)
-        return AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer).update(profile)
+        return merge_profile(
+            AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
+            profile,
+            # Accepting a `{'role': 'system'}` entry is a fact about the Messages API, not about the
+            # model family, so it's set here rather than in `anthropic_model_profile()`, which is
+            # shared with the Bedrock Converse API and the OpenAI-compatible gateways that route the
+            # same models. Only the transport verified to serve the role opts in; everywhere else the
+            # flag stays `False` and `Model.prepare_messages` keeps applying the `<system>`-tagged
+            # rendering, as it did before this was supported anywhere.
+            AnthropicModelProfile(
+                supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+                # Request-scoped (`clear_at`) entries are published for the same models and transports as
+                # the role itself, under the `mid-conversation-system-clear-at-2026-08-21` beta.
+                # `claude-sonnet-5` accepts and clears them too (verified live), but it's left out for
+                # the same reason it's left out above.
+                supports_request_scoped_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
+            ),
+            # Prompt caching is likewise a fact about the Messages API rather than the model family.
+            # `AnthropicModel` narrows `supports_auto_cache` per client and model (the legacy Bedrock SDK client only
+            # takes the top-level automatic caching parameter on some models), before the user's `profile=` so an
+            # explicit value still wins, and `supported_cache_retentions` on Bedrock, which
+            # grants the 1-hour TTL to only a subset of Claude models. Anthropic documents the 1-hour TTL on Vertex
+            # for all active models: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+            AnthropicModelProfile(
+                supports_cache=True,
+                supported_cache_retentions=('5m', '1h'),
+                supports_auto_cache=True,
+            ),
+            AnthropicModelProfile(tool_addition_mode='by_reference')
+            if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
+            else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
+                # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
+                # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
+                default_cache_retention=timedelta(minutes=5)
+            ),
+        )
 
     @overload
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx.AsyncClient | None = None
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -78,7 +165,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         api_key: str | None = None,
         base_url: str | None = None,
         anthropic_client: AsyncAnthropicClient | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: httpx2.AsyncClient | None = None,
     ) -> None:
         """Create a new Anthropic provider.
 
@@ -93,7 +180,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 [`AsyncAnthropicFoundry`](https://platform.claude.com/docs/en/build-with-claude/claude-in-microsoft-foundry), or
                 [`AsyncAnthropicVertex`](https://docs.anthropic.com/en/api/claude-on-vertex-ai).
                 If provided, the `api_key` and `http_client` arguments will be ignored.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
         if anthropic_client is not None:
             assert http_client is None, 'Cannot provide both `anthropic_client` and `http_client`'
@@ -102,19 +189,20 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         else:
             api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
             if not api_key:
-                raise UserError(
+                raise missing_api_key_error(
                     'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'
                     ' to use the Anthropic provider.'
                 )
             if http_client is not None:
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
-                http_client = create_async_http_client()
+                http_client = create_async_httpx2_client()
                 self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
+                self._http_client_factory = create_async_httpx2_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert isinstance(http_client, httpx2.AsyncClient)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
@@ -184,4 +272,31 @@ class AnthropicJsonSchemaTransformer(JsonSchemaTransformer):
     def transform(self, schema: JsonSchema) -> JsonSchema:
         schema.pop('title', None)
         schema.pop('$schema', None)
+        if self.strict is True:
+            _const_to_typed_enum(schema)
         return schema
+
+
+def _const_to_typed_enum(schema: JsonSchema) -> None:
+    """Rewrite a scalar `const` as a typed one-value `enum`, which Anthropic's `transform_schema()` keeps.
+
+    `transform_schema()` moves a `const` into the description, which would leave the value unconstrained, while
+    it keeps an `enum`. Pydantic emits a typed `const` for a single-value `Literal`, such as a discriminator field.
+    A described `Enum`, `Choices()` and `BoolCriteria` render their options as `anyOf` of untyped `const`s, which
+    get the type of their value, as `transform_schema()` rejects a node without a `type`.
+    """
+    const = schema.get('const')
+    # `bool` before `int`, which it subclasses.
+    if isinstance(const, bool):
+        type_ = 'boolean'
+    elif isinstance(const, str):
+        type_ = 'string'
+    elif isinstance(const, int):
+        type_ = 'integer'
+    elif isinstance(const, float):
+        type_ = 'number'
+    else:
+        return
+    del schema['const']
+    schema.setdefault('type', type_)
+    schema['enum'] = [const]

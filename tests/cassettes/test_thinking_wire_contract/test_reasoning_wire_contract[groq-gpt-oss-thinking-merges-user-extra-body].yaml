@@ -1,0 +1,80 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '231'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      reasoning_effort: high
+      reasoning_format: parsed
+      service_tier: on_demand
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '931'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          reasoning: 'The user asks: "What is 2+2? Reply with just the number." The user wants the answer "4". The system
+            instruction says we are to comply with user request. There''s no conflict with policy. So we respond with "4".
+            Ensure no extra formatting.'
+          role: assistant
+      created: 1783016780
+      id: chatcmpl-d510dc98-c63f-4230-a12b-fc11eba2dae0
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_96d96a151c
+      usage:
+        completion_time: 0.139900713
+        completion_tokens: 67
+        completion_tokens_details:
+          reasoning_tokens: 57
+        prompt_time: 0.013028211
+        prompt_tokens: 84
+        queue_time: 0.171971088
+        total_time: 0.152928924
+        total_tokens: 151
+      usage_breakdown: null
+      x_groq:
+        id: req_01kwj19w6ze8x8agspkbqs0taa
+        seed: 1846969516
+    status:
+      code: 200
+      message: OK
+version: 1

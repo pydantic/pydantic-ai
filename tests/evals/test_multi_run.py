@@ -40,7 +40,7 @@ with try_import() as logfire_import_successful:
     from logfire.testing import CaptureLogfire
 
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
@@ -269,7 +269,7 @@ def test_averages_with_multi_run():
     averages = report.averages()
     assert averages is not None
     # Two-level: mean(mean(0.2, 0.4), mean(0.9)) = mean(0.3, 0.9) = 0.6
-    assert averages.scores['score'] == pytest.approx(0.6)  # pyright: ignore[reportUnknownMemberType]
+    assert averages.scores['score'] == pytest.approx(0.6)
 
 
 def test_average_from_aggregates_computation():

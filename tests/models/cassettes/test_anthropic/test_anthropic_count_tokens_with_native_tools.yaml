@@ -1,0 +1,44 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '119'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: What is 2 + 2?
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+    uri: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '20'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=162
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      input_tokens: 16
+    status:
+      code: 200
+      message: OK
+version: 1

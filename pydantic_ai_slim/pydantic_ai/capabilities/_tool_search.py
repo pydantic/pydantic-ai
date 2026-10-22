@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
+from typing import TYPE_CHECKING, ClassVar
 
-from .._run_context import AgentDepsT
+from .._run_context import AgentDepsT, RunContext
 from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
@@ -24,7 +25,11 @@ from ..tools import (
 )
 from ..toolsets import AbstractToolset
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
+from ._deferred_capabilities import record_loaded_capability_tools
 from .abstract import AbstractCapability, CapabilityOrdering
+
+if TYPE_CHECKING:
+    from ..models import ModelRequestContext
 
 
 @dataclass
@@ -80,7 +85,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     # Custom search function — used locally, and by provider-native "client-executed"
     # modes when supported.
     def my_search(
-        ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]
+        ctx: RunContext, queries: Sequence[str], tools: Sequence[ToolDefinition]
     ) -> list[str]:
         return [
             t.name
@@ -101,7 +106,9 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     * `None` (default): let Pydantic AI pick the best strategy for the current provider
       — native on supporting models (Anthropic BM25, OpenAI server-executed tool search),
-      local keyword matching elsewhere. The choice may change in future versions.
+      local keyword matching elsewhere. On the legacy `AsyncAnthropicBedrock` client it's
+      Anthropic regex, so BM25 there needs an explicit `'bm25'`. The choice may change in
+      future versions.
     * `'keywords'`: always use the local keyword-overlap algorithm. Still prompt-cache
       compatible on providers that expose a "client-executed" native surface (Anthropic,
       OpenAI): the algorithm rides the same `defer_loading` wire as a custom callable,
@@ -119,10 +126,23 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     """Maximum number of matches returned by the local search algorithm."""
 
     tool_description: str | None = None
-    """Custom description for the local `search_tools` function shown to the model."""
+    """Custom description for the model-facing search tool when search runs on our side.
+
+    Used for the local `search_tools` fallback and for providers with client-executed
+    native tool search.
+    """
 
     parameter_description: str | None = None
-    """Custom description for the `queries` parameter on the local `search_tools` function."""
+    """Custom description for the `queries` parameter when search runs on our side."""
+
+    _: KW_ONLY
+
+    id: str | None = 'tool_search'
+    """One-off: an agent has a single tool-discovery configuration, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine].
+    Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
 
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
@@ -192,3 +212,16 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
         )
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Record tools unlocked by a capability load."""
+        # The tools to record are those owned by a loaded deferred capability but not yet
+        # present in tool-search history (`ctx.discovered_tool_names`), so we don't
+        # duplicate an existing exchange. `discovered_tool_names` is the clean history
+        # field (`in_history`), which keeps this append collapse-proof.
+        return record_loaded_capability_tools(ctx, request_context)
+
+    function_tool_name: ClassVar[str] = 'search_tools'
+    """Reserved name of the local function tool used when tool search runs client-side."""

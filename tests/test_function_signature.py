@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import typing
 from enum import Enum
 from typing import Optional, Union
@@ -24,11 +25,9 @@ from pydantic_ai.tools import Tool, ToolDefinition
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 
 # Module-level types for tests that need get_type_hints() resolution
-class _Color(str, Enum):
+class _Color(str, Enum):  # noqa: UP042
     RED = 'red'
     GREEN = 'green'
 
@@ -574,6 +573,62 @@ def search(*, query: str, limit: int | None = None) -> Any:
 ''')
 
 
+def test_tool_signature_renders_parameter_descriptions():
+    def multiply(left: float, right: float) -> float:
+        """Multiply two numbers.
+
+        Args:
+            left: The left operand.
+            right: The right operand.
+
+        Returns:
+            The product of `left` and `right`.
+        """
+        return left * right  # pragma: no cover
+
+    rendered = Tool(multiply).tool_def.render_signature('...', is_async=True)
+    assert rendered == snapshot('''\
+async def multiply(*, left: float, right: float) -> float:
+    """
+    <summary>Multiply two numbers.</summary>
+    <returns>
+    <description>The product of `left` and `right`.</description>
+    </returns>
+
+    Args:
+        left: The left operand.
+        right: The right operand.
+    """
+    ...\
+''')
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.AsyncFunctionDef)
+    assert 'left: The left operand.' in (ast.get_docstring(function) or '')
+
+
+def test_tool_signature_escapes_parameter_descriptions():
+    tool_definition = ToolDefinition(
+        name='search',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'description': 'Use `"""exact"""` text or C:\\queries.\0',
+                }
+            },
+            'required': ['query'],
+        },
+    )
+
+    rendered = tool_definition.render_signature('...')
+    compile(rendered, '<rendered>', 'exec')
+    function = ast.parse(rendered).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert ast.get_docstring(function) == 'Args:\n    query: Use `"""exact"""` text or C:\\queries.\0'
+
+
 # =============================================================================
 # Function signature edge cases
 # =============================================================================
@@ -582,7 +637,7 @@ def search(*, query: str, limit: int | None = None) -> Any:
 def test_function_signature_special_params():
     """RunContext skipped, unannotated params become Any via schema path."""
 
-    def with_ctx(ctx: RunContext[None], x: int) -> int:
+    def with_ctx(ctx: RunContext, x: int) -> int:
         return x  # pragma: no cover
 
     td = Tool(with_ctx, takes_ctx=True).tool_def
@@ -793,7 +848,112 @@ class User(TypedDict):
         },
     )
     assert sig_ref_nonobj.render('...', name='tool5') == snapshot("""\
-def tool5(*, x: StringAlias) -> Any:
+def tool5(*, x: str) -> Any:
+    ...\
+""")
+
+
+def test_non_object_type_refs_render_inline():
+    """Non-object `$defs` resolve inline; a bare alias name would never be defined.
+
+    Covers every shape pydantic emits for a PEP 695 alias — constrained scalar, enum, list,
+    mapping, union and formatted scalar — plus the nested-item and object-field paths.
+    """
+    sig = FunctionSignature.from_schema(
+        name='list_tasks',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'limit': {'$ref': '#/$defs/PageLimit'},
+                'status': {'$ref': '#/$defs/Status'},
+                'tags': {'$ref': '#/$defs/Tags'},
+                'meta': {'$ref': '#/$defs/Meta'},
+                'maybe': {'$ref': '#/$defs/MaybeInt'},
+                'stamp': {'$ref': '#/$defs/Stamp'},
+                'nested': {'type': 'array', 'items': {'$ref': '#/$defs/PageLimit'}},
+                'inner': {'$ref': '#/$defs/Inner'},
+            },
+            'required': ['limit', 'status', 'tags', 'meta', 'maybe', 'stamp', 'nested', 'inner'],
+            '$defs': {
+                'PageLimit': {'type': 'integer', 'minimum': 1, 'maximum': 100},
+                'Status': {'type': 'string', 'enum': ['open', 'done']},
+                'Tags': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1},
+                'Meta': {'type': 'object', 'additionalProperties': {'type': 'integer'}},
+                'MaybeInt': {'anyOf': [{'type': 'integer'}, {'type': 'null'}]},
+                'Stamp': {'type': 'string', 'format': 'date-time'},
+                'Inner': {
+                    'type': 'object',
+                    'title': 'Inner',
+                    'properties': {'limit': {'$ref': '#/$defs/PageLimit'}},
+                    'required': ['limit'],
+                },
+            },
+        },
+    )
+
+    rendered = sig.render('...', name='list_tasks')
+    assert rendered == snapshot("""\
+def list_tasks(*, limit: int, status: Literal['open', 'done'], tags: list[str], meta: dict[str, int], maybe: int | None, stamp: str, nested: list[int], inner: Inner) -> Any:
+    ...\
+""")
+    definitions = FunctionSignature.render_type_definitions([sig], frozenset())
+    assert definitions == snapshot(
+        [
+            """\
+class Inner(TypedDict):
+    limit: int\
+"""
+        ]
+    )
+
+    # Only object defs become TypedDicts, so no other alias name may survive anywhere.
+    emitted = '\n'.join([rendered, *definitions])
+    assert [name for name in ('PageLimit', 'Status', 'Tags', 'Meta', 'MaybeInt', 'Stamp') if name in emitted] == []
+    compile(rendered, '<test>', 'exec')
+
+
+def test_recursive_non_object_type_ref_renders_any():
+    """A self-referential non-object def has no TypedDict to name, so the cycle renders as `Any`."""
+    sig = FunctionSignature.from_schema(
+        name='dump',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'blob': {'$ref': '#/$defs/Json'}},
+            'required': ['blob'],
+            '$defs': {
+                'Json': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'integer'},
+                        {'type': 'array', 'items': {'$ref': '#/$defs/Json'}},
+                    ]
+                }
+            },
+        },
+    )
+    assert sig.render('...', name='dump') == snapshot("""\
+def dump(*, blob: str | int | list[Any]) -> Any:
+    ...\
+""")
+
+
+def test_ref_to_ref_def_keeps_alias_name():
+    """A def that is itself a `$ref` is left unresolved.
+
+    Pydantic flattens an alias of an alias into a full copy, so this shape only reaches us
+    from hand-written schemas; following the indirection is out of scope here.
+    """
+    sig = FunctionSignature.from_schema(
+        name='t',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'x': {'$ref': '#/$defs/Indirect'}},
+            'required': ['x'],
+            '$defs': {'Indirect': {'$ref': '#/$defs/PageLimit'}, 'PageLimit': {'type': 'integer'}},
+        },
+    )
+    assert sig.render('...', name='t') == snapshot("""\
+def t(*, x: Indirect) -> Any:
     ...\
 """)
 
@@ -1198,7 +1358,7 @@ def test_function_signature_root_model():
 
     td = Tool(func_with_root_model).tool_def
     assert td.render_signature('...') == snapshot("""\
-def func_with_root_model(*, x: _IntList, y: int) -> None:
+def func_with_root_model(*, x: list[int], y: int) -> None:
     ...\
 """)
     assert td.function_signature is not None
@@ -1374,6 +1534,19 @@ def test_function_with_enum_field_in_model():
     assert '_Color' not in type_names
 
 
+def test_function_with_enum_ref_parameter():
+    """Referenced enum values are visible in the rendered tool signature."""
+
+    def set_color(color: _Color) -> None:
+        pass  # pragma: no cover
+
+    td = Tool(set_color).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def set_color(*, color: Literal['red', 'green']) -> None:
+    ...\
+""")
+
+
 def test_schema_with_described_optional_fields():
     """Schema with descriptions and optional fields renders NotRequired and field descriptions."""
     sig = FunctionSignature.from_schema(
@@ -1432,3 +1605,106 @@ def test_render_empty_type_signature():
     # Empty with description renders docstring but no pass
     ts_with_desc = TypeSignature(name='Marker', description='A marker type')
     assert ts_with_desc.render_definition() == 'class Marker(TypedDict):\n    """A marker type"""'
+
+
+# Boolean JSON Schema nodes (`True`/`False` are valid schemas per spec, and surface from
+# e.g. MCP tool schemas). Each test below exercises a distinct walker entry point that would
+# otherwise index into a bool. See `_normalize_schema_node`.
+
+
+def test_boolean_property_schema_renders_as_any():
+    """A property whose schema is the bare boolean `True` renders as `Any` instead of crashing."""
+    sig = FunctionSignature.from_schema(
+        name='passthrough',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'anything': True},
+            'required': ['anything'],
+        },
+    )
+    assert str(sig.params['anything'].type) == 'Any'
+
+
+def test_boolean_array_items_render_as_list_any():
+    """`items: True` (any element allowed) recurses with a bool and renders as `list[Any]`."""
+    sig = FunctionSignature.from_schema(
+        name='collect',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'arr': {'type': 'array', 'items': True}},
+            'required': ['arr'],
+        },
+    )
+    assert str(sig.params['arr'].type) == 'list[Any]'
+
+
+def test_boolean_allof_member_renders_as_any():
+    """A single-member `allOf: [True]` recurses into `_schema_to_type_expr` with a bool."""
+    sig = FunctionSignature.from_schema(
+        name='allof_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'allOf': [True]}},
+            'required': ['value'],
+        },
+    )
+    assert str(sig.params['value'].type) == 'Any'
+
+
+def test_boolean_anyof_member_renders():
+    """A bool member inside `anyOf` is inspected (`.get('type')`) before recursion and must not crash."""
+    sig = FunctionSignature.from_schema(
+        name='anyof_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'anyOf': [True, {'type': 'null'}]}},
+            'required': ['value'],
+        },
+    )
+    assert str(sig.params['value'].type) == 'Any | None'
+
+
+def test_boolean_nested_object_property_renders_as_any():
+    """A bare-boolean property inside a NESTED object hits the `_build_type_signature` walker."""
+    sig = FunctionSignature.from_schema(
+        name='outer',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'nested': {'type': 'object', 'properties': {'x': True}}},
+            'required': ['nested'],
+        },
+    )
+    nested = next(t for t in sig.referenced_types if 'x' in t.fields)
+    assert str(nested.fields['x'].type) == 'Any'
+
+
+def test_boolean_def_schema_does_not_crash():
+    """A bare-boolean `$defs` entry (referenced via `$ref`) must not crash `_process_schema_defs`."""
+    sig = FunctionSignature.from_schema(
+        name='defs_tool',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'value': {'$ref': '#/$defs/Anything'}},
+            'required': ['value'],
+            '$defs': {'Anything': True},
+        },
+    )
+    assert 'value' in sig.params
+
+
+def test_boolean_additional_properties_render_as_dict_any():
+    """`additionalProperties: True`/`False` on an object render as `dict[str, Any]`.
+
+    Unlike the cases above these never crashed (the object branch reads the value directly),
+    but the assertion documents the rendered shape and guards against regressions.
+    """
+    for value in (True, False):
+        sig = FunctionSignature.from_schema(
+            name='cfg',
+            parameters_schema={
+                'type': 'object',
+                'properties': {'meta': {'type': 'object', 'additionalProperties': value}},
+                'required': ['meta'],
+            },
+        )
+        assert str(sig.params['meta'].type) == 'dict[str, Any]'

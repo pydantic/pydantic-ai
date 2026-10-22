@@ -1,0 +1,78 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"reasoning_config": "high"}}'
+    headers:
+      Content-Length:
+      - '188'
+      Content-Type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+      User-Agent:
+      - !!binary |
+        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
+        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vYiwz
+        LEQsWixOIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
+      amz-sdk-invocation-id:
+      - !!binary |
+        NTA1NGI5YjMtMDM1Ny00NjkzLWFmYTYtNmU0ZjI2YmM5NjVm
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
+  response:
+    body:
+      string: '{"metrics": {"latencyMs": 496}, "output": {"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "\nOkay, the user wants me to reply with the single word \"ok\". They probably just need a quick confirmation or acknowledgment. Let me make sure I don''t add anything extra. Just \"ok\" as requested. Alright, that''s straightforward.\n"}}}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 15, "outputTokens": 55, "serverToolUsage": {}, "totalTokens": 70}}'
+    headers:
+      Transfer-Encoding:
+      - chunked
+      content-type:
+      - application/json
+      date:
+      - Wed, 13 May 2026 22:52:33 GMT
+      via:
+      - 1.1 google
+      x-amzn-requestid:
+      - 6fb2b0cd-9427-495a-badc-75457faf4160
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}, {"role": "assistant", "content": [{"text": "<think>\n\nOkay, the user wants me to reply with the single word \"ok\". They probably just need a quick confirmation or acknowledgment. Let me make sure I don''t add anything extra. Just \"ok\" as requested. Alright, that''s straightforward.\n\n</think>"}]}, {"role": "user", "content": [{"text": "Validation feedback:\nPlease return text.\n\nFix the errors and try again."}]}], "system": [], "inferenceConfig": {}, "additionalModelRequestFields": {"reasoning_config": "high"}}'
+    headers:
+      Content-Length:
+      - '609'
+      Content-Type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+      User-Agent:
+      - !!binary |
+        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
+        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vYiwz
+        LEQsWixOIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
+      amz-sdk-invocation-id:
+      - !!binary |
+        MjAwZWFlMTQtMjZmZS00ODQ5LTg2ODItMTc1ZTE4MTg1OGY1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
+  response:
+    body:
+      string: '{"metrics": {"latencyMs": 1673}, "output": {"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "\nOkay, the user is asking me to reply with the single word \"ok\". I did that in my initial response. Then they provided some validation feedback saying \"Please return text. Fix the errors and try again.\" Hmm, maybe the system is expecting more than just the word \"ok\"? Let me check the instructions again. The user wants a single word, but perhaps the validation is checking for proper formatting or if \"ok\" was actually the correct word. Wait, maybe there was an error in how the response was processed. Let me make sure to just reply with \"ok\" again, ensuring no extra characters or formatting are present. Maybe the system is case-sensitive? The user wrote \"ok\" in lowercase, so I should stick with that. I''ll just send \"ok\" again.\n"}}}, {"text": "\n\nok"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 39, "outputTokens": 166, "serverToolUsage": {}, "totalTokens": 205}}'
+    headers:
+      Transfer-Encoding:
+      - chunked
+      content-type:
+      - application/json
+      date:
+      - Wed, 13 May 2026 22:52:35 GMT
+      via:
+      - 1.1 google
+      x-amzn-requestid:
+      - 8ea72997-1d7d-4c2a-bae0-1ccb1b1e76de
+    status:
+      code: 200
+      message: OK
+version: 1

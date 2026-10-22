@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
@@ -8,7 +10,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -29,7 +32,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -52,7 +54,7 @@ class Pet(BaseModel):
 
 
 def _get_profile(model: OllamaModel) -> OpenAIModelProfile:
-    return OpenAIModelProfile.from_profile(model.profile)
+    return model.profile
 
 
 def test_local_ollama_supports_json_schema_output(ollama_api_key: str) -> None:
@@ -63,9 +65,9 @@ def test_local_ollama_supports_json_schema_output(ollama_api_key: str) -> None:
     model = OllamaModel('qwen3:0.6b', provider=provider)
     profile = _get_profile(model)
 
-    assert model.profile.supports_json_schema_output is True
-    assert model.profile.supports_json_object_output is True
-    assert profile.openai_supports_strict_tool_definition is False
+    assert model.profile.get('supports_json_schema_output', False) is True
+    assert model.profile.get('supports_json_object_output', False) is True
+    assert profile.get('openai_supports_strict_tool_definition', True) is False
 
 
 def test_ollama_cloud_base_url_disables_json_schema_output(ollama_api_key: str) -> None:
@@ -77,9 +79,9 @@ def test_ollama_cloud_base_url_disables_json_schema_output(ollama_api_key: str) 
     model = OllamaModel('gpt-oss:20b', provider=provider)
     profile = _get_profile(model)
 
-    assert model.profile.supports_json_schema_output is False
-    assert model.profile.supports_json_object_output is True
-    assert profile.openai_supports_strict_tool_definition is False
+    assert model.profile.get('supports_json_schema_output', False) is False
+    assert model.profile.get('supports_json_object_output', False) is True
+    assert profile.get('openai_supports_strict_tool_definition', True) is False
 
 
 def test_local_ollama_cloud_suffix_disables_json_schema_output(ollama_api_key: str) -> None:
@@ -88,8 +90,8 @@ def test_local_ollama_cloud_suffix_disables_json_schema_output(ollama_api_key: s
     provider = OllamaProvider(base_url=OLLAMA_LOCAL_BASE_URL, api_key=ollama_api_key)
     model = OllamaModel('gpt-oss:20b-cloud', provider=provider)
 
-    assert model.profile.supports_json_schema_output is False
-    assert model.profile.supports_json_object_output is True
+    assert model.profile.get('supports_json_schema_output', False) is False
+    assert model.profile.get('supports_json_object_output', False) is True
 
 
 def test_ollama_explicit_profile_overrides_cloud_detection(ollama_api_key: str) -> None:
@@ -99,7 +101,7 @@ def test_ollama_explicit_profile_overrides_cloud_detection(ollama_api_key: str) 
     override = OpenAIModelProfile(supports_json_schema_output=True)
     model = OllamaModel('gpt-oss:20b', provider=provider, profile=override)
 
-    assert model.profile.supports_json_schema_output is True
+    assert model.profile.get('supports_json_schema_output', False) is True
 
 
 async def test_ollama_cloud_native_output_raises(allow_model_requests: None, ollama_api_key: str) -> None:
@@ -133,25 +135,21 @@ def test_ollama_provider_name_routes_through_ollama_model(monkeypatch: pytest.Mo
 
     agent = Agent('ollama:gpt-oss:20b')
     assert isinstance(agent.model, OllamaModel)
-    assert agent.model.profile.supports_json_schema_output is False
+    assert agent.model.profile.get('supports_json_schema_output', False) is False
 
 
 # ---------- VCR integration tests against live Ollama ----------
 
 
 @pytest.fixture(scope='module')
-def vcr_config():
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
     """Override the repo-wide `vcr_config` fixture so that localhost traffic is recorded.
 
     The local Ollama tests need to replay `http://localhost:11434` cassettes in CI where
     there is no running daemon; the repo default ignores localhost so those requests
     would pass through live.
     """
-    return {
-        'ignore_localhost': False,
-        'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
-    }
+    return {**vcr_config, 'ignore_localhost': False}
 
 
 @pytest.mark.vcr
@@ -283,7 +281,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -292,7 +290,7 @@ async def test_ollama_cloud_tool_output(allow_model_requests: None, ollama_api_k
                                 'input': 'Paris.',
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],

@@ -10,14 +10,7 @@ commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI Provider Parity Explore
 
-You are running under the **Pydantic AI gh-aw shim** (not the Claude Code
-CLI), driving a model through gh-aw's AWF firewall and credential-injecting
-proxy. You have Claude's native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`,
-`WebFetch`, `Task`, …), the gh-aw GitHub tools, and the `mcp__safeoutputs__create_issue` /
-`mcp__safeoutputs__noop` safe-output tools.
-
-You are working in the **Pydantic AI** repository
-([ai.pydantic.dev](https://ai.pydantic.dev/)). Model integrations live in
+Model integrations live in
 `pydantic_ai_slim/pydantic_ai/models/` and `…/providers/`.
 
 ## Objective
@@ -58,6 +51,31 @@ Distinguish **silent drops** (input accepted, quietly ignored — a bug) from
 - Speculative "would be nice" features with no user impact.
 - Gaps already tracked by an open issue — **search issues first**.
 
+## Deduplication — mandatory BEFORE filing an issue
+
+Open issues were prefetched before the sandbox started. First check this
+sweep's own prior findings with a local label filter:
+
+```
+jq '.[] | select(any(.labels[]; .name == "provider-parity-explore")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "parity" and the capability you're auditing:
+
+```
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
+
+If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
+
+## Sandbox notes
+
 ## Output — When to Noop
 
 If the matrix shows consistent or clearly-documented behavior, call `mcp__safeoutputs__noop`
@@ -84,3 +102,10 @@ run.
 >
 > ## Evidence
 > - [SDK/docs references; `path:line`; a short snippet showing the silent drop]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real output demonstrating the gap]
+> - **Existing tests checked:** [tests read; none assert this behavior is intentional]
+> - **Ruled out by-design:** [nearby comment / profile / maintainer decision checked]
+> - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

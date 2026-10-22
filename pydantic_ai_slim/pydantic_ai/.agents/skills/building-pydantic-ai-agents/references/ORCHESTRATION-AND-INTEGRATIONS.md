@@ -1,6 +1,6 @@
 # Orchestration and Integrations
 
-Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, evals, or third-party integrations.
+Read this file when the user wants multi-agent coordination, graphs, direct model calls, A2A, durable execution, embeddings, image generation, evals, or third-party integrations.
 
 ## Coordinate Multiple Agents
 
@@ -9,15 +9,18 @@ Use agent delegation when one agent should call another and return the result.
 ```python
 from pydantic_ai import Agent, RunContext
 
-parent = Agent('openai:gpt-5.2')
-researcher = Agent('openai:gpt-5.2', output_type=str)
+parent = Agent('openai:gpt-5.2', name='parent_agent')
+researcher = Agent('openai:gpt-5.2', name='researcher_agent', output_type=str)
 
 
 @parent.tool
-async def research(ctx: RunContext[None], topic: str) -> str:
+async def research(ctx: RunContext, topic: str) -> str:
     result = await researcher.run(f'Research: {topic}', usage=ctx.usage)
     return result.output
 ```
+
+Delegating tools and output functions must be `async def` and use `await delegate.run(...)`; never call
+`run_sync()` or `run_stream_sync()` inside them. The parent may still use `run_sync()` at the application boundary.
 
 Good split:
 
@@ -26,35 +29,35 @@ Good split:
 
 ## Build Multi-Step Workflows with Graphs
 
-Use `pydantic_graph` when the workflow is a state machine rather than a single agent loop.
+Use `pydantic_graph` when the workflow is a state machine rather than a single agent loop. Compose graphs with `GraphBuilder` and typed step functions:
 
 ```python
-from dataclasses import dataclass
+from pydantic_graph import GraphBuilder, StepContext
 
-from pydantic_graph import BaseNode, End, Graph, GraphRunContext
-
-
-@dataclass
-class FirstNode(BaseNode[None, None, int]):
-    value: int
-
-    async def run(self, ctx: GraphRunContext) -> 'SecondNode | End[int]':
-        if self.value >= 5:
-            return End(self.value)
-        return SecondNode(self.value + 1)
+g = GraphBuilder(input_type=int, output_type=int)
 
 
-@dataclass
-class SecondNode(BaseNode):
-    value: int
-
-    async def run(self, ctx: GraphRunContext) -> FirstNode:
-        return FirstNode(self.value)
+@g.step
+async def increment(ctx: StepContext[None, None, int]) -> int:
+    return ctx.inputs + 1
 
 
-graph = Graph(nodes=[FirstNode, SecondNode])
-result = graph.run_sync(FirstNode(0))
+@g.step
+async def double(ctx: StepContext[None, None, int]) -> int:
+    return ctx.inputs * 2
+
+
+g.add(
+    g.edge_from(g.start_node).to(increment),
+    g.edge_from(increment).to(double),
+    g.edge_from(double).to(g.end_node),
+)
+
+graph = g.build()
+result = graph.run_sync(inputs=3)
 ```
+
+Use `await graph.run(inputs=...)` from async code.
 
 ## Call the Model Without Using an Agent
 
@@ -72,32 +75,42 @@ response = model_request_sync(
 
 Reach for this when there is no need for tools, retries, or agent loop state.
 
-## Expose Agents as HTTP Servers (A2A)
-
-Use `fasta2a.pydantic_ai.agent_to_a2a` when the agent should be exposed as an ASGI app that speaks the A2A protocol. Install with `pip install 'fasta2a[pydantic-ai]>=0.6.1'`.
-
-```python
-from fasta2a.pydantic_ai import agent_to_a2a
-
-from pydantic_ai import Agent
-
-agent = Agent('openai:gpt-5.2')
-app = agent_to_a2a(agent)
-```
-
-`Agent.to_a2a()` still works in 1.x but emits a deprecation warning and is removed in 2.0.
-
 ## Use Durable Execution
 
 Use the durable execution integrations when the run must survive crashes, retries, or long-lived workflows.
 
 Temporal entry points:
 
-- `TemporalAgent`
+- `Agent(..., capabilities=[TemporalDurability(...)])`
 - `PydanticAIWorkflow`
 - `PydanticAIPlugin`
+- `AgentPlugin`
 
-There are parallel integrations for DBOS and Prefect.
+`TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
+
+Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.
+
+Pass every executing toolset that needs durable wrapping to the agent constructor. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`; the `@agent.toolset` decorator registers after the engine's durable units were created. Toolsets that arrive later — via the decorator, `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution. Inside a workflow or flow, Temporal and Prefect reject runtime `MCPToolset` and `DynamicToolset` leaves, plus `FunctionToolset` leaves unless every async tool opts out of durable wrapping with `metadata={'temporal': False}` or `metadata={'prefect': False}` respectively; DBOS accepts a `FunctionToolset`, whose tools it runs inline either way, but rejects `MCPToolset` and `DynamicToolset`. A custom executing `AbstractToolset` leaf is not recognized by this guard and runs unwrapped, so do not add one at run time. The deprecated wrapper agents don't run this check — inside a workflow or flow they run the toolset list frozen at wrap time, so a toolset registered that late is silently left out. A toolset added at run time also cannot reuse a construction-time toolset's `id`.
+
+Temporal and DBOS register durable units before their workers start, so attach capabilities at agent construction time. Passing `run(capabilities=[...])` inside one of their workflows raises a `UserError` unless the capability is the observer-only `Instrumentation`; broader support for observer-only capabilities is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477), where users can share their use cases. Prefect creates tasks per call, so it has no such registration boundary and accepts a per-run capability that contributes no executing toolset; one that does is still rejected by the runtime-toolset guard.
+
+A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
+
+## Handle MCP Tool Errors
+
+Set `MCPToolset(tool_error_behavior=...)` according to the server error semantics:
+
+- `'retry'` asks the model to correct and retry the call. This is the default.
+- `'failed'` reports a completed failed result via `ToolFailed` without consuming retry budget.
+- `'error'` propagates the underlying exception to application code.
+
+Structured server error content is serialized as JSON for both `'retry'` and `'failed'`. Protocol and transport errors (as opposed to completed tool errors) stay retryable even under `'failed'`.
+
+## Render MCP Apps in a Frontend
+
+[MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview) are HTML pages a server attaches to tools. `MCPToolset` needs no setup: a call to a tool with `_meta.ui.resourceUri` keeps an `MCPAppToolResult` in `ToolReturnPart.metadata['mcp_app']` (resource URI, tool input, full result, toolset `id`), which the model never sees. The AG-UI adapter sends it as an `mcp-apps` activity, the Vercel AI adapter as a `data-mcp-apps` chunk. Read the page with `read_resource_for_app(uri)`, which returns the MCP result as is, keeping the MIME type and `_meta.ui` (CSP, permissions).
+
+Relay the page's requests with `call_tool_for_app(name, arguments)` (app-visible tools only, `isError` results returned, no `process_tool_call`) and `read_resource_for_app(uri)` (any resource); both return the MCP wire result to send back as is. Use one `MCPToolset` per server.
 
 ## Use Embeddings for RAG
 
@@ -109,16 +122,36 @@ from pydantic_ai import Embedder
 embedder = Embedder('openai:text-embedding-3-small')
 ```
 
-## Use LangChain or ACI.dev Tools
+## Generate Images
+
+Use `ImageGenerator(...)` when the application, rather than an agent, decides that an image should be created or edited.
+
+```python
+from pydantic_ai import ImageGenerator
+
+generator = ImageGenerator('openai:gpt-image-2')
+result = generator.generate_sync('A watercolor map of a floating city.')
+image_bytes = result.image.data
+```
+
+Use `await generator.generate(...)` from async code. `result.image` is the first generated image as a `BinaryImage`; use `result.images` when you asked for several or need per-image metadata such as `revised_prompt`.
+
+`ImageGenerationSettings` carries only the portable settings — `dimensions`, `aspect_ratio`, `extra_headers`, `extra_body`. Everything else, including image count, quality, output format, and background, is provider-prefixed on `OpenAIImageGenerationSettings`, `GoogleImageGenerationSettings`, or `XaiImageGenerationSettings`.
+
+Pass reference images through `images=[...]` to edit or transform them. A provider content block raises `ContentFilterError` instead of returning an empty result, so a rejected prompt can be retried explicitly.
+
+When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerationModel`; an `ImageGenerator` goes on `local`), which calls the direct image model as a tool when the conversational model has no native image generation.
+
+The image such a run generates is in its message history, not in `result.output`: a local fallback returns it from the `generate_image` tool call (`ToolReturnPart.files`), and the native tool puts it in that response's `ModelResponse.images`. `output_type=BinaryImage` requires the agent's model itself to support image output, and the output is then that model's own image, even beside `native=False`, not the fallback's.
+
+## Use LangChain Tools
 
 Third-party integrations to reach for:
 
 - `tool_from_langchain`
 - `LangChainToolset`
-- `tool_from_aci` (deprecated, removed in 2.0)
-- `ACIToolset` (deprecated, removed in 2.0)
 
-Use these when the user explicitly wants those ecosystems instead of native Pydantic AI tools. The ACI.dev wrappers are deprecated in 1.x and removed in 2.0; wrap ACI tools yourself with `Tool.from_schema` against `aci.ACI().functions.get_definition(...)`.
+Use these when the user explicitly wants the LangChain ecosystem instead of native Pydantic AI tools.
 
 ## Systematically Verify Agent Behavior with Evals
 

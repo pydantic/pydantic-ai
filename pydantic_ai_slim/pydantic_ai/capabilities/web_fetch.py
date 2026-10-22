@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai._utils import install_deprecated_kwarg_alias
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import WebFetchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
@@ -19,10 +16,9 @@ from .native_or_local import NativeOrLocalTool
 class WebFetch(NativeOrLocalTool[AgentDepsT]):
     """URL fetching capability.
 
-    Uses the model's native URL fetching when available, falling back to a local
-    function tool (markdownify-based fetch by default) when it isn't.
-
-    The local fallback requires the `web-fetch` optional group:
+    Uses the model's native URL fetching and raises `UserError` on models that
+    don't support it natively. Pass `local=True` to opt into a local fallback
+    (requires the `web-fetch` optional group):
 
     ```bash
     pip install "pydantic-ai-slim[web-fetch]"
@@ -44,6 +40,13 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     max_content_tokens: int | None
     """Maximum content length in tokens. Native-only; ignored by local tools."""
 
+    id: str | None = 'web_fetch'
+    """One-off: an agent searches, fetches or generates one way, so the id is fixed.
+
+    Declared here rather than only as an `__init__` default so the class states it where
+    `_declares_default_id` -- and a reader -- can see it.
+    """
+
     def __init__(
         self,
         *,
@@ -56,7 +59,13 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
         max_uses: int | None = None,
         enable_citations: bool | None = None,
         max_content_tokens: int | None = None,
+        id: str | None = 'web_fetch',
+        defer_loading: bool = False,
+        description: str | None = None,
     ) -> None:
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
         self.native = native
         self.local = local
         self.allowed_domains = allowed_domains
@@ -83,27 +92,6 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     def _native_unique_id(self) -> str:
         return WebFetchTool.kind
 
-    def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        try:
-            from pydantic_ai.common_tools.web_fetch import web_fetch_tool
-        except ImportError:
-            # No [web-fetch] extra → the auto-fallback path can't run, so there's no deprecated
-            # behavior to warn about. If the model also doesn't support the native tool, the
-            # user will hit a clear UserError at request time with `local=…` migration hints.
-            return None
-
-        warnings.warn(
-            'WebFetch will stop auto-selecting the markdownify-based fetch tool based on package '
-            'availability in v2. To keep this fallback, pass `local=True`. '
-            'To disable the fallback, pass `local=False`.',
-            PydanticAIDeprecationWarning,
-            stacklevel=5,
-        )
-        return web_fetch_tool(
-            allowed_domains=self.allowed_domains,
-            blocked_domains=self.blocked_domains,
-        )
-
     def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
         if name is True:
             try:
@@ -124,6 +112,3 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
 
     def _requires_native(self) -> bool:
         return self.max_uses is not None
-
-
-install_deprecated_kwarg_alias(WebFetch, old='builtin', new='native')

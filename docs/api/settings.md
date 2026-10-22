@@ -5,4 +5,8 @@
       inherited_members: true
       members:
         - ModelSettings
+        - ModelSettingName
+        - ToolChoice
         - ToolOrOutput
+        - ServiceTier
+        - CacheConfig

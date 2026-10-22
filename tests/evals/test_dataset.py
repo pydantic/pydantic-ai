@@ -1,8 +1,12 @@
 from __future__ import annotations as _annotations
 
+import asyncio
+import inspect
 import json
-import sys
+import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,9 +20,12 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
-    from pydantic_evals import Case, Dataset, PydanticEvalsDeprecationWarning
+    from rich.table import Table
+
+    from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
+        EvaluationReason,
         EvaluationResult,
         Evaluator,
         EvaluatorFailure,
@@ -59,7 +66,7 @@ with try_import() as tenacity_import_successful:
     from pydantic_ai.retries import RetryConfig
 
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
@@ -69,12 +76,6 @@ needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logf
 _any_trace_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_span_id: str | None = IsOneOf(IsStr(), None)  # type: ignore[assignment]
 _any_duration: float = IsNumber()  # type: ignore[assignment]
-
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
 if logfire_import_successful():
@@ -91,6 +92,37 @@ class TaskInput(BaseModel):
 class TaskOutput(BaseModel):
     answer: str
     confidence: float = 1.0
+
+
+def test_evaluate_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must replace a closed thread-current event loop.
+
+    This uses a local task rather than VCR because the failure occurs while scheduling the
+    evaluation coroutine, before any model request could be made.
+    """
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    dataset.evaluate_sync(lambda value: value, progress=False)
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_evaluate_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`evaluate_sync` must create and install an event loop when the thread has none."""
+    dataset = Dataset(name='test', cases=[Case(name='case', inputs='input')])
+    report = dataset.evaluate_sync(lambda value: value, progress=False)
+    replacement_loop = asyncio.get_event_loop()
+
+    assert report.cases[0].output == 'input'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 class TaskMetadata(BaseModel):
@@ -139,60 +171,37 @@ def simple_evaluator() -> type[Evaluator[TaskInput, TaskOutput, TaskMetadata]]:
     return SimpleEvaluator
 
 
-def test_dataset_name_deprecation_warning(
+def test_dataset_name_required(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ):
-    """Test that omitting the name parameter emits a deprecation warning."""
-    with pytest.warns(PydanticEvalsDeprecationWarning, match='Omitting the `name` parameter is deprecated'):
-        Dataset(cases=example_cases)
-
-
-async def test_evaluate_positional_args_deprecation_warning(
-    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
-):
-    """Passing positional args to `Dataset.evaluate` warns and still binds correctly ahead of v2 kw-only."""
-
-    async def task(inputs: TaskInput) -> TaskOutput:
-        return TaskOutput(answer=inputs.query)
-
-    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
-        report = await example_dataset.evaluate(task, 'custom_experiment_name')
-    assert report.name == 'custom_experiment_name'
-
-
-def test_evaluate_sync_positional_args_deprecation_warning(
-    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
-):
-    """`Dataset.evaluate_sync` mirrors the same positional deprecation."""
-
-    def task(inputs: TaskInput) -> TaskOutput:
-        return TaskOutput(answer=inputs.query)
-
-    with pytest.warns(PydanticEvalsDeprecationWarning, match='positionally to `Dataset.evaluate`'):
-        report = example_dataset.evaluate_sync(task, 'custom_experiment_name')
-    assert report.name == 'custom_experiment_name'
-
-
-async def test_evaluate_too_many_positional_args_raises(
-    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
-):
-    """More positionals than legacy slots should still be a TypeError."""
-
-    async def task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
-        raise AssertionError('task should not be called when evaluate() rejects bad positional args')
-
-    with pytest.raises(TypeError, match='takes at most'):
-        await example_dataset.evaluate(task, 'n', None, True, None, None, 'extra')
+    """Test that omitting the name parameter raises a validation error."""
+    with pytest.raises(Exception, match='name'):
+        Dataset(cases=example_cases)  # pyright: ignore[reportCallIssue]
 
 
 def test_from_file_uses_filename_as_default_name(tmp_path: Path):
-    """Test that from_file uses filename stem as name and does not emit a deprecation warning."""
+    """Test that from_file uses filename stem as name."""
     yaml_content = 'cases:\n- name: test\n  inputs:\n    query: hello\n'
     yaml_path = tmp_path / 'my_dataset.yaml'
-    yaml_path.write_text(yaml_content)
+    yaml_path.write_text(yaml_content, encoding='utf-8')
 
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(yaml_path)
     assert dataset.name == 'my_dataset'
+
+
+def test_from_dict_without_name_raises():
+    """If neither the serialized data nor `default_name` supplies a name, `from_dict` errors."""
+    data = {'cases': [{'name': 'test', 'inputs': {'query': 'hi'}}]}
+    with pytest.raises(ValueError, match='Dataset name is required'):
+        Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(data)
+
+
+def test_from_dict_without_generic_params_warns():
+    """Calling `from_dict` on the bare `Dataset` class (no generic params) warns and falls back to `Any`."""
+    data = {'name': 'demo', 'cases': [{'name': 'c1', 'inputs': {'q': 'hi'}}]}
+    with pytest.warns(UserWarning, match='Could not determine the generic parameters'):
+        dataset = Dataset.from_dict(data)
+    assert dataset.name == 'demo'
 
 
 async def test_dataset_init(
@@ -384,6 +393,51 @@ async def test_evaluate_sync(
     )
 
 
+async def test_evaluate_async_callable_instance(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """An async callable instance is awaited; this local task dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    class AsyncCallable:
+        async def __call__(self, inputs: TaskInput) -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+    report = await example_dataset.evaluate(AsyncCallable(), progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert inspect.isawaitable(report.cases[0].output) is False
+    assert len(report.failures) == 0
+
+
+async def test_evaluate_sync_callable_returning_awaitable(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """A sync task's awaitable result is awaited; this local dispatch has no provider boundary to record."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    def task(inputs: TaskInput) -> Awaitable[TaskOutput]:
+        async def result() -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+        return result()
+
+    report = await example_dataset.evaluate(task, progress=False)
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert len(report.failures) == 0
+
+
 @pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
 async def test_evaluate_with_retried_task_and_evaluator(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
@@ -522,6 +576,17 @@ async def test_evaluate_with_concurrency(
             'trace_id': _any_trace_id,
         }
     )
+
+
+@pytest.mark.parametrize('max_concurrency', [0, -1])
+async def test_evaluate_with_invalid_max_concurrency(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], max_concurrency: int
+):
+    async def mock_task(inputs: TaskInput) -> TaskOutput:  # pragma: no cover
+        return TaskOutput(answer=inputs.query)
+
+    with pytest.raises(ValueError, match=f'max_concurrency must be >= 1, got {max_concurrency}'):
+        await example_dataset.evaluate(mock_task, max_concurrency=max_concurrency)
 
 
 async def test_evaluate_with_failing_task(
@@ -834,6 +899,7 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
             ],
             span_id=_any_span_id,
             trace_id=_any_trace_id,
+            dataset_name='example',
         )
     )
 
@@ -846,7 +912,7 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
     async def my_task(inputs: TaskInput) -> TaskOutput:
         with logfire.span(
             'my chat span',
-            **{  # type: ignore
+            **{  # pyright: ignore[reportArgumentType]
                 'gen_ai.operation.name': 'chat',
                 'gen_ai.request.model': 'gpt-5-mini',
                 'gen_ai.usage.input_tokens': 1,
@@ -969,6 +1035,19 @@ async def test_serialization_to_json(example_dataset: Dataset[TaskInput, TaskOut
     assert (tmp_path / schema).exists()
 
 
+def test_serialization_to_json_with_absolute_schema_path(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], tmp_path: Path
+):
+    json_path = tmp_path / 'test_cases.json'
+    schema_path = tmp_path / 'test_cases_schema.json'
+
+    example_dataset.to_file(json_path, schema_path=schema_path, fmt='json')
+
+    raw = json.loads(json_path.read_text(encoding='utf-8'))
+    assert raw['$schema'] == 'test_cases_schema.json'
+    assert schema_path.exists()
+
+
 def test_serializing_parts_with_discriminators(tmp_path: Path):
     class Foo(BaseModel):
         foo: str
@@ -1077,10 +1156,10 @@ async def test_from_text_failure():
                 '2 error(s) loading evaluators from registry',
                 [
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                     ValueError(
-                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
+                        "Evaluator 'NotAnEvaluator' is not in the provided `custom_evaluator_types`. Valid choices: ['Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include its type in the `custom_evaluator_types` argument."
                     ),
                 ],
             )
@@ -1401,6 +1480,108 @@ async def test_dataset_evaluate_with_invalid_evaluator_result(
     assert report.failures == snapshot([])
 
 
+@pytest.mark.parametrize(
+    'output_factory',
+    [
+        pytest.param(lambda: math.nan, id='nan-scalar'),
+        pytest.param(lambda: math.inf, id='inf-scalar'),
+        pytest.param(lambda: -math.inf, id='negative-inf-scalar'),
+        pytest.param(lambda: {'score': math.nan}, id='nan-mapping'),
+        pytest.param(lambda: EvaluationReason(value=math.nan, reason='not finite'), id='nan-reason'),
+        pytest.param(lambda: {'score': EvaluationReason(value=math.inf, reason='not finite')}, id='inf-mapped-reason'),
+    ],
+)
+async def test_dataset_evaluate_with_non_finite_evaluator_result(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], output_factory: Callable[[], Any]
+):
+    """Non-finite evaluator scores should be reported as evaluator failures."""
+    output = output_factory()
+
+    class NonFiniteEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> Any:
+            return output
+
+    example_dataset.add_evaluator(NonFiniteEvaluator())
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=inputs.query.upper())
+
+    report = await example_dataset.evaluate(task)
+
+    assert report.failures == []
+    assert len(report.cases) == 2
+    for case in report.cases:
+        assert case.scores == {}
+        assert len(case.evaluator_failures) == 1
+        failure = case.evaluator_failures[0]
+        assert failure.name == 'NonFiniteEvaluator'
+        assert failure.error_type == 'ValueError'
+        assert 'returned a value of an invalid type' in failure.error_message
+        assert repr(output) in failure.error_message
+
+
+async def test_nonfinite_metric_renders_in_report():
+    """Non-finite metric values render in the report, and against a finite baseline show `old → new` with no diff text.
+
+    A `nan` change has no direction, so it gets neither the increase nor the decrease style.
+    """
+    dataset = Dataset[str, str, None](
+        name='non_finite',
+        cases=[Case(name=name, inputs=name) for name in ('inf', '-inf', 'nan')],
+    )
+
+    async def baseline_task(inputs: str) -> str:
+        increment_eval_metric('ratio', 1.5)
+        return inputs
+
+    async def task(inputs: str) -> str:
+        increment_eval_metric('ratio', float(inputs))
+        return inputs
+
+    baseline = await dataset.evaluate(baseline_task)
+    report = await dataset.evaluate(task)
+
+    assert render_table(report.console_table(include_durations=False)) == snapshot("""\
+ Evaluation Summary: task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics     ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ inf      │ ratio: inf  │
+├──────────┼─────────────┤
+│ -inf     │ ratio: -inf │
+├──────────┼─────────────┤
+│ nan      │ ratio: nan  │
+├──────────┼─────────────┤
+│ Averages │ ratio: nan  │
+└──────────┴─────────────┘
+""")
+    diff_table = report.console_table(baseline=baseline, include_durations=False)
+    assert isinstance(diff_table, Table)
+    assert render_table(diff_table) == snapshot("""\
+Evaluation Diff: baseline_task →
+              task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics            ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ -inf     │ ratio: 1.50 → -inf │
+├──────────┼────────────────────┤
+│ inf      │ ratio: 1.50 → inf  │
+├──────────┼────────────────────┤
+│ nan      │ ratio: 1.50 → nan  │
+├──────────┼────────────────────┤
+│ Averages │ ratio: 1.50 → nan  │
+└──────────┴────────────────────┘
+""")
+    assert list(diff_table.columns[1].cells) == snapshot(
+        [
+            '[bold]ratio[/]: [green]1.50 → -inf[/]',
+            '[bold]ratio[/]: [red]1.50 → inf[/]',
+            'ratio: 1.50 → nan',
+            'ratio: 1.50 → nan',
+        ]
+    )
+
+
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
     """Test evaluating a dataset with a custom task name."""
 
@@ -1420,6 +1601,38 @@ async def test_dataset_evaluate_with_sync_task(example_dataset: Dataset[TaskInpu
     report = await example_dataset.evaluate(sync_task)
     assert report.name == 'sync_task'
     assert len(report.cases) == 2
+
+
+async def test_evaluate_wrapped_partial_task_name():
+    """A task wrapped with `@wraps` around a partial infers the underlying function's name."""
+
+    def add(value: int, offset: int = 0) -> int:
+        return value + offset
+
+    @wraps(partial(add, offset=2))
+    async def wrapped_task(value: int) -> int:
+        return partial(add, offset=2)(value)
+
+    dataset = Dataset(name='example', cases=[Case(name='case', inputs=3)])
+    report = await dataset.evaluate(wrapped_task, progress=False)
+    assert report.cases[0].output == 5
+    assert report.name == 'add'
+
+
+def test_evaluate_sync_wrapped_partial_task_name():
+    """`evaluate_sync` infers the same underlying name for a `@wraps`-wrapped partial task."""
+
+    def add(value: int, offset: int = 0) -> int:
+        return value + offset
+
+    @wraps(partial(add, offset=2))
+    def wrapped_task(value: int) -> int:
+        return partial(add, offset=2)(value)
+
+    dataset = Dataset(name='example', cases=[Case(name='case', inputs=3)])
+    report = dataset.evaluate_sync(wrapped_task, progress=False)
+    assert report.cases[0].output == 5
+    assert report.name == 'add'
 
 
 async def test_dataset_evaluate_with_no_expected_output(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -1489,7 +1702,6 @@ async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Datase
     assert len(report.cases[0].scores) == 2
 
 
-@pytest.mark.anyio
 async def test_unnamed_cases():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
         name='unnamed_cases',
@@ -1517,7 +1729,6 @@ async def test_unnamed_cases():
     assert [case.name for case in result.cases] == ['Case 1', 'My Case', 'Case 3']
 
 
-@pytest.mark.anyio
 async def test_duplicate_case_names():
     with pytest.raises(ValueError) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata](
@@ -1568,7 +1779,7 @@ def test_add_invalid_evaluator():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](name='invalid_evaluator', cases=[])
 
     with pytest.raises(ValueError) as exc_info:
-        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # type: ignore
+        dataset.model_json_schema_with_evaluators((NotAnEvaluator,))  # pyright: ignore[reportArgumentType]
     assert str(exc_info.value).startswith('All custom evaluator classes must be subclasses of Evaluator')
 
     with pytest.raises(ValueError) as exc_info:
@@ -2048,7 +2259,7 @@ def test_invalid_report_evaluator_type():
     with pytest.raises(ValueError, match='must be subclasses of ReportEvaluator'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_dict(
             {'cases': []},
-            custom_report_evaluator_types=(NotAReportEvaluator,),  # type: ignore
+            custom_report_evaluator_types=(NotAReportEvaluator,),  # pyright: ignore[reportArgumentType]
         )
 
     class NotADataclass(ReportEvaluator):
@@ -2071,7 +2282,7 @@ cases:
 report_evaluators:
   - NonExistentEvaluator
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
@@ -2086,7 +2297,7 @@ report_evaluators:
   - ConfusionMatrixEvaluator:
       nonexistent_param: true
 """
-    with pytest.raises(ExceptionGroup, match='error.*loading evaluators'):
+    with pytest.raises(ExceptionGroup, match=r'error.*loading evaluators'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(yaml_text)
 
 
@@ -2326,3 +2537,19 @@ async def test_lifecycle_setup_failure_produces_case_failure_and_calls_teardown(
     assert len(report.failures) == 1
     assert 'setup failed' in report.failures[0].error_message
     assert teardown_called
+
+
+async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test that the lifecycle can be passed as a partial to provide additional configuration."""
+    from pydantic_evals.lifecycle import CaseLifecycle
+
+    class ConfigurableLifecycle(CaseLifecycle[TaskInput, TaskOutput, TaskMetadata]):
+        def __init__(self, case: Case[TaskInput, TaskOutput, TaskMetadata], my_config: int) -> None:
+            super().__init__(case)
+            self.my_config = my_config
+
+    async def task(inputs: TaskInput) -> TaskOutput:
+        raise NotImplementedError()
+
+    lifecycle = partial(ConfigurableLifecycle, my_config=123)
+    await example_dataset.evaluate(task, lifecycle=lifecycle)

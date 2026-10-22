@@ -35,20 +35,18 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '2866'
+      - '2934'
       content-type:
       - application/json
-      openai-organization:
-      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '2221'
-      openai-project:
-      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      - '1594'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -59,26 +57,28 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1772656542
-      created_at: 1772656540
+      completed_at: 1781030193
+      created_at: 1781030192
       error: null
       frequency_penalty: 0.0
-      id: resp_086090ee9d1835df0069a8979c55d0819c8b250faf0d7c366a
+      id: resp_098687dd19c245c3006a285d301a1481a3a592a3ff7edb7548
       incomplete_details: null
       instructions: null
       max_output_tokens: null
       max_tool_calls: null
       metadata: {}
       model: gpt-5-mini-2025-08-07
+      moderation: null
       object: response
       output:
-      - encrypted_content: gAAAAABpqJeeIxy4BRZlK4-GIdryPb5Gh8eJiOswTSg53itfFtZGhslJ-wlqsrooBeoxORLm2K3nT2yYwITyO70oSzYZC66t6D9xxAvKg9SFWgb3J4HnpdiTjeWJ6GvhXTz6dOfHaL8YrXnGPRhqki0FQQb4WhDY1odXU2ODlkXqTMLrAxrL7CMFjR-8ES6jwMU526XiZ7UJXZrSciKfxuk_0Ykjvfd9SRglHjigxnAufPQdTs8jZFNfDX10yBTOX6KxKa9wWSoyDwgkNVNEE8vRo4u6p5bufIki4eXT8eWkukoZBCyd-lzuvOiO0WSt2wvxDw3MDDz_gTyRoReC_LQGudlWowTRjOXb9bEcfF8zRbjFqUl5ZYX8vHm6YvOmI8XhbEN9EU9cNfYAe85e5GWIwbG-C88WLsuellXDUTMlB_ovBvAuVMRfL3GGrEb6sEqyyTrxi5r88W3NS4uKFY7eehlXy-GV-cVwnaUrP8Oh1TiEYBk2HFEjwuFwQpA6rvrxYcLcZ9_Z6jzM8S7nC_k5bIbIgk5pNtns8V18-vNGm8wX9yUhlATrzs1atvzM2DQxdT5rwwers713XFM887ScIAXqF2QjGQRkaf86HQpNVsmaW9iLzdhcY7KnomwSDOTHMNJ-jrloGHGHj3KkzJLMRFIu4x4RuT9sCi6auhXf1aOi6GBKzc1-C1rcgvtb9y-_D5Uq0dK4398mWF3oT1oBXKKSKkFo_gv65w53oL78_xq3iOumiJ8_5tPGpSSA6eUUWBTJqytC17i9yVOpOoodMXWHpEAC0PLMAKlcKx4nII2XXXffZOGV4gCkSwpv0FRlZkImkCSbIfklyhmc5rr3PTETqBLXi05QowovTOz7KQZjtPEJX-CpGVYzGYZ57ROynXmnXwFoQQIMN4yyYWckNGb_ZOReMFbQ_FCQPoeNtBRsYM0x7TssIbzJXoEJcbcXLoAL9wSf1ycaFDDD-qMahHPGOSrfzhqfuwDIflny4TZ9_Z-kKNqbWfxvPN9IViwtzaaCkqe7VXLyluSGS-0zgVp08ED0vyz3XSUVZ7AL96aENPXeT19H2Drx2B_2vLF5ToT98knEq3EvCj9-IHhaE8s9FpDkSMx2OsB-IBa-ArBBoAUWn2YYA1oU8fa9ZzTQB_G482oN8efWKih36TuOqOHi96QV-UPpHQmKuo8IAFtYoZSMAsSn7T8B11jxfcLhkN-xmhQ0PXqYwtvtrvHRXHHwWs2aSRq1AEIrCD_IxxGEvVjaqMg2LL0x-CvIUH7k3ZF0S4K7zsUUIPFJxo8kXGay1wYxkIOm9hE-He7Fv3l5nO7dStI=
-        id: rs_086090ee9d1835df0069a8979c8e5c819cb76bc2694aa36c11
+      - content: []
+        encrypted_content: gAAAAABqKF0xrh9vRkJ0v-LgVEzHSxsHlRHBT0t6BkdFlTtzjJdGRvug_9TMmu9hLKaRIeu-9pM4NPOgJH8cNAPZCliyvCGPdgYTmB6UfZq6jXxLjKr189ZRYKu5V_zlsx32kM0HVHw3kgE3UkFQOq1BKHXKelF74Olx1IWfUBF5VpXyCXYj_Pfyl9ZEO6JgJq1Wodm93nCSFHPVvPRXj9vuid19D-RGRzOuEpgUZhbXNwn7NBP23lYz3cDYNEM35oFvGkbjktG4l8WfiDsHehwo7q5v3r3BWT0K_BIc09H2yVoeqPTV0y2d7fPI-JapbfPAFXPwDwKVCYhENKtVJw9Uu2BQomVLspnloXcDe8h2QL0nNLhvOekAR7jKPhk40g79LjZFfIAWjFdHNhyLzyVpbrhTZvxGcVRbBnDLGo042qtbEM6u4ifr4MIFqP5x_0LTg7EMDElOH2_Idjgti78-8gfmhJm4TnUX0quDxF2e1x1r8bJD_I0yh3h42xyGzeduBXGApxRA6U333fZhpsHSZ4KH9tuWjnJ6K2hMK9U3_T68UtxgAmSW0GxIvjgNnbOURMJSOXwGwiprSuNCkxze3Q2_8sdpOIMnPR6A8F79I3lE_hsTDJ-e0FhRAsnHPBEHoh1d6KenvVnCjMY2GgMFE4ZTKx6sSUdqGjsgw7E-a6jjF0cQdp4X3lz2Vh5bllEMpvRgZlPElTwQEWcnyCKCeLOVIVqAJQzRgV6VS9GautbfgYCBrslIpQBxmv1L1mg24uWY0gay-KI5YtFocDtT6nn4v5vnJ4Un_YM0ETuIjux02yeas1dbYPR1crvdQXFbW3xHlNzhe1lhBlFRC1C8wHaoVW2Wl48nA0ODxPr6A08oW0HFQ5IKuEKd_98IYk6Dt6lD5-KWmE5nzdmwIH6Iu-LyO77fjwH-yYyssoGXCJ6UL0dCxlEgJWo66Gp7ZEvB3-P0L4T0nrV5dpHS6r7JSS28RkC9-LD4JMDeL02gis110Edx7QFtLIsB8CacCILcMvLrROladNmMK5udafNkB8T93oZieCXe7qvC8Pkn4E4NgW0DQrQfnuvYv4iyrc0pvW0_7nv4UW7dgrsIqO6jRmyjprBH8U-ya19kDiCkbFhQa4i1vbXeS1sWLIXq2Q01q_VCrHhKvasy9cSM_5g9PEcWvDDNjwJ_ttvex0VEWcFJNpVUGHRGDzuX1xfOfMHvHnqP1nh7rr9g-ipFidRRi5czdsJ5rC_xsom3AJD987aOY1WKvj0dx7jpx-LHlCFJGx4LMQdD54hAW9W1thywvYeUotZBrspJNhetSBnThhBHaJr8G98=
+        id: rs_098687dd19c245c3006a285d30ad4881a38205977f3f9f521a
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_N2quw33vc8m9ZIwGWU5I6tNU
-        id: fc_086090ee9d1835df0069a8979e3590819c937c785a006ae305
+        call_id: call_6EywwF6Do75rPN366IhFNt7A
+        id: fc_098687dd19c245c3006a285d31539c81a3a20e2cb7abc08989
         name: get_file
         status: completed
         type: function_call
@@ -86,8 +86,9 @@ interactions:
       presence_penalty: 0.0
       previous_response_id: null
       prompt_cache_key: null
-      prompt_cache_retention: null
+      prompt_cache_retention: in_memory
       reasoning:
+        context: current_turn
         effort: medium
         summary: null
       safety_identifier: null
@@ -116,10 +117,10 @@ interactions:
         input_tokens: 47
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 89
+        output_tokens: 74
         output_tokens_details:
-          reasoning_tokens: 64
-        total_tokens: 136
+          reasoning_tokens: 0
+        total_tokens: 121
       user: null
     status:
       code: 200
@@ -133,11 +134,9 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2246'
+      - '2265'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=CJGkmZuosBIARi31RbzwOnwwiEYh3IlnyeTkiybqYRM-1772656540.2748787-1.0.1.1-FxI4Y3xFPb81tt8BXDaIuR8cd7U4e6MM57h46jRdTSskHJmH8wTS9vn5.cjourDV7k7j4rglEK5oHYSCFs9gllzvGdHJCuen3I6QYYjPuLlo7ZpYmATFlubAcqBxyySv
       host:
       - api.openai.com
     method: POST
@@ -147,21 +146,22 @@ interactions:
       input:
       - content: Use the get_file tool now to retrieve a image file, then describe what you received.
         role: user
-      - encrypted_content: gAAAAABpqJeeIxy4BRZlK4-GIdryPb5Gh8eJiOswTSg53itfFtZGhslJ-wlqsrooBeoxORLm2K3nT2yYwITyO70oSzYZC66t6D9xxAvKg9SFWgb3J4HnpdiTjeWJ6GvhXTz6dOfHaL8YrXnGPRhqki0FQQb4WhDY1odXU2ODlkXqTMLrAxrL7CMFjR-8ES6jwMU526XiZ7UJXZrSciKfxuk_0Ykjvfd9SRglHjigxnAufPQdTs8jZFNfDX10yBTOX6KxKa9wWSoyDwgkNVNEE8vRo4u6p5bufIki4eXT8eWkukoZBCyd-lzuvOiO0WSt2wvxDw3MDDz_gTyRoReC_LQGudlWowTRjOXb9bEcfF8zRbjFqUl5ZYX8vHm6YvOmI8XhbEN9EU9cNfYAe85e5GWIwbG-C88WLsuellXDUTMlB_ovBvAuVMRfL3GGrEb6sEqyyTrxi5r88W3NS4uKFY7eehlXy-GV-cVwnaUrP8Oh1TiEYBk2HFEjwuFwQpA6rvrxYcLcZ9_Z6jzM8S7nC_k5bIbIgk5pNtns8V18-vNGm8wX9yUhlATrzs1atvzM2DQxdT5rwwers713XFM887ScIAXqF2QjGQRkaf86HQpNVsmaW9iLzdhcY7KnomwSDOTHMNJ-jrloGHGHj3KkzJLMRFIu4x4RuT9sCi6auhXf1aOi6GBKzc1-C1rcgvtb9y-_D5Uq0dK4398mWF3oT1oBXKKSKkFo_gv65w53oL78_xq3iOumiJ8_5tPGpSSA6eUUWBTJqytC17i9yVOpOoodMXWHpEAC0PLMAKlcKx4nII2XXXffZOGV4gCkSwpv0FRlZkImkCSbIfklyhmc5rr3PTETqBLXi05QowovTOz7KQZjtPEJX-CpGVYzGYZ57ROynXmnXwFoQQIMN4yyYWckNGb_ZOReMFbQ_FCQPoeNtBRsYM0x7TssIbzJXoEJcbcXLoAL9wSf1ycaFDDD-qMahHPGOSrfzhqfuwDIflny4TZ9_Z-kKNqbWfxvPN9IViwtzaaCkqe7VXLyluSGS-0zgVp08ED0vyz3XSUVZ7AL96aENPXeT19H2Drx2B_2vLF5ToT98knEq3EvCj9-IHhaE8s9FpDkSMx2OsB-IBa-ArBBoAUWn2YYA1oU8fa9ZzTQB_G482oN8efWKih36TuOqOHi96QV-UPpHQmKuo8IAFtYoZSMAsSn7T8B11jxfcLhkN-xmhQ0PXqYwtvtrvHRXHHwWs2aSRq1AEIrCD_IxxGEvVjaqMg2LL0x-CvIUH7k3ZF0S4K7zsUUIPFJxo8kXGay1wYxkIOm9hE-He7Fv3l5nO7dStI=
-        id: rs_086090ee9d1835df0069a8979c8e5c819cb76bc2694aa36c11
+      - encrypted_content: gAAAAABqKF0xrh9vRkJ0v-LgVEzHSxsHlRHBT0t6BkdFlTtzjJdGRvug_9TMmu9hLKaRIeu-9pM4NPOgJH8cNAPZCliyvCGPdgYTmB6UfZq6jXxLjKr189ZRYKu5V_zlsx32kM0HVHw3kgE3UkFQOq1BKHXKelF74Olx1IWfUBF5VpXyCXYj_Pfyl9ZEO6JgJq1Wodm93nCSFHPVvPRXj9vuid19D-RGRzOuEpgUZhbXNwn7NBP23lYz3cDYNEM35oFvGkbjktG4l8WfiDsHehwo7q5v3r3BWT0K_BIc09H2yVoeqPTV0y2d7fPI-JapbfPAFXPwDwKVCYhENKtVJw9Uu2BQomVLspnloXcDe8h2QL0nNLhvOekAR7jKPhk40g79LjZFfIAWjFdHNhyLzyVpbrhTZvxGcVRbBnDLGo042qtbEM6u4ifr4MIFqP5x_0LTg7EMDElOH2_Idjgti78-8gfmhJm4TnUX0quDxF2e1x1r8bJD_I0yh3h42xyGzeduBXGApxRA6U333fZhpsHSZ4KH9tuWjnJ6K2hMK9U3_T68UtxgAmSW0GxIvjgNnbOURMJSOXwGwiprSuNCkxze3Q2_8sdpOIMnPR6A8F79I3lE_hsTDJ-e0FhRAsnHPBEHoh1d6KenvVnCjMY2GgMFE4ZTKx6sSUdqGjsgw7E-a6jjF0cQdp4X3lz2Vh5bllEMpvRgZlPElTwQEWcnyCKCeLOVIVqAJQzRgV6VS9GautbfgYCBrslIpQBxmv1L1mg24uWY0gay-KI5YtFocDtT6nn4v5vnJ4Un_YM0ETuIjux02yeas1dbYPR1crvdQXFbW3xHlNzhe1lhBlFRC1C8wHaoVW2Wl48nA0ODxPr6A08oW0HFQ5IKuEKd_98IYk6Dt6lD5-KWmE5nzdmwIH6Iu-LyO77fjwH-yYyssoGXCJ6UL0dCxlEgJWo66Gp7ZEvB3-P0L4T0nrV5dpHS6r7JSS28RkC9-LD4JMDeL02gis110Edx7QFtLIsB8CacCILcMvLrROladNmMK5udafNkB8T93oZieCXe7qvC8Pkn4E4NgW0DQrQfnuvYv4iyrc0pvW0_7nv4UW7dgrsIqO6jRmyjprBH8U-ya19kDiCkbFhQa4i1vbXeS1sWLIXq2Q01q_VCrHhKvasy9cSM_5g9PEcWvDDNjwJ_ttvex0VEWcFJNpVUGHRGDzuX1xfOfMHvHnqP1nh7rr9g-ipFidRRi5czdsJ5rC_xsom3AJD987aOY1WKvj0dx7jpx-LHlCFJGx4LMQdD54hAW9W1thywvYeUotZBrspJNhetSBnThhBHaJr8G98=
+        id: rs_098687dd19c245c3006a285d30ad4881a38205977f3f9f521a
         summary: []
         type: reasoning
       - arguments: '{}'
-        call_id: call_N2quw33vc8m9ZIwGWU5I6tNU
-        id: fc_086090ee9d1835df0069a8979e3590819c937c785a006ae305
+        call_id: call_6EywwF6Do75rPN366IhFNt7A
+        id: fc_098687dd19c245c3006a285d31539c81a3a20e2cb7abc08989
         name: get_file
         type: function_call
-      - call_id: call_N2quw33vc8m9ZIwGWU5I6tNU
+      - call_id: call_6EywwF6Do75rPN366IhFNt7A
         output: File attached
         type: function_call_output
       - content:
-        - file_id: file-BVTjj4CLd1Z7cgppk5sL45
-          type: input_file
+        - detail: auto
+          file_id: file-BVTjj4CLd1Z7cgppk5sL45
+          type: input_image
         role: user
       model: gpt-5-mini
       stream: false
@@ -178,35 +178,106 @@ interactions:
     uri: https://api.openai.com/v1/responses
   response:
     headers:
+      access-control-expose-headers:
+      - CF-Ray
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-length:
-      - '637'
+      - '4923'
       content-type:
       - application/json
-      openai-organization:
-      - user-grnwlxd1653lxdzp921aoihz
       openai-processing-ms:
-      - '314'
-      openai-project:
-      - proj_FYsIItHHgnSPdHBVMzhNBWGa
+      - '5881'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
     parsed_body:
-      error:
-        code: null
-        message: 'Invalid input: Expected context stuffing file type to be a supported format: .art, .bat, .brf, .c, .cls,
-          .css, .csv, .diff, .doc, .docx, .dot, .eml, .es, .h, .hs, .htm, .html, .hwp, .hwpx, .ics, .ifb, .java, .js, .json,
-          .keynote, .ksh, .ltx, .mail, .markdown, .md, .mht, .mhtml, .mjs, .nws, .odt, .pages, .patch, .pdf, .pl, .pm, .pot,
-          .ppa, .pps, .ppt, .pptx, .pwz, .py, .rst, .rtf, .scala, .sh, .shtml, .srt, .sty, .svg, .svgz, .tex, .text, .txt,
-          .vcf, .vtt, .wiz, .xla, .xlb, .xlc, .xlm, .xls, .xlsx, .xlt, .xlw, .xml, .yaml, .yml but got .jpg.'
-        param: input
-        type: invalid_request_error
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1781030199
+      created_at: 1781030195
+      error: null
+      frequency_penalty: 0.0
+      id: resp_098687dd19c245c3006a285d323fdc81a3afc89e320a1a7790
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-mini-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqKF04Wgtfv8B0Vtnl7yhZrLeCVQ8xeHzLDeENZ1wujEPKegwxWP2FE4rKL7SBlxc4iQ8KS24YQhWb4jr5F-roOjV-OPSX0ahgH7RNGxBdkBrzeFHIBY7I2pMwabcHQImrlAoB3zWbkj-82FHRsNQP8a_2uRpsyEz-qIkTitMwYKCO1ZBIXS1aKa18inmxL0F6SkvKD76Uy27wU74KEUb6cdocOaZmN-sQZuv-1f5QebYiobf7FJA-Y2zXu0bpi3ylekVcmu7FA5ELncGSogE9abi4h7f1ZbxaTldmtxZ1ekjEt4lGxOO5zlMrp6lpyHfYVK5_jA3FI4LP3e0_tQe3FJaNBLrQV7Fko1kCFyiHrl7uon-GzcPlkPSFRPSh4_BXdEIrIsnsH7bHFdroneglBNaHcHtL_cWYmvG545-PA-YvY1QWtsv0vdeqNaqpl0wpEEkTFayoK-SHjlOxepxv3meXVP6gKhZiCgmsIiUAPSJuqiSGMVaJC84VFPZzrgUKH8IYESBRTj_7vnloGLdMeD4iZ9mqjg0VM0q1zn7JEfXOzBN62uaduwQBoSE-5UV1Lh0iXFw7NOImvgmKIqT-eV-0fJFADBa2sGFEddUih0GF6R-vB187CinxGWj3J15V9-8ic3MmW8whj8R4T5bpppbv0sQganqfk1t-DDVK0U8MtuLA0ZMHpE03l9675eqrz48B5N1a6qOKpZ_ebGtBSxnOS-hodHNGBnMVSCAjQBH4yke9fdBT8xo3AlA-b9PvMJ_wzV74EOTcMyjKNAucNowT53Y1T5a03FOLC3QshDgKZ7BdtiHaMY2bbSqpyuR8UiEniar5tFYOS1rgTM-8cRL-qO1az-JsisPA_RgLu9ZedMHn5DNfQfT-9uYXJ8R2GDNN7KUWhwgP-u3Ysk8KkPQ9kO4EFfIBLrw8LOoh5ERRQ69_-D42U6PKSKYVdN0acixbpC7jpLRRH5kIkCi2AMwC-jQyM2FMhi9W0Gbme9b0GiZDrp7aGq7WqW7QBIUpeGjW7aVKh59YXI0PbJVwU_-XFTF30K3WWFsx3ETTZeVQqYRv5yOKZLH0mFEKTvLCnTkjsgySEHZBe1DDxU8pnZ8levn-7vX5362OzScDpJW2-CXiOwSrs83IAEtJRDrqJyP5FqHHTIvXyUBku_tAYXCxNsC1PbFj8h3dq0dNASq9GA8w4-SYSQrSA699l6H5LoEVguLtxQMPB1YqnOqwqeyj0Im-T1ELcS9EidBi4TRDeGW4iJIPbu3yqMtojAS_cHfqU7kFyr7y-i3R7qfKc4OW5TpZxqSrlNkeHAJbIsWsBiRjCtUHI9T3AEyLmNPT0GJdNxfzyT6t2-9ISDabw9LzDJJsDvFJOEUEtUKocTtv2PhM4kAWcD6vLtbWtfVOCz9xO5jzT_zubZI5wn9nawwvtaeintMZH6ofBOmbE-2QT848BRWIKEwy7-8te7g20IGgaaHd8pFdJVnuOD3w8Ab_TbgsihpwsWZV0ebee17rowEKALA836C8mHznQ-20Higs06kpzxreD4LGwNBA87WnaETErWOY2hpSEG0aemLay2eHjWHzN28oIvyotPi9NVkq9v5w-SKD6w61pPceUt5Nf7DGLON0ghPO83ddX_-eqCgTneqct1oLPZhXcMSTS4qWOCEVKdes7EE0eWynzH3kaK_1z8j9mM8CNBO8iO5PR8oys2brGOS3Ye3LozG_Yqpkkz3cs2dcXXB_plNpOjD6523x5LPGHRM_J0R_Fi9RySqis_tDpe4TsHv9yyhTsTn8qKtADsU2wtDjnwU9qXqLXfaIO_pXubaUqFdzQ0le060EseaQhcIiDvwtuiRjPZwZoOBix9wj7bnxcw_YwjkAJghhMijcwz6nluP7Uuj5iaS1O1xLerDdfw8EvuPG_MwWFfrD2EcKhnEX3Hln_UxnIXpoKCAi1G3ShjUFu0ip02uH1fmqVVZM2fxUlaCTP2hjdF6x6u40ineyROiFmBsCFC6P438K6bOmE_praT-E0XlSnsWnZemNRV8rDke2y96CCh3ajf0iIE27bZ7JCV_qYZBhxFWfxuxTYSMDf_awlqBLVLAjS-IxO3TlMwN3WIFYFTTUf2DE82raUGe9l0mrPTtsex3gl3rnfWyyCvTfMn5KgBEzJM872aNUzvsGKPJworbgowwZpsB7z5_k97lGtEHS6fQFUqsAgbLyu_Dac7oa2yEIX707PvrtCOPFhcjmNg3SMozlbXHFyuDsEvP_PT_Unwiui7Sr52Nv1LqjS10x7kHI39CfqZnR95fdrIKjkU9p4zpPjsYE61kxDbjU9ioxvvpx4vSqKKd7z_yFH62PwIHbxb0d0Ru-xyGQiMCZMytCZ1BiV5zAd9ol5jH0wBg8Z1XGSVHuPLy9QHLOknP0yFDUlUZ-h_VgIO94WW7bMHOcnkxnTFYkrHn-FLS7MjYX7eeKFgyF0d0lT8O4zduflK6Ek0wLLHricZacQZwL5GWX5iOOTe_AQEqTMpnK995jlo7FUVT3n0PDRvkAid5vKbB5KN8DVkGDDHwvqPzjewULOwoydKqSPLHDo9N7SfwMFP0fgeLxuOo4rIetlUb1Dk2JVZzt1FXZWa0h6rJUsAzmRsoveOGkqTry79OPbzl5Uoe-I2FIQ94LkakOih-4RQkFYCv6giyvIlzPyQrDAYQto1IH2gD6fAU_qSni2g==
+        id: rs_098687dd19c245c3006a285d33c94881a3a02fdfddf42d23e6
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            You gave me a close-up photo showing a single kiwi fruit cut in half, viewed straight-on as a circular cross-section. Key details:
+
+            - Central whitish core surrounded by bright green flesh.
+            - Numerous small, shiny black seeds arranged in a neat ring around the core.
+            - Radial, slightly darker green lines/fibers extending from the core toward the skin.
+            - Thin brown, fuzzy skin visible around the outer edge.
+            - Even, high-key lighting with a clean white background; the fruit appears fresh and juicy.
+
+            No people, text, or other identifiable items are visible in the image.
+          type: output_text
+        id: msg_098687dd19c245c3006a285d3686a481a3bcee2cdff8824bda
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: get_file
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 493
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 394
+        output_tokens_details:
+          reasoning_tokens: 256
+        total_tokens: 887
+      user: null
     status:
-      code: 400
-      message: Bad Request
+      code: 200
+      message: OK
 version: 1

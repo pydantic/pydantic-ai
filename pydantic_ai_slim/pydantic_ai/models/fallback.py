@@ -1,28 +1,58 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard, assert_never
 
 import anyio
-from opentelemetry.trace import get_current_span
-from typing_extensions import assert_never
+from opentelemetry.trace import Span, get_current_span
+from opentelemetry.util.types import AttributeValue
 
-from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
+from pydantic_ai._instrumentation import (
+    model_attributes,
+    model_request_parameters_attributes,
+    open_request_policy,
+    span_include_content,
+)
+from pydantic_ai._model_request_attempts import AttemptStart, failed_attempt, record_attempt_span
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type, is_async_callable
+from pydantic_ai._utils import PeekableAsyncStream, await_maybe, get_first_param_type
 
+from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from ..messages import ModelResponse
+from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
-from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
+from . import (
+    KnownModelName,
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    infer_model,
+)
+from ._request_timeout import (
+    RequestDeadline,
+    carried_deadline,
+    carry_deadline,
+    enforce_request_deadline,
+    start_request_deadline,
+    stream_under_deadline,
+)
 
 if TYPE_CHECKING:
-    from ..messages import ModelMessage
+    from ..messages import ModelMessage, ModelResponseStreamEvent
     from ..settings import ModelSettings
+
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
+# Must match `_continuation._REPLACE_PREVIOUS_RESPONSE_KEY`: the merge module reads this exact key
+# (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
+# than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
+_REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
 
 ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
 """A sync or async callable that decides whether an exception should trigger fallback."""
@@ -74,7 +104,6 @@ class FallbackModel(Model):
 
     models: list[Model]
 
-    _model_name: str = field(repr=False)
     _exception_handlers: list[ExceptionHandler] = field(repr=False)
     _response_handlers: list[ResponseHandler] = field(repr=False)
 
@@ -106,6 +135,11 @@ class FallbackModel(Model):
                 Handler type is auto-detected by inspecting type hints on the first parameter.
                 If the first parameter is hinted as `ModelResponse`, it's a response handler.
                 Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+                Response handlers only apply to non-streamed requests. A streamed request accepts
+                the response as is and emits a `UserWarning`. A request is streamed whenever
+                something consumes the run's events, including `run()` with an
+                `event_stream_handler` or an event listener.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
@@ -118,11 +152,7 @@ class FallbackModel(Model):
 
     def _parse_fallback_on(self, fallback_on: FallbackOn) -> None:
         """Parse the fallback_on parameter into exception and response handlers."""
-        if isinstance(fallback_on, tuple):
-            if fallback_on:
-                # Tuple of exception types (typing guarantees tuple contents are exception types)
-                self._exception_handlers.append(_exception_types_to_handler(fallback_on))  # type: ignore[arg-type]
-        elif _is_exception_type(fallback_on):
+        if _is_exception_type(fallback_on):
             # Single exception type
             self._exception_handlers.append(_exception_types_to_handler((fallback_on,)))
         elif callable(fallback_on):
@@ -160,7 +190,7 @@ class FallbackModel(Model):
         handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
         for handler in handlers:
             # pyright can't narrow handler's param type from the isinstance check on value
-            result = await handler(value) if is_async_callable(handler) else handler(value)  # type: ignore[arg-type]
+            result = await await_maybe(handler(value))  # type: ignore[arg-type]
             if result:
                 return True
         return False
@@ -187,6 +217,10 @@ class FallbackModel(Model):
             self._entered_count -= 1
             if self._entered_count == 0:
                 await self._exit_stack.aclose()
+
+    def _refresh_http_client(self) -> None:
+        for model in self.models:
+            model._refresh_http_client()
 
     @property
     def provider(self) -> None:
@@ -219,30 +253,97 @@ class FallbackModel(Model):
         """Try each model in sequence until one succeeds.
 
         In case of failure, raise a FallbackExceptionGroup with all exceptions.
+
+        If a previous response set `state='suspended'`, the request is routed directly
+        to the pinned continuation model, bypassing the fallback chain. If the pinned model
+        raises a fallback-eligible error during continuation, the messages are rewound
+        (stripping the suspended response and trailing continuation request) and the
+        normal fallback chain is tried.
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
+        attempts: list[ModelRequestAttempt] = []
+        # Set once a pinned continuation fails and we rewind to the chain: the first successful response
+        # the chain then produces is fresh generation superseding the stale suspended turn, so it must
+        # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
+        rewound = False
+
+        if pinned := self._get_continuation_model(messages):
+            # `_get_continuation_model` only returns a model when the last message is a suspended response.
+            suspended_response = messages[-1]
+            assert isinstance(suspended_response, ModelResponse)
+            prepared_parameters = model_request_parameters
+            start = AttemptStart()
+            deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
+            try:
+                with suppress_unsupported_setting_warnings():
+                    _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
+                with enforce_request_deadline(deadline):
+                    response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
+            except Exception as exc:
+                duration = start.elapsed()
+                if not await self._should_fallback(exc):
+                    self._set_span_attributes(pinned, prepared_parameters)
+                    raise
+                # Best-effort cancel the suspended server-side job we're abandoning before rewinding
+                # and retrying the chain. `FallbackModel` swallows the error, so the graph's own
+                # cancel path never sees it; without this an OpenAI background job would keep running
+                # and billing while the chain issues a duplicate request.
+                with suppress(Exception):
+                    await pinned.cancel_suspended_response(suspended_response)
+                messages = _rewind_messages(messages)
+                rewound = True
+                exceptions.append(exc)
+                self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
+                # Fall through to normal chain below
+            else:
+                if response.state == 'suspended':
+                    _stamp_continuation(response, pinned)
+                    carry_deadline(response, deadline)
+                self._set_span_attributes(pinned, prepared_parameters)
+                return response
 
         for model in self.models:
+            prepared_parameters = model_request_parameters
+            start = AttemptStart()
             try:
-                _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                with suppress_unsupported_setting_warnings():
+                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
-                prepared_messages = model.prepare_messages(messages)
-                response = await model.request(prepared_messages, model_settings, model_request_parameters)
+                prepared_messages = model.prepare_messages(messages, model_request_parameters)
+                deadline = start_request_deadline(model, model_settings)
+                with enforce_request_deadline(deadline):
+                    response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
+                duration = start.elapsed()
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
+                    self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                     continue
+                self._set_span_attributes(model, prepared_parameters)
                 raise exc
 
+            duration = start.elapsed()
             if await self._should_fallback(response):
                 rejected_responses.append(response)
+                self._record_failed_attempt(model, attempts, response, start=start, duration=duration)
                 continue
 
+            if attempts:
+                response = replace(response, failed_attempts=[*attempts, *(response.failed_attempts or [])])
+
+            # After a rewind, the first successful response is fresh generation that supersedes the
+            # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
+            if rewound:
+                _stamp_replace_previous(response)
+            if response.state == 'suspended':
+                _stamp_continuation(response, model)
+                carry_deadline(response, deadline)
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        _raise_fallback_exception_group(exceptions, rejected_responses)
+        _raise_fallback_exception_group(exceptions, rejected_responses, attempts)
 
     @asynccontextmanager
     async def request_stream(
@@ -251,33 +352,181 @@ class FallbackModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
-        """Try each model in sequence until one succeeds."""
+    ) -> AsyncGenerator[StreamedResponse]:
+        """Try each model in sequence until one succeeds.
+
+        If a previous response set `state='suspended'`, the request is routed directly
+        to the pinned continuation model, bypassing the fallback chain. If the pinned model
+        raises a fallback-eligible error while opening the stream, the messages are rewound
+        and the normal fallback chain is tried.
+
+        A stream is only handed over once it has produced its first event, so an error the stream
+        raises before that, such as a provider reporting an overload after acknowledging the request,
+        falls back like an error while opening it. Failures after the first event still propagate.
+
+        Response handlers are not applied: the response has already been streamed by the time
+        it could be judged, so a `UserWarning` is emitted and the response is accepted as is.
+        """
         exceptions: list[Exception] = []
+        attempts: list[ModelRequestAttempt] = []
+        # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
+        rewound = False
+
+        if pinned := self._get_continuation_model(messages):
+            # `_get_continuation_model` only returns a model when the last message is a suspended response.
+            suspended_response = messages[-1]
+            assert isinstance(suspended_response, ModelResponse)
+            async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
+                start = AttemptStart()
+                deadline = _pinned_request_deadline(suspended_response, pinned, model_settings)
+                try:
+                    with suppress_unsupported_setting_warnings():
+                        _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
+                    prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
+                    streamed_response = await stack.enter_async_context(
+                        _request_stream_until_first_event(
+                            pinned, deadline, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
+                    )
+                except Exception as exc:
+                    duration = start.elapsed()
+                    if not await self._should_fallback(exc):
+                        self._set_span_attributes(pinned, prepared_parameters)
+                        raise
+                    # Best-effort cancel the suspended server-side job we're abandoning before
+                    # rewinding to the chain (see the non-streaming path above); `FallbackModel`
+                    # swallows the error, so the graph's own cancel path never sees it.
+                    with suppress(Exception):
+                        await pinned.cancel_suspended_response(suspended_response)
+                    messages = _rewind_messages(messages)
+                    rewound = True
+                    exceptions.append(exc)
+                    self._record_failed_attempt(pinned, attempts, exc, start=start, duration=duration)
+                    # Fall through to normal chain below
+                else:
+                    self._set_span_attributes(pinned, prepared_parameters)
+                    yield streamed_response
+                    # Unlike `request()`, which stamps before returning, the streaming path stamps
+                    # after `yield`: the final `state` is only known once the caller has consumed the
+                    # stream. Callers must therefore call `get()` after the `async with` exits.
+                    if streamed_response.state == 'suspended':
+                        _stamp_continuation(streamed_response, pinned)
+                        carry_deadline(streamed_response, deadline)
+                    return
+
+        if self._response_handlers:
+            warnings.warn(
+                '`FallbackModel` response handlers in `fallback_on` are not applied to streamed requests, '
+                'so the streamed response is accepted as is. A request is streamed whenever something consumes '
+                "the run's events, such as `run_stream()`, `run_stream_events()`, `iter()` with `node.stream()`, "
+                'an `event_stream_handler`, or an event listener or hook.',
+                UserWarning,
+            )
 
         for model in self.models:
             async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
+                start = AttemptStart()
                 try:
-                    _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
-                    prepared_messages = model.prepare_messages(messages)
-                    response = await stack.enter_async_context(
-                        model.request_stream(prepared_messages, model_settings, model_request_parameters, run_context)
+                    with suppress_unsupported_setting_warnings():
+                        _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
+                    prepared_messages = model.prepare_messages(messages, model_request_parameters)
+                    deadline = start_request_deadline(model, model_settings)
+                    streamed_response = await stack.enter_async_context(
+                        _request_stream_until_first_event(
+                            model, deadline, prepared_messages, model_settings, model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
+                    duration = start.elapsed()
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
+                        self._record_failed_attempt(model, attempts, exc, start=start, duration=duration)
                         continue
-                    raise exc  # pragma: no cover
+                    self._set_span_attributes(model, prepared_parameters)
+                    raise exc
 
+                # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
+                # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
+                # this must land on `metadata` *before* `yield`: the streamed composite resolves
+                # `_segment_offset` (via `merge_mode`) on the first reindexable event, so a late stamp
+                # would reindex against a stale `'accumulate'` verdict and misplace the parts. That this
+                # stream supersedes the suspended turn is known the moment the rewound chain is entered.
+                if rewound:
+                    _stamp_replace_previous(streamed_response)
+                if attempts:
+                    streamed_response.failed_attempts = [*attempts, *(streamed_response.failed_attempts or [])]
                 self._set_span_attributes(model, prepared_parameters)
-                yield response
+                yield streamed_response
+                # Stamp after `yield` (see the pinned path above): `state` is only final once the
+                # caller has consumed the stream, so callers must call `get()` after the context exits.
+                if streamed_response.state == 'suspended':
+                    _stamp_continuation(streamed_response, model)
+                    carry_deadline(streamed_response, deadline)
                 return
 
-        _raise_fallback_exception_group(exceptions, [])
+        _raise_fallback_exception_group(exceptions, [], attempts)
+
+    async def cancel_suspended_response(self, response: ModelResponse) -> None:
+        """Cancel a suspended continuation on the underlying model holding the server-side job.
+
+        When the response carries a continuation pin, resolve that model and delegate to it. Resolve
+        the pin directly from metadata rather than via `_get_continuation_model`: the cancel path is
+        driven by `_ContinuationStreamedResponse.get()`, whose `state` is already
+        `'interrupted'`/`'incomplete'`/`'complete'` (never `'suspended'`) by the time cancellation
+        unwinds, so gating on `state == 'suspended'` here would never find the pin.
+
+        When no pin resolves, the response can still hold a live server-side job: the pin is only
+        stamped when a segment *ends* suspended, so a streamed background job cancelled during its
+        first segment (e.g. OpenAI background mode, marked by `provider_details['background']` +
+        `provider_response_id`) has no pin yet. Best-effort delegate to every inner model so the job
+        is torn down rather than leaked. This is safe because each model's own cancel guard is strict
+        (OpenAI only acts on its own `background` marker with a matching `provider_name`; others
+        no-op), and a raising model doesn't stop the rest.
+        """
+        if pinned := self._pinned_continuation_model(response):
+            await pinned.cancel_suspended_response(response)
+            return
+
+        for model in self.models:
+            with suppress(Exception):
+                await model.cancel_suspended_response(response)
+
+    def continuation_delay(self, response: ModelResponse) -> float | None:
+        if pinned := self._pinned_continuation_model(response):
+            return pinned.continuation_delay(response)
+        for model in self.models:
+            if (delay := model.continuation_delay(response)) is not None:
+                return delay
+        return None
 
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def _start_request_deadline(self, model_settings: ModelSettings | None) -> RequestDeadline | None:
+        # Each model it tries gets a fresh deadline of its own instead.
+        return None
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """A fallback model can't know which model will serve the request, so no retention is claimed."""
+        return None
+
+    def _caching_not_enabled(self, model_settings: ModelSettings | None) -> bool:
+        # Which model serves the request isn't known here, so nothing is claimed about its caching either.
+        return False
+
+    @property
+    def context_window(self) -> int | None:
+        """The smallest known context window among the candidate models, or `None` if none is known.
+
+        Any candidate may end up answering, and history that fits the smallest window fits them all,
+        so compacting against it errs towards compacting early rather than overflowing a fallback.
+        Candidates with an unknown window don't constrain the result.
+        """
+        windows = [window for model in self.models if (window := model.context_window) is not None]
+        return min(windows) if windows else None
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         return model_request_parameters  # pragma: no cover
@@ -287,23 +536,172 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
-    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
-        # `FallbackModel` doesn't have its own profile — defer per-model `prepare_messages`
-        # to each inner model's `request` call so the right profile gates the transformation.
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
+        # `FallbackModel` doesn't have its own profile; dispatch applies each inner model's profile instead.
         return messages
+
+    def _get_continuation_model(self, messages: list[ModelMessage]) -> Model | None:
+        """Find the model that should handle continuation from message history."""
+        if not messages:  # pragma: lax no cover
+            return None
+        last = messages[-1]
+        if not isinstance(last, ModelResponse) or last.state != 'suspended':
+            return None
+        return self._pinned_continuation_model(last)
+
+    def _pinned_continuation_model(self, response: ModelResponse) -> Model | None:
+        """Resolve the underlying model pinned to this continuation from its routing metadata."""
+        pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
+        if model_id := pydantic_ai_meta.get(_FALLBACK_MODEL_ID_KEY):
+            return next((m for m in self.models if m.model_id == model_id), None)
+        return None
+
+    def _fallback_span(self) -> Span | None:
+        """The recording `chat` span instrumentation opened for this request, if any.
+
+        Matching the span's request model to this `FallbackModel` keeps attempts off an unrelated
+        ambient span, such as a user's own span around an uninstrumented model.
+        """
+        span = get_current_span()
+        if span.is_recording() and getattr(span, 'attributes', {}).get('gen_ai.request.model') == self.model_name:
+            return span
+        return None
 
     def _set_span_attributes(self, model: Model, model_request_parameters: ModelRequestParameters) -> None:
         with suppress(Exception):
-            span = get_current_span()
-            if span.is_recording():
-                attributes = getattr(span, 'attributes', {})
-                if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
-                    span.set_attributes(
-                        {
-                            **model_attributes(model),
-                            **model_request_parameters_attributes(model_request_parameters),
-                        }
+            if span := self._fallback_span():
+                span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
+                # Only refresh `model_request_parameters` if it was emitted at span open; its absence
+                # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
+                # it here would leak the attribute the setting is meant to suppress.
+                if 'model_request_parameters' in getattr(span, 'attributes', {}):
+                    span_attributes.update(
+                        model_request_parameters_attributes(
+                            model_request_parameters,
+                            # The settings aren't reachable from here, so the span carries its
+                            # own `include_content` in a context variable, keyed by the span it
+                            # was set for. This refresh serializes the *selected* model's
+                            # parameters, whose instruction parts the outer request may not have
+                            # had at all, so it cannot be inferred from what is already
+                            # recorded. Fails closed on anything but this span's own policy.
+                            include_content=span_include_content(span),
+                        )
                     )
+                span.set_attributes(span_attributes)
+
+    def _record_failed_attempt(
+        self,
+        model: Model,
+        attempts: list[ModelRequestAttempt],
+        failure: Exception | ModelResponse,
+        *,
+        start: AttemptStart,
+        duration: timedelta,
+    ) -> None:
+        """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
+        # A nested `FallbackModel` recorded the attempts it made itself, and their usage was billed too.
+        if isinstance(failure, ModelResponse):
+            attempts.extend(failure.failed_attempts or [])
+        elif isinstance(failure, FallbackExceptionGroup):
+            attempts.extend(failure.attempts)
+        attempt = failed_attempt(model, failure, start=start, duration=duration)
+        attempts.append(attempt)
+        # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
+        if (span := self._fallback_span()) and (policy := open_request_policy()):
+            record_attempt_span(
+                attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
+            )
+
+
+def _pinned_request_deadline(
+    suspended_response: ModelResponse, model: Model, model_settings: ModelSettings | None
+) -> RequestDeadline | None:
+    """The deadline of a continuation segment for the model the suspended response is pinned to.
+
+    What's left of the deadline that model got when it was picked carries over, so the continuation stays one request
+    to it. A nested `FallbackModel` gets none, as it carries over the deadline of the model it picked itself.
+    """
+    deadline = start_request_deadline(model, model_settings)
+    if deadline is not None and (expires_at := carried_deadline(suspended_response)) is not None:
+        return deadline.until(expires_at)
+    return deadline
+
+
+@asynccontextmanager
+async def _request_stream_until_first_event(
+    model: Model,
+    deadline: RequestDeadline | None,
+    messages: list[ModelMessage],
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+    run_context: RunContext[Any] | None,
+) -> AsyncGenerator[StreamedResponse]:
+    """Open `model`'s stream and wait for its first event before handing it over.
+
+    Providers can accept a streamed request and then report a failure before producing any output,
+    like an OpenAI Responses `response.failed` after `response.created`, or a Bedrock throttling
+    error as the first stream event. Waiting for the first event means such an error is raised here,
+    inside the candidate's own stream context, where `FallbackModel` can still move on to the next
+    model. The event is replayed to the consumer, so the stream it gets is unchanged. The stream is opened under
+    `deadline`, so waiting for the first event counts towards it like every event after it.
+    """
+    async with stream_under_deadline(
+        deadline, model.request_stream(messages, model_settings, model_request_parameters, run_context)
+    ) as response:
+        events: PeekableAsyncStream[ModelResponseStreamEvent, AsyncIterator[ModelResponseStreamEvent]] = (
+            PeekableAsyncStream(aiter(response))
+        )
+        await events.peek()
+        # `StreamedResponse.__aiter__` hands out the iterator stored here, so the consumer gets the peeked event too.
+        response._event_iterator = events  # pyright: ignore[reportPrivateUsage]
+        yield response
+
+
+def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
+    """Stamp the model's identifier into metadata for stateless continuation routing.
+
+    Uses `metadata['__pydantic_ai__']` to avoid conflating framework-level routing state
+    with provider-specific data in `provider_details`.
+    """
+    if response.metadata is None:
+        response.metadata = {}
+    pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
+    pydantic_ai_meta[_FALLBACK_MODEL_ID_KEY] = model.model_id
+
+
+def _stamp_replace_previous(response: ModelResponse | StreamedResponse) -> None:
+    """Stamp the `replace_previous_response` marker so a fresh post-rewind turn supersedes the stale one.
+
+    After a pinned continuation fails and `FallbackModel` rewinds and retries the chain, the first
+    successful response is genuinely fresh generation, but may carry the same `model_name` as the
+    abandoned suspended turn (only the `provider_response_id` differs). Without this marker
+    `merge_mode` would classify the merge as an `accumulate` — same model, different id, indistinguishable
+    from an Anthropic `pause_turn` — and duplicate the abandoned suspended parts ahead of the fresh turn.
+    The marker (merged into the shared `__pydantic_ai__` namespace, alongside any continuation pin) tells
+    the merge to `'replace-new'`; it's transient and popped after being honored so it can't persist into
+    history. See `pydantic_ai.models._continuation`.
+    """
+    if response.metadata is None:
+        response.metadata = {}
+    pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
+    pydantic_ai_meta[_REPLACE_PREVIOUS_RESPONSE_KEY] = True
+
+
+def _rewind_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Strip the suspended response from the end of message history.
+
+    When a pinned continuation model fails, the messages still contain the suspended
+    response. Before falling through to the normal chain, we remove it so models see
+    clean history ending with the most recent ModelRequest.
+    """
+    rewound = list(messages)
+    if rewound and isinstance(rewound[-1], ModelResponse) and rewound[-1].state == 'suspended':  # pragma: no branch
+        rewound.pop()
+    return rewound
 
 
 def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> ExceptionHandler:
@@ -315,14 +713,19 @@ def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> Exce
     return handler
 
 
-def _raise_fallback_exception_group(exceptions: list[Exception], rejected_responses: list[ModelResponse]) -> NoReturn:
+def _raise_fallback_exception_group(
+    exceptions: list[Exception], rejected_responses: list[ModelResponse], attempts: list[ModelRequestAttempt]
+) -> NoReturn:
     """Raise a FallbackExceptionGroup combining exceptions and response rejections.
 
     Args:
         exceptions: List of exceptions raised by models.
         rejected_responses: List of responses that were rejected by fallback_on handlers.
+        attempts: Every attempt that was made, in order.
     """
     all_errors = list(exceptions)
     if rejected_responses:
         all_errors.append(ResponseRejected(len(rejected_responses)))
-    raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
+    group = FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
+    group.attempts = attempts
+    raise group

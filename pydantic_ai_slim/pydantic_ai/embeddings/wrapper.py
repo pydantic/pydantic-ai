@@ -4,8 +4,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 if TYPE_CHECKING:
@@ -69,4 +69,6 @@ class WrapperEmbeddingModel(EmbeddingModel):
         return self.wrapped.base_url
 
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)  # pragma: no cover
+        if item == 'wrapped':
+            raise AttributeError(item)
+        return getattr(self.wrapped, item)

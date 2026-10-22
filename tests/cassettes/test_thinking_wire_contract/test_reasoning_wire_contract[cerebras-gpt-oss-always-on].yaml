@@ -1,0 +1,75 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '129'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: gpt-oss-120b
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '833'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-38aef496-e471-49d5-a302-935a4387c86b
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: '4'
+          reasoning: 'The user asks: "What is 2+2? Reply with just the number." So answer: "4". Should be just the number,
+            no extra text.'
+          role: assistant
+      created: 1780977002
+      id: chatcmpl-38aef496-e471-49d5-a302-935a4387c86b
+      model: gpt-oss-120b
+      object: chat.completion
+      system_fingerprint: fp_46358675aa6b1ba4d98d
+      time_info:
+        completion_time: 0.016805376
+        created: 1780977002.505653
+        prompt_time: 0.002048384
+        queue_time: 0.004083076
+        total_time: 0.026249408721923828
+      usage:
+        completion_tokens: 45
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          reasoning_tokens: 34
+          rejected_prediction_tokens: 0
+        prompt_tokens: 80
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 125
+    status:
+      code: 200
+      message: OK
+version: 1

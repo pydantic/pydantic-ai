@@ -1,49 +1,5 @@
 interactions:
 - request:
-    body: Action=AssumeRole&Version=2011-06-15&RoleArn=scrubbed&RoleSessionName=scrubbed
-    headers:
-      amz-sdk-invocation-id:
-      - !!binary |
-        Yzk5NTNjNGYtM2Y5Ni00MTIzLWE0YWItMDNlOWUyNjIxYjIz
-      amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
-      content-length:
-      - '149'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24veC13d3ctZm9ybS11cmxlbmNvZGVkOyBjaGFyc2V0PXV0Zi04
-    method: POST
-    uri: https://sts.us-east-1.amazonaws.com/
-  response:
-    body:
-      string: |
-        <AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
-          <AssumeRoleResult>
-            <AssumedRoleUser>
-              <AssumedRoleId>SCRUBBED</AssumedRoleId>
-              <Arn>SCRUBBED</Arn>
-            </AssumedRoleUser>
-            <Credentials>
-              <AccessKeyId>SCRUBBED</AccessKeyId>
-              <SecretAccessKey>SCRUBBED</SecretAccessKey>
-              <SessionToken>SCRUBBED</SessionToken>
-              <Expiration>2099-01-01T00:00:00Z</Expiration>
-            </Credentials>
-          </AssumeRoleResult>
-          <ResponseMetadata>
-            <RequestId>5f8a8cf5-c410-4f38-a2c7-b18e1e4da44f</RequestId>
-          </ResponseMetadata>
-        </AssumeRoleResponse>
-    headers:
-      content-length:
-      - '585'
-      content-type:
-      - text/xml
-    status:
-      code: 200
-      message: OK
-- request:
     body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a image file, then describe
       what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
       "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":

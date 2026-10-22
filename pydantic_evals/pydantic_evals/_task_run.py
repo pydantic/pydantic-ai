@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
 from .otel._context_subtree import context_subtree
+from .otel._errors import SpanTreeRecordingError
 from .otel.span_tree import SpanTree
 
 
@@ -33,7 +34,7 @@ class TaskRun:
 
 
 @contextmanager
-def run_task() -> Iterator[Callable[[], dict[str, Any]]]:
+def run_task() -> Generator[Callable[[], dict[str, Any]]]:
     task_run = TaskRun()
     token = CURRENT_TASK_RUN.set(task_run)
 
@@ -46,14 +47,15 @@ def run_task() -> Iterator[Callable[[], dict[str, Any]]]:
         }
 
     t0 = time.perf_counter()
+    span_tree: SpanTree | SpanTreeRecordingError | None = None
     try:
         with context_subtree() as span_tree:
             yield get_eval_context_kwargs
     finally:
         duration = time.perf_counter() - t0
         CURRENT_TASK_RUN.reset(token)
-    if isinstance(span_tree, SpanTree):  # pragma: no branch
-        extract_span_tree_metrics(task_run, span_tree)
+        if isinstance(span_tree, SpanTree):
+            extract_span_tree_metrics(task_run, span_tree)
 
 
 def extract_span_tree_metrics(task_run: TaskRun, span_tree: SpanTree) -> None:

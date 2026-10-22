@@ -1,3 +1,7 @@
+---
+description: "Reference for the evaluators built into Pydantic Evals: exact match, contains, type checks, max duration, LLM judge, G-Eval, span checks and confusion matrices."
+---
+
 # Native Evaluators
 
 Pydantic Evals provides several built-in evaluators for common evaluation tasks.
@@ -40,6 +44,9 @@ dataset = Dataset(
 **Notes:**
 
 - Skips evaluation if `expected_output` is `None` (returns empty dict `{}`)
+- Because of that skip, a case whose expected output *is* `None` records no assertion at
+  all, so it passes whatever the task returns. To assert that the output is `None`, use
+  [`Equals(value=None)`](#equals), which takes the value explicitly.
 - Uses Python's `==` operator, so works with any comparable types
 - For structured data, considers nested equality
 
@@ -335,7 +342,7 @@ dataset = Dataset(
         # Quality score with different model
         LLMJudge(
             rubric='Overall response quality',
-            model='anthropic:claude-sonnet-4-6',
+            model='{{ anthropic:medium }}',
             score={'evaluation_name': 'quality', 'include_reason': False},
             assertion=False,
         ),
@@ -351,13 +358,52 @@ dataset = Dataset(
 
 **See Also:** [LLM Judge Deep Dive](llm-judge.md)
 
+### GEval
+
+Chain-of-thought evaluation following the G-Eval method (Liu et al., 2023): the judge applies
+explicit evaluation steps and returns an integer score in `score_range` with a reasoning trace.
+
+```python
+from pydantic_evals.evaluators import GEval
+
+GEval(
+    criteria='coherence',
+    evaluation_steps=[
+        'Read the output carefully.',
+        'Check that each sentence follows logically from the previous one.',
+        'Assign a score from 1 (incoherent) to 5 (fully coherent).',
+    ],
+    score_range=(1, 5),
+    include_input=False,
+)
+```
+
+**Parameters:**
+
+- `criteria` (str): The aspect being evaluated, e.g. `'coherence'` (required)
+- `evaluation_steps` (list[str]): Explicit chain-of-thought steps the judge should follow (required)
+- `score_range` (tuple[int, int]): Inclusive integer score range (default: `(1, 5)`)
+- `include_input` (bool): Include task inputs in the prompt (default: `False`)
+- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `model_settings` (ModelSettings | None): Custom model settings
+- `evaluation_name` (str | None): Custom name for the result (default: `'GEval'`)
+
+**Returns:** `EvaluationReason` with the integer score and the judge's reasoning
+
+When the judge model cannot generate text, like a [decision model](../../models/decision.md) such as
+[TypeSafe's Jev](../../models/typesafe.md), the score keeps the requested integer scale and the reason
+is `None`. Scoring becomes one question with a level per score, so `score_range` may contain at most
+20 levels.
+
+**See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
+
 ---
 
 ## Span-Based Evaluation
 
 ### HasMatchingSpan
 
-Check if OpenTelemetry spans match a query (requires Logfire configuration).
+Check if OpenTelemetry spans match a query (requires the `logfire` SDK to be configured; no Pydantic Logfire account is needed).
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
@@ -392,7 +438,7 @@ dataset = Dataset(
         ),
         # Check for errors
         HasMatchingSpan(
-            query={'has_attributes': {'error': True}},
+            query={'has_status': 'error'},
             evaluation_name='had_errors',
         ),
         # Check duration constraints
@@ -419,7 +465,9 @@ analyze entire experiment results. These are passed via the `report_evaluators` 
 | Report Evaluator | Purpose | Output |
 |------------------|---------|--------|
 | [`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] | Classification confusion matrix | `ConfusionMatrix` |
-| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` |
+| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` + `ScalarResult` |
+| [`ROCAUCEvaluator`][pydantic_evals.evaluators.ROCAUCEvaluator] | ROC curve with AUC | `LinePlot` + `ScalarResult` |
+| [`KolmogorovSmirnovEvaluator`][pydantic_evals.evaluators.KolmogorovSmirnovEvaluator] | KS plot with KS statistic | `LinePlot` + `ScalarResult` |
 
 **See:** [Report Evaluators](report-evaluators.md) for full documentation, parameters, and examples,
 including how to write custom report evaluators that produce `ScalarResult` and `TableResult` analyses.
@@ -438,6 +486,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
+| [`GEval`][pydantic_evals.evaluators.GEval] | Chain-of-thought scoring | `int` + reason | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
 
 ### Report-Level Evaluators

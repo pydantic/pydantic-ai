@@ -1,12 +1,17 @@
 import json
+import logging
 import re
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Annotated, Any, Literal
+from enum import Enum
+from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
 import pytest
-from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, WithJsonSchema
+from griffe import Docstring
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from pytest import LogCaptureFixture
@@ -14,32 +19,51 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    EndStrategy,
     ExternalToolset,
     FunctionToolset,
+    InstructionBaselinePart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PrefixedToolset,
-    RetryPromptPart,
+    RetryInfo,
     RunContext,
     TextPart,
     Tool,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UseEnumMemberDocstrings,
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    PydanticAIDeprecationWarning,
+    ToolFailed,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.tools import (
+    DeferredToolCallResult,
+    DeferredToolRequests,
+    DeferredToolResults,
+    GenerateToolJsonSchema,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsStr
+from .conftest import IsDatetime, IsStr, iter_message_parts, legacy_retry_prompt_part, message, message_part
 
 
 def test_tool_no_ctx():
@@ -65,7 +89,7 @@ def test_tool_plain_with_ctx():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool_plain
-        async def invalid_tool(ctx: RunContext[None]) -> str:  # pragma: no cover
+        async def invalid_tool(ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
@@ -102,12 +126,30 @@ def test_tool_ctx_second():
     with pytest.raises(UserError) as exc_info:
 
         @agent.tool  # pyright: ignore[reportArgumentType]
-        def invalid_tool(x: int, ctx: RunContext[None]) -> str:  # pragma: no cover
+        def invalid_tool(x: int, ctx: RunContext) -> str:  # pragma: no cover
             return 'Hello'
 
     assert str(exc_info.value) == snapshot(
         """\
 Error generating schema for test_tool_ctx_second.<locals>.invalid_tool:
+  First parameter of tools that take context must be annotated with RunContext[...]
+  RunContext annotations can only be used as the first argument\
+"""
+    )
+
+
+def test_tool_ctx_last():
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError) as exc_info:
+
+        @agent.tool  # pyright: ignore[reportArgumentType]
+        def invalid_tool(first: int, last: str, ctx: RunContext) -> str:  # pragma: no cover
+            return f'{first} {last}'
+
+    assert str(exc_info.value) == snapshot(
+        """\
+Error generating schema for test_tool_ctx_last.<locals>.invalid_tool:
   First parameter of tools that take context must be annotated with RunContext[...]
   RunContext annotations can only be used as the first argument\
 """
@@ -166,11 +208,14 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -207,11 +252,14 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -256,11 +304,14 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -268,7 +319,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
 def test_google_style_with_returns():
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: int) -> str:  # pragma: no cover
+    def my_tool(x: int) -> str:
         """A function that does something.
 
         Args:
@@ -280,6 +331,7 @@ def test_google_style_with_returns():
         return str(x)
 
     agent.tool_plain(my_tool)
+    assert my_tool(1) == '1'  # exercise the tool body so it doesn't need a no-cover pragma
     result = agent.run_sync('Hello')
     json_schema = json.loads(result.output)
     assert json_schema == snapshot(
@@ -305,11 +357,14 @@ def test_google_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -352,11 +407,14 @@ def test_sphinx_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -405,11 +463,14 @@ def test_numpy_style_with_returns():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -446,11 +507,14 @@ def test_only_returns_type():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -478,11 +542,14 @@ def test_docstring_unknown():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -528,11 +595,14 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -571,11 +641,14 @@ def test_takes_just_model():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -623,11 +696,14 @@ def test_takes_model_and_int():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
@@ -648,14 +724,16 @@ def test_init_tool_plain():
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
     assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent._function_toolset.tools['plain_tool'].max_retries == 7
+    # No explicit per-tool budget, so the agent default resolves per-run via `RunContext.max_retries`
+    # rather than baked onto the tool (contrast `test_init_tool_ctx`, where explicit `max_retries=3` wins).
+    assert agent._function_toolset.tools['plain_tool'].max_retries is None
 
     agent_infer = Agent('test', tools=[plain_tool], retries={'tools': 7, 'output': 7})
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
     assert agent_infer._function_toolset.tools['plain_tool'].takes_ctx is False
-    assert agent_infer._function_toolset.tools['plain_tool'].max_retries == 7
+    assert agent_infer._function_toolset.tools['plain_tool'].max_retries is None
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
@@ -689,7 +767,7 @@ def test_repeat_tool_by_rename():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -713,7 +791,7 @@ def test_repeat_tool():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def change_tool_name(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -725,7 +803,7 @@ def test_repeat_tool():
     def bar(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
-    with pytest.raises(UserError, match="Tool name conflicts with previously renamed tool: 'bar'."):
+    with pytest.raises(UserError, match=re.escape("Tool name conflicts with previously renamed tool: 'bar'.")):
         agent.run_sync('')
 
 
@@ -1017,17 +1095,108 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
     # Without suppressing griffe logging, we get:
     # assert caplog.messages == snapshot(['<module>:4: No type or annotation for returned value 1'])
     assert caplog.messages == snapshot([])
+
+
+def google_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    Args:
+        x: The x.
+        y: Not a parameter.
+
+    Returns:
+        The result.
+    """
+    return ''
+
+
+def numpy_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    Parameters
+    ----------
+    x
+        The x, with no type.
+    y : int
+        Not a parameter.
+    """
+    return ''
+
+
+def sphinx_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    :param x: The x.
+    :param y: Not a parameter.
+    :returns: The result.
+    """
+    return ''
+
+
+@pytest.mark.parametrize(
+    'func, style',
+    [
+        (google_docstring_griffe_warns_about, 'google'),
+        (numpy_docstring_griffe_warns_about, 'numpy'),
+        (sphinx_docstring_griffe_warns_about, 'sphinx'),
+    ],
+)
+def test_griffe_docstring_warnings_are_not_logged(
+    caplog: LogCaptureFixture, func: Callable[..., Any], style: Literal['google', 'numpy', 'sphinx']
+):
+    # Some installed packages (e.g. fastmcp) raise griffe's logger to ERROR on import; undo that so
+    # this test sees whatever griffe would log.
+    caplog.set_level(logging.WARNING, logger='griffe')
+    Docstring(func.__doc__ or '', parser=style).parse()
+    assert caplog.messages, 'griffe should warn about this docstring on its own'
+    caplog.clear()
+
+    tool = Tool(func, docstring_format=style)
+
+    assert 'Do the thing.' in (tool.description or '')
+    assert caplog.messages == []
+
+
+def test_parsing_a_tool_docstring_leaves_logging_alone(caplog: LogCaptureFixture, monkeypatch: pytest.MonkeyPatch):
+    # Tools can be built on several threads at once (e.g. Temporal workflows). Parsing must not change
+    # logging config, or other threads lose their warnings mid-parse and the change can outlive the parse.
+    caplog.set_level(logging.WARNING, logger='griffe')
+    parse = Docstring.parse
+    entered = threading.Event()
+    release = threading.Event()
+
+    def held_parse(self: Docstring, *args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert release.wait(30)
+        return parse(self, *args, **kwargs)
+
+    monkeypatch.setattr(Docstring, 'parse', held_parse)
+    root_level = logging.root.level
+    thread = threading.Thread(target=Tool, args=(google_docstring_griffe_warns_about,))
+    thread.start()
+    assert entered.wait(30)
+    logging.getLogger('tests.test_tools').warning('logged while another thread parses')
+    logging.getLogger('griffe').warning('griffe logged while another thread parses')
+    release.set()
+    thread.join(30)
+    assert not thread.is_alive()
+
+    assert caplog.messages == ['logged while another thread parses', 'griffe logged while another thread parses']
+    assert logging.root.level == root_level
 
 
 async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover
@@ -1069,7 +1238,7 @@ def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], a: int, b: int = 1) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 1) -> int:
         raise NotImplementedError
 
     @agent.tool_plain
@@ -1096,11 +1265,14 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1118,11 +1290,14 @@ def test_json_schema_required_parameters():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1150,7 +1325,7 @@ def test_call_tool_without_unrequired_parameters():
         return None
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], a: int, b: int = 2) -> int:
+    def my_tool(ctx: RunContext, a: int, b: int = 2) -> int:
         return a + b
 
     @agent.tool_plain
@@ -1159,11 +1334,9 @@ def test_call_tool_without_unrequired_parameters():
 
     result = agent.run_sync('Hello')
     all_messages = result.all_messages()
-    first_response = all_messages[1]
-    second_request = all_messages[2]
-    assert isinstance(first_response, ModelResponse)
-    assert isinstance(second_request, ModelRequest)
-    tool_call_args = [p.args for p in first_response.parts if isinstance(p, ToolCallPart)]
+    first_response = message(all_messages, ModelResponse, index=1)
+    second_request = message(all_messages, ModelRequest, index=2)
+    tool_call_args = [p.args for p in first_response.tool_calls]
     tool_returns = [p.content for p in second_request.parts if isinstance(p, ToolReturnPart)]
     assert tool_call_args == snapshot(
         [
@@ -1213,11 +1386,14 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
             {
                 'description': None,
@@ -1234,11 +1410,14 @@ def test_schema_generator():
                 'metadata': None,
                 'timeout': None,
                 'defer_loading': False,
+                'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
+                'unless_tool_kind': None,
                 'tool_kind': None,
                 'return_schema': None,
                 'include_return_schema': None,
+                'capability_id': None,
             },
         ]
     )
@@ -1278,21 +1457,24 @@ def test_tool_parameters_with_attribute_docstrings():
             'metadata': None,
             'timeout': None,
             'defer_loading': False,
+            'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
+            'unless_tool_kind': None,
             'tool_kind': None,
             'return_schema': None,
             'include_return_schema': None,
+            'capability_id': None,
         }
     )
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
-            return None
+            return []
         elif ctx.deps == 21:
             return [replace(tool_def, strict=True) for tool_def in tool_defs]
         return tool_defs
@@ -1320,7 +1502,7 @@ def test_dynamic_tools_agent_wide():
 
 
 def test_sync_prepare_tools_agent_wide():
-    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         if ctx.deps == 42:
             return []
         return tool_defs
@@ -1336,6 +1518,25 @@ def test_sync_prepare_tools_agent_wide():
 
     result = agent.run_sync('', deps=1)
     assert result.output == snapshot('{"foobar":"0"}')
+
+
+def test_tool_explicit_empty_description_suppresses_docstring():
+    """https://github.com/pydantic/pydantic-ai/issues/7670"""
+
+    def my_tool(x: int) -> int:
+        """Docstring that should not be sent to the model."""
+        return x
+
+    assert Tool(my_tool).tool_def.description == 'Docstring that should not be sent to the model.'
+    assert Tool(my_tool, description=None).tool_def.description == 'Docstring that should not be sent to the model.'
+    assert Tool(my_tool, description='').tool_def.description == ''
+    assert Tool(my_tool, description=' ').tool_def.description == ' '
+
+    test_model = TestModel()
+    agent = Agent(test_model, tools=[Tool(my_tool, description='')])
+    agent.run_sync('hello')
+    assert test_model.last_model_request_parameters is not None
+    assert test_model.last_model_request_parameters.function_tools[0].description == ''
 
 
 def test_function_tool_consistent_with_schema():
@@ -1359,7 +1560,8 @@ def test_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_from_schema_with_ctx():
@@ -1388,7 +1590,8 @@ def test_function_tool_from_schema_with_ctx():
     result = agent.run_sync('foobar', deps='Hello, ')
     assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is True
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
 def test_function_tool_inconsistent_with_schema():
@@ -1407,7 +1610,7 @@ def test_function_tool_inconsistent_with_schema():
     pydantic_tool = Tool.from_schema(function, name='foobar', description='does foobar stuff', json_schema=json_schema)
 
     agent = Agent('test', tools=[pydantic_tool], retries={'tools': 0, 'output': 0})
-    with pytest.raises(TypeError, match=".* got an unexpected keyword argument 'one'"):
+    with pytest.raises(TypeError, match=r".* got an unexpected keyword argument 'one'"):
         agent.run_sync('foobar')
 
     result = function('three', 4)
@@ -1435,7 +1638,28 @@ def test_async_function_tool_consistent_with_schema():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
     assert agent._function_toolset.tools['foobar'].takes_ctx is False
-    assert agent._function_toolset.tools['foobar'].max_retries == 0
+    # The agent default resolves per-run via `RunContext.max_retries`, so it isn't baked onto the tool.
+    assert agent._function_toolset.tools['foobar'].max_retries is None
+
+
+async def test_positional_or_keyword_with_var_args():
+    """A POSITIONAL_OR_KEYWORD param followed by *args must not be double-bound.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6540.
+
+    Not VCR-backed: this exercises local schema-to-call argument binding and makes no provider request.
+    """
+
+    def f(r0: int, *values: int) -> dict[str, Any]:
+        return {'r0': r0, 'values': list(values)}
+
+    tool = Tool(f)
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    args = {'r0': 1, 'values': [0]}
+    result = await tool.function_schema.call(args, ctx)
+    assert result == {'r0': 1, 'values': [0]}
+    # `call` must not mutate the caller's args dict — tool-execute hooks inspect it afterwards.
+    assert args == {'r0': 1, 'values': [0]}
 
 
 def test_tool_retries():
@@ -1447,7 +1671,7 @@ def test_tool_retries():
     call_max_retries: list[int] = []
     call_last_attempt: list[bool] = []
 
-    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
+    async def prepare_tool_defs(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         nonlocal prepare_tools_retries
         retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
@@ -1455,7 +1679,7 @@ def test_tool_retries():
 
     agent = Agent(TestModel(), retries={'tools': 3, 'output': 3}, capabilities=[PrepareTools(prepare_tool_defs)])
 
-    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def prepare_tool_def(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         prepare_max_retries.append(ctx.max_retries)
@@ -1463,7 +1687,7 @@ def test_tool_retries():
         return tool_def
 
     @agent.tool(retries=5, prepare=prepare_tool_def)
-    def infinite_retry_tool(ctx: RunContext[None]) -> int:
+    def infinite_retry_tool(ctx: RunContext) -> int:
         nonlocal call_retries
         call_retries.append(ctx.retry)
         call_max_retries.append(ctx.max_retries)
@@ -1484,6 +1708,89 @@ def test_tool_retries():
     assert call_last_attempt == snapshot([False, False, False, False, False, True])
 
 
+def test_tool_failed():
+    """A tool raising `ToolFailed` produces a `ToolReturnPart(outcome='failed')` in history (not a retried one), and the run continues."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('failing_tool', {}, tool_call_id='call1')])
+        return ModelResponse(parts=[TextPart('Acknowledged.')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Disk full')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Acknowledged.'
+
+    parts = [p for m in result.all_messages() for p in m.parts]
+    tool_returns = [p for p in parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 1
+    assert tool_returns[0].outcome == 'failed'
+    assert tool_returns[0].content == 'Disk full'
+    assert not any(isinstance(p, ToolReturnPart) and p.outcome == 'retried' for p in parts)
+
+
+def test_tool_failed_parallel():
+    """When one of several parallel tool calls raises `ToolFailed`, the other results still reach the model and the run continues."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('ok_tool', {}, tool_call_id='call_ok'),
+                    ToolCallPart('failing_tool', {}, tool_call_id='call_fail'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def ok_tool() -> str:
+        return 'ok'
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Disk full')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Done.'
+
+    tool_returns = {p.tool_call_id: p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)}
+    assert tool_returns['call_ok'].outcome == 'success'
+    assert tool_returns['call_ok'].content == 'ok'
+    assert tool_returns['call_fail'].outcome == 'failed'
+    assert tool_returns['call_fail'].content == 'Disk full'
+
+
+def test_tool_failed_does_not_consume_retry_budget():
+    """`ToolFailed` is a result, not a correction request — repeated failures must not trigger `UnexpectedModelBehavior` from the per-tool retry counter."""
+    call_count = 0
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 5:
+            return ModelResponse(parts=[ToolCallPart('failing_tool', {}, tool_call_id=f'call{call_count}')])
+        return ModelResponse(parts=[TextPart('Giving up.')])
+
+    # retries=1 would trip after a single ModelRetry; ToolFailed must not.
+    agent = Agent(FunctionModel(llm), retries=1)
+
+    @agent.tool_plain
+    def failing_tool() -> str:
+        raise ToolFailed('Still failing')
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'Giving up.'
+    tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert len(tool_returns) == 5
+    assert all(p.outcome == 'failed' for p in tool_returns)
+
+
 def test_tool_raises_call_deferred():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
@@ -1495,6 +1802,51 @@ def test_tool_raises_call_deferred():
     assert result.output == snapshot(
         DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
     )
+
+
+def test_test_model_same_name_calls_get_distinct_ids_and_both_run():
+    executed: list[tuple[int, int]] = []
+
+    def add(left: int, right: int) -> int:
+        executed.append((left, right))
+        return left + right
+
+    agent = Agent(TestModel(call_tools=['add', 'add'], custom_output_text='done'))
+    agent.tool_plain(add)
+
+    result = agent.run_sync('hello')
+
+    assert result.output == 'done'
+    assert len(executed) == 2
+    tool_call_parts = [
+        p for m in result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in tool_call_parts] == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+    tool_return_ids = [p.tool_call_id for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert sorted(tool_return_ids) == ['pyd_ai_tool_call_id__add', 'pyd_ai_tool_call_id__add__2']
+
+    # A single call to the same tool keeps the documented `pyd_ai_tool_call_id__{name}` id format.
+    single_agent = Agent(TestModel(call_tools=['add'], custom_output_text='done'))
+    single_agent.tool_plain(add)
+    single_result = single_agent.run_sync('hello')
+    single_parts = [
+        p for m in single_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart) and p.tool_name == 'add'
+    ]
+    assert [p.tool_call_id for p in single_parts] == ['pyd_ai_tool_call_id__add']
+
+    # A tool whose own name ends in `__<n>` doesn't collide with a repeated call's suffixed id.
+    def add__2(left: int, right: int) -> int:
+        return left + right
+
+    suffix_agent = Agent(TestModel(call_tools=['add', 'add', 'add__2'], custom_output_text='done'))
+    suffix_agent.tool_plain(add)
+    suffix_agent.tool_plain(add__2)
+    suffix_result = suffix_agent.run_sync('hello')
+    assert [p.tool_call_id for m in suffix_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart)] == [
+        'pyd_ai_tool_call_id__add',
+        'pyd_ai_tool_call_id__add__2',
+        'pyd_ai_tool_call_id__add__2__2',
+    ]
 
 
 def test_tool_raises_approval_required():
@@ -1515,7 +1867,7 @@ def test_tool_raises_approval_required():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1577,6 +1929,248 @@ def test_tool_raises_approval_required():
     assert result.output == snapshot('Done!')
 
 
+@pytest.mark.parametrize('approval', [None, 'yes'])
+def test_invalid_deferred_tool_approval_does_not_execute(approval: object):
+    """Not a VCR test: invalid approval values are application inputs, not provider responses."""
+    executed = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done!')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool() -> str:  # pragma: no cover
+        nonlocal executed
+        executed = True
+        return 'executed'
+
+    result = agent.run_sync('Run the tool')
+    assert isinstance(result.output, DeferredToolRequests)
+    invalid_approval = cast(bool | ToolApproved | ToolDenied, approval)  # Simulate invalid runtime input.
+
+    with pytest.raises(
+        UserError,
+        match="Invalid approval result for tool call 'call-1': expected `bool`, `ToolApproved`, or `ToolDenied`",
+    ):
+        agent.run_sync(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'call-1': invalid_approval}),
+        )
+
+    assert not executed
+
+
+def _return_unchanged(tool_def: ToolDefinition) -> ToolDefinition:
+    return tool_def
+
+
+def _return_replaced(tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, description='tweaked')
+
+
+@pytest.mark.parametrize(
+    'transform',
+    [
+        pytest.param(_return_unchanged, id='unchanged'),
+        pytest.param(_return_replaced, id='replace'),
+    ],
+)
+@pytest.mark.parametrize('hook', ['prepare', 'prepare_tools'])
+def test_prepare_preserves_approval_requirement(
+    hook: Literal['prepare', 'prepare_tools'], transform: Callable[[ToolDefinition], ToolDefinition]
+):
+    """A `prepare` hook that modifies the definition it was given keeps `requires_approval=True` in force.
+
+    Both documented idioms (returning the definition as-is, and copying it with `dataclasses.replace`)
+    carry `kind='unapproved'` through, so the run still pauses for approval. Building a brand-new
+    `ToolDefinition` instead would reset `kind` to its default, which
+    [the docs](../docs/tools-advanced.md#tool-prepare) warn against.
+    """
+    executed = False
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('Done!')])  # pragma: no cover
+
+    def prepare(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
+        return transform(tool_def)
+
+    def prepare_tools(ctx: RunContext[object], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [transform(tool_def) for tool_def in tool_defs]
+
+    capabilities: list[PrepareTools[object]] = [PrepareTools(prepare_tools)] if hook == 'prepare_tools' else []
+    agent = Agent(
+        FunctionModel(llm),
+        output_type=[str, DeferredToolRequests],
+        capabilities=capabilities,
+    )
+
+    @agent.tool_plain(requires_approval=True, prepare=prepare if hook == 'prepare' else None)
+    def my_tool() -> str:  # pragma: no cover
+        nonlocal executed
+        executed = True
+        return 'executed'
+
+    result = agent.run_sync('Run the tool')
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='call-1')])
+    )
+    assert not executed
+
+
+@pytest.mark.parametrize('end_strategy', ['early', 'graceful', 'exhaustive'])
+def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy):
+    """Not a VCR test: pins internal resume validation and message-history shape via `FunctionModel`,
+    which requires an exact parallel batch of an invalid output tool call and an approval-required
+    call that a live model wouldn't reliably produce (https://github.com/pydantic/pydantic-ai/issues/6486).
+    """
+
+    class MyOutput(BaseModel):
+        value: int
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'value': 'not-an-int'},
+                        tool_call_id='output_call',
+                    ),
+                    ToolCallPart(
+                        tool_name='my_tool',
+                        args={'x': 1},
+                        tool_call_id='approval_call',
+                    ),
+                ]
+            )
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')]
+        )
+
+    agent = Agent(FunctionModel(llm), output_type=[MyOutput, DeferredToolRequests], end_strategy=end_strategy)
+
+    @agent.tool_plain(requires_approval=True)
+    def my_tool(x: int) -> int:
+        return x * 2
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call')])
+    )
+    message_history = result.all_messages()
+
+    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls'):
+        agent.run_sync(
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'approval_call': True, 'bogus_call': True}),
+        )
+
+    result = agent.run_sync(
+        message_history=message_history,
+        deferred_tool_results=DeferredToolResults(approvals={'approval_call': True}),
+    )
+
+    assert result.output == MyOutput(value=42)
+    messages = result.all_messages()
+    retry_parts = [
+        part for part in iter_message_parts(messages, ModelRequest, ToolReturnPart) if part.outcome == 'retried'
+    ]
+    my_tool_returns = [
+        part
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.tool_name == 'my_tool' and part.outcome == 'success'
+    ]
+    assert len(retry_parts) == 1
+    assert retry_parts[0].tool_call_id == 'output_call'
+    assert len(my_tool_returns) == 1
+    assert my_tool_returns[0].tool_call_id == 'approval_call'
+
+    if end_strategy == 'graceful':
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result', args={'value': 'not-an-int'}, tool_call_id='output_call'
+                        ),
+                        ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call'),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=9),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            content=[
+                                {
+                                    'type': 'int_parsing',
+                                    'loc': ['value'],
+                                    'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                                    'input': 'not-an-int',
+                                }
+                            ],
+                            tool_name='final_result',
+                            tool_call_id='output_call',
+                            timestamp=IsDatetime(),
+                            outcome='retried',
+                            retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool', content=2, tool_call_id='approval_call', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')
+                    ],
+                    usage=RequestUsage(input_tokens=78, output_tokens=13),
+                    model_name='function:llm:',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='final_result',
+                            content='Final result processed.',
+                            tool_call_id='valid_output_call',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+
+
 def test_approval_required_with_user_prompt():
     """Test that user_prompt can be provided alongside deferred_tool_results for approval."""
 
@@ -1590,8 +2184,7 @@ def test_approval_required_with_user_prompt():
             )
         else:
             # Second call: respond to both tool result and user prompt
-            last_request = messages[-1]
-            assert isinstance(last_request, ModelRequest)
+            last_request = message(messages, ModelRequest, index=-1)
 
             # Verify we received both tool return and user prompt
             has_tool_return = any(isinstance(p, ToolReturnPart) for p in last_request.parts)
@@ -1606,7 +2199,7 @@ def test_approval_required_with_user_prompt():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
@@ -1667,7 +2260,7 @@ def test_approval_required_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -1732,7 +2325,7 @@ def test_approval_required_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired  # No metadata
         return x * 42
@@ -1771,17 +2364,17 @@ def test_mixed_deferred_tools_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def tool_a(ctx: RunContext[None], x: int) -> int:
+    def tool_a(ctx: RunContext, x: int) -> int:
         raise CallDeferred(metadata={'type': 'external', 'priority': 'high'})
 
     @agent.tool
-    def tool_b(ctx: RunContext[None], y: int) -> int:
+    def tool_b(ctx: RunContext, y: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(metadata={'reason': 'Needs approval', 'level': 'manager'})
         return y * 10
 
     @agent.tool
-    def tool_c(ctx: RunContext[None], z: int) -> int:
+    def tool_c(ctx: RunContext, z: int) -> int:
         raise CallDeferred  # No metadata
 
     result = agent.run_sync('Hello')
@@ -1873,12 +2466,14 @@ async def test_deferred_tool_without_output_type():
 
 
 def test_output_type_deferred_tool_requests_by_itself():
-    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolRequests`.'):
+    with pytest.raises(
+        UserError, match=re.escape('At least one output type must be provided other than `DeferredToolRequests`.')
+    ):
         Agent(TestModel(), output_type=DeferredToolRequests)
 
 
 def test_output_type_empty():
-    with pytest.raises(UserError, match='At least one output type must be provided.'):
+    with pytest.raises(UserError, match=re.escape('At least one output type must be provided.')):
         Agent(TestModel(), output_type=[])
 
 
@@ -1965,11 +2560,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -1978,11 +2575,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2019,7 +2618,7 @@ def test_parallel_tool_return_with_deferred():
                     content='I bought a banana',
                     metadata={'fruit': 'banana', 'price': 100.0},
                 ),
-                'buy_pear': RetryPromptPart(
+                'buy_pear': legacy_retry_prompt_part(
                     content='The purchase of pears was denied.',
                 ),
             },
@@ -2063,11 +2662,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2076,11 +2677,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2097,11 +2700,13 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2110,11 +2715,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2127,7 +2734,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2140,11 +2747,13 @@ def test_parallel_tool_return_with_deferred():
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2153,11 +2762,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='I bought a banana',
@@ -2170,7 +2781,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=137, output_tokens=36),
+                usage=RequestUsage(input_tokens=121, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -2217,11 +2828,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: banana',
                         tool_name='get_price',
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
@@ -2230,17 +2843,21 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Unknown fruit: grape',
                         tool_name='get_price',
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Apples are not available',
                         tool_name='buy',
                         tool_call_id='buy_apple',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     ToolReturnPart(
                         tool_name='buy',
@@ -2249,11 +2866,13 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The purchase of pears was denied.',
                         tool_name='buy',
                         tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
@@ -2284,7 +2903,7 @@ def test_deferred_tool_call_approved_fails():
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
-    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+    async def defer(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition | None:
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
@@ -2329,10 +2948,8 @@ def test_unapproved_tool_invalid_args_retry():
     assert result.output == 'done'
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried'
     ]
     assert len(retry_parts) == 1
     assert retry_parts[0].tool_name == 'my_tool'
@@ -2371,7 +2988,7 @@ async def test_approval_required_toolset():
                 ]
             )
 
-    toolset = FunctionToolset[None]()
+    toolset = FunctionToolset()
 
     @toolset.tool_plain
     def foo(x: int) -> int:
@@ -2524,8 +3141,9 @@ def test_deferred_tool_results_serializable():
                 content='The tool call was approved.',
                 metadata={'foo': 'bar'},
             ),
+            'tool-failed': ToolFailed('The tool failed.'),
             'model-retry': ModelRetry('The tool call was denied.'),
-            'retry-prompt-part': RetryPromptPart(
+            'retry-prompt-part': legacy_retry_prompt_part(
                 content='The tool call was denied.',
                 tool_name='foo',
                 tool_call_id='foo',
@@ -2548,8 +3166,10 @@ def test_deferred_tool_results_serializable():
                     'return_value': 1,
                     'content': 'The tool call was approved.',
                     'metadata': {'foo': 'bar'},
+                    'tools': None,
                     'kind': 'tool-return',
                 },
+                'tool-failed': {'message': 'The tool failed.', 'kind': 'tool-failed'},
                 'model-retry': {'message': 'The tool call was denied.', 'kind': 'model-retry'},
                 'retry-prompt-part': {
                     'content': 'The tool call was denied.',
@@ -2569,15 +3189,69 @@ def test_deferred_tool_results_serializable():
             'metadata': {},
         }
     )
-    deserialized = results_ta.validate_python(serialized)
+    # `DeferredToolCallResult` still accepts the deprecated part, and unlike a message history it
+    # doesn't translate one — so reloading results that hold one rebuilds the class, and warns.
+    with pytest.warns(PydanticAIDeprecationWarning):
+        deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
+    assert TypeAdapter(DeferredToolCallResult).validate_python(results.calls['tool-failed']) == ToolFailed(
+        'The tool failed.'
+    )
+
+
+def test_deferred_tool_results_does_not_coerce_approval():
+    with pytest.raises(ValidationError):
+        TypeAdapter(DeferredToolResults).validate_python({'approvals': {'call-1': 'yes'}})
+
+
+def test_deferred_tool_call_result_tool_failed():
+    """A `ToolFailed` in `DeferredToolResults.calls` reaches the model as a failed tool return, not a retry or a success."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple')])
+        else:
+            return ModelResponse(parts=[TextPart('Done!')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def buy(fruit: str):
+        raise CallDeferred
+
+    result = agent.run_sync('Buy me an apple')
+    assert result.output == snapshot(
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple')])
+    )
+
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(calls={'buy_apple': ToolFailed('The store is closed')}),
+    )
+    assert result.output == snapshot('Done!')
+    assert result.all_messages()[-2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='buy',
+                    content='The store is closed',
+                    tool_call_id='buy_apple',
+                    timestamp=IsDatetime(),
+                    outcome='failed',
+                )
+            ],
+            timestamp=IsDatetime(),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
 
 
 def test_tool_metadata():
     """Test that metadata is properly set on tools."""
     metadata = {'category': 'test', 'version': '1.0'}
 
-    def simple_tool(ctx: RunContext[None], x: int) -> int:
+    def simple_tool(ctx: RunContext, x: int) -> int:
         return x * 2  # pragma: no cover
 
     tool = Tool(simple_tool, metadata=metadata)
@@ -2588,7 +3262,7 @@ def test_tool_metadata():
     agent = Agent('test')
 
     @agent.tool(metadata={'source': 'agent'})
-    def agent_tool(ctx: RunContext[None], y: int) -> int:
+    def agent_tool(ctx: RunContext, y: int) -> int:
         return y + 1  # pragma: no cover
 
     agent_tool_def = agent._function_toolset.tools['agent_tool']
@@ -2613,14 +3287,14 @@ def test_tool_metadata():
     assert toolset_plain_tool_def.metadata == {'foo': 'bar'}
 
     @toolset.tool(metadata={'toolset': 'function'})
-    def toolset_tool(ctx: RunContext[None], a: str) -> str:
+    def toolset_tool(ctx: RunContext, a: str) -> str:
         return a.upper()  # pragma: no cover
 
     toolset_tool_def = toolset.tools['toolset_tool']
     assert toolset_tool_def.metadata == {'foo': 'bar', 'toolset': 'function'}
 
     # Test with FunctionToolset.add_function
-    def standalone_func(ctx: RunContext[None], b: float) -> float:
+    def standalone_func(ctx: RunContext, b: float) -> float:
         return b / 2  # pragma: no cover
 
     toolset.add_function(standalone_func, metadata={'method': 'add_function'})
@@ -2633,7 +3307,7 @@ def test_retry_tool_until_last_attempt():
     agent = Agent(model, retries={'tools': 2, 'output': 2})
 
     @agent.tool
-    def always_fail(ctx: RunContext[None]) -> str:
+    def always_fail(ctx: RunContext) -> str:
         if ctx.last_attempt:
             return 'I guess you never learn'
         else:
@@ -2659,16 +3333,19 @@ def test_retry_tool_until_last_attempt():
                 usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Please try again.',
                         tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2677,19 +3354,22 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Please try again.',
                         tool_name='always_fail',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=2, max_retries=2),
                     )
                 ],
                 timestamp=IsDatetime(),
@@ -2698,9 +3378,10 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=72, output_tokens=6),
+                usage=RequestUsage(input_tokens=64, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2719,9 +3400,10 @@ def test_retry_tool_until_last_attempt():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
-                usage=RequestUsage(input_tokens=77, output_tokens=14),
+                usage=RequestUsage(input_tokens=69, output_tokens=14),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -2729,9 +3411,8 @@ def test_retry_tool_until_last_attempt():
     )
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_triggers_retry():
-    """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
+    """Test that a slow tool is answered with a retried tool return when its timeout is exceeded."""
     import asyncio
 
     call_count = 0
@@ -2757,17 +3438,45 @@ async def test_tool_timeout_triggers_retry():
     # Check that retry prompt was sent to the model
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'slow_tool'
 
 
-@pytest.mark.anyio
+async def test_sync_tool_timeout_triggers_retry():
+    """A blocking `def` tool times out too: its worker thread is abandoned when the deadline expires."""
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_sync_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=0.01)
+    def slow_sync_tool() -> str:
+        time.sleep(0.1)
+        # The abandoned thread runs to completion, so this line is covered; only its result is discarded.
+        return 'done'
+
+    result = await agent.run('call slow_sync_tool')
+
+    retry_parts = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.01 seconds' in str(retry_parts[0].content)
+    assert retry_parts[0].tool_name == 'slow_sync_tool'
+
+
 async def test_tool_with_timeout_completes_successfully():
     """Test that a tool completes successfully when within its timeout."""
     import asyncio
@@ -2800,16 +3509,13 @@ async def test_tool_with_timeout_completes_successfully():
     # Should NOT have any retry prompts since tool completed within timeout
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 0
     assert 'completed successfully' in result.output
 
 
-@pytest.mark.anyio
 async def test_no_timeout_by_default():
     """Test that tools run without timeout by default (backward compatible)."""
     import asyncio
@@ -2827,7 +3533,6 @@ async def test_no_timeout_by_default():
     assert 'completed' in result.output
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
@@ -2850,7 +3555,6 @@ async def test_tool_timeout_retry_counts_as_failed():
     assert call_count == 3
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_message_format():
     """Test the format of the retry prompt message on timeout."""
     import asyncio
@@ -2875,14 +3579,12 @@ async def test_tool_timeout_message_format():
 
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
     # Check message contains timeout value (tool_name is in the part, not in content)
-    assert '0.1' in retry_parts[0].content
+    assert '0.1' in str(retry_parts[0].content)
     assert retry_parts[0].tool_name == 'my_slow_tool'
 
 
@@ -2913,7 +3615,6 @@ def test_tool_timeout_default_none():
     assert tool.tool_def.timeout is None
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_exceeds_retry_limit():
     """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
     import asyncio
@@ -2937,7 +3638,6 @@ async def test_tool_timeout_exceeds_retry_limit():
         await agent.run('call always_slow_tool')
 
 
-@pytest.mark.anyio
 async def test_agent_level_tool_timeout():
     """Test that agent-level tool_timeout applies to all tools."""
     import asyncio
@@ -2964,16 +3664,13 @@ async def test_agent_level_tool_timeout():
     # Check that retry prompt was sent
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
 
 
-@pytest.mark.anyio
 async def test_per_tool_timeout_overrides_agent_timeout():
     """Test that per-tool timeout overrides agent-level timeout."""
     import asyncio
@@ -3000,13 +3697,11 @@ async def test_per_tool_timeout_overrides_agent_timeout():
     # Should timeout because per-tool timeout (0.1s) is applied, not agent timeout (10s)
     retry_parts = [
         part
-        for msg in result.all_messages()
-        if isinstance(msg, ModelRequest)
-        for part in msg.parts
-        if isinstance(part, RetryPromptPart) and 'Timed out' in str(part.content)
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.outcome == 'retried' and 'Timed out' in str(part.content)
     ]
     assert len(retry_parts) == 1
-    assert 'Timed out after 0.1 seconds' in retry_parts[0].content
+    assert 'Timed out after 0.1 seconds' in str(retry_parts[0].content)
 
 
 def test_agent_tool_timeout_passed_to_toolset():
@@ -3017,7 +3712,6 @@ def test_agent_tool_timeout_passed_to_toolset():
     assert agent._function_toolset.timeout == 30.0
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
     """Test that tools are cancelled when agent is cancelled."""
@@ -3032,7 +3726,10 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
         is_called.set()
 
         try:
-            await asyncio.sleep(1.0)
+            # Block until cancelled instead of sleeping a fixed duration: a sleep that races the
+            # `wait_for` timeouts below is flaky under CI load — if the loop is starved past the
+            # sleep, the tool returns normally and `is_cancelled` is never set.
+            await asyncio.Event().wait()
 
         except asyncio.CancelledError:
             is_cancelled.set()
@@ -3043,13 +3740,14 @@ async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
             await agent.run('call tool')
 
         else:
-            async for _ in agent.run_stream_events('call tool'):
-                pass
+            async with agent.run_stream_events('call tool') as event_stream:
+                async for _ in event_stream:
+                    pass
 
     task = asyncio.create_task(run_agent())
-    await asyncio.wait_for(is_called.wait(), timeout=1.0)
+    await asyncio.wait_for(is_called.wait(), timeout=10)
     task.cancel()
-    await asyncio.wait_for(is_cancelled.wait(), timeout=1.0)
+    await asyncio.wait_for(is_cancelled.wait(), timeout=10)
 
 
 def test_tool_approved_with_metadata():
@@ -3073,7 +3771,7 @@ def test_tool_approved_with_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired(
                 metadata={
@@ -3128,7 +3826,7 @@ def test_tool_approved_with_metadata_and_override_args():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture both the metadata and the argument
@@ -3181,7 +3879,7 @@ def test_tool_approved_without_metadata():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         if not ctx.tool_call_approved:
             raise ApprovalRequired()
         # Capture the tool_call_metadata from context
@@ -3211,7 +3909,7 @@ def test_tool_call_metadata_not_available_for_unapproved_calls():
     agent = Agent(TestModel())
 
     @agent.tool
-    def my_tool(ctx: RunContext[None], x: int) -> int:
+    def my_tool(ctx: RunContext, x: int) -> int:
         # Capture the tool_call_metadata from context
         received_metadata.append(ctx.tool_call_metadata)
         return x * 42
@@ -3261,6 +3959,7 @@ def test_args_validator_success():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3282,6 +3981,7 @@ def test_args_validator_success():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3304,7 +4004,6 @@ def test_args_validator_not_configured():
     agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
 
-@pytest.mark.anyio
 async def test_args_validator_async():
     """Test async validator functions work correctly."""
     validator_called = False
@@ -3343,6 +4042,7 @@ async def test_args_validator_async():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3364,6 +4064,7 @@ async def test_args_validator_async():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3434,6 +4135,7 @@ def test_args_validator_tool_direct():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3455,6 +4157,7 @@ def test_args_validator_tool_direct():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3503,6 +4206,7 @@ def test_args_validator_toolset():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3524,6 +4228,7 @@ def test_args_validator_toolset():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3569,6 +4274,7 @@ def test_args_validator_tool_plain():
                 usage=RequestUsage(input_tokens=56, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3590,6 +4296,7 @@ def test_args_validator_tool_plain():
                 usage=RequestUsage(input_tokens=57, output_tokens=9),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3817,6 +4524,212 @@ def test_args_validator_not_double_called_for_approved_tools():
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
 
 
+def test_args_validator_requests_approval():
+    """An `args_validator` can raise `ApprovalRequired` to request approval for valid arguments.
+
+    The tool is not executed, the call is deferred with the validator's metadata, and approving it
+    on a follow-up run runs the tool with `ctx.tool_call_approved` set. `retries=0` pins that the
+    deferral doesn't consume the retry budget: if it were treated as a validation failure, the run
+    would fail with `UnexpectedModelBehavior` instead of deferring.
+    """
+    validator_calls: list[bool] = []
+    executed: list[int] = []
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        validator_calls.append(ctx.tool_call_approved)
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'reason': 'sensitive'})
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(args_validator=my_validator, retries=0)
+    def my_tool(ctx: RunContext, x: int) -> int:
+        executed.append(x)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+            metadata={'pyd_ai_tool_call_id__my_tool': {'reason': 'sensitive'}},
+        )
+    )
+    assert executed == []
+    assert validator_calls == [False]
+
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+    )
+    assert executed == [0]
+    assert validator_calls == [False, True]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__my_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":0}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=7),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_args_validator_defers_call():
+    """An `args_validator` can raise `CallDeferred` so the call is executed externally.
+
+    As with approval, the tool isn't executed and the retry budget isn't touched (`retries=0`);
+    the external result supplied on the follow-up run is recorded verbatim.
+    """
+    executed: list[int] = []
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        raise CallDeferred(metadata={'job_id': 'abc'})
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(args_validator=my_validator, retries=0)
+    def my_tool(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append(x)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+            metadata={'pyd_ai_tool_call_id__my_tool': {'job_id': 'abc'}},
+        )
+    )
+    assert executed == []
+
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.calls[0].tool_call_id
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(calls={tool_call_id: 'done externally'}),
+    )
+    assert executed == []
+    assert result.all_messages()[-2].parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='my_tool',
+                content='done externally',
+                tool_call_id='pyd_ai_tool_call_id__my_tool',
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds():
+    """Pins current behavior: a tool that's already deferred by kind ignores the deferral's metadata.
+
+    A `requires_approval=True` (or external) tool is collected as deferred by its kind without being
+    executed, so neither its `args_validator` nor its function body can contribute
+    `ApprovalRequired(metadata=...)` to `DeferredToolRequests.metadata` — the validator case behaves
+    exactly like the pre-existing tool-body case, both asserted here. Only tools deferred *by* the
+    deferral itself (a plain function tool) carry metadata through.
+    """
+    executed: list[str] = []
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        raise ApprovalRequired(metadata={'from': 'validator'})
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=True, args_validator=my_validator)
+    def validator_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('validator_defers')
+        return x
+
+    @agent.tool(requires_approval=True)
+    def body_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('body_defers')
+        raise ApprovalRequired(metadata={'from': 'body'})
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(
+                    tool_name='validator_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__validator_defers'
+                ),
+                ToolCallPart(tool_name='body_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__body_defers'),
+            ]
+        )
+    )
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.metadata == {}  # neither the validator's nor the body's metadata
+    assert executed == []
+
+
+def test_args_validator_approval_resolved_inline_by_capability():
+    """A validator's `ApprovalRequired` is resolvable inline by a `HandleDeferredToolCalls` handler."""
+    requests: list[DeferredToolRequests] = []
+    executed: list[int] = []
+
+    def handle_deferred(ctx: RunContext, reqs: DeferredToolRequests) -> DeferredToolResults:
+        requests.append(reqs)
+        return reqs.build_results(approve_all=True)
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+
+    agent = Agent(TestModel(), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext, x: int) -> int:
+        executed.append(x)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('{"my_tool":0}')
+    assert executed == [0]
+    assert requests == snapshot(
+        [
+            DeferredToolRequests(
+                approvals=[
+                    ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                ]
+            )
+        ]
+    )
+
+
 def test_args_validator_single_base_model_arg():
     """`args_validator` works when a tool has a single BaseModel parameter.
 
@@ -3987,7 +4900,7 @@ def test_tool_ctx_agent():
     tool_output_types: list[Any] = []
 
     @agent.tool
-    def get_agent_info(ctx: RunContext[None]) -> str:
+    def get_agent_info(ctx: RunContext) -> str:
         assert ctx.agent is not None
         tool_agent_names.append(ctx.agent.name)
         tool_output_types.append(ctx.agent.output_type)
@@ -4010,6 +4923,7 @@ def test_tool_ctx_agent():
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4031,6 +4945,7 @@ def test_tool_ctx_agent():
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4057,7 +4972,7 @@ def test_tool_ctx_agent_in_output_validator():
     validator_agent_names: list[str | None] = []
 
     @agent.output_validator
-    def check_agent(ctx: RunContext[None], output: str) -> str:
+    def check_agent(ctx: RunContext, output: str) -> str:
         assert ctx.agent is not None
         validator_agent_names.append(ctx.agent.name)
         return output
@@ -4077,6 +4992,7 @@ def test_tool_ctx_agent_in_output_validator():
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
+                provider_name='test',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -4172,8 +5088,9 @@ def test_return_schema_tool_return_generic():
 
 def test_return_schema_self_bound_method():
     """Self return type on a bound method resolves to the owning class."""
+    from typing import Self
+
     from pydantic import BaseModel
-    from typing_extensions import Self
 
     class Weather(BaseModel):
         temperature: float
@@ -4190,14 +5107,12 @@ def test_return_schema_self_bound_method():
 
 def test_return_schema_self_unbound():
     """Self return type on a non-bound function falls back to unconstrained schema."""
-    from typing import Any
+    from typing import Any, Self
 
-    from typing_extensions import Self
-
-    from pydantic_ai._function_schema import _extract_return_schema_type
+    from pydantic_ai._function_schema import extract_return_schema_type
 
     # Pass Self directly as the annotation — no need for a real function with Self return
-    result = _extract_return_schema_type(Self, lambda: None)
+    result = extract_return_schema_type(Self, lambda: None)
     assert result is Any
 
 
@@ -4211,10 +5126,7 @@ def test_include_return_schema_default_cleared():
     result = agent.run_sync('test')
     # return_schema should be cleared since include_return_schema defaults to False
     # (verified by the fact that the tool description doesn't contain "Return schema:")
-    request = result.all_messages()[0]
-    assert isinstance(request, ModelRequest)
-    part = request.parts[0]
-    assert isinstance(part, UserPromptPart)
+    part = message_part(result.all_messages(), UserPromptPart)
     assert 'Return schema' not in str(part.content)
 
 
@@ -4227,10 +5139,9 @@ def test_include_return_schema_via_capability():
 
     agent = Agent('test', tools=[Tool(my_tool)], capabilities=[IncludeToolReturnSchemas()])
     result = agent.run_sync('test')
-    request = result.all_messages()[0]
-    assert isinstance(request, ModelRequest)
+    request = message(result.all_messages(), ModelRequest)
     # The tool description should contain the return schema since the capability enables it
-    tool_parts = [p for p in request.parts if hasattr(p, 'content')]
+    tool_parts = [p for p in request.parts if not isinstance(p, (ToolAvailabilityDeltaPart, InstructionBaselinePart))]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
 
 
@@ -4323,9 +5234,8 @@ def test_include_return_schema_warning_empty_schema():
 
 
 def test_prepare_return_schemas():
-    """_prepare_return_schemas resolves and injects return schemas in a single pass."""
-    from pydantic_ai.models import ModelRequestParameters, _prepare_return_schemas
-    from pydantic_ai.profiles import ModelProfile
+    """`prepare_return_schemas` resolves and injects return schemas in a single pass."""
+    from pydantic_ai.models import ModelRequestParameters, prepare_return_schemas
     from pydantic_ai.tools import ToolDefinition
 
     td_with_schema = ToolDefinition(
@@ -4347,8 +5257,7 @@ def test_prepare_return_schemas():
     )
 
     # Non-native model: opted-in tool gets schema injected into description, non-opted-in gets cleared
-    profile_no_native = ModelProfile(supports_tool_return_schema=False)
-    result = _prepare_return_schemas(params, profile_no_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=False)
     assert result.function_tools[0].return_schema is None
     assert 'Return schema:' in (result.function_tools[0].description or '')
     assert 'A tool' in (result.function_tools[0].description or '')
@@ -4356,8 +5265,7 @@ def test_prepare_return_schemas():
     assert 'Return schema:' not in (result.function_tools[1].description or '')
 
     # Native model: opted-in tool keeps schema, non-opted-in gets cleared
-    profile_native = ModelProfile(supports_tool_return_schema=True)
-    result = _prepare_return_schemas(params, profile_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=True)
     assert result.function_tools[0].return_schema == {'type': 'string'}
     assert result.function_tools[1].return_schema is None
 
@@ -4366,7 +5274,7 @@ def test_prepare_return_schemas():
     params_no_desc = ModelRequestParameters(
         function_tools=[td_no_desc], output_tools=[], output_mode='auto', output_object=None
     )
-    result = _prepare_return_schemas(params_no_desc, profile_no_native)
+    result = prepare_return_schemas(params_no_desc, supports_tool_return_schema=False)
     assert result.function_tools[0].description is not None
     assert result.function_tools[0].description.startswith('Return schema:')
 
@@ -4399,3 +5307,345 @@ def test_include_return_schema_on_toolset_tool():
 
 
 # endregion
+
+
+# --- Tool parameter validation -------------------------------------------------
+
+
+def test_tool_rejects_negative_max_retries():
+    with pytest.raises(UserError, match='max_retries must be >= 0'):
+        Tool(lambda: None, max_retries=-1)
+
+
+def test_tool_accepts_zero_max_retries():
+    tool = Tool(lambda: None, max_retries=0)
+    assert tool.max_retries == 0
+
+
+def test_tool_accepts_none_max_retries():
+    tool = Tool(lambda: None, max_retries=None)
+    assert tool.max_retries is None
+
+
+def test_tool_rejects_non_positive_timeout():
+    with pytest.raises(UserError, match='timeout must be > 0'):
+        Tool(lambda: None, timeout=0)
+
+
+def test_tool_rejects_negative_timeout():
+    with pytest.raises(UserError, match='timeout must be > 0'):
+        Tool(lambda: None, timeout=-1)
+
+
+def test_tool_accepts_none_timeout():
+    tool = Tool(lambda: None, timeout=None)
+    assert tool.timeout is None
+
+
+# --- ToolOutput parameter validation -------------------------------------------
+
+
+def test_tooloutput_rejects_negative_max_retries():
+    with pytest.raises(UserError, match='max_retries must be >= 0'):
+        ToolOutput(int, max_retries=-1)
+
+
+@pytest.mark.parametrize('max_retries', [0, None])
+def test_tooloutput_accepts_valid_max_retries(max_retries: int | None):
+    out = ToolOutput(int, max_retries=max_retries)
+    assert out.max_retries == max_retries
+
+
+def test_tool_return_part_serializes_with_serialization_alias():
+    """Tool return serialization uses field aliases so wire output matches return_schema.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/6542: the
+    `return_schema` is generated with `mode='serialization'` (advertising the
+    `serialization_alias`), but `ToolReturnPart.model_response_str()` and
+    `model_response_object()` must also serialize with `by_alias=True` so the payload
+    keys agree with the schema the model received.
+    """
+
+    class OutputModel(BaseModel):
+        value: int = Field(serialization_alias='wireOut')
+
+    def my_tool() -> OutputModel:
+        return OutputModel(value=1)
+
+    tool = Tool(my_tool)
+    # The advertised return schema uses the serialization alias.
+    return_schema = tool.function_schema.return_schema
+    assert 'wireOut' in return_schema.get('properties', {})
+
+    part = ToolReturnPart(tool_name='my_tool', content=my_tool(), tool_call_id='call-1')
+
+    # String serialization should use the alias key.
+    serialized_str = part.model_response_str()
+    assert json.loads(serialized_str) == {'wireOut': 1}
+
+    # Object serialization should use the alias key.
+    serialized_obj = part.model_response_object()
+    assert serialized_obj == {'wireOut': 1}
+
+    # The wire output keys agree with the advertised return schema properties.
+    assert set(json.loads(serialized_str)) == set(return_schema.get('properties', {}))
+    assert set(serialized_obj) == set(return_schema.get('properties', {}))
+
+
+class DescribedEnum(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    """A base for enums built by the functional API, which takes one mix-in type and no extra bases."""
+
+
+def test_enum_member_docstrings_describe_options():
+    """A docstring under an enum member becomes that option's description, as `anyOf` of `const`s."""
+
+    class Priority(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+        """How urgent the ticket is."""
+
+        low = 'low'
+        """Can wait a week."""
+        high = 'high'
+        """Needs attention today."""
+        unknown = 'unknown'
+        annotated: str = 'annotated'  # pyright: ignore[reportGeneralTypeIssues]
+        """An annotated member is a member too."""
+        _ignore_ = ['label']
+        """A string after a name that is not a member describes nothing."""
+
+        def label(self) -> str:
+            return self.value.title()  # pragma: no cover
+
+        """A string that follows no member describes nothing."""
+
+    # Opted in, but built without source to read, so no member can be described.
+    Undocumented = DescribedEnum('Undocumented', {'a': 'a', 'b': 'b'})
+
+    agent = Agent(FunctionModel(get_json_schema))
+
+    @agent.tool_plain
+    def triage(priority: Priority, other: Undocumented) -> None: ...  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    json_schema = json.loads(result.output)
+    assert json_schema['parameters_json_schema']['$defs'] == snapshot(
+        {
+            'Priority': {
+                'anyOf': [
+                    {'const': 'low', 'description': 'Can wait a week.'},
+                    {'const': 'high', 'description': 'Needs attention today.'},
+                    {'const': 'unknown'},
+                    {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+                ],
+                'description': 'How urgent the ticket is.',
+                'title': 'Priority',
+                'type': 'string',
+            },
+            'Undocumented': {'enum': ['a', 'b'], 'title': 'Undocumented', 'type': 'string'},
+        }
+    )
+
+
+class Urgency(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+class UnopinionatedUrgency(str, Enum):  # noqa: UP042
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+def test_mixing_in_use_enum_member_docstrings_is_what_describes_the_options():
+    """`UseEnumMemberDocstrings` is the opt-in, and the only difference between these two enums."""
+
+    class Ticket(BaseModel):
+        urgency: Urgency
+
+    assert Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)['$defs']['Urgency'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high', 'description': 'Needs attention today.'},
+            ],
+            'description': 'How urgent the ticket is.',
+            'title': 'Urgency',
+            'type': 'string',
+        }
+    )
+
+
+def test_an_enum_that_does_not_mix_it_in_is_described_exactly_as_pydantic_describes_it():
+    """Without the opt-in, the docstrings are ignored and the schema is the one Pydantic itself generates.
+
+    `UnopinionatedUrgency` has the same body as `Urgency` above, minus the mix-in, and is compared against
+    Pydantic's own generator rather than a snapshot alone, so the guarantee is that nothing moved for a user
+    who hasn't opted in — not merely that today's shape is the one we wrote down.
+    """
+
+    class Ticket(BaseModel):
+        urgency: UnopinionatedUrgency
+
+    ours = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)['$defs']['UnopinionatedUrgency']
+    pydantics = Ticket.model_json_schema()['$defs']['UnopinionatedUrgency']
+    assert ours == pydantics
+    assert ours == snapshot(
+        {
+            'description': 'How urgent the ticket is.',
+            'enum': ['low', 'high'],
+            'title': 'UnopinionatedUrgency',
+            'type': 'string',
+        }
+    )
+
+
+class Level(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    annotated: str = 'annotated'  # pyright: ignore[reportGeneralTypeIssues]
+    """An annotated member is a member too."""
+    _ignore_ = ['label']
+    """A string after a name that is not a member describes nothing."""
+
+    def label(self) -> str:
+        return self.value.title()  # pragma: no cover
+
+    """A string that follows no member describes nothing."""
+
+
+Functional = DescribedEnum('Functional', {'low': 'low', 'high': 'high'})
+"""Opted in, but built without source to read, so no member can be described."""
+
+
+def test_a_none_member_keeps_the_enum_in_its_plain_form():
+    """`{'const': None}` reads as "no const" to a lookup with a default, so such an enum is left alone."""
+
+    class Settled(UseEnumMemberDocstrings, Enum):
+        yes = 'yes'
+        """The claim holds."""
+        unknown = None
+        """Nothing in the material settles it."""
+
+    class Verdict(BaseModel):
+        settled: Settled
+
+    seen: list[dict[str, Any]] = []
+
+    def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.output_tools[0].parameters_json_schema)
+        return ModelResponse(parts=[ToolCallPart('final_result', {'settled': 'yes'}, 'call_1')])
+
+    Agent(FunctionModel(capture), output_type=Verdict).run_sync('Hello')
+    assert seen[0]['$defs']['Settled'] == snapshot({'enum': ['yes', None], 'title': 'Settled'})
+
+
+class Aliased(UseEnumMemberDocstrings, str, Enum):  # noqa: UP042
+    """How urgent the ticket is."""
+
+    high = 'high'
+    urgent = 'high'
+    """Same as high, under the name the ticketing system uses."""
+    low = 'low'
+    """Can wait a week."""
+
+
+def test_an_enum_alias_describes_the_option_it_was_written_for():
+    """A docstring is read under the name it was declared under, but an alias is the same member.
+
+    `Aliased.urgent is Aliased.high`, so the schema only ever names `high`; looking the docstring up by
+    the member's own name found nothing and dropped it silently.
+    """
+
+    class Ticket(BaseModel):
+        priority: Aliased
+
+    schema = Ticket.model_json_schema(schema_generator=GenerateToolJsonSchema)
+    assert schema['$defs']['Aliased'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'high', 'description': 'Same as high, under the name the ticketing system uses.'},
+                {'const': 'high', 'description': 'Same as high, under the name the ticketing system uses.'},
+                {'const': 'low', 'description': 'Can wait a week.'},
+            ],
+            'description': 'How urgent the ticket is.',
+            'title': 'Aliased',
+            'type': 'string',
+        }
+    )
+
+
+def test_enum_member_docstrings_do_not_need_the_enclosing_model_to_opt_in():
+    """The enum's own mix-in is the whole opt-in, wherever Pydantic AI describes that enum to a model.
+
+    The enclosing model's `use_attribute_docstrings` neither enables this nor is required by it: that config
+    is pushed while the core schema is built and never while the JSON schema is generated, so an enum reached
+    from a tool's parameters never sees it even though `_function_schema` sets it. Gating on it would have held
+    in three of these four places, with nothing to tell the user which one they were in.
+    """
+
+    class Quiet(BaseModel):
+        level: Level
+
+    class Described(BaseModel):
+        model_config = ConfigDict(use_attribute_docstrings=True)
+        level: Level
+
+    def defs(output_type: Any) -> dict[str, Any]:
+        seen: list[dict[str, Any]] = []
+
+        def capture(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.output_tools[0].parameters_json_schema)
+            args = (
+                {'response': 'low'}
+                if isinstance(output_type, type) and issubclass(output_type, Enum)
+                else {'level': 'low'}
+            )
+            return ModelResponse(parts=[ToolCallPart('final_result', args, 'call_1')])
+
+        Agent(FunctionModel(capture), output_type=output_type).run_sync('Hello')
+        return seen[0]
+
+    assert defs(Quiet)['$defs']['Level'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
+            'title': 'Level',
+            'type': 'string',
+        }
+    )
+    assert defs(Described)['$defs']['Level'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
+            'title': 'Level',
+            'type': 'string',
+        }
+    )
+    assert defs(Functional)['$defs']['Functional'] == snapshot(
+        {'enum': ['low', 'high'], 'title': 'Functional', 'type': 'string'}
+    )
+    assert defs(Level)['$defs']['Level'] == snapshot(
+        {
+            'anyOf': [
+                {'const': 'low', 'description': 'Can wait a week.'},
+                {'const': 'high'},
+                {'const': 'annotated', 'description': 'An annotated member is a member too.'},
+            ],
+            'title': 'Level',
+            'type': 'string',
+        }
+    )

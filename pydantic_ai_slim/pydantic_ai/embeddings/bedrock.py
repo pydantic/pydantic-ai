@@ -11,17 +11,27 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import anyio
 import anyio.to_thread
 
+from pydantic_ai import _model_errors
+from pydantic_ai._utils import BaseExceptionGroup, gather
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.models import check_allow_model_requests
+from pydantic_ai.models._decode_errors import map_decode_errors
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
 
-from .base import EmbeddingModel, EmbedInputType
-from .result import EmbeddingResult
+from .base import EmbeddingModel
+from .result import EmbeddingResult, EmbedInputType
 from .settings import EmbeddingSettings
 
 try:
-    from botocore.exceptions import ClientError
+    from botocore.exceptions import (
+        ClientError,
+        ConnectionError as BotocoreConnectionError,
+        ConnectTimeoutError,
+        HTTPClientError,
+        ReadTimeoutError,
+    )
 except ImportError as _import_error:
     raise ImportError(
         'Please install `boto3` to use Bedrock embedding models, '
@@ -196,7 +206,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     `amazon.nova-2-multimodal-embeddings-v1:0`
 
     When embedding multiple texts with models that only support single-text requests,
-    this controls how many requests run in parallel. Defaults to 5.
+    this controls how many requests run in parallel. Defaults to 5 and must be at least 1.
     """
 
 
@@ -572,6 +582,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs_list, settings_dict = self.prepare_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
@@ -611,20 +622,27 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ) -> EmbeddingResult:
         """Embed inputs concurrently with controlled parallelism and combine results."""
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
+        if max_concurrency < 1:
+            raise UserError(f'bedrock_max_concurrency must be >= 1, got {max_concurrency}.')
         semaphore = anyio.Semaphore(max_concurrency)
 
-        results: list[tuple[Sequence[float], int]] = [None] * len(inputs)  # type: ignore[list-item]
-
-        async def embed_single(index: int, text: str) -> None:
+        async def embed_single(text: str) -> tuple[Sequence[float], int]:
             async with semaphore:
                 body = self._handler.prepare_request([text], input_type, settings)
                 response, input_tokens = await self._invoke_model(body, settings)
                 embeddings, _ = self._handler.parse_response(response)
-                results[index] = (embeddings[0], input_tokens)
+                return embeddings[0], input_tokens
 
-        async with anyio.create_task_group() as tg:
-            for i, text in enumerate(inputs):
-                tg.start_soon(embed_single, i, text)
+        try:
+            results = await gather(*(embed_single(text) for text in inputs))
+        except BaseExceptionGroup as eg:
+            # Requests already sent to a thread can't be cancelled, so a throttle or validation error that fails every
+            # request surfaces several times. Raise the first model error, so callers see the same `ModelHTTPError` or
+            # `ModelAPIError` whatever the number of inputs; the full group stays reachable as its `__context__`.
+            first = next((e for e in eg.exceptions if isinstance(e, ModelAPIError)), None)
+            if first is not None:
+                raise first
+            raise
 
         all_embeddings = [embedding for embedding, _ in results]
         total_input_tokens = sum(tokens for _, tokens in results)
@@ -658,17 +676,36 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 )
             )
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            metadata = e.response.get('ResponseMetadata', {})
+            status_code = metadata.get('HTTPStatusCode')
             if isinstance(status_code, int):
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+                error = e.response.get('Error', {})
+                code, message = error.get('Code'), error.get('Message')
+                provider_error_code = code if isinstance(code, str) else None
+                raise ModelHTTPError.for_category(
+                    _model_errors.bedrock_code_category(provider_error_code, message)
+                    or _model_errors.http_status_category(status_code, message),
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.response,
+                    headers=metadata.get('HTTPHeaders'),
+                    provider_error_code=provider_error_code,
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        except (HTTPClientError, BotocoreConnectionError) as e:
+            # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
+            timeout = isinstance(e, (ReadTimeoutError, ConnectTimeoutError))
+            raise _model_errors.connection_error(self.model_name, str(e), e, timeout=timeout) from e
 
         # Extract input token count from HTTP headers
         input_tokens = int(
             response.get('ResponseMetadata', {}).get('HTTPHeaders', {}).get('x-amzn-bedrock-input-token-count', '0')
         )
 
-        response_body = json.loads(response['body'].read())
+        # `InvokeModel` returns the body as an undecoded byte stream, so this is the response decode other providers'
+        # SDKs do internally.
+        with map_decode_errors(self.model_name):
+            response_body = json.loads(response['body'].read())
         return response_body, input_tokens
 
     async def max_input_tokens(self) -> int | None:

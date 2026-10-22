@@ -1,13 +1,15 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Literal
+from typing import Literal, cast
 
-import httpx
+from pydantic_ai._http import AsyncHTTPClient
 
 try:
+    from google.auth import credentials as google_auth_credentials
     from google.auth.credentials import Credentials
     from google.genai.client import Client
+    from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.providers.google import BaseGoogleProvider, GoogleCloudLocation
 except ImportError as _import_error:
@@ -30,39 +32,60 @@ class GoogleCloudProvider(BaseGoogleProvider):
         api_key: str | None = None,
         credentials: Credentials | None = None,
         project: str | None = None,
-        location: GoogleCloudLocation | Literal['global'] | str | None = None,
+        location: GoogleCloudLocation | Literal['global', 'us', 'eu'] | str | None = None,
         client: Client | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
+        retry_options: HttpRetryOptions | None = None,
     ) -> None:
         """Create a new Google Cloud provider.
 
         Args:
             api_key: The [Vertex AI Express Mode API key](https://cloud.google.com/vertex-ai/generative-ai/docs/start/api-keys?usertype=expressmode)
-                to use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable.
-                Cannot be combined with `credentials`/`project`/`location` (those use Application Default Credentials).
+                to use for authentication. It can also be set via the `GOOGLE_API_KEY` environment variable,
+                or the legacy `GEMINI_API_KEY` environment variable (`GOOGLE_API_KEY` takes precedence).
+                Explicit `credentials` use credential-based authentication instead.
+                Explicit `project`/`location` use Application Default Credentials.
+                `GOOGLE_APPLICATION_CREDENTIALS` takes precedence over an API key from the environment.
             credentials: The credentials to use for authentication when calling the Google Cloud APIs. Credentials can
                 be obtained from environment variables and default credentials. For more information, see
                 [Set up Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials).
+                Credentials that require scopes are automatically scoped with
+                `https://www.googleapis.com/auth/cloud-platform`.
             project: The Google Cloud project ID to use for quota. Can be obtained from environment variables
                 (for example, `GOOGLE_CLOUD_PROJECT`).
-            location: The location to send API requests to (for example, `us-central1`). Can be obtained from
-                the `GOOGLE_CLOUD_LOCATION` environment variable.
-            client: A pre-initialized client to use.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            location: The location to send API requests to, for example `us-central1` (a single region) or
+                `global`. `'us'` and `'eu'` are multi-region values routed to the `aiplatform.{us,eu}.rep.googleapis.com`
+                data-residency endpoints. Model availability differs between single regions, multi-regions, and
+                `global` — see the
+                [Vertex AI locations docs](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions).
+                Can be obtained from the `GOOGLE_CLOUD_LOCATION` environment variable.
+            client: A pre-initialized client to use. Stored as-is without forcing `vertexai=True`, so a
+                client built for the Gemini Developer API is used on that transport even though `name`
+                stays `'google-cloud'`. `GoogleModel` reads the transport off the client rather than the
+                provider name, so it routes correctly either way.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
             base_url: The base URL for the Google Cloud API.
+            retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
+                See `google.genai.types.HttpRetryOptions` for available fields.
         """
         if client is not None:
             self._client = client
             return
 
-        # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
-        api_key = api_key or os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
+        # Treat an empty api_key as unset so it doesn't skip the precedence/ADC blocks below and let
+        # the SDK resurrect an environment API key (its BaseApiClient does `api_key or env_api_key`).
+        api_key = api_key or None
 
         # ADC kwargs take precedence over API-key auth. With none provided and only an api_key,
-        # the SDK uses Vertex AI Express Mode.
+        # the SDK uses Vertex AI Express Mode. The SDK reads `GOOGLE_API_KEY`/`GEMINI_API_KEY` itself,
+        # but drops them, since the ADC path below always passes explicit `credentials` or an
+        # explicit `location`, which take precedence over environment API keys in the SDK.
         if credentials is not None or project is not None or location is not None:
             api_key = None
+        elif api_key is None and not os.getenv('GOOGLE_APPLICATION_CREDENTIALS'):
+            # NOTE: We are keeping GEMINI_API_KEY for backwards compatibility.
+            api_key = os.getenv('GOOGLE_API_KEY') or os.getenv('GEMINI_API_KEY')
 
         if api_key is None:
             project = project or os.getenv('GOOGLE_CLOUD_PROJECT')
@@ -73,7 +96,15 @@ class GoogleCloudProvider(BaseGoogleProvider):
             # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
             location = location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1'
 
-        http_options = self._build_http_options(http_client=http_client, base_url=base_url)
+            if credentials is not None:
+                credentials = cast(
+                    Credentials,
+                    google_auth_credentials.with_scopes_if_required(  # pyright: ignore[reportUnknownMemberType]
+                        credentials, ['https://www.googleapis.com/auth/cloud-platform']
+                    ),
+                )
+
+        http_options = self._build_http_options(http_client=http_client, base_url=base_url, retry_options=retry_options)
         self._client = Client(
             vertexai=True,
             api_key=api_key,

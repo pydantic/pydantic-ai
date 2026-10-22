@@ -1,10 +1,10 @@
 import re
 
-import httpx
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
@@ -17,8 +17,9 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
-def test_moonshotai_provider():
+def test_moonshotai_provider(env: TestEnv):
     """Test basic MoonshotAI provider initialization."""
+    env.remove('MOONSHOTAI_BASE_URL')
     provider = MoonshotAIProvider(api_key='api-key')
     assert provider.name == 'moonshotai'
     assert provider.base_url == 'https://api.moonshot.ai/v1'
@@ -39,18 +40,38 @@ def test_moonshotai_provider_need_api_key(env: TestEnv) -> None:
         MoonshotAIProvider()
 
 
-def test_moonshotai_provider_pass_http_client() -> None:
-    """Test passing a custom HTTP client to MoonshotAI provider."""
-    http_client = httpx.AsyncClient()
-    provider = MoonshotAIProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
-def test_moonshotai_pass_openai_client() -> None:
+def test_moonshotai_pass_openai_client(env: TestEnv) -> None:
     """Test passing a custom OpenAI client to MoonshotAI provider."""
-    openai_client = openai.AsyncOpenAI(api_key='api-key')
+    env.set('MOONSHOTAI_BASE_URL', 'https://api.moonshot.ai/v1')
+    openai_client = openai.AsyncOpenAI(api_key='api-key', base_url='https://api.moonshot.cn/v1')
     provider = MoonshotAIProvider(openai_client=openai_client)
-    assert provider.client == openai_client
+    assert provider.client is openai_client
+    assert provider.base_url == 'https://api.moonshot.cn/v1/'
+
+
+def test_moonshotai_provider_custom_base_url(env: TestEnv) -> None:
+    env.set('MOONSHOTAI_BASE_URL', 'https://api.moonshot.ai/v1')
+    provider = MoonshotAIProvider(api_key='api-key', base_url='https://api.moonshot.cn/v1')
+    assert provider.base_url == 'https://api.moonshot.cn/v1'
+    assert str(provider.client.base_url) == 'https://api.moonshot.cn/v1/'
+
+
+@pytest.mark.parametrize('base_url', ['https://api.moonshot.cn/v1', ''])
+def test_moonshotai_provider_env_base_url(base_url: str, env: TestEnv) -> None:
+    """Test model-string endpoint resolution without a live API request."""
+    env.set('MOONSHOTAI_BASE_URL', base_url)
+    env.set('MOONSHOTAI_API_KEY', 'api-key')
+    agent = Agent('moonshotai:kimi-k3')
+    assert isinstance(agent.model, OpenAIChatModel)
+    expected_url = base_url or 'https://api.moonshot.ai/v1'
+    assert agent.model.base_url == f'{expected_url}/'
+    assert agent.model.client.api_key == 'api-key'
+
+
+def test_moonshotai_provider_openai_client_and_base_url_are_exclusive() -> None:
+    openai_client = openai.AsyncOpenAI(api_key='api-key')
+    with pytest.raises(UserError, match='Cannot provide both `openai_client` and `base_url`'):
+        MoonshotAIProvider(openai_client=openai_client, base_url='https://api.moonshot.cn/v1')  # type: ignore[call-overload]
 
 
 def test_moonshotai_provider_creates_http_client() -> None:
@@ -63,7 +84,32 @@ def test_moonshotai_provider_creates_http_client() -> None:
 def test_moonshotai_model_profile():
     provider = MoonshotAIProvider(api_key='api-key')
     model = OpenAIChatModel('kimi-k2-0711-preview', provider=provider)
-    assert isinstance(model.profile, OpenAIModelProfile)
-    assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert model.profile.openai_supports_tool_choice_required is False
-    assert model.profile.supports_json_object_output is True
+    assert isinstance(model.profile, dict)
+    assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    assert model.profile.get('supports_forced_tool_choice', True) is False
+    assert model.profile.get('supports_json_object_output', False) is True
+
+
+def test_moonshotai_model_profile_thinking():
+    # Unit (not VCR): these pin the profile flags resolved from the model id at model-build time, which
+    # the cassette doesn't exercise — it records the wire round-trip, not the resolved profile, and our
+    # matchers aren't body-sensitive, so a regression flipping a model's reasoning flags could still
+    # replay an existing recording green. A direct profile assertion is what catches it.
+    provider = MoonshotAIProvider(api_key='api-key')
+
+    # Reasoning models advertise thinking; it's always-on since Moonshot rejects reasoning_effort='none'.
+    for reasoning_model in ('kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k3'):
+        profile = provider.model_profile(reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking') is True
+        assert profile.get('thinking_always_enabled') is True
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'
+        assert profile.get('openai_chat_send_back_thinking_parts') == 'field'
+
+    # Instruct/base models don't reason, so thinking stays off.
+    for non_reasoning_model in ('moonshot-v1-8k', 'moonshot-v1-auto', 'kimi-k2-0711-preview', 'kimi-latest'):
+        profile = provider.model_profile(non_reasoning_model)
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('thinking_always_enabled', False) is False
+        assert profile.get('openai_chat_thinking_field') == 'reasoning_content'

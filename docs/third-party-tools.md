@@ -1,6 +1,10 @@
+---
+description: "Use tools from third-party libraries such as LangChain and from MCP servers in your Pydantic AI agents, as toolsets or as capabilities."
+---
+
 # Third-Party Tools
 
-Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents. Third-party tools are also available as [capabilities](capabilities.md#third-party-capabilities) — see [Extensibility](extensibility.md) for the full ecosystem.
+Pydantic AI supports integration with various third-party tool libraries, allowing you to leverage existing tool ecosystems in your agents. Third-party tools are also available as [capabilities](capabilities/third-party.md) — see [Extensibility](extensibility.md) for the full ecosystem.
 
 ## MCP Tools {#mcp-tools}
 
@@ -14,7 +18,7 @@ You will need to install the `langchain-community` package and any others requir
 
 Here is how you can use the LangChain `DuckDuckGoSearchRun` tool, which requires the `ddgs` package:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.tools import DuckDuckGoSearchRun
 
 from pydantic_ai import Agent
@@ -24,7 +28,7 @@ search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    '{{ google:medium }}',
     tools=[search_tool],
 )
 
@@ -37,7 +41,7 @@ print(result.output)
 
 If you'd like to use multiple LangChain tools or a LangChain [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits), you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] [toolset](toolsets.md) which takes a list of LangChain tools:
 
-```python {test="skip"}
+```python {test="skip" typecheck="skip - langchain-community is not installed in the test environment"}
 from langchain_community.agent_toolkits import SlackToolkit
 
 from pydantic_ai import Agent
@@ -46,61 +50,8 @@ from pydantic_ai.ext.langchain import LangChainToolset
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 # ...
-```
-
-## ACI.dev Tools {#aci-tools}
-
-!!! warning "Deprecated in 1.x, removed in 2.0"
-    `pydantic_ai.ext.aci` (`tool_from_aci` and `ACIToolset`) is deprecated and will be removed in 2.0 (see [#5467](https://github.com/pydantic/pydantic-ai/pull/5467)). Wrap ACI.dev tools yourself using [`Tool.from_schema`][pydantic_ai.tools.Tool.from_schema] against `aci.ACI().functions.get_definition(...)`, or call the upstream `aci-sdk` integration directly.
-
-If you'd like to use a tool from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`tool_from_aci`][pydantic_ai.ext.aci.tool_from_aci] convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
-
-You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
-
-Here is how you can use the ACI.dev `TAVILY__SEARCH` tool:
-
-```python {test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.ext.aci import tool_from_aci
-
-tavily_search = tool_from_aci(
-    'TAVILY__SEARCH',
-    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
-)
-
-agent = Agent(
-    'google:gemini-3-flash-preview',
-    tools=[tavily_search],
-)
-
-result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (1)!
-print(result.output)
-#> Elden Ring Nightreign is planned to be released on May 30, 2025.
-```
-
-1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
-
-If you'd like to use multiple ACI.dev tools, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`:
-
-```python {test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.ext.aci import ACIToolset
-
-toolset = ACIToolset(
-    [
-        'OPEN_WEATHER_MAP__CURRENT_WEATHER',
-        'OPEN_WEATHER_MAP__FORECAST',
-    ],
-    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
-)
-
-agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 
 ## See Also
@@ -109,4 +60,3 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 - [Toolsets](toolsets.md) - Managing collections of tools
 - [MCP Client](mcp/client.md) - Using MCP servers with Pydantic AI
 - [LangChain Toolsets](toolsets.md#langchain-tools) - Using LangChain toolsets
-- [ACI.dev Toolsets](toolsets.md#aci-tools) - Using ACI.dev toolsets

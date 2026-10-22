@@ -5,21 +5,39 @@ The providers are in charge of providing an authenticated client to the API.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import functools
-import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, Self
 
 import anyio
-import httpx
-from typing_extensions import Self, TypeVar
+from typing_extensions import TypeVar
 
-from .._warnings import PydanticAIDeprecationWarning
+from .._http import AsyncHTTPClient
+from ..exceptions import UserError
 from ..profiles import ModelProfile
 
+if TYPE_CHECKING:
+    from ..realtime import RealtimeModelProfile
+
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
+
+_KEYLESS_HINT = (
+    "To try Pydantic AI without an API key, use the built-in test model: `Agent('test')`. "
+    'See https://pydantic.dev/docs/ai/guides/testing/'
+)
+
+
+def missing_api_key_error(message: str) -> UserError:
+    """Build a [`UserError`][pydantic_ai.exceptions.UserError] for missing provider credentials.
+
+    The provider-specific `message` (which environment variable to set or how to pass the key) is followed by a
+    hint pointing newcomers to the keyless [test model](https://pydantic.dev/docs/ai/guides/testing/), so a missing key never
+    dead-ends the getting-started experience.
+    """
+    return UserError(f'{message} {_KEYLESS_HINT}')
 
 
 class Provider(ABC, Generic[InterfaceClient]):
@@ -33,12 +51,15 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     When used as an async context manager, providers that create their own HTTP client will close it on exit.
     This is handled automatically when using [`Agent`][pydantic_ai.agent.Agent] as a context manager.
+    Outside one, a run on a new event loop, while the one the client was last used on isn't running, gets a new client.
     """
 
     _client: InterfaceClient
-    _own_http_client: httpx.AsyncClient | None = None
-    _http_client_factory: Callable[[], httpx.AsyncClient] | None = None
+    _own_http_client: AsyncHTTPClient | None = None
+    _http_client_factory: Callable[[], AsyncHTTPClient] | None = None
+    _own_client_loop: asyncio.AbstractEventLoop | None = None
     _entered_count: int = 0
+    _model_id_namespace: str | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -60,6 +81,11 @@ class Provider(ABC, Generic[InterfaceClient]):
         raise NotImplementedError()
 
     @property
+    def model_id_namespace(self) -> str:
+        """The namespace used to fully qualify model IDs routed through this provider."""
+        return self._model_id_namespace or self.name
+
+    @property
     @abstractmethod
     def base_url(self) -> str:
         """The base URL for the provider API."""
@@ -76,20 +102,55 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The model profile for the named model, if available."""
         return None  # pragma: no cover
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile | None:
+        """The realtime model profile for the named model, if available."""
+        return None
+
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         """Update the SDK client's internal HTTP client reference.
 
         Subclasses that manage their own HTTP client should override this to inject
         the new client into their SDK client after re-creation.
         """
 
+    def _moved_to_another_event_loop(self) -> bool:
+        """Record the running event loop as the one this provider's own client is used on.
+
+        Returns whether the client was last used on a different event loop that isn't running now. Connections
+        belong to the event loop that opened them, so a client can't be used from another one, and one whose
+        loop has closed can't be closed either. While the loop it was last used on is still running, for example in
+        another thread, its runs may still be using the client, so it isn't replaced under them. Only that last
+        loop is checked: with three or more loops taking turns, a run still going on an earlier one can see the
+        client replaced.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No asyncio event loop, e.g. under Trio, so there's nothing to compare.
+            return False
+        previous_loop, self._own_client_loop = self._own_client_loop, loop
+        return previous_loop is not None and previous_loop is not loop and not previous_loop.is_running()
+
+    def _refresh_http_client(self) -> None:
+        """Replace the HTTP client this provider created if it's closed or was used on an event loop that isn't running.
+
+        Called when the provider is entered, and at the start of a run that uses it without entering it. While
+        the provider is entered, whoever entered it owns the client, so it's left alone. The replaced client
+        isn't closed: either it already is, or its event loop is gone or belongs to other code. A client that
+        was passed in is never replaced.
+        """
+        own_client = self._own_http_client
+        if self._entered_count or own_client is None or self._http_client_factory is None:
+            return
+        if self._moved_to_another_event_loop() or own_client.is_closed:
+            new_client = self._http_client_factory()
+            self._own_http_client = new_client
+            self._set_http_client(new_client)
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
-            if self._entered_count == 0 and self._own_http_client is not None:
-                if self._own_http_client.is_closed and self._http_client_factory is not None:
-                    new_client = self._http_client_factory()
-                    self._own_http_client = new_client
-                    self._set_http_client(new_client)
+            self._refresh_http_client()
             self._entered_count += 1
         return self
 
@@ -113,41 +174,30 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
-    came_from_gateway = provider.startswith('gateway/')
-    # Normalize gateway-prefixed providers (e.g. 'gateway/openai' -> 'openai').
-    # The `gateway/google-vertex` deprecation warning fires inside `normalize_gateway_provider`.
-    if came_from_gateway:
+    # Strip the `gateway/` prefix to get the canonical class-lookup name. The
+    # Gateway URL route value (e.g. `google-vertex`) is a separate concern
+    # handled by `_gateway_route` in `providers/gateway.py`.
+    if provider.startswith('gateway/'):
         from .gateway import normalize_gateway_provider
 
         provider = normalize_gateway_provider(provider)
-
-    # Normalize deprecated/alias provider names
-    if provider == 'vertexai':
-        provider = 'google-vertex'
-
-    if provider == 'google-gla':
-        warnings.warn(
-            "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        provider = 'google'
-    elif provider == 'google-vertex':
-        # Suppress the standalone `'google-vertex:'` rename warning when coming from a gateway
-        # prefix — the caller already saw the `'gateway/google-vertex:'` warning above, and the
-        # internal mapping `gateway/google-cloud -> google-vertex` is intentional (see rule 17).
-        if not came_from_gateway:
-            warnings.warn(
-                "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-        provider = 'google-cloud'
 
     if provider in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
         return OpenAIProvider
+    elif provider == 'openai-codex':
+        from .openai_codex import OpenAICodexProvider
+
+        return OpenAICodexProvider
+    elif provider == 'openai-chatgpt':
+        from .openai_chatgpt import OpenAIChatGPTProvider
+
+        return OpenAIChatGPTProvider
+    elif provider == 'openai-decisions':
+        from .openai_decisions import OpenAIDecisionsProvider
+
+        return OpenAIDecisionsProvider
     elif provider == 'deepseek':
         from .deepseek import DeepSeekProvider
 
@@ -160,7 +210,7 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .vercel import VercelProvider
 
         return VercelProvider
-    elif provider == 'azure':
+    elif provider in ('azure', 'azure-responses'):
         from .azure import AzureProvider
 
         return AzureProvider
@@ -176,6 +226,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .bedrock import BedrockProvider
 
         return BedrockProvider
+    elif provider == 'bedrock-mantle':
+        from .bedrock_mantle import BedrockMantleProvider
+
+        return BedrockMantleProvider
     elif provider == 'groq':
         from .groq import GroqProvider
 
@@ -196,10 +250,18 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .cohere import CohereProvider
 
         return CohereProvider
-    elif provider == 'grok':
-        from .grok import GrokProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'system-one':
+        from .system_one import SystemOneProvider
 
-        return GrokProvider  # pyright: ignore[reportDeprecated]
+        return SystemOneProvider
+    elif provider == 'crusoe':
+        from .crusoe import CrusoeProvider
+
+        return CrusoeProvider
+    elif provider == 'elevenlabs':
+        from .elevenlabs import ElevenLabsProvider
+
+        return ElevenLabsProvider
     elif provider == 'xai':
         from .xai import XaiProvider
 
@@ -208,6 +270,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .moonshotai import MoonshotAIProvider
 
         return MoonshotAIProvider
+    elif provider == 'meta':
+        from .meta import MetaProvider
+
+        return MetaProvider
     elif provider == 'fireworks':
         from .fireworks import FireworksProvider
 
@@ -229,13 +295,21 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return OllamaProvider
     elif provider == 'github':
-        from .github import GitHubProvider
+        from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-        return GitHubProvider
+        return GitHubProvider  # pyright: ignore[reportDeprecated]
+    elif provider == 'github-copilot':
+        from .github_copilot import GitHubCopilotProvider
+
+        return GitHubCopilotProvider
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 
         return LiteLLMProvider
+    elif provider == 'vllm':
+        from .vllm import VLLMProvider
+
+        return VLLMProvider
     elif provider == 'nebius':
         from .nebius import NebiusProvider
 
@@ -252,18 +326,26 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sambanova import SambaNovaProvider
 
         return SambaNovaProvider
-    elif provider == 'outlines':
-        from .outlines import OutlinesProvider  # pyright: ignore[reportDeprecated]
-
-        return OutlinesProvider  # pyright: ignore[reportDeprecated]
     elif provider == 'sentence-transformers':
         from .sentence_transformers import SentenceTransformersProvider
 
         return SentenceTransformersProvider
+    elif provider == 'snowflake':
+        from .snowflake import SnowflakeProvider
+
+        return SnowflakeProvider
+    elif provider == 'typesafe':
+        from .typesafe import TypeSafeProvider
+
+        return TypeSafeProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 
         return VoyageAIProvider
+    elif provider == 'zai':
+        from .zai import ZaiProvider
+
+        return ZaiProvider
     else:
         raise ValueError(f'Unknown provider: {provider}')
 
@@ -273,32 +355,8 @@ def infer_provider(provider: str) -> Provider[Any]:
     if provider.startswith('gateway/'):
         from .gateway import gateway_provider
 
-        # The `gateway/google-vertex` deprecation warning fires inside `normalize_gateway_provider`,
-        # which `gateway_provider` calls below.
         upstream_provider = provider.removeprefix('gateway/')
         return gateway_provider(upstream_provider)
-
-    if provider == 'vertexai':
-        provider = 'google-vertex'
-
-    if provider == 'google-gla':
-        warnings.warn(
-            "The 'google-gla:' prefix is deprecated and will be removed in v2.0. Use 'google:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        from .google import GoogleProvider
-
-        return GoogleProvider()
-    elif provider == 'google-vertex':
-        warnings.warn(
-            "The 'google-vertex:' prefix is deprecated and will be removed in v2.0. Use 'google-cloud:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        from .google_cloud import GoogleCloudProvider
-
-        return GoogleCloudProvider()
 
     provider_class = infer_provider_class(provider)
     return provider_class()

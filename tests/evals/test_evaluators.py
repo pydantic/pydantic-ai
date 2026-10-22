@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -42,7 +43,7 @@ with try_import() as logfire_import_successful:
 
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
@@ -594,31 +595,35 @@ async def test_span_query_evaluator(
 async def test_import_errors():
     with pytest.raises(
         ImportError,
-        match='The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.',
+        match=re.escape(
+            'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
+        ),
     ):
         from pydantic_evals.evaluators import Python  # pyright: ignore[reportUnusedImport]
 
     with pytest.raises(
         ImportError,
-        match='The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.',
+        match=re.escape(
+            'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
+        ),
     ):
         from pydantic_evals.evaluators.common import Python  # pyright: ignore[reportUnusedImport] # noqa: F401
 
     with pytest.raises(
         ImportError,
-        match="cannot import name 'Foo' from 'pydantic_evals.evaluators'",
+        match=re.escape("cannot import name 'Foo' from 'pydantic_evals.evaluators'"),
     ):
         from pydantic_evals.evaluators import Foo  # pyright: ignore[reportUnusedImport]
 
     with pytest.raises(
         ImportError,
-        match="cannot import name 'Foo' from 'pydantic_evals.evaluators.common'",
+        match=re.escape("cannot import name 'Foo' from 'pydantic_evals.evaluators.common'"),
     ):
         from pydantic_evals.evaluators.common import Foo  # pyright: ignore[reportUnusedImport] # noqa: F401
 
     with pytest.raises(
         AttributeError,
-        match="module 'pydantic_evals.evaluators' has no attribute 'Foo'",
+        match=re.escape("module 'pydantic_evals.evaluators' has no attribute 'Foo'"),
     ):
         import pydantic_evals.evaluators as _evaluators
 
@@ -626,7 +631,7 @@ async def test_import_errors():
 
     with pytest.raises(
         AttributeError,
-        match="module 'pydantic_evals.evaluators.common' has no attribute 'Foo'",
+        match=re.escape("module 'pydantic_evals.evaluators.common' has no attribute 'Foo'"),
     ):
         import pydantic_evals.evaluators.common as _common
 

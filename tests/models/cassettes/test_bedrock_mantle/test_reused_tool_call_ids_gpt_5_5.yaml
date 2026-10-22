@@ -1,0 +1,564 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '726'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Follow the tool instructions.
+        role: user
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      model: openai.gpt-5.5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '1758'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784577557
+      created_at: 1784577556
+      error: null
+      frequency_penalty: 0.0
+      id: resp_2vmnquymsguw3uup3fg2bsvkq3joan3ebjhg2hhvviozugqqmufa
+      incomplete_details: null
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: openai.gpt-5.5
+      moderation: null
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_0
+        id: fc_36f011262abb5556b74096db18b12fcc
+        name: first_tool
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 88
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 14
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 102
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1057'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Follow the tool instructions.
+        role: user
+      - arguments: '{}'
+        call_id: resp_2vmnquymsguw3uup3fg2bsvkq3joan3ebjhg2hhvviozugqqmufa:call_0
+        id: fc_36f011262abb5556b74096db18b12fcc
+        name: first_tool
+        type: function_call
+      - call_id: resp_2vmnquymsguw3uup3fg2bsvkq3joan3ebjhg2hhvviozugqqmufa:call_0
+        output: first result
+        type: function_call_output
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      model: openai.gpt-5.5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '1760'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784577558
+      created_at: 1784577557
+      error: null
+      frequency_penalty: 0.0
+      id: resp_c6npxt3zfnuohdeovuudcjrpqsm6aixyo3ttvu7s2ur6kjwwo65q
+      incomplete_details: null
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: openai.gpt-5.5
+      moderation: null
+      object: response
+      output:
+      - arguments: '{}'
+        call_id: call_0
+        id: fc_227c423c7da65c46a0eabff37fd9a54a
+        name: second_tool
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 115
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 14
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 129
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1390'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Follow the tool instructions.
+        role: user
+      - arguments: '{}'
+        call_id: resp_2vmnquymsguw3uup3fg2bsvkq3joan3ebjhg2hhvviozugqqmufa:call_0
+        id: fc_36f011262abb5556b74096db18b12fcc
+        name: first_tool
+        type: function_call
+      - call_id: resp_2vmnquymsguw3uup3fg2bsvkq3joan3ebjhg2hhvviozugqqmufa:call_0
+        output: first result
+        type: function_call_output
+      - arguments: '{}'
+        call_id: resp_c6npxt3zfnuohdeovuudcjrpqsm6aixyo3ttvu7s2ur6kjwwo65q:call_0
+        id: fc_227c423c7da65c46a0eabff37fd9a54a
+        name: second_tool
+        type: function_call
+      - call_id: resp_c6npxt3zfnuohdeovuudcjrpqsm6aixyo3ttvu7s2ur6kjwwo65q:call_0
+        output: second result
+        type: function_call_output
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      model: openai.gpt-5.5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '1891'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784577559
+      created_at: 1784577558
+      error: null
+      frequency_penalty: 0.0
+      id: resp_wc6bmpiszpwsypyjfjgfwa6ksq4f3gsorg4nihcmhvuikkap5wya
+      incomplete_details: null
+      instructions: Call first_tool. After receiving its result, call second_tool in a new model response. After receiving
+        that result, answer with both results. Never call both tools in one response.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: openai.gpt-5.5
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "First tool result: first result  \nSecond tool result: second result"
+          type: output_text
+        id: msg_b71e73d593275be8bb6ac78a8590ac0c
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: first_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: null
+        name: second_tool
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 142
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 17
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 159
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1153'
+      content-type:
+      - application/json
+      host:
+      - bedrock-mantle.us-east-1.api.aws
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Follow the tool instructions.
+        role: user
+      - arguments: '{}'
+        call_id: resp_2vmnquymsguw3uup3fg2bsvkq3joan3ebjhg2hhvviozugqqmufa:call_0
+        id: fc_36f011262abb5556b74096db18b12fcc
+        name: first_tool
+        type: function_call
+      - call_id: resp_2vmnquymsguw3uup3fg2bsvkq3joan3ebjhg2hhvviozugqqmufa:call_0
+        output: first result
+        type: function_call_output
+      - arguments: '{}'
+        call_id: resp_c6npxt3zfnuohdeovuudcjrpqsm6aixyo3ttvu7s2ur6kjwwo65q:call_0
+        id: fc_227c423c7da65c46a0eabff37fd9a54a
+        name: second_tool
+        type: function_call
+      - call_id: resp_c6npxt3zfnuohdeovuudcjrpqsm6aixyo3ttvu7s2ur6kjwwo65q:call_0
+        output: second result
+        type: function_call_output
+      - content:
+        - annotations: []
+          text: "First tool result: first result  \nSecond tool result: second result"
+          type: output_text
+        id: msg_b71e73d593275be8bb6ac78a8590ac0c
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      - content: Reply with exactly OK.
+        role: user
+      model: openai.gpt-5.5
+      stream: false
+    uri: https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - x-amzn-requestid,x-request-id,date,x-amzn-usage-reservation-quota,x-amzn-usage-reservation-remaining-quota,x-amzn-usage-reservation-spillover
+      connection:
+      - keep-alive
+      content-length:
+      - '2198'
+      content-type:
+      - application/json
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1784577560
+      created_at: 1784577560
+      error: null
+      frequency_penalty: 0.0
+      id: resp_s26hlvtpsq5c245236bhqydnjyjzyz736qmluexul46wwch4q7ya
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: openai.gpt-5.5
+      moderation: null
+      object: response
+      output:
+      - encrypted_content: rsn_5ZVrif4J0bXIqmWdledj7QIFePImBNq8lg54Qeb1NgCacu8KM/lchSmySm3aW7w4d3gNAF8AAQAVYXdzLWNyeXB0by1wdWJsaWMta2V5AERBc0Jaem1IOEUzL3MxcnF5N0dsc3hnZHkxL1QxbS9Za0wxU0MrNEIrcTZ2d1p1YzFnLytTU3hlYXdHcDRiSXBWQmc9PQABABFhd3Mta21zLWhpZXJhcmNoeQAKYmVybS1zdG9yZQBcjNAPvN3o/EJbtbI7gfV69j0Muu21lPFnjMJjwFrKc+5ls0wRpnX+0wjWt1ItNNmFp5JpRqRb++d1EGLAlzq25+z8k1REffuqBajz7bMdxJfi+BEv8nN9r1RJyqMCAAAQAJJdngHoIAtRU9dsmZqp7OCfpV8R7IV1naOq52Ewq/syY0ismDVEx6RojzceuLX6gP////8AAAABAAAAAAAAAAAAAAABAAAAZV9j9jOJv0Hw6L+JzB08V+PYLPJ4txb4zMn2fpfwM92mX7JQ22/CKPaWi6rRfR9vSD63pKRD3wU69Q8sF12oI6uOk8fnmVAhp64Dof5JCQWgGO3CJdUpATkxZVUHlSugiYBaEKOlizbCc+G12dBUA7NtlSUP9gBnMGUCMQDTq2BAOq4bOYe7M4bVxMhY1s1WIfHOOPKbJ4mr4rYR1b9E29gm3unY6ocZ8TpQFj4CMG6yENj5vZtk5YgTYd2I2ndcLvbbFwzM+cbx4a8jiJ0PQLqnzAu4HuIsdBIZLJo6Hw==
+        id: rs_7a9e2d042ef4576298b85e8a6e87701f
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: OK
+          type: output_text
+        id: msg_99c2aff743585d46b709fc0e98b912a4
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 93
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 17
+        output_tokens_details:
+          reasoning_tokens: 10
+        total_tokens: 110
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

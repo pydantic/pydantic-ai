@@ -1,0 +1,40 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with the single word: ok"}]}], "system": [], "inferenceConfig": {}}'
+    headers:
+      Content-Length:
+      - '126'
+      Content-Type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+      User-Agent:
+      - !!binary |
+        Qm90bzMvMS40Mi42MyBtZC9Cb3RvY29yZSMxLjQyLjYzIHVhLzIuMSBvcy9tYWNvcyMyNS4wLjAg
+        bWQvYXJjaCNhcm02NCBsYW5nL3B5dGhvbiMzLjEyLjEyIG1kL3B5aW1wbCNDUHl0aG9uIG0vYiwz
+        LEQsWixOIGNmZy9yZXRyeS1tb2RlI2xlZ2FjeSBCb3RvY29yZS8xLjQyLjYz
+      amz-sdk-invocation-id:
+      - !!binary |
+        MjU1ODU1YzEtNThmOC00NWMzLWFjNWYtNzZhN2QxNzg1ZTM1
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/openai.gpt-oss-120b-1%3A0/converse
+  response:
+    body:
+      string: '{"metrics": {"latencyMs": 436}, "output": {"message": {"content": [{"reasoningContent": {"reasoningText": {"text": "The user: \"Reply with the single word: ok\". They want the assistant to respond with the single word \"ok\". So I should respond with \"ok\"."}}}, {"text": "ok"}], "role": "assistant"}}, "stopReason": "end_turn", "usage": {"inputTokens": 74, "outputTokens": 44, "serverToolUsage": {}, "totalTokens": 118}}'
+    headers:
+      Transfer-Encoding:
+      - chunked
+      content-type:
+      - application/json
+      date:
+      - Wed, 13 May 2026 22:52:32 GMT
+      via:
+      - 1.1 google
+      x-amzn-requestid:
+      - 696bc8dc-e7a2-4860-a608-18d32ede2018
+    status:
+      code: 200
+      message: OK
+version: 1

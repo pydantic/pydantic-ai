@@ -1,7 +1,10 @@
-from .span_tree import SpanNode, SpanQuery, SpanTree
+from ._errors import SpanTreeRecordingError
+from .span_tree import SpanNode, SpanQuery, SpanStatus, SpanTree
 
 __all__ = (
-    'SpanTree',
     'SpanNode',
     'SpanQuery',
+    'SpanStatus',
+    'SpanTree',
+    'SpanTreeRecordingError',
 )

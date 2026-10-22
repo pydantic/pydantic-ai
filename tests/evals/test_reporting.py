@@ -1,24 +1,28 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from io import BytesIO, TextIOWrapper
 
 import pytest
 from pydantic import BaseModel
+from rich.console import Console
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
-from .utils import render_table
+from .utils import render_table, trim_trailing_whitespace
 
 with try_import() as imports_successful:
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
+    from pydantic_evals.evaluators.evaluator import EvaluatorFailure
     from pydantic_evals.reporting import (
         EvaluationRenderer,
         EvaluationReport,
         ReportCase,
         ReportCaseAggregate,
+        ReportCaseFailure,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 class TaskInput(BaseModel):
@@ -961,6 +965,7 @@ async def test_evaluation_renderer_with_experiment_metadata(sample_report_case: 
     )
 
     output = report.render(
+        width=300,
         include_input=True,
         include_metadata=False,
         include_expected_output=False,
@@ -1016,6 +1021,7 @@ async def test_evaluation_renderer_with_long_experiment_metadata(sample_report_c
     )
 
     output = report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
@@ -1071,6 +1077,7 @@ async def test_evaluation_renderer_diff_with_experiment_metadata(sample_report_c
     )
 
     output = new_report.render(
+        width=300,
         baseline=baseline_report,
         include_input=False,
         include_metadata=False,
@@ -1123,6 +1130,7 @@ async def test_evaluation_renderer_diff_with_only_new_metadata(sample_report_cas
     )
 
     output = new_report.render(
+        width=300,
         baseline=baseline_report,
         include_input=False,
         include_metadata=False,
@@ -1173,6 +1181,7 @@ async def test_evaluation_renderer_diff_with_only_baseline_metadata(sample_repor
     )
 
     output = new_report.render(
+        width=300,
         baseline=baseline_report,
         include_input=False,
         include_metadata=False,
@@ -1225,6 +1234,7 @@ async def test_evaluation_renderer_diff_with_same_metadata(sample_report_case: R
     )
 
     output = new_report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
@@ -1283,6 +1293,7 @@ async def test_evaluation_renderer_diff_with_changed_metadata(sample_report_case
     )
 
     output = new_report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
@@ -1333,6 +1344,7 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
     )
 
     output = new_report.render(
+        width=300,
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
@@ -1362,3 +1374,343 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
 │ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
 └───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
 """)
+
+
+async def test_render_shows_bracketed_text_verbatim(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+    """Case, task and evaluator text containing square brackets is shown as written, not parsed as Rich markup.
+
+    A closing tag with no opening tag, like the `[/INST]` of a leaked chat template, used to make rendering raise
+    `MarkupError`, and text that looks like a tag, like `[int]` or pydantic's `[type=...]` error details, was dropped.
+    """
+    source = mock_evaluator.as_spec()
+    case = ReportCase(
+        name='parse list[int]',
+        inputs='[INST] What is 2+2? [/INST]',
+        metadata={'source': '[docs](https://example.com)'},
+        expected_output='list[int]',
+        output='4 [/INST]',
+        metrics={'cost[usd]': 0.5},
+        attributes={},
+        scores={
+            'match[strict]': EvaluationResult(
+                name='match[strict]', value=1.0, reason='answer is followed by [/INST]', source=source
+            )
+        },
+        labels={'category': EvaluationResult(name='category', value='[/INST]', reason=None, source=source)},
+        assertions={
+            'is_json[strict]': EvaluationResult(
+                name='is_json[strict]', value=False, reason='found [/INST] after the answer', source=source
+            )
+        },
+        task_duration=0.1,
+        total_duration=0.2,
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='Judge[gpt]',
+                error_message='judge replied [/INST] instead of a verdict',
+                error_stacktrace='',
+                source=source,
+            )
+        ],
+    )
+    failure = ReportCaseFailure(
+        name='parse list[str]',
+        inputs='[INST] Name a city [/INST]',
+        metadata=None,
+        expected_output=None,
+        error_message='ValidationError: Input should be a valid string [type=string_type, input_value=1, input_type=int]',
+        error_stacktrace='Traceback (most recent call last):\nValueError: model emitted [/INST]',
+    )
+    report = EvaluationReport(cases=[case], failures=[failure], name='test_report')
+
+    output = report.render(
+        width=300,
+        include_input=True,
+        include_metadata=True,
+        include_expected_output=True,
+        include_output=True,
+        include_reasons=True,
+        include_error_stacktrace=True,
+    )
+    assert trim_trailing_whitespace(output) == snapshot("""\
+                                                                                                                                      Evaluation Summary: test_report
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID         ┃ Inputs                      ┃ Metadata                              ┃ Expected Output ┃ Outputs   ┃ Scores                                 ┃ Labels                     ┃ Metrics          ┃ Assertions                            ┃ Evaluator Failures                     ┃ Duration ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ parse list[int] │ [INST] What is 2+2? [/INST] │ {'source':                            │ list[int]       │ 4 [/INST] │ match[strict]: 1.00                    │ category: [/INST]          │ cost[usd]: 0.500 │ is_json[strict]: ✗                    │ Judge[gpt]: judge replied [/INST]      │  100.0ms │
+│                 │                             │ '[docs](https://example.com)'}        │                 │           │   Reason: answer is followed by        │                            │                  │   Reason: found [/INST] after the     │ instead of a verdict                   │          │
+│                 │                             │                                       │                 │           │ [/INST]                                │                            │                  │ answer                                │                                        │          │
+│                 │                             │                                       │                 │           │                                        │                            │                  │                                       │                                        │          │
+│                 │                             │                                       │                 │           │                                        │                            │                  │                                       │                                        │          │
+├─────────────────┼─────────────────────────────┼───────────────────────────────────────┼─────────────────┼───────────┼────────────────────────────────────────┼────────────────────────────┼──────────────────┼───────────────────────────────────────┼────────────────────────────────────────┼──────────┤
+│ Averages        │                             │                                       │                 │           │ match[strict]: 1.00                    │ category: {'[/INST]': 1.0} │ cost[usd]: 0.500 │ 0.0% ✔                                │                                        │  100.0ms │
+└─────────────────┴─────────────────────────────┴───────────────────────────────────────┴─────────────────┴───────────┴────────────────────────────────────────┴────────────────────────────┴──────────────────┴───────────────────────────────────────┴────────────────────────────────────────┴──────────┘
+                                                                                                     Case Failures
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID         ┃ Inputs                     ┃ Metadata  ┃ Expected Output ┃ Error Message                                                                                     ┃ Error Stacktrace                   ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ parse list[str] │ [INST] Name a city [/INST] │ <missing> │ <missing>       │ ValidationError: Input should be a valid string [type=string_type, input_value=1, input_type=int] │ Traceback (most recent call last): │
+│                 │                            │           │                 │                                                                                                   │ ValueError: model emitted [/INST]  │
+└─────────────────┴────────────────────────────┴───────────┴─────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────┴────────────────────────────────────┘
+""")
+
+
+async def test_render_diff_shows_bracketed_text_verbatim(sample_report_case: ReportCase):
+    """A diff between values that differ only inside square brackets still shows both values."""
+    baseline_case = replace(
+        sample_report_case,
+        name='parse list[int]',
+        output='list[int]',
+        labels={'kind[raw]': replace(sample_report_case.labels['label1'], value='list[int]')},
+    )
+    new_case = replace(
+        baseline_case,
+        output='list[str]',
+        labels={'kind[raw]': replace(sample_report_case.labels['label1'], value='[/INST]')},
+    )
+    baseline_report = EvaluationReport(cases=[baseline_case], name='baseline_report')
+    new_report = EvaluationReport(cases=[new_case], name='new_report')
+
+    output = new_report.render(width=300, baseline=baseline_report, include_output=True)
+    assert trim_trailing_whitespace(output) == snapshot("""\
+                                                     Evaluation Diff: baseline_report → new_report
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID         ┃ Outputs               ┃ Scores       ┃ Labels                                           ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ parse list[int] │ list[int] → list[str] │ score1: 2.50 │ kind[raw]: list[int] → [/INST]                   │ accuracy: 0.950 │ ✔          │  100.0ms │
+├─────────────────┼───────────────────────┼──────────────┼──────────────────────────────────────────────────┼─────────────────┼────────────┼──────────┤
+│ Averages        │                       │ score1: 2.50 │ kind[raw]: {'list[int]': 1.0} → {'[/INST]': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  100.0ms │
+└─────────────────┴───────────────────────┴──────────────┴──────────────────────────────────────────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_render_diff_shows_custom_formatter_text_verbatim(sample_report_case: ReportCase):
+    """Text returned by a custom `value_formatter` or `diff_formatter` is shown as written, not parsed as Rich markup."""
+    case = replace(sample_report_case, scores={}, labels={}, metrics={}, assertions={})
+    baseline_report = EvaluationReport(cases=[replace(case, output='a')], name='baseline_report')
+    new_report = EvaluationReport(cases=[replace(case, output='b')], name='new_report')
+
+    output = new_report.render(
+        width=300,
+        baseline=baseline_report,
+        include_output=True,
+        include_averages=False,
+        output_config={
+            'value_formatter': lambda value: f'{value} [/INST]',
+            'diff_formatter': lambda old, new: f'was {old}: list[int] [/INST]',
+        },
+    )
+    assert trim_trailing_whitespace(output) == snapshot("""\
+               Evaluation Diff: baseline_report → new_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Outputs                                          ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ a [/INST] → b [/INST] (was a: list[int] [/INST]) │  100.0ms │
+└───────────┴──────────────────────────────────────────────────┴──────────┘
+""")
+
+
+async def test_render_shows_trailing_backslashes_as_written(sample_report_case: ReportCase):
+    """Text ending in backslashes is shown as written, both at the end of a cell and inside the diff style tag."""
+    case = replace(sample_report_case, scores={}, labels={}, metrics={}, assertions={})
+    baseline_report = EvaluationReport(
+        cases=[replace(case, name='dir\\', output='x'), replace(case, name='c2', output='x\\')], name='baseline'
+    )
+    new_report = EvaluationReport(
+        cases=[replace(case, name='dir\\', output='C:\\temp\\'), replace(case, name='c2', output='x\\\\')], name='new'
+    )
+
+    output = new_report.render(width=300, include_output=True, include_averages=False)
+    assert trim_trailing_whitespace(output) == snapshot("""\
+     Evaluation Summary: new
+┏━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID ┃ Outputs  ┃ Duration ┃
+┡━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━┩
+│ dir\\    │ C:\\temp\\ │  100.0ms │
+├─────────┼──────────┼──────────┤
+│ c2      │ x\\\\      │  100.0ms │
+└─────────┴──────────┴──────────┘
+""")
+
+    output = new_report.render(width=300, baseline=baseline_report, include_output=True, include_averages=False)
+    assert trim_trailing_whitespace(output) == snapshot("""\
+   Evaluation Diff: baseline → new
+┏━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID ┃ Outputs      ┃ Duration ┃
+┡━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ c2      │ x\\ → x\\\\     │  100.0ms │
+├─────────┼──────────────┼──────────┤
+│ dir\\    │ x → C:\\temp\\ │  100.0ms │
+└─────────┴──────────────┴──────────┘
+""")
+
+
+def render_to_non_utf8_console(
+    report: EvaluationReport, baseline: EvaluationReport | None = None, *, encoding: str = 'cp1252'
+) -> str:
+    """Print a report to a console whose stream can't encode Unicode report text, and return what was written.
+
+    This is Windows with stdout redirected to a file or a pipe: Python uses UTF-8 for the console
+    itself, but falls back to the ANSI code page for a redirected stream.
+    """
+    buffer = BytesIO()
+    stream = TextIOWrapper(buffer, encoding=encoding, errors='strict', newline='')
+    report.print(baseline=baseline, console=Console(file=stream, width=150))
+    stream.flush()
+    return trim_trailing_whitespace(buffer.getvalue().decode(encoding))
+
+
+async def test_print_falls_back_to_ascii_glyphs_on_non_utf8_console(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata], sample_report_case: ReportCase
+):
+    """A report printed to a stream that can't encode `✔`/`✗` renders ASCII markers instead of raising."""
+    failed_assertion = EvaluationResult(
+        name='FailingEvaluator', value=False, reason=None, source=mock_evaluator.as_spec()
+    )
+    case = replace(
+        sample_report_case, assertions={**sample_report_case.assertions, 'FailingEvaluator': failed_assertion}
+    )
+    report = EvaluationReport(cases=[case], name='test_report')
+
+    assert render_to_non_utf8_console(report) == snapshot("""\
+                                Evaluation Summary: test_report
++---------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics         | Assertions | Duration |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 | vx         |  100.0ms |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 | 50.0% v    |  100.0ms |
++---------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_print_falls_back_to_ascii_duration_units_on_cp932_console(sample_report_case: ReportCase):
+    """Default duration values and diffs use ASCII units on a console that can't encode the micro sign."""
+    baseline_report = EvaluationReport(
+        cases=[replace(sample_report_case, task_duration=0.0001)], name='baseline_report'
+    )
+    report = EvaluationReport(cases=[replace(sample_report_case, task_duration=0.0002)], name='test_report')
+
+    assert render_to_non_utf8_console(report, baseline=baseline_report, encoding='cp932') == snapshot("""\
+                                    Evaluation Diff: baseline_report -> test_report
++----------------------------------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics         | Assertions |                          Duration |
+|-----------+--------------+------------------------+-----------------+------------+-----------------------------------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 | v          | 100us -> 200us (+100us / +100.0%) |
+|-----------+--------------+------------------------+-----------------+------------+-----------------------------------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 | 100.0% v   | 100us -> 200us (+100us / +100.0%) |
++----------------------------------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_print_diff_falls_back_to_ascii_glyphs_on_non_utf8_console(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata], sample_report_case: ReportCase
+):
+    """Every `→` in a diff report degrades too: metadata panel, value/number diffs, and cell diffs."""
+    failed_assertion = EvaluationResult(name='MockEvaluator', value=False, reason=None, source=mock_evaluator.as_spec())
+    baseline_case = replace(
+        sample_report_case,
+        assertions={'MockEvaluator': failed_assertion},
+        metrics={'accuracy': 0.95},
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='BaselineEvaluator',
+                error_message='Baseline error',
+                error_stacktrace='Baseline stacktrace',
+                source=mock_evaluator.as_spec(),
+            )
+        ],
+    )
+    new_case = replace(
+        sample_report_case,
+        labels={'label1': replace(sample_report_case.labels['label1'], value='goodbye')},
+        metrics={'accuracy': 0.97},
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='NewEvaluator',
+                error_message='New error',
+                error_stacktrace='New stacktrace',
+                source=mock_evaluator.as_spec(),
+            )
+        ],
+    )
+    baseline_report = EvaluationReport(
+        cases=[baseline_case], name='baseline_report', experiment_metadata={'model': 'gpt-4'}
+    )
+    new_report = EvaluationReport(cases=[new_case], name='new_report', experiment_metadata={'model': 'gpt-4o'})
+
+    assert render_to_non_utf8_console(new_report, baseline=baseline_report) == snapshot("""\
++- Evaluation Diff: baseline_report -> new_report -+
+| model: gpt-4 -> gpt-4o                           |
++--------------------------------------------------+
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                        | Metrics                  | Assertions         | Evaluator Failures           | Duration |
+|-----------+--------------+-------------------------------+--------------------------+--------------------+------------------------------+----------|
+| test_case | score1: 2.50 | label1: hello -> goodbye      | accuracy: 0.950 -> 0.970 | x -> v             | BaselineEvaluator: Baseline  |  100.0ms |
+|           |              |                               |                          |                    | error                        |          |
+|           |              |                               |                          |                    | ->                           |          |
+|           |              |                               |                          |                    | NewEvaluator: New error      |          |
+|-----------+--------------+-------------------------------+--------------------------+--------------------+------------------------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} ->     | accuracy: 0.950 -> 0.970 | 0.0% v -> 100.0% v |                              |  100.0ms |
+|           |              | {'goodbye': 1.0}              |                          |                    |                              |          |
++----------------------------------------------------------------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_print_diff_title_falls_back_to_ascii_glyphs_on_non_utf8_console(sample_report_case: ReportCase):
+    """Without an experiment-metadata panel the diff name lands in the table title, which degrades as well."""
+    baseline_report = EvaluationReport(cases=[sample_report_case], name='baseline_report')
+    new_report = EvaluationReport(cases=[replace(sample_report_case, metrics={'accuracy': 0.97})], name='new_report')
+
+    assert render_to_non_utf8_console(new_report, baseline=baseline_report) == snapshot("""\
+                             Evaluation Diff: baseline_report -> new_report
++------------------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics                  | Assertions | Duration |
+|-----------+--------------+------------------------+--------------------------+------------+----------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 -> 0.970 | v          |  100.0ms |
+|-----------+--------------+------------------------+--------------------------+------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 -> 0.970 | 100.0% v   |  100.0ms |
++------------------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_console_table_renders_ascii_glyphs_when_asked(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata], sample_report_case: ReportCase
+):
+    """A caller holding its own non-UTF-8 console can ask `console_table` for the fallback and print it."""
+    failed_assertion = EvaluationResult(
+        name='FailingEvaluator', value=False, reason=None, source=mock_evaluator.as_spec()
+    )
+    case = replace(
+        sample_report_case, assertions={**sample_report_case.assertions, 'FailingEvaluator': failed_assertion}
+    )
+    report = EvaluationReport(cases=[replace(case, task_duration=0.0001)], name='test_report')
+
+    buffer = BytesIO()
+    stream = TextIOWrapper(buffer, encoding='cp932', errors='strict', newline='')
+    console = Console(file=stream, width=150)
+    console.print(report.console_table(ascii_only=True, duration_config={}))
+    stream.flush()
+
+    assert trim_trailing_whitespace(buffer.getvalue().decode('cp932')) == snapshot("""\
+                                Evaluation Summary: test_report
++---------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels                 | Metrics         | Assertions | Duration |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| test_case | score1: 2.50 | label1: hello          | accuracy: 0.950 | vx         |    100us |
+|-----------+--------------+------------------------+-----------------+------------+----------|
+| Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 | 50.0% v    |    100us |
++---------------------------------------------------------------------------------------------+
+""")
+
+
+async def test_console_table_keeps_custom_duration_formatters_on_ascii_only(sample_report_case: ReportCase):
+    """ASCII fallback applies only to renderer-supplied duration formatters."""
+    report = EvaluationReport(cases=[replace(sample_report_case, task_duration=0.0001)], name='test_report')
+
+    table = report.console_table(
+        ascii_only=True,
+        duration_config={'value_formatter': lambda _: 'custom µs'},
+    )
+
+    assert 'custom µs' in render_table(table)

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -32,6 +32,26 @@ class MCPSamplingModel(Model):
     [MCP Sampling](https://modelcontextprotocol.io/docs/concepts/sampling)
     allows an MCP server to make requests to a model by calling back to the MCP client that connected to it.
     """
+
+    # MCP sampling messages carry text and images; see `_mcp.map_from_pai_messages`.
+    _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'extra_headers',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'parallel_tool_calls',
+            'presence_penalty',
+            'seed',
+            'service_tier',
+            'timeout',
+            'top_k',
+            'top_p',
+        }
+    )
 
     session: ServerSession
     """The MCP server session to use for sampling."""
@@ -81,13 +101,13 @@ class MCPSamplingModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         raise NotImplementedError('MCP Sampling does not support streaming')
         yield
 
     @property
     def provider(self) -> None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def model_name(self) -> str:

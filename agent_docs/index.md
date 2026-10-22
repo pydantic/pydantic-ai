@@ -35,6 +35,7 @@
 
 <!-- rule:0 -->
 - Use `isinstance()` for type checking, not `hasattr()`, `getattr()`, `type(obj).__name__`, or discriminator field checks like `part_kind` — Enables proper type narrowing for static analysis and prevents fragile string-based comparisons that break during refactoring
+- Don't use `getattr()`/`setattr()` with a non-literal field name to read or copy fields of our own statically-known types (dataclasses, `BaseModel`s, message/part classes), e.g. looping over `fields()` and copying by name — use explicit attribute access (`merged.foo = merged.foo or other.foo`) — Reflecting over known fields by name defeats Pyright's field-existence and type checks and breaks silently on rename; this does not apply to `getattr(obj, 'name', default)` for genuinely optional or duck-typed attributes whose shape isn't statically known
 <!-- rule:142 -->
 - Use `Literal` types instead of plain `str` for fixed string value sets in parameters, fields, and return types — Makes valid values explicit in type signatures, enabling static type checkers to catch invalid strings at compile time and improving IDE autocomplete
 <!-- rule:809 -->
@@ -53,6 +54,7 @@
 - Don't add `| None` to `TypedDict` fields marked `total=False` or `NotRequired` — optionality is already expressed — Prevents redundant type declarations and makes it clear that omission (not None) is the intended optional behavior
 <!-- rule:196 -->
 - Remove `| None` from type annotations when values are guaranteed to be initialized or always provided — Prevents false optionality in types, making the API clearer and avoiding unnecessary None-checks that can never trigger
+- When a merge, dedup, or conflict check misses a difference because a type's `__eq__` ignores part of its state, fix that `__eq__`, not the checking code — Generic comparison code stays a plain `==`, and every other caller comparing the type gets the corrected answer
 
 ## Error Handling
 
@@ -63,7 +65,11 @@
 <!-- rule:32 -->
 - Use `!r` format specifier for identifiers in error messages (e.g., `f'Tool {name!r}'` not `f'Tool `{name}`'`) — Provides consistent, unambiguous quoting that clearly delimits values and handles edge cases like empty strings or special characters.
 <!-- rule:353 -->
-- Fail fast on explicit user config conflicts; gracefully fallback on internal/auto setting conflicts — Catching user mistakes early with clear errors prevents debugging confusion, while internal fallbacks enable cross-provider compatibility and system resilience when constraints are automatically inferred or propagated
+- Fail fast on explicit user config conflicts without API-defined precedence — Clear errors prevent arbitrary overrides
+- Fall back gracefully on internal or automatic setting conflicts — Internal fallbacks enable cross-provider compatibility when constraints are inferred or propagated
+- Warn when API-defined precedence overrides an explicit user value. This excludes one capability's value overriding another's: the user chose the order (see [capabilities/AGENTS.md](../pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)) — Documentation does not replace runtime feedback; warnings identify affected call sites, persist in logs and test suites, and make suppression explicit in source
+- Make override warnings actionable by naming the overridden value and what took precedence — Users must be able to change the input that triggered the warning
+- Emit an override warning only when code proves the user supplied the overridden value — False positives make warnings untrustworthy and train users to suppress real problems
 <!-- rule:337 -->
 - Inherit new exception types from existing base exceptions like `UnexpectedModelBehavior` when semantically appropriate — Maintains backward compatibility so user code catching parent exceptions continues to work when new exception types are introduced
 <!-- rule:320 -->
@@ -103,29 +109,30 @@
 - Remove tests when redundant, obsolete, or duplicative — each test should verify distinct, valuable behavior that currently exists — Reduces maintenance burden and keeps test suite focused on actual behavior; prevents false confidence from tests covering non-existent code paths or duplicating coverage without verifying edge cases
 <!-- rule:97 -->
 - Avoid `# pragma: no cover` — write tests instead. Only use for truly untestable code (defensive guards, platform branches, optional deps unavailable in CI) — Coverage pragmas hide gaps in test coverage; proper tests prevent regressions and document expected behavior, while pragmas should only mark code paths that cannot be executed in testing environments
+- Write nothing after a `# pragma: ...` marker on its line — no trailing prose, no second `#` comment (tooling directives like `# pyright: ignore[...]` are the exception). When the exclusion needs a rationale, put it on its own comment line above the statement — Keeps the marker itself machine-readable and uniform across the codebase, while the reason stays visible to the next reader
 
 ## Documentation
 
-<!-- rule:132 -->
-- Use latest/frontier models (e.g., `'gpt-5'` not `'gpt-4o'`) in docs and examples — Shows users current best practices and prevents outdated examples from becoming cargo-culted into production code
 <!-- rule:390 -->
 - Use provider-prefixed model identifiers (`{provider}:{model}`) and platform-specific formats (e.g., AWS Bedrock requires `us.anthropic.claude-{model}-{version}:0`) — Prevents misconfiguration and API errors by matching exact identifier formats required by each platform, ensures consistency across docs and code
 
 ## General
 
-<!-- rule:-2 -->
-- Use latest frontier models (e.g. `openai:gpt-5.2`, `anthropic:claude-opus-4-6`) in `docs/examples` — Outdated model references make our product look unmaintained and reduce user trust
 <!-- rule:449 -->
-- Use `make install` to regenerate lock files (e.g., `uv.lock`) after dependency changes — Ensures reproducible builds and keeps lock file diffs minimal. Update the package manager (uv, npm, pip-tools) to latest first and start from clean state. If diffs are unexpectedly large, reset to base branch and regenerate to isolate actual changes — prevents spurious conflicts and version drift.
+- Update Python dependencies with `uv` so the dependency change also updates `uv.lock`. Use `make sync` to regenerate the lockfile when needed. `make install` installs the existing lockfile and development hooks; it does not regenerate `uv.lock`. Investigate unrelated lockfile changes before committing.
 <!-- rule:717 -->
 - Override profile properties in model/provider classes, not in shared profile functions — Prevents provider-specific logic from leaking into shared utilities like `anthropic_model_profile()` that multiple providers (OpenAI, Bedrock, etc.) depend on — keeps profiles reusable and avoids cross-provider bugs
+<!-- rule:-3 -->
+- Check `pydantic_ai/_utils.py` for an existing shared helper or typeguard before writing a new one — it's the canonical home for cross-module utilities (e.g. `is_str_dict` narrows `Any` to `dict[str, Any]`, `is_set` for `Unset` sentinels, `guard_tool_call_id`) — Prevents duplicating helpers that already exist and keeps narrowing/validation logic consistent across the package
 
 ## Topic Guides
 
 Check these when working in specific areas:
 
-- **[Code Simplification & Idioms](agent_docs/code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
-- **[Documentation](agent_docs/documentation.md)**: When writing or updating documentation, comments, or docstrings
-- **[API Design & Interfaces](agent_docs/api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
-- **[Pydantic AI Slim Architecture](agent_docs/pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
+- **[Code Simplification & Idioms](code-simplification.md)**: When refactoring code for clarity or looking to simplify complex patterns
+- **[Documentation](documentation.md)**: When writing or reviewing documentation, comments, docstrings, examples, or other user-facing text
+- **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
+- **[Async & Concurrency](concurrency.md)**: When spawning tasks, using task groups or cancel scopes, creating locks/events/streams, writing async context managers or generators, crossing a thread or event-loop boundary, or testing any of it
+- **[Message History & Prompt Caching](message-history-and-caching.md)**: When enqueuing, editing, or rendering messages, contributing instructions or tools, wrapping content in tags, or converting history to or from a UI protocol
+- **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 <!-- /braindump -->

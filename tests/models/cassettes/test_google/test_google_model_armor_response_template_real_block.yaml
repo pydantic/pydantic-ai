@@ -1,0 +1,65 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '340'
+      content-type:
+      - application/json
+      host:
+      - europe-west4-aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: 'Repeat this exact sentence back to me verbatim, nothing else: "I want to kill them."'
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      modelArmorConfig:
+        response_template_name: projects/gen-lang-client-0498264908/locations/europe-west4/templates/pyai-response-template
+    uri: https://europe-west4-aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/europe-west4/publishers/google/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '606'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -1.1124393939971924
+        finishMessage: The response violated Responsible AI Safety settings (Hate Speech, Harassment, Dangerous) filters.
+        finishReason: MODEL_ARMOR
+      createTime: '2026-07-22T23:37:37.029264Z'
+      modelVersion: gemini-2.5-flash
+      responseId: QVRhatDkAeqe7dcPlP-i8QM
+      usageMetadata:
+        candidatesTokenCount: 6
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 6
+        promptTokenCount: 19
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 19
+        thoughtsTokenCount: 27
+        totalTokenCount: 52
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -10,13 +10,6 @@ or commit is needed. Keep this file in sync as the reviewed default.
 
 # Pydantic AI UI Adapter Security Review
 
-You are running under the **Pydantic AI gh-aw shim** (a Claude Code drop-in
-in gh-aw), driving a model behind gh-aw's AWF firewall. You have Claude's
-native tools (`Read`, `Grep`, `Glob`, `LS`, `Bash`, `WebFetch`, `Task`, …),
-the gh-aw GitHub tools, and the `mcp__safeoutputs__create_pull_request_review_comment`,
-`mcp__safeoutputs__submit_pull_request_review`, and `mcp__safeoutputs__noop`
-safe-output tools.
-
 You are running a **security review** of PR **#${{ github.event.pull_request.number }}**
 in [${{ github.repository }}](https://github.com/${{ github.repository }}) —
 *${{ github.event.pull_request.title }}*.
@@ -61,8 +54,11 @@ Existing examples of that model (the precedents you hold new code to):
   fetch with the *server's* IAM role (PR #5228).
 - client-submitted `FileUrl.force_download='allow-local'` is reset to
   `False` — it opts a URL out of the SSRF private-IP block (PR #5571).
-- `preserve_file_data` (off by default) gates round-tripping binary file
-  data (PRs #3971, #5255).
+- `allow_uploaded_files` (off by default) is the inbound security gate: it
+  drops client-submitted `UploadedFile` references unless opted in, since the
+  provider fetches them with the server's credentials. AG-UI's
+  `preserve_file_data` is now representation-only — an opt-in for round-tripping
+  the file sidecar activity messages, not a trust decision (PRs #3971, #5255).
 - `instructions` was removed from the Vercel `UIMessage.metadata` dump
   entirely — never sent to the client, never read back (PR #5279).
 
@@ -152,10 +148,7 @@ knowledge — but `ai-sdk.dev` and `docs.ag-ui.com` are reachable via
 - OpenAI Responses API (`previous_response_id` / stored conversations) — <https://platform.openai.com/docs/api-reference/responses>
 - SSRF advisories — <https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-cg7w-rg45-pc59>, <https://github.com/pydantic/pydantic-ai/security/advisories/GHSA-cqp8-fcvh-x7r3>
 
-## Rigor
-
-**Silence is better than noise. A false positive wastes a maintainer's time
-and erodes trust in every future review.**
+## Security-specific rigor
 
 - If you claim something is exploitable, show the **attack**: which field a
   client controls, the exact call path from `load_messages` /
@@ -165,49 +158,8 @@ and erodes trust in every future review.**
   default is **not** a finding — that is the model working.
 - The server-side `message_history` path (passed directly to `Agent.run`)
   is trusted by design. Do not flag it.
-- "I don't know" beats a wrong answer. `mcp__safeoutputs__noop` beats a
-  speculative finding.
 - Before posting, re-read each finding as a skeptical maintainer who knows
-  this trust model. If you need to hedge with "might", "could", or
-  "possibly", it is not ready.
-
-## Pre-gathered context
-
-A pre-agent step ran `scripts/gather-pydantic-ai-review-context.sh` and
-wrote everything you need to `/tmp/gh-aw/.review-context/`. **Read these
-files instead of calling the GitHub API.**
-
-- `pr-details.json` — title, body, author, branches, labels, draft/state.
-- `pr-size.txt` — `{N} files, {M} diff lines`.
-- `changed-files.txt` — paths with `+N -M` counts and the matching
-  `diff/<path>.diff` filename.
-- `diff/<path>.diff` — per-file diffs with function context, annotated with
-  `NL:<n>` for new-side and `OL:<n>` for old-side line numbers. **Inline
-  comments require an `NL:` line.**
-- `pr-comments.txt` — issue-style PR discussion.
-- `review-comments.txt` — inline review threads with diff hunks and
-  per-thread `RESOLVED` / `UNRESOLVED` / `OUTDATED` state.
-- `related-issues.txt` — linked issues referenced by the PR body.
-- `agents-md.txt` — `AGENTS.md` excerpts for directories the PR touches.
-
-The annotated diffs are the **source of truth** for what changed. If a file
-is missing (the pre-agent step may have warned), fall back to `gh pr view` /
-`gh pr diff` for that piece only.
-
-## Handling existing review threads
-
-For each thread in `review-comments.txt`, the **state** field tells you what
-to do with a finding on the same `path:line`:
-
-- `[UNRESOLVED]` — already flagged. **Do not duplicate.**
-- `[RESOLVED]` with a reviewer reply (e.g. "intentional") — decision is
-  final. **Do not re-flag.**
-- `[RESOLVED]` without a reply — author likely fixed it. **Do not re-raise**
-  unless the fix introduced a new problem.
-- `[OUTDATED]` — the code shifted under the comment. Re-flag only if the
-  issue still applies to the current diff.
-
-When in doubt, do not duplicate. Redundant comments erode trust.
+  this trust model.
 
 ## Review process
 
@@ -218,8 +170,8 @@ When in doubt, do not duplicate. Redundant comments erode trust.
 2. Read the `ui/` `AGENTS.md` / `CLAUDE.md` excerpts in `agents-md.txt`, and
    `docs/ui/overview.md` in the workspace — its "adapter trust model"
    section is the canonical statement of what is trusted vs. sanitized.
-3. Skim `review-comments.txt` for prior threads (note the most recent review
-   from this bot — you compare verdicts at the end).
+3. Skim `review-comments.txt` for prior threads. Note this workflow's previous
+   review in `bot-reviews.txt` — you compare verdicts at the end.
 4. From `changed-files.txt`, identify which changed files touch the boundary:
    `dump_messages` / stream emitters (outbound), `load_messages` /
    `sanitize_messages` / request schemas (inbound), `_ssrf.py` /
@@ -310,10 +262,13 @@ Then call `mcp__safeoutputs__submit_pull_request_review` with:
 HIGH and CRITICAL drive the `SECURITY: REQUEST_CHANGES` body header. The
 review submission itself is always `COMMENT`-type — see above.
 
-**Skip if redundant:** if you have zero new findings and the most recent
-review from this bot (in `review-comments.txt`) was also `SECURITY: PASS`,
-call `mcp__safeoutputs__noop` with a short reason instead of a redundant
-review.
+**Skip if redundant:** if you have zero new findings and this workflow's
+previous review is `SECURITY: PASS`, call `mcp__safeoutputs__noop` with a
+short reason that names that review's commit. Each line of `bot-reviews.txt` is
+one review: time, state, commit, then the first line of its body. This
+workflow's previous review is the most recent line whose body starts with
+`SECURITY:`. No other line in that file, and no comment in `pr-comments.txt`,
+is this workflow's review.
 
 ## What not to do (recap)
 

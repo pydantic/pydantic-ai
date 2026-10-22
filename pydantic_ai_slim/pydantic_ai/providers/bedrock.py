@@ -2,24 +2,31 @@ from __future__ import annotations as _annotations
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from typing import Any, Literal, overload
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, ClassVar, Literal, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import CodeExecutionTool
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    bedrock_claude_cache_retentions,
+    bedrock_lacks_claude_structured_output,
     remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
     split_bedrock_model_id,
 )
@@ -80,6 +87,8 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
     `description` so the model still has the hint.
     """
 
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE
+
     def walk(self) -> JsonSchema:
         schema = super().walk()
 
@@ -104,7 +113,7 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
 
         incompatible: dict[str, object] = {}
         if isinstance(schema_type, str):
-            for key in _BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE.get(schema_type, ()):
+            for key in self._unsupported_keys_by_type.get(schema_type, ()):
                 if key in schema:
                     incompatible[key] = schema[key]
             if schema_type == 'array' and schema.get('minItems', 0) > 1:
@@ -122,47 +131,116 @@ class BedrockJsonSchemaTransformer(JsonSchemaTransformer):
         return schema
 
 
-@dataclass(kw_only=True)
-class BedrockModelProfile(ModelProfile):
+class _BedrockJsonSchemaTransformerWithoutContains(BedrockJsonSchemaTransformer):
+    # Claude, GLM, Qwen and Gemma reject `contains`; Ministral accepts it. Keep the fallback model-specific.
+    # Verified on Bedrock us-east-1; see https://github.com/pydantic/pydantic-ai/issues/10713.
+    _unsupported_keys_by_type: ClassVar[dict[str, tuple[str, ...]]] = {
+        **_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE,
+        'array': (*_BEDROCK_STRICT_UNSUPPORTED_KEYS_BY_TYPE['array'], 'contains'),
+    }
+
+
+class _BedrockAnthropicJsonSchemaTransformer(_BedrockJsonSchemaTransformerWithoutContains):
+    def transform(self, schema: JsonSchema) -> JsonSchema:
+        schema = super().transform(schema)
+        schema_type = schema.get('type')
+        # Claude also rejects contains on nullable array type lists; GLM, Qwen and Gemma accept it.
+        # Keep the matching-type traversal boundary: the contains subschema is not walked here.
+        if self.strict and isinstance(schema_type, list) and 'array' in schema_type and 'contains' in schema:
+            note = f'contains={schema.pop("contains")}'
+            description = schema.get('description')
+            schema['description'] = note if not description else f'{description} ({note})'
+        return schema
+
+
+class BedrockModelProfile(ModelProfile, total=False):
     """Profile for models used with BedrockModel.
 
     ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
 
-    bedrock_supports_tool_choice: bool = False
-    bedrock_tool_result_format: Literal['text', 'json'] = 'text'
-    bedrock_send_back_thinking_parts: bool = False
-    bedrock_supports_prompt_caching: bool = False
-    bedrock_supports_tool_caching: bool = False
-    bedrock_supported_media_kinds_in_tool_returns: frozenset[str] = frozenset({'image'})
-    bedrock_supports_strict_tool_definition: bool = False
+    bedrock_supports_tool_choice: bool
+    """Default: `False`."""
+    bedrock_tool_result_format: Literal['text', 'json']
+    """Default: `'text'`."""
+    bedrock_send_back_thinking_parts: bool
+    """Default: `False`."""
+    bedrock_supports_prompt_caching: bool
+    """Default: `False`."""
+    bedrock_supports_tool_caching: bool
+    """Default: `False`."""
+    bedrock_supported_media_kinds_in_tool_returns: frozenset[Literal['image', 'document', 'video']]
+    """Default: `frozenset({'image'})`."""
+    bedrock_tool_result_colocatable_content: frozenset[Literal['text', 'image', 'document', 'video']]
+    """Content-block kinds that this model accepts in the same user message as a `toolResult` block.
+
+    pydantic-ai merges consecutive user turns into one Bedrock message, which can place a `toolResult`
+    alongside a following turn's text/attachment. Some models reject that: Anthropic rejects documents
+    and video next to a `toolResult`, while Llama and Mistral reject *any* content sharing the turn (the
+    `toolResult` must be alone). When a merge would co-locate a `toolResult` with a kind not listed here,
+    the adapter splits the turns and separates them with a synthetic assistant message (Bedrock re-merges
+    consecutive same-role turns, so a bare split doesn't suffice). See https://github.com/pydantic/pydantic-ai/issues/6081.
+
+    Default: all kinds (no restriction); the model receives merged turns unchanged.
+    """
+    bedrock_supports_leading_assistant_message: bool
+    """Whether this model accepts a conversation that starts with an assistant message.
+
+    Bedrock's Converse API requires that a conversation start with a user message for most model
+    families (Amazon Nova, Meta Llama, Mistral, Cohere, AI21, Writer, ...), which reject a leading
+    assistant turn with `"A conversation must start with a user message..."`. Anthropic and Qwen
+    models accept a leading assistant turn, so for them we don't need to synthesize a placeholder
+    user message when `message_history` starts with a `ModelResponse`.
+
+    Verified against Bedrock `us-east-1` on 2026-07-03.
+
+    Default: `False` (strict — synthesize a leading user message when history starts with an
+    assistant turn).
+    """
+    bedrock_supports_tool_result_status: bool
+    """Whether this model accepts the `status` field on a `toolResult` block in Bedrock's Converse API.
+
+    Most families accept (and pydantic-ai emits) `status: 'success'`/`'error'` on `toolResult` blocks, but
+    Writer Palmyra rejects it (`"This model doesn't support the status field. Remove status and try again."`),
+    so the field is omitted for it. Verified against Bedrock `us-east-1`.
+
+    Default: `True`.
+    """
+    bedrock_supports_strict_tool_definition: bool
     """Whether this model accepts `strict: true` on `toolSpec` in Bedrock's Converse API.
 
     Tracked separately from `supports_json_schema_output` (which gates `NativeOutput` /
     `outputConfig`) because AWS could in principle ship a model that supports one without the
     other; today both features track the same per-model allowlist per the Bedrock structured-output
     docs: https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html.
+
+    Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen'] | None = None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen', 'xai'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
     - `'qwen'`: Uses `{'reasoning_config': 'low'|'high'}`
+    - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
     - `None`: No unified thinking support.
+
+    Default: `None`.
     """
 
-    bedrock_supports_adaptive_thinking: bool = False
-    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Sonnet 4.6+, Opus 4.6+).
+    bedrock_supports_adaptive_thinking: bool
+    """Whether this model accepts `{'thinking': {'type': 'adaptive'}}` (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant. When False, the variant falls back to
     `{'type': 'enabled', 'budget_tokens': N}` for pre-4.6 models.
+
+    Default: `False`.
     """
 
-    bedrock_supports_effort: bool = False
-    """Whether this model emits `output_config.effort` on Bedrock Converse (Sonnet 4.6+, Opus 4.6+).
+    bedrock_supports_effort: bool
+    """Whether this model emits `output_config.effort` on Bedrock Converse (Haiku 5.5, Sonnet 4.6+, Opus 4.6+).
 
     Only meaningful for the `'anthropic'` variant AND only honored alongside
     `bedrock_supports_adaptive_thinking=True`. Bedrock has not been verified to accept
@@ -170,55 +248,135 @@ class BedrockModelProfile(ModelProfile):
     (e.g. Opus 4.5), so the translator skips it there even though the direct Anthropic
     API accepts it. Effort lives at `additionalModelRequestFields.output_config.effort`
     (a sibling of `thinking`, not inside it).
+
+    Default: `False`.
+    """
+
+    bedrock_top_k_variant: Literal['anthropic', 'nova'] | None
+    """How the unified `top_k` setting is placed in `additionalModelRequestFields`.
+
+    Bedrock's Converse `inferenceConfig` has no `topK` field, so `top_k` must travel in the
+    model-specific `additionalModelRequestFields` blob, where the shape differs per family
+    (and Bedrock 400s on an unrecognized key rather than ignoring it):
+
+    - `'anthropic'`: flat `{'top_k': N}`
+    - `'nova'`: nested `{'inferenceConfig': {'topK': N}}`
+    - `None`: `top_k` is silently dropped (Llama/Mistral/DeepSeek/Jamba don't accept it on
+      Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
+    """
+
+    bedrock_tool_choice_none_variant: Literal['anthropic'] | None
+    """How `tool_choice='none'` is sent once the history has a tool call.
+
+    Converse's `toolChoice` has no `none` mode, so the tools are dropped from the request instead. Converse rejects
+    `toolUse`/`toolResult` blocks without a `toolConfig`, though, so once the history has them the tools are kept:
+
+    - `'anthropic'`: `toolChoice` is omitted and `{'tool_choice': {'type': 'none'}}` is sent in
+      `additionalModelRequestFields`. Bedrock 400s when this is combined with a Converse `toolChoice`.
+    - `None`: no native `none` exists, so `toolChoice` is omitted and the model can still call the tools.
+
+    Default: `None`.
+    """
+
+    bedrock_document_cache_point_variant: Literal['anthropic'] | None
+    """Where a cache point goes when the message ends with documents.
+
+    Bedrock rejects a `cachePoint` directly after some document blocks, so it can't always go at the end:
+
+    - `'anthropic'`: a `cachePoint` may follow a PDF, so it's appended, for a `CachePoint` too. Bedrock renders
+      documents of every other format as text, moves them to the front of the message unless a `cachePoint`
+      precedes them, and rejects a `cachePoint` after them. When the message has no earlier `cachePoint`, an
+      automatic `bedrock_cache_messages` cache point goes at the end, with such trailing documents moved ahead of
+      the block before them, unless that's a PDF: the rendered prompt is unchanged, and matches the next request's,
+      which no longer has this `cachePoint`, so that request reads the cache.
+    - `None`: the `cachePoint` goes before the trailing documents and videos.
+
+    Default: `None`.
+    """
+
+    bedrock_disallows_sampling_settings: bool
+    """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
+
+    When set, `BedrockConverseModel` drops these settings with a warning instead of sending them.
+    """
+
+    bedrock_supported_on_converse: bool
+    """Whether this model is served by the Bedrock Converse API. Default: `True`.
+
+    Set to `False` for models that Bedrock serves only through the Mantle OpenAI-compatible API (today,
+    the proprietary OpenAI GPT models not allowlisted in `bedrock_openai_model_profile`);
+    `BedrockConverseModel` raises at construction so the user gets an actionable pointer to
+    `BedrockMantleProvider` instead of an opaque Converse error at request time.
     """
 
 
 def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model used via Bedrock."""
-    # These Opus models support structured output on the direct Anthropic API but are not listed
-    # in the Bedrock Runtime structured-output docs:
-    # https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html
-    bedrock_structured_output_unsupported = ('claude-opus-4-1', 'claude-opus-4-7')
     downstream = anthropic_model_profile(model_name)
-    # Read anthropic_* capability flags before update() strips them: ModelProfile.update()
-    # only copies fields that exist on self, so anthropic-prefixed fields would be lost.
-    is_anthropic = isinstance(downstream, AnthropicModelProfile)
-    supports_adaptive = is_anthropic and downstream.anthropic_supports_adaptive_thinking
-    # Bedrock only honors effort inside the adaptive branch of `_translate_thinking`, so don't claim
+    supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
+    # Bedrock only honors effort inside the adaptive branch of `_build_additional_model_request_fields`, so don't claim
     # support for non-adaptive models (e.g. Opus 4.5) even when the direct Anthropic API supports it.
-    supports_effort = supports_adaptive and is_anthropic and downstream.anthropic_supports_effort
-    profile = BedrockModelProfile(
-        bedrock_supports_tool_choice=True,
-        bedrock_send_back_thinking_parts=True,
-        bedrock_supports_prompt_caching=True,
-        bedrock_supports_tool_caching=True,
-        bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
-        bedrock_thinking_variant='anthropic',
-        bedrock_supports_adaptive_thinking=supports_adaptive,
-        bedrock_supports_effort=supports_effort,
-    ).update(_without_builtin_tools(downstream))
-    supports_structured_output = profile.supports_json_schema_output and not model_name.startswith(
-        bedrock_structured_output_unsupported
+    supports_effort = supports_adaptive and bool((downstream or {}).get('anthropic_supports_effort', False))
+    profile = merge_profile(
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_send_back_thinking_parts=True,
+            bedrock_supports_prompt_caching=True,
+            bedrock_supports_tool_caching=True,
+            supports_cache=True,
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models.
+            supported_cache_retentions=bedrock_claude_cache_retentions(model_name),
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+            # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
+            # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
+            bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}),
+            bedrock_supports_leading_assistant_message=True,
+            bedrock_thinking_variant='anthropic',
+            bedrock_supports_adaptive_thinking=supports_adaptive,
+            bedrock_supports_effort=supports_effort,
+            bedrock_top_k_variant='anthropic',
+            bedrock_tool_choice_none_variant='anthropic',
+            bedrock_document_cache_point_variant='anthropic',
+        ),
+        _strip_builtin_tools(downstream),
     )
-    return replace(
+    supports_structured_output = profile.get(
+        'supports_json_schema_output', False
+    ) and not bedrock_lacks_claude_structured_output(model_name)
+    return merge_profile(
         profile,
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
+        BedrockModelProfile(
+            json_schema_transformer=(
+                _BedrockAnthropicJsonSchemaTransformer if supports_structured_output else BedrockJsonSchemaTransformer
+            ),
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+        ),
     )
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
-    profile = _without_builtin_tools(amazon_model_profile(model_name))
+    profile = _strip_builtin_tools(amazon_model_profile(model_name))
     if 'nova' in model_name:
-        profile = BedrockModelProfile(
-            bedrock_supports_tool_choice=True,
-            bedrock_supports_prompt_caching=True,
-        ).update(profile)
+        # Bedrock-specific overrides apply on top of the upstream Amazon profile.
+        # Nova is intentionally left at the default `bedrock_supported_media_kinds_in_tool_returns`
+        # (`frozenset({'image'})`): inside a `toolResult` it accepts images and text-based documents
+        # (csv/txt) but rejects binary documents (pdf/docx). That constraint is document-format-dependent,
+        # which this kind-based flag can't express, so a format-aware fix is out of scope here.
+        profile = merge_profile(
+            profile,
+            BedrockModelProfile(
+                bedrock_supports_tool_choice=True,
+                bedrock_supports_prompt_caching=True,
+                supports_cache=True,
+                supported_cache_retentions=('5m',),
+                bedrock_top_k_variant='nova',
+            ),
+        )
 
     if 'nova-2' in model_name:
-        profile.supported_native_tools = frozenset({CodeExecutionTool})
+        profile = merge_profile(profile, ModelProfile(supported_native_tools=frozenset({CodeExecutionTool})))
 
     return profile
 
@@ -227,21 +385,52 @@ def bedrock_deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model used via Bedrock."""
     profile = deepseek_model_profile(model_name)
     if 'r1' in model_name:
-        return BedrockModelProfile(bedrock_send_back_thinking_parts=True).update(profile)
+        # Bedrock-specific override applies on top of the upstream DeepSeek profile.
+        return merge_profile(profile, BedrockModelProfile(bedrock_send_back_thinking_parts=True))
     return profile  # pragma: no cover
+
+
+def bedrock_meta_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Meta Llama model used via Bedrock."""
+    return merge_profile(
+        _strip_builtin_tools(meta_model_profile(model_name)),
+        BedrockModelProfile(
+            # Llama on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+            # any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
+            bedrock_tool_result_colocatable_content=frozenset(),
+            # Llama on Bedrock accepts both images and documents inside a `toolResult`'s content; it has
+            # no video support. Verified live against `us.meta.llama4-maverick-17b-instruct-v1:0`.
+            # This applies family-wide, but the flag only matters when a tool return actually carries that
+            # media kind: text-only members (e.g. Llama 3) don't receive documents/images in practice, and
+            # if one ever did, the pre-existing sibling-split fallback failed for them too (they can't read
+            # it either way), so reflecting the multimodal variant's capability here is no regression.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
+        ),
+    )
 
 
 def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Mistral model used via Bedrock."""
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
+    return merge_profile(
+        _strip_builtin_tools(mistral_model_profile(model_name)),
         BedrockModelProfile(
             bedrock_tool_result_format='json',
-        ).update(_without_builtin_tools(mistral_model_profile(model_name))),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Mistral on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+            # any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
+            bedrock_tool_result_colocatable_content=frozenset(),
+            # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
+            # images there — even though it accepts images in a plain user message — and has no video
+            # support. Verified live against `us.mistral.pixtral-large-2502-v1:0`. Applies family-wide, but
+            # the flag only matters when a tool return actually carries a document: text-only members (e.g.
+            # `mistral-large-2407`) don't receive documents in practice, and if one ever did, the
+            # pre-existing sibling-split fallback failed for them too, so this is no regression.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset({'document'}),
+        ),
     )
 
 
@@ -249,16 +438,29 @@ def bedrock_qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model used via Bedrock."""
     models_that_support_structured_output = ('qwen3',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
+    # Bedrock-Converse exposes only `reasoning_config ∈ {low, high}` for Qwen3 — no disable value.
+    supports_reasoning = 'qwq' in model_name or 'qwen3' in model_name
+    return merge_profile(
+        _strip_builtin_tools(qwen_model_profile(model_name)),
         BedrockModelProfile(
+            bedrock_supports_leading_assistant_message=True,
             bedrock_thinking_variant='qwen',
-            supports_thinking='qwq' in model_name or 'qwen3' in model_name,
-        ).update(_without_builtin_tools(qwen_model_profile(model_name))),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
-        # Bedrock Converse API doesn't support JSON object mode
-        supports_json_object_output=False,
+            supports_thinking=supports_reasoning,
+            thinking_always_enabled=supports_reasoning,
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Bedrock Converse API doesn't support JSON object mode
+            supports_json_object_output=False,
+            # Qwen (qwen3-vl) on Bedrock rejects every media kind inside a `toolResult`'s content — it
+            # has no document support and rejects images there too. Verified live against
+            # `us.qwen.qwen3-vl-235b-a22b-instruct-v1:0`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset(),
+        ),
     )
 
 
@@ -266,31 +468,108 @@ def bedrock_google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model used via Bedrock."""
     models_that_support_structured_output = ('gemma-3-12b-it', 'gemma-3-27b-it')
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
-        BedrockModelProfile().update(_without_builtin_tools(google_model_profile(model_name))),
-        json_schema_transformer=BedrockJsonSchemaTransformer,
-        supports_json_schema_output=supports_structured_output,
-        bedrock_supports_strict_tool_definition=supports_structured_output,
-        # Bedrock Converse API doesn't support JSON object mode
-        supports_json_object_output=False,
-        # Bedrock Converse API doesn't support tool return schemas natively
-        supports_tool_return_schema=False,
+    return merge_profile(
+        _strip_builtin_tools(google_model_profile(model_name)),
+        BedrockModelProfile(
+            json_schema_transformer=(
+                _BedrockJsonSchemaTransformerWithoutContains
+                if supports_structured_output
+                else BedrockJsonSchemaTransformer
+            ),
+            supports_json_schema_output=supports_structured_output,
+            bedrock_supports_strict_tool_definition=supports_structured_output,
+            # Bedrock Converse API doesn't support JSON object mode
+            supports_json_object_output=False,
+            # Bedrock Converse API doesn't support tool return schemas natively
+            supports_tool_return_schema=False,
+        ),
     )
 
 
-# MiniMax and NVIDIA don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
-# upstream profile via `_without_builtin_tools(<upstream>_model_profile(model_name))` like the
-# other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
-# `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
+def bedrock_zai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Z.AI (Zhipu) GLM model used via Bedrock."""
+    return merge_profile(
+        _strip_builtin_tools(zai_model_profile(model_name)),
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_supports_leading_assistant_message=True,
+            json_schema_transformer=_BedrockJsonSchemaTransformerWithoutContains,
+            supports_json_schema_output=True,
+            bedrock_supports_strict_tool_definition=True,
+        ),
+    )
+
+
+def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Moonshot AI Kimi model used via Bedrock.
+
+    Registered for both the `moonshot.` and `moonshotai.` Bedrock provider prefixes.
+    """
+    return merge_profile(
+        _strip_builtin_tools(moonshotai_model_profile(model_name)),
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_supports_leading_assistant_message=True,
+            json_schema_transformer=BedrockJsonSchemaTransformer,
+            supports_json_schema_output=True,
+            bedrock_supports_strict_tool_definition=True,
+            # Kimi (kimi-k2.5) accepts an image in a plain user message but rejects any media inside a
+            # `toolResult`'s content (both images and documents), so multimodal tool returns are delivered
+            # as a following user message instead. Verified live against `moonshotai.kimi-k2.5`.
+            bedrock_supported_media_kinds_in_tool_returns=frozenset(),
+        ),
+    )
+
+
+def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an xAI Grok model used via Bedrock Converse."""
+    # Grok on Converse always reasons: `additionalModelRequestFields.reasoning.effort` takes `low`, `medium`,
+    # `high`, or `xhigh` (the default is `low` on 4.6 and `high` on 4.7), and no value turns reasoning off.
+    # Structured output (`outputConfig`) is listed as "Not Supported" on the Grok 4.6 model card, so the
+    # upstream Grok profile's `supports_json_schema_output`/`supports_json_object_output` are turned off. The
+    # Grok 4.7 card lists it as supported, but it stays off there too until it's verified on Converse.
+    # Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, and 4.7 is
+    # assumed to match, so they're dropped.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-6.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-7.html
+    return merge_profile(
+        _strip_builtin_tools(grok_model_profile(model_name)),
+        BedrockModelProfile(
+            bedrock_supports_tool_choice=True,
+            bedrock_thinking_variant='xai',
+            bedrock_disallows_sampling_settings=True,
+            supports_thinking=True,
+            thinking_always_enabled=True,
+            supports_json_schema_output=False,
+            supports_json_object_output=False,
+        ),
+    )
+
+
+# MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
+# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
+# profile. OpenAI is handled separately because Converse support differs between its model families.
+
+
+def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Writer Palmyra model used via Bedrock."""
+    return BedrockModelProfile(
+        supported_native_tools=frozenset(),
+        json_schema_transformer=BedrockJsonSchemaTransformer,
+        # Writer Palmyra on Bedrock requires a `toolResult` to be alone in its user message; it rejects
+        # any co-located text or attachment block (like Llama and Mistral). Verified live against
+        # `writer.palmyra-x4-v1:0` and `writer.palmyra-x5-v1:0`. See https://github.com/pydantic/pydantic-ai/issues/6081.
+        bedrock_tool_result_colocatable_content=frozenset(),
+        # Writer Palmyra also rejects the `status` field on a `toolResult` block, unlike every other family.
+        bedrock_supports_tool_result_status=False,
+    )
 
 
 def bedrock_minimax_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MiniMax model used via Bedrock."""
     models_that_support_structured_output = ('minimax-m2',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
-        BedrockModelProfile(),
+    return BedrockModelProfile(
         supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
@@ -302,8 +581,7 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an NVIDIA model used via Bedrock."""
     models_that_support_structured_output = ('nemotron-nano',)
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
-    return replace(
-        BedrockModelProfile(),
+    return BedrockModelProfile(
         supported_native_tools=frozenset(),
         json_schema_transformer=BedrockJsonSchemaTransformer,
         supports_json_schema_output=supports_structured_output,
@@ -311,8 +589,40 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
-def _without_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
-    return replace(profile or BedrockModelProfile(), supported_native_tools=frozenset())
+_BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'})
+
+
+def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an OpenAI model used via Bedrock Converse."""
+    # Exact names, not prefixes: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
+    # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
+    if model_name in {
+        'gpt-5.6-sol',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+    }:
+        # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
+        return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
+    # Keep other proprietary GPT models gated until their Converse support is confirmed.
+    if not model_name.startswith('gpt-oss'):
+        return BedrockModelProfile(bedrock_supported_on_converse=False)
+    # Converse rejects `reasoning_effort='none'` — mark always-on.
+    return BedrockModelProfile(
+        bedrock_thinking_variant='openai',
+        supports_thinking=True,
+        thinking_always_enabled=True,
+    )
+
+
+def _strip_builtin_tools(profile: ModelProfile | None) -> ModelProfile:
+    return merge_profile(profile, ModelProfile(supported_native_tools=frozenset()))
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -328,6 +638,7 @@ class BedrockProvider(Provider[BaseClient]):
 
     @property
     def client(self) -> BaseClient:
+        """The boto3 client used to make requests to the Bedrock API."""
         return self._client
 
     @client.setter
@@ -343,20 +654,37 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': bedrock_anthropic_model_profile,
+            'anthropic': lambda model_name: merge_profile(
+                bedrock_anthropic_model_profile(model_name),
+                # Bedrock's Claude model cards document a 5-minute TTL; some models accept a 1-hour
+                # `cachePoint` TTL, which `prompt_cache_outlook` detects in message history.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=5)),
+            ),
             'mistral': bedrock_mistral_model_profile,
-            'cohere': lambda model_name: _without_builtin_tools(cohere_model_profile(model_name)),
+            'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
-            'meta': lambda model_name: _without_builtin_tools(meta_model_profile(model_name)),
-            'deepseek': lambda model_name: _without_builtin_tools(bedrock_deepseek_model_profile(model_name)),
-            'openai': lambda _mn: BedrockModelProfile(
-                bedrock_thinking_variant='openai',
-                supports_thinking=True,
+            'meta': bedrock_meta_model_profile,
+            'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
+            'openai': lambda model_name: merge_profile(
+                bedrock_openai_model_profile(model_name),
+                # Bedrock documents a 30-minute minimum TTL for exactly these; other OpenAI models get
+                # automatic caching with no documented retention.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=30))
+                if model_name in _BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS
+                else None,
             ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,
             'minimax': bedrock_minimax_model_profile,
             'nvidia': bedrock_nvidia_model_profile,
+            'writer': bedrock_writer_model_profile,
+            'zai': bedrock_zai_model_profile,
+            # Moonshot AI's Kimi models ship under both provider prefixes on Bedrock.
+            'moonshot': bedrock_moonshotai_model_profile,
+            'moonshotai': bedrock_moonshotai_model_profile,
+            'xai': bedrock_xai_model_profile,
         }
 
         # Bedrock model IDs are `<provider>.<model-name>-v<n>(:<m>)?`, optionally with a

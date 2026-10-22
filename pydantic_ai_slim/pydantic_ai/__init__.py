@@ -1,11 +1,12 @@
 from importlib.metadata import version as _metadata_version
-from typing import Any
 
-from ._template import TemplateStr
+from ._cancel import CancellationToken
+from ._json_schema import UseEnumMemberDocstrings
 from .agent import (
     Agent,
     AgentModelSettings,
     AgentRetries,
+    AgentRunEvents,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -14,13 +15,14 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .capabilities import AgentCapability, CapabilityFunc
+from .capabilities import AgentCapability, Capability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
     ConcurrencyLimit,
     ConcurrencyLimiter,
 )
+from .conversation import Conversation, ConversationTypeAdapter
 from .embeddings import (
     Embedder,
     EmbeddingModel,
@@ -32,34 +34,69 @@ from .exceptions import (
     ApprovalRequired,
     CallDeferred,
     ConcurrencyLimitExceeded,
+    CostCalculationFailedWarning,
+    CostNotFoundWarning,
     FallbackExceptionGroup,
     IncompleteToolCall,
+    MessageHistoryMutatedWarning,
     ModelAPIError,
+    ModelConnectionError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelRequestTimeout,
     ModelRetry,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+    PydanticAIDeprecationWarning,
+    RunCancelled,
+    RunTimedOut,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
+    ToolFailed,
+    TransportPhase,
     UndrainedPendingMessagesError,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
+    UsageExtractionFailedWarning,
     UsageLimitExceeded,
+    UsageLimitUnavailableWarning,
     UserError,
 )
 from .format_prompt import format_as_xml
+from .images import (
+    GeneratedImage,
+    ImageGenerationModel,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    ImageGenerator,
+)
 from .messages import (
+    AgentInstructionSource,
     AgentStreamEvent,
     AudioFormat,
     AudioMediaType,
     AudioUrl,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CapabilityEvent,
+    CapabilityInstructionSource,
     CompactionPart,
+    CustomEvent,
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
+    EnqueuedMessagesEvent,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -70,11 +107,19 @@ from .messages import (
     ImageFormat,
     ImageMediaType,
     ImageUrl,
+    InstructionBaselinePart,
+    InstructionChangePolicy,
+    InstructionDeltaPart,
+    InstructionDigest,
+    InstructionId,
     InstructionPart,
+    InstructionSource,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestAttempt,
     ModelRequestPart,
+    ModelRequestState,
     ModelResponse,
     ModelResponsePart,
     ModelResponsePartDelta,
@@ -88,19 +133,30 @@ from .messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+    RunInstructionSource,
+    SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
+    ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolKind,
     ToolResultEvent,
     ToolReturn,
     ToolReturnPart,
+    ToolsetInstructionSource,
+    UnknownCapabilityEvent,
+    UnknownCustomEvent,
     UploadedFile,
     UserContent,
     UserPromptPart,
@@ -108,21 +164,30 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext
+from .models import AbstractModel, ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
+    AdvisorTool,
     CodeExecutionTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
-    UrlContextTool,  # pyright: ignore[reportDeprecated]
     WebFetchTool,
     WebSearchTool,
     WebSearchUserLocation,
     XSearchTool,
 )
-from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .output import (
+    BoolCriteria,
+    Choice,
+    Choices,
+    NativeOutput,
+    PromptedOutput,
+    StructuredDict,
+    TextOutput,
+    ToolOutput,
+)
 from .profiles import (
     DEFAULT_PROFILE,
     InlineDefsJsonSchemaTransformer,
@@ -130,9 +195,9 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .result import AgentEventStream
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
+from .template import TemplateStr
 from .tools import (
     AgentNativeTool,
     DeferredToolRequests,
@@ -165,8 +230,10 @@ from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
     '__version__',
+    'BANNER_ENABLED',
     # agent
     'Agent',
+    'CancellationToken',
     'AgentModelSettings',
     'AgentRetries',
     'AgentSpec',
@@ -181,6 +248,12 @@ __all__ = (
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    # images
+    'ImageGenerator',
+    'ImageGenerationModel',
+    'ImageGenerationSettings',
+    'ImageGenerationResult',
+    'GeneratedImage',
     # concurrency
     'AbstractConcurrencyLimiter',
     'AnyConcurrencyLimit',
@@ -193,35 +266,66 @@ __all__ = (
     'CallDeferred',
     'ApprovalRequired',
     'ConcurrencyLimitExceeded',
+    'CostCalculationFailedWarning',
+    'CostNotFoundWarning',
+    'UsageExtractionFailedWarning',
+    'UsageLimitUnavailableWarning',
     'ModelRetry',
+    'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
+    'ModelRateLimitError',
+    'ModelQuotaExceededError',
+    'ModelUnavailableError',
+    'ModelOverloadedError',
+    'ModelServerError',
+    'ModelConnectionError',
+    'ModelTimeoutError',
+    'TransportPhase',
+    'ModelContextWindowExceededError',
+    'ModelRequestTimeout',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'RunCancelled',
+    'RunTimedOut',
+    'MessageHistoryMutatedWarning',
+    'PydanticAIDeprecationWarning',
     'SkipModelRequest',
     'SkipToolExecution',
     'SkipToolValidation',
     'UndrainedPendingMessagesError',
     'UnexpectedModelBehavior',
+    'UnsupportedSettingWarning',
     'UsageLimitExceeded',
     'UserError',
     # messages
+    'AgentInstructionSource',
     'AgentStreamEvent',
     'AudioFormat',
     'AudioMediaType',
     'AudioUrl',
+    'SpeechPart',
+    'SpeechPartDelta',
     'BaseToolCallPart',
     'BaseToolReturnPart',
+    'BinaryAudio',
     'BinaryContent',
     'NativeToolCallPart',
     'NativeToolReturnPart',
     'CachePoint',
     'CompactionPart',
+    'CapabilityEvent',
+    'CustomEvent',
+    'UnknownCapabilityEvent',
+    'UnknownCustomEvent',
     'DocumentFormat',
     'DocumentMediaType',
     'DocumentUrl',
+    'EnqueuedMessagesEvent',
     'FileUrl',
     'FilePart',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FinalResultEvent',
     'FinishReason',
     'FunctionToolCallEvent',
@@ -231,11 +335,16 @@ __all__ = (
     'ImageMediaType',
     'ImageUrl',
     'BinaryImage',
+    'CapabilityInstructionSource',
+    'InstructionId',
     'InstructionPart',
+    'InstructionSource',
     'ModelMessage',
     'ModelMessagesTypeAdapter',
     'ModelRequest',
+    'ModelRequestAttempt',
     'ModelRequestPart',
+    'ModelRequestState',
     'ModelResponse',
     'ModelResponsePart',
     'ModelResponsePartDelta',
@@ -247,16 +356,27 @@ __all__ = (
     'PartDeltaEvent',
     'PartEndEvent',
     'PartStartEvent',
+    'RetryFeedbackPart',
+    'RetryInfo',
     'RetryPromptPart',
+    'RunInstructionSource',
     'SystemPromptPart',
     'TextContent',
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
+    'ToolsetInstructionSource',
+    'ToolAvailabilityDeltaEvent',
+    'ToolAvailabilityDeltaPart',
+    'InstructionBaselinePart',
+    'InstructionDeltaPart',
+    'InstructionDigest',
+    'InstructionChangePolicy',
     'ThinkingPartDelta',
     'ToolCallEvent',
     'ToolCallPart',
     'ToolCallPartDelta',
+    'ToolKind',
     'ToolResultEvent',
     'ToolReturn',
     'ToolReturnPart',
@@ -281,6 +401,7 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'UseEnumMemberDocstrings',
     # toolsets
     'AbstractToolset',
     'AgentToolset',
@@ -299,18 +420,19 @@ __all__ = (
     'ToolsetTool',
     'WrapperToolset',
     # builtin_tools
+    'AdvisorTool',
     'CodeExecutionTool',
     'FileSearchTool',
     'ImageGenerationTool',
     'MCPServerTool',
     'MemoryTool',
-    'UrlContextTool',
     'WebFetchTool',
     'WebSearchTool',
     'WebSearchUserLocation',
     'XSearchTool',
     # capabilities
     'AgentCapability',
+    'Capability',
     'CapabilityFunc',
     # output
     'ToolOutput',
@@ -318,12 +440,18 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    'Choice',
+    'Choices',
+    'BoolCriteria',
     # template
     'TemplateStr',
     # format_prompt
     'format_as_xml',
     # models
+    'AbstractModel',
     'ModelRequestContext',
+    'ModelResolutionContext',
+    'ModelSelectionContext',
     # settings
     'ModelSettings',
     'ToolChoice',
@@ -334,37 +462,19 @@ __all__ = (
     'UsageLimits',
     # run
     'AgentRun',
+    'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
-    # result
-    'AgentEventStream',
+    'Conversation',
+    'ConversationTypeAdapter',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
 
+BANNER_ENABLED = True
+"""Whether the first-run banner may be shown, for a program that would rather own its output.
 
-# Deprecated top-level aliases for names renamed in the built-in → native tools rename.
-# Importing these from `pydantic_ai` continues to work in 1.x with a deprecation
-# warning that points at the new name.
-_BUILTIN_TO_NATIVE_TOP_LEVEL: dict[str, str] = {
-    'BuiltinToolCallPart': 'NativeToolCallPart',
-    'BuiltinToolReturnPart': 'NativeToolReturnPart',
-    'AgentBuiltinTool': 'AgentNativeTool',
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name in _BUILTIN_TO_NATIVE_TOP_LEVEL:
-        import warnings
-
-        from ._warnings import PydanticAIDeprecationWarning
-
-        new_name = _BUILTIN_TO_NATIVE_TOP_LEVEL[name]
-        warnings.warn(
-            f'`pydantic_ai.{name}` is deprecated, use `pydantic_ai.{new_name}` instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        import pydantic_ai as _self
-
-        return getattr(_self, new_name)
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+Set it to `False` before the first agent run; `PYDANTIC_AI_NO_BANNER` does the same from the
+environment. Neither is needed to keep the banner out of an application's way: it is only ever shown
+once per process, to a terminal or a coding agent, and never at all once instrumentation is
+configured, under `pytest`, or in CI.
+"""

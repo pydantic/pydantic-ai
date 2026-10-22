@@ -1,0 +1,448 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "218"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Briefly: what is 17 * 23? Think first."
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 1024
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-1ed653a9afb01e595d7e45aaea718629-3a60ea79133ff3ef-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3pZrDcvRcgd67wVaiE","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":51,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me calculate 17 * 23"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n\nI"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" can"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" break"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" this down:\n17 * "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"23 = 17 * "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"20 + 17 * "}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"3\n= 340 + "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"51\n= 391\n\nOr"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I could do"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":":"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"\n17 * 23 ="}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" ("}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"20 -"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 3) * 23 ="}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 20 * 23 -"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 3 * 23 ="} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 460 - 69 ="}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 391\n\nLet"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" me verify: 391"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErwDCpsBCBIYAipA+gjgtrCXyI9201ApOkjZrzWVBuIX6MAfVmEAIEOb1HWwoSRfEIv1giGhk0tg+RTVRW/ApsE7rQt/M5F8uv4QUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBu8/v1QYSDPKmue2pnN+fB9oozxoM+V2hwJ2jwcmQGI+ZIjBhslBJgrPCBmjnWPrCHRDWE9u0JsVrhP4upQvcZBB8al/gpTUWmzOoA3dB3MXTXsUqzQH2FQSqgYC4IwEdyjSrduuJPmw68AO0FA7HGo2ppyVYjQwKVFARuiB75iElCJT/SCr6/4++TKk5U04ttM4XbO7Mz51H+A2tCbqAHous/2sWYndvxc3+mOyenTeqHHhVrjOWtBmaEuzKQf/ObF2wHcoHByUtfMpj5TFiZ6H+AAAD/iC7/ykV1ALJJ4uD5FuFKsHOPJTdPiZO0khvz2CrvkI43mdWfrRrkw3a8IWlohHRVlXSjoeTMB/Mebqj+bdWIYGbZoIP6ndIcXon7qcVGAE="}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Thinking"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" through"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" it"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":":"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n-"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 17 ×"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 23"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- ="}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 17 × 20 +"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 17 × 3\n-"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = 340 + 51"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- = **"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"391**"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":51,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":166,"output_tokens_details":{"thinking_tokens":116}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-09-29T16:30:52.533301+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1284"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Briefly: what is 17 * 23? Think first."
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              Let me calculate 17 * 23.
+
+              I can break this down:
+              17 * 23 = 17 * 20 + 17 * 3
+              = 340 + 51
+              = 391
+
+              Or I could do:
+              17 * 23 = (20 - 3) * 23 = 20 * 23 - 3 * 23 = 460 - 69 = 391
+
+              Let me verify: 391
+            signature: >-
+              ErwDCpsBCBIYAipA+gjgtrCXyI9201ApOkjZrzWVBuIX6MAfVmEAIEOb1HWwoSRfEIv1giGhk0tg+RTVRW/ApsE7rQt/M5F8uv4QUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBu8/v1QYSDPKmue2pnN+fB9oozxoM+V2hwJ2jwcmQGI+ZIjBhslBJgrPCBmjnWPrCHRDWE9u0JsVrhP4upQvcZBB8al/gpTUWmzOoA3dB3MXTXsUqzQH2FQSqgYC4IwEdyjSrduuJPmw68AO0FA7HGo2ppyVYjQwKVFARuiB75iElCJT/SCr6/4++TKk5U04ttM4XbO7Mz51H+A2tCbqAHous/2sWYndvxc3+mOyenTeqHHhVrjOWtBmaEuzKQf/ObF2wHcoHByUtfMpj5TFiZ6H+AAAD/iC7/ykV1ALJJ4uD5FuFKsHOPJTdPiZO0khvz2CrvkI43mdWfrRrkw3a8IWlohHRVlXSjoeTMB/Mebqj+bdWIYGbZoIP6ndIcXon7qcVGAE=
+            type: thinking
+          - text: |-
+              Thinking through it:
+              - 17 × 23
+              - = 17 × 20 + 17 × 3
+              - = 340 + 51
+              - = **391**
+            type: text
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 1024
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-4b2ab70e63c0c7f42b3434375afb8f9d-20bb46eb113df80d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3pou4gRRsHZhkqCEkc","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}           }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" asking me to reply with exactly"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" \"OK\"."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" This is a simple,"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" straight"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"forward request."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EtoCCpsBCBIYAipAIXqlVa7R4ErBzHIJ+u5rInxjNLmMO9pBTUAPTO2+pZpZHfm7hshEk2vT2D/Kb0+jYpQC/2iaxpzcrerB/LnoKzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBvc/v1QYSDGq5TSTtB94A/0OLoBoMxHgfdzW92XMBfO/gIjBHZ3AOZqqpvwrUD19FT3UWZ6SJbUmbDQrokrIf5xJeDYubobsiGmGuD1DdVn2I9BkqbLnIYRN8iMLrbdO9df6i52wNciHkFM/fn4oV5gjEBppCFNApYHh5JOZ2ElXmzIAvFb6z1x1RaZsNxymqo0/2x3X7MGx7uFafaBHmACNKphgS6arrT7IRmGluNZ/c9B5I+uIAbvU+oAsfVXEgQBgB"}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"OK"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":33,"output_tokens_details":{"thinking_tokens":26}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-09-29T16:30:54.003949+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1284"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: "Briefly: what is 17 * 23? Think first."
+            type: text
+        - role: assistant
+          content:
+          - thinking: |-
+              Let me calculate 17 * 23.
+
+              I can break this down:
+              17 * 23 = 17 * 20 + 17 * 3
+              = 340 + 51
+              = 391
+
+              Or I could do:
+              17 * 23 = (20 - 3) * 23 = 20 * 23 - 3 * 23 = 460 - 69 = 391
+
+              Let me verify: 391
+            signature: >-
+              ErwDCpsBCBIYAipA+gjgtrCXyI9201ApOkjZrzWVBuIX6MAfVmEAIEOb1HWwoSRfEIv1giGhk0tg+RTVRW/ApsE7rQt/M5F8uv4QUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBu8/v1QYSDPKmue2pnN+fB9oozxoM+V2hwJ2jwcmQGI+ZIjBhslBJgrPCBmjnWPrCHRDWE9u0JsVrhP4upQvcZBB8al/gpTUWmzOoA3dB3MXTXsUqzQH2FQSqgYC4IwEdyjSrduuJPmw68AO0FA7HGo2ppyVYjQwKVFARuiB75iElCJT/SCr6/4++TKk5U04ttM4XbO7Mz51H+A2tCbqAHous/2sWYndvxc3+mOyenTeqHHhVrjOWtBmaEuzKQf/ObF2wHcoHByUtfMpj5TFiZ6H+AAAD/iC7/ykV1ALJJ4uD5FuFKsHOPJTdPiZO0khvz2CrvkI43mdWfrRrkw3a8IWlohHRVlXSjoeTMB/Mebqj+bdWIYGbZoIP6ndIcXon7qcVGAE=
+            type: thinking
+          - text: |-
+              Thinking through it:
+              - 17 × 23
+              - = 17 × 20 + 17 × 3
+              - = 340 + 51
+              - = **391**
+            type: text
+        - role: user
+          content:
+          - text: "Reply with exactly: OK"
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 1024
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d6dcb4f28f02ce8ddce3a8f5660908f1-651d04066d3e8faf-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3pv7d1WLPdWzFZkiZx","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" is"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" asking me to reply"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" with exactly \"OK\"."} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" This is a simple, direct"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" instruction"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EtUCCpsBCBIYAipA7P9ZUDAUF/U+kUJA+PMhOSyFkVMJuozta45CoMeBC7W2hBvD/UHpabcohqt+RxY7FFdjmb6KG12eFPX5gNPuEzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBv8/v1QYSDEiH1pa/0ViJumh1bBoM3UgAVe5OwkVEb2StIjAy+A2N71Ik/HYkm9EaG9oTLVW3i3mIqHyOJpsMm7FGpSuDW7I4lA7xx/yWBxcM5z4qZ5XNU2MNzoBRogHhVuHPOA/uUg1UDitq/ceq0q10EHKe5GMEmGVPjG3j4ikttHGMk7AFPZKHcFfxT+k3ALL6MdZPdl9DBaCiEQ8Se7Dvlfn7DuGcTOCG9eynz9ti8QTeUuwMoEHFZSAYAQ=="}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"OK"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":107,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":32,"output_tokens_details":{"thinking_tokens":25}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-29T16:30:55.659900+00:00

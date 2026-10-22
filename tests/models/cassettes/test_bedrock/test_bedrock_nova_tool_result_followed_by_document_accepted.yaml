@@ -1,0 +1,51 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "show me my expenses"}]}, {"role": "assistant", "content":
+      [{"toolUse": {"toolUseId": "t1", "name": "get_expenses", "input": {}}}]}, {"role": "user", "content": [{"toolResult":
+      {"toolUseId": "t1", "content": [{"text": "ok"}], "status": "success"}}, {"text": "What is in this document?"}, {"document":
+      {"name": "Document 1", "format": "txt", "source": {"bytes": "RHVtbXkgVFhUIGZpbGUK"}}}]}], "system": [], "inferenceConfig":
+      {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_expenses", "inputSchema": {"json": {"additionalProperties":
+      false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ODkxMTZhMDctYjg0MC00NGQzLWI5YjEtZmM2YmQ5YjNlY2Qz
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '668'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-pro-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1095'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 1953
+      output:
+        message:
+          content:
+          - text: |-
+              <thinking> The tool 'get_expenses' has returned a success status, but the actual expenses data is not provided. The response mentions a "Dummy TXT file", which suggests that the expenses data might be in a text file. However, I do not have direct access to file contents or the ability to read files. I need to inform the user that I cannot retrieve the expenses data without further information or tools. </thinking>
+
+              I'm sorry, but I can't directly access or read the contents of files. The tool 'get_expenses' has indicated a success status, but it did not provide the actual expenses data. If the expenses are stored in a "Dummy TXT file", I would need a tool that can read file contents to retrieve the data. Unfortunately, I do not have such a tool available. Please provide the expenses data directly or let me know if there's another way I can assist you.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 436
+        outputTokens: 193
+        serverToolUsage: {}
+        totalTokens: 629
+    status:
+      code: 200
+      message: OK
+version: 1

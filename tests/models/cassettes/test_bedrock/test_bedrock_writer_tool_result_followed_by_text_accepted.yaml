@@ -1,0 +1,48 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "show me my expenses"}]}, {"role": "assistant", "content":
+      [{"toolUse": {"toolUseId": "t1", "name": "get_expenses", "input": {}}}]}, {"role": "user", "content": [{"toolResult":
+      {"toolUseId": "t1", "content": [{"text": "ok"}]}}]}, {"role": "assistant", "content": [{"text": "."}]}, {"role": "user",
+      "content": [{"text": "Thanks. Now just say the word DONE."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "get_expenses", "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type":
+      "object"}}}}]}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ODFhOGJkNjYtZDJkNC00MDZiLWFmNjgtZDQzNjZhN2JiMTU2
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '611'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.writer.palmyra-x4-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '225'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 488
+      output:
+        message:
+          content:
+          - text: DONE
+          role: assistant
+      stopReason: end_turn
+      usage:
+        inputTokens: 88
+        outputTokens: 1
+        serverToolUsage: {}
+        totalTokens: 89
+    status:
+      code: 200
+      message: OK
+version: 1

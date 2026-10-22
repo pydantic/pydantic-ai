@@ -18,6 +18,8 @@ from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 
+from .conftest import message
+
 
 @dataclass
 class MyDeps:
@@ -159,7 +161,7 @@ class TestValidateFromSpecArgs:
         """Capabilities without TemplateStr in from_spec hints are unchanged."""
 
         @dataclass
-        class PlainCap(AbstractCapability[None]):
+        class PlainCap(AbstractCapability):
             value: str = ''
 
             @classmethod
@@ -218,10 +220,10 @@ class TestAgentFromSpecDeps:
             deps_type=MyDeps,
         )
         # Instructions with templates are stored as TemplateStr
-        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(agent._instructions[0].instruction, TemplateStr)  # pyright: ignore[reportPrivateUsage]
 
     def test_from_spec_without_deps_type_returns_agent_none(self) -> None:
-        """Without deps_type, from_spec returns Agent[None, str]."""
+        """Without deps_type, from_spec returns Agent[object, str]."""
         agent = Agent.from_spec({'model': 'test'})
         assert agent._deps_type is type(None)  # pyright: ignore[reportPrivateUsage]
 
@@ -232,8 +234,6 @@ class TestAgentFromSpecDeps:
 
 # --- Integration: full agent run with templated instructions ---
 
-pytestmark = [pytest.mark.anyio]
-
 
 async def test_agent_run_with_template_instructions() -> None:
     """Full integration: run an agent with templated instructions and verify they render."""
@@ -243,8 +243,7 @@ async def test_agent_run_with_template_instructions() -> None:
     )
     result = await agent.run('hi', deps=MyDeps(name='Alice', age=30))
     # The rendered instructions should appear in the first model request
-    first_request = result.all_messages()[0]
-    assert isinstance(first_request, ModelRequest)
+    first_request = message(result.all_messages(), ModelRequest)
     assert first_request.instructions == 'You are helping Alice, age 30.'
 
 
@@ -258,15 +257,17 @@ class TestAgentSpecTemplateFields:
             {'model': 'test', 'instructions': 'Hello {{name}}'},
             deps_type=MyDeps,
         )
-        assert len(agent._instructions) == 1  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        instructions = [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+        assert len(instructions) == 1
+        assert isinstance(instructions[0], TemplateStr)
 
     def test_spec_instructions_plain_string(self) -> None:
         """Plain strings in spec instructions stay as plain strings."""
         agent = Agent.from_spec({'model': 'test', 'instructions': 'Hello world'})
-        assert len(agent._instructions) == 1  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(agent._instructions[0], str)  # pyright: ignore[reportPrivateUsage]
-        assert not isinstance(agent._instructions[0], TemplateStr)  # pyright: ignore[reportPrivateUsage]
+        instructions = [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
+        assert len(instructions) == 1
+        assert isinstance(instructions[0], str)
+        assert not isinstance(instructions[0], TemplateStr)
 
     def test_spec_instructions_list_with_templates(self) -> None:
         """List of instructions can mix templates and plain strings."""
@@ -274,7 +275,7 @@ class TestAgentSpecTemplateFields:
             {'model': 'test', 'instructions': ['Hello {{name}}', 'Be helpful']},
             deps_type=MyDeps,
         )
-        instructions = agent._instructions  # pyright: ignore[reportPrivateUsage]
+        instructions = [sourced.instruction for sourced in agent._instructions]  # pyright: ignore[reportPrivateUsage]
         assert len(instructions) == 2
         assert isinstance(instructions[0], TemplateStr)
         assert isinstance(instructions[1], str)
@@ -304,8 +305,7 @@ class TestAgentSpecTemplateFields:
             deps_type=MyDeps,
         )
         result = await agent.run('hi', deps=MyDeps(name='Alice', age=30))
-        first_request = result.all_messages()[0]
-        assert isinstance(first_request, ModelRequest)
+        first_request = message(result.all_messages(), ModelRequest)
         assert first_request.instructions == 'You are Alice'
 
 

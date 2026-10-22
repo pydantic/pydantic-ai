@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Gather PR context for the Pydantic AI PR Review agent into /tmp/gh-aw/.review-context/.
+# Gather PR context for the CI Review agent into $GITHUB_WORKSPACE/.review-context/.
 # Usage: scripts/gather-pydantic-ai-review-context.sh <pr-number> [repo]
 #
 # Examples:
 #   scripts/gather-pydantic-ai-review-context.sh 4269
 #   scripts/gather-pydantic-ai-review-context.sh 4269 pydantic/pydantic-ai
 #
-# Why outputs live under /tmp (not in the workspace): gh-aw's pre-agent flow
-# runs a "Save/Restore agent config folders from base branch" step that
-# touches `.github/` (a security feature to prevent PRs from rewriting the
-# agent's own configuration). Writing context inside `.github/` or any other
-# managed folder (`.agents`, `.claude`, `.codex`, …) is unreliable because
-# those snapshots can wipe or shadow what we wrote. `/tmp/gh-aw/...` is
-# under the runner's tmp tree, untouched by gh-aw's restore step.
+# Why outputs live at the workspace ROOT, and not under /tmp or `.github/`:
+# the agent's `Read` tool refuses any path outside the workspace, so a `/tmp`
+# destination makes every instructed read fail (#6766 measured ~15 failed
+# `Read` calls per run, in 80 of 80 sampled runs). But gh-aw's pre-agent flow
+# also runs a "Save/Restore agent config folders from base branch" step that
+# rewrites `.github/` (and `.agents`, `.claude`, `.codex`, …) from the BASE
+# branch, so anything written inside those is liable to be wiped or shadowed.
+# The workspace root satisfies both: readable by the agent, untouched by the
+# restore.
 #
 # TODO(consolidate): This is a fork of scripts/gather-review-context.sh used
 # by the legacy Claude-action workflow (.github/workflows/bots.yml). The two
@@ -22,9 +24,66 @@
 
 set -euo pipefail
 
+# The partition mode is also used by local regression tests. It accepts the same
+# GitHub files JSON consumed by the full context gatherer and makes no API calls.
+if [ "${1:-}" = "--partition-files" ]; then
+  FILES_JSON="${2:?Usage: $0 --partition-files <files.json> <output-dir>}"
+  ORDERINGS_DIR="${3:?Usage: $0 --partition-files <files.json> <output-dir>}"
+  mkdir -p "$ORDERINGS_DIR"
+
+  # Keep the historical ordering files for consumers that use them. Resolve
+  # equal-size ties by path so assignments do not depend on GitHub API order.
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by(.filename) | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/az.txt"
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by(.filename) | reverse | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/za.txt"
+
+  PARTITIONS=$(jq '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename]) as $files
+    | ($files | length) as $file_count
+    | ([$files[] | (.additions // 0) + (.deletions // 0)] | add // 0) as $diff_lines
+    | (if $file_count <= 3 and $diff_lines <= 200 then 0
+       elif $file_count > 10 or $diff_lines > 1000 then 3
+       else 2 end) as $requested
+    | ([ $requested, $file_count ] | min) as $delegate_count
+    | (reduce range(0; $delegate_count) as $i
+         ({bins: [], loads: []}; .bins += [[]] | .loads += [0])) as $empty
+    | reduce $files[] as $file ($empty;
+        . as $state
+        | (reduce range(1; $delegate_count) as $i
+             (0; . as $best
+              | if $state.loads[$i] < $state.loads[$best]
+                   or ($state.loads[$i] == $state.loads[$best]
+                       and ($state.bins[$i] | length) < ($state.bins[$best] | length))
+                then $i else $best end)) as $best
+        | .bins[$best] += [$file.filename]
+        | .loads[$best] += (($file.additions // 0) + ($file.deletions // 0)))
+    | {delegate_count: $delegate_count, bins: .bins}
+  ' "$FILES_JSON")
+
+  printf '%s\n' "$PARTITIONS" | jq -r '.delegate_count' > "$ORDERINGS_DIR/delegate-count.txt"
+  DELEGATE_COUNT=$(printf '%s\n' "$PARTITIONS" | jq -r '.delegate_count')
+  for ((index = 0; index < DELEGATE_COUNT; index++)); do
+    jq -r ".bins[$index][]" <<<"$PARTITIONS" > "$ORDERINGS_DIR/delegate-$((index + 1)).txt"
+  done
+  # Existing largest.txt remains the ordered source used for first-pass
+  # assignments. Assign each next-largest file to the least-loaded delegate.
+  jq -r '
+    [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
+    | sort_by([-( (.additions // 0) + (.deletions // 0) ), .filename])
+    | .[].filename
+  ' "$FILES_JSON" > "$ORDERINGS_DIR/largest.txt"
+  exit 0
+fi
+
 PR_NUMBER="${1:?Usage: $0 <pr-number> [repo]}"
 REPO="${2:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}"
-CTX="/tmp/gh-aw/.review-context"
+CTX="${GITHUB_WORKSPACE:-$PWD}/.review-context"
 mkdir -p "$CTX"
 
 # Track every `mktemp` we allocate and unlink them on exit, including the
@@ -51,7 +110,7 @@ gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate --jq '.[] | "### 
 [ -s "$CTX/pr-comments.txt" ] || echo "(No PR comments)" > "$CTX/pr-comments.txt"
 
 # Inline review comments (with diff hunks and resolved state via GraphQL)
-# Fetch all review threads first, then determine last auto-review timestamp, then format
+# Fetch all review threads first, then determine last douwebot-review timestamp, then format
 echo "  - Review comments"
 OWNER="${REPO%%/*}"
 REPO_NAME="${REPO##*/}"
@@ -103,8 +162,8 @@ while true; do
   fi
 done
 
-# Find timestamp of last auto-review from both issue comments and inline review comments
-echo "  - Checking for previous auto-review"
+# Find timestamp of last douwebot review from both issue comments and inline review comments
+echo "  - Checking for previous douwebot review"
 LAST_ISSUE_COMMENT_TS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
   | jq -s '[.[][] | select(.user.login == "github-actions" or .user.login == "github-actions[bot]") | .created_at] | sort | last // empty' -r)
 LAST_REVIEW_COMMENT_TS=$(jq -r '
@@ -126,9 +185,9 @@ else
 fi
 
 if [ -n "$LAST_REVIEW_TS" ]; then
-  echo "    Last auto-review: $LAST_REVIEW_TS"
+  echo "    Last douwebot review: $LAST_REVIEW_TS"
 else
-  echo "    No previous auto-review found"
+  echo "    No previous douwebot review found"
 fi
 
 # Format review threads with compaction
@@ -153,7 +212,7 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
   $arr[$i] as $t |
   $t.first as $first |
 
-  # Compact if: (resolved AND outdated) OR (all comments predate last auto-review)
+  # Compact if: (resolved AND outdated) OR (all comments predate last douwebot review)
   (
     ($t.resolved and $t.outdated) or
     ($last_review != "" and $t.lastCommentAt < $last_review)
@@ -175,6 +234,19 @@ jq -r --arg last_review "$LAST_REVIEW_TS" '
   end
 ' "$THREADS_JSON" >> "$CTX/review-comments.txt"
 [ -s "$CTX/review-comments.txt" ] || echo "(No review comments)" > "$CTX/review-comments.txt"
+
+# Review verdicts are in neither file above: `review-comments.txt` holds only
+# inline threads, `pr-comments.txt` only issue comments. Every gh-aw reviewer here
+# posts as `github-actions[bot]`, so each one tells its own reviews apart by the
+# first line of the body. Non-fatal: the diffs below matter more than this file.
+echo "  - Bot reviews"
+gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+  | jq -rs '
+      [add[] | select(.user.login == "github-actions[bot]")] | sort_by(.submitted_at) | .[]
+      | "\(.submitted_at) \(.state) at \(.commit_id): \((.body // "") | split("\n") | (.[0] // "") | rtrimstr("\r") | if . == "" then "(no body)" else . end)"
+    ' > "$CTX/bot-reviews.txt" \
+  || echo "(Could not list reviews)" > "$CTX/bot-reviews.txt"
+[ -s "$CTX/bot-reviews.txt" ] || echo "(No reviews from github-actions[bot])" > "$CTX/bot-reviews.txt"
 
 # Related issues: extract issue numbers from PR body
 echo "  - Related issues"
@@ -339,24 +411,12 @@ jq -r '.[] | [.filename, "+\(.additions) -\(.deletions)", (.filename | gsub("/";
     fi
   done > "$CTX/changed-files.txt"
 
-# File orderings for sub-agent fan-out. Each ordering primes one sub-agent to
-# spend its early attention on a different slice of the PR; the parent merges
-# findings. Generated files (uv.lock, cassettes) are excluded — they don't
-# get reviewed. Each file contains one path per line.
-echo "  - File orderings (az / za / largest)"
+# File orderings and disjoint first-pass assignments. The historical ordering
+# files remain available to other consumers; assignments use largest-first
+# greedy balancing and exclude generated files.
+echo "  - File orderings and delegate assignments"
 mkdir -p "$CTX/file-orderings"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(.filename) | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/az.txt"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(.filename) | reverse | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/za.txt"
-jq -r '
-  [.[] | select(.filename | test("uv\\.lock|/cassettes/") | not)]
-  | sort_by(-((.additions // 0) + (.deletions // 0))) | .[].filename
-' "$FILES_JSON" > "$CTX/file-orderings/largest.txt"
+"$0" --partition-files "$FILES_JSON" "$CTX/file-orderings"
 
 # PR size summary — file count and total diff lines. The prompt uses this to
 # pick a single-pass vs fan-out review strategy.
@@ -421,8 +481,12 @@ Determine severity AFTER investigating the finding, not before.
   on small helpers, narrow refactor opportunities.
 - 💬 **NITPICK** — truly optional. Naming preferences, comment polish.
 
-**Verdict mapping:** any HIGH or CRITICAL → `REQUEST_CHANGES`. MEDIUM-only
-or below → `APPROVE` (post the comments anyway). No findings → `APPROVE`.
+**Verdict mapping:** any verified HIGH or CRITICAL finding requires
+`REQUEST_CHANGES`, even when review coverage is incomplete. Otherwise, incomplete
+coverage requires `COMMENT`; complete coverage with MEDIUM-only or lower findings
+requires `APPROVE` (post comments anyway). Name every unreviewed file in the
+review body for either verdict.
+Complete coverage with no findings → `APPROVE`.
 
 **Cap inline comments at 30 per run.** If more findings survive, keep the
 highest-severity 30 inline and list the rest briefly in the review body.
@@ -435,10 +499,23 @@ the surrounding code before posting.
 
 - **Style / formatting** — ruff handles it.
 - **Type nits already covered by pyright** — `make typecheck` runs in CI.
+- **Coverage-gate / `# pragma: no cover` predictions** — coverage is
+  deterministic and CI reports it exactly: the `fail_under = 100` job names
+  every uncovered `file:line`, and a strict-no-cover audit flags a
+  `# pragma: no cover` sitting on a line that was actually covered. Don't
+  flag "this drops below 100%", "removing this pragma breaks coverage", or
+  "this pragma is wrong/unneeded" — CI catches all of these clearly. (A
+  missing test for genuinely *new* behavior or public API is still fair
+  game — that's about correctness, not the coverage number. A profile-gated
+  branch whose added tests all pin one side of the flag is fair game too
+  (Example 4): the branch line can read at 100% while the flag-on and
+  flag-off *combination* stays unverified, so it is a value-combination gap,
+  not a coverage-percentage prediction.)
 - **"Missing tests" for pure refactor** — if the PR moves or renames
   existing code and existing tests still exercise the behavior, no new
   test is needed. Only flag missing tests for new behavior or new public
-  API.
+  API, which includes a newly added or modified `profile.get(...)` branch
+  under `models/` (Example 4): that is new behavior, not a move.
 - **`None` / `Optional` access guarded upstream** — internal helpers
   often assume a precondition the caller enforces (or a type narrows the
   value via an `assert` / `isinstance` / early-return). Read the caller
@@ -526,6 +603,121 @@ a deprecation shim breaks every user on upgrade.
 ```
 *Why:* Leading underscore = private. Internal refactors don't need
 deprecation.
+
+### Example 4 — profile-flag test pinning
+
+Trigger: the diff adds or modifies a `profile.get(...)` read under
+`pydantic_ai_slim/pydantic_ai/models/`, and the tests plus cassettes the same
+diff adds pin that flag to a single value. Decide it by calling the provider's
+profile function for each pinned model and reading the flag.
+
+**Flag this (MEDIUM):**
+```python
+# PR adds a background-mode include gated on a profile flag under models/...
+if profile.get('openai_supports_encrypted_reasoning_content'):
+    include.append('reasoning.encrypted_content')
+# ...and every test and cassette the same PR adds pins `gpt-4o`.
+```
+*Why:* The new branch only runs when the flag is on, but
+`openai_model_profile('gpt-4o').get('openai_supports_encrypted_reasoning_content')`
+is `False`, so every added test sits on the flag-off side and the flag-on
+branch ships unverified. Coverage does not catch this: the line is exercised
+by other tests and reads at 100%, yet the (flag on) × (this path) combination
+is never visited. Ask for one added test pinning a model on the other side (a
+reasoning model, e.g. `gpt-5.6` or `o3`, for which the flag is `True`), or an
+in-test note saying why that side is unreachable on this path. MEDIUM and
+advisory: post the comment, never `REQUEST_CHANGES`.
+
+**Don't flag this:**
+```python
+# Same branch, and the PR adds one test pinning `gpt-4o` plus one pinning `o3`.
+```
+*Why:* The added tests pin a model on each side of the flag
+(`openai_model_profile('gpt-4o')` is `False`, `openai_model_profile('o3')` is
+`True`), so both paths are covered. Also don't flag when the diff pins one
+value but a comment in the added test explains why the other side is
+unreachable on this path, or when the touched `profile.get(...)` read is not a
+new or modified branch (a pure move or rename).
+
+### Example 5 — test cost
+
+Trigger: the diff adds or changes tests under `tests/`. Every test runs on
+every push across the whole CI matrix, and the next test in the file copies the
+pattern, so cost is a review concern even when CI is green. The rules are in
+"Test cost" in `tests/AGENTS.md`; `tests/cost_guards.py` already fails an
+unmarked Python launch and (on one CI leg) a test over the time budget, so the
+review's job is the escape hatches and the patterns the guards cannot see.
+
+**Flag this (MEDIUM):**
+```python
+@pytest.mark.subprocess(reason='runs the CLI')
+def test_cli_prints_version(tmp_path: Path):
+    result = subprocess.run([sys.executable, '-m', 'pydantic_clai2', '--version'], ...)
+```
+*Why:* The claim (the version string) does not depend on the process
+boundary, so the marker only waves through a second-per-test interpreter
+launch; ask for the entry point to be called in-process. The same goes for a
+new `@pytest.mark.slow(reason=...)` whose cost could be designed away, and for
+a new test that waits out a real `sleep`/timeout/poll interval instead of
+injecting it, or proves a complexity bound with one huge input instead of a
+growth ratio across small sizes.
+
+**Don't flag this:**
+```python
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
+def test_import_is_light():
+    ...
+```
+*Why:* What a fresh interpreter imports can only be observed in a fresh
+interpreter; the reason names the process-boundary property under test. Also
+don't flag a launch in a `session`- or `module`-scoped fixture (shared cost,
+the recommended pattern) or a short real wait whose duration is the claim.
+
+### Example 6 — message history and prompt cache
+
+Trigger: the diff enqueues or edits messages, contributes instructions or
+tools, renders history in a model adapter, wraps content in tags, or converts
+history to or from a UI protocol. The rules, each with its reason, are in
+`agent_docs/message-history-and-caching.md`. A violation with a concrete
+trigger is HIGH: a moved prefix makes every later request re-process it uncached, with no error,
+and content in the wrong channel is a prompt injection.
+
+**Flag this (HIGH):**
+```python
+async def before_model_request(self, ctx, request_context):
+    report = await self._sub_agent_report()
+    ctx.enqueue(SystemPromptPart(f'Sub-agent finished:\n{report}'))
+```
+*Why:* The report is another agent's output, which can repeat anything it
+read, and here it is sent in operator voice. It belongs in the tool result
+channel, or in a framed and escaped data wrapper on a user turn. The same goes
+for a framework or harness hook that rewrites or strips earlier messages by
+default or on every request, for
+framework guidance enqueued as a plain `str` (it becomes a user message), for
+code that finds its own earlier parts by matching their text, and for a new
+wrapper with a hand-rolled escaper instead of `_framing.wrap()`, or one that escapes only the closing
+`</name>` spelling (`</NAME >`, `< / name>` or an opening `<name>` still gets
+through) or escapes only its own tag (a `</context>` or `<system>` in its
+body still gets through), uses a `kebab-case` tag name, or puts an
+untagged "Tool X completed." line in front of the frame. Likewise a summarizer or judge
+that renders a framework data part (a task report, a reminder) as a `user:` turn.
+
+**Don't flag this:**
+```python
+async def before_model_request(self, ctx, request_context):
+    ctx.enqueue(SystemPromptPart('Keep the answer under 100 words.', scope='request'))
+```
+*Why:* Fixed framework text in system voice, request-scoped, and added to
+history. On Anthropic it's sent natively with `clear_at`, so later requests
+send it unchanged; elsewhere it's sent at the tail of its own request, behind
+the cache breakpoint, and left out of later ones, a deliberate tail move that
+keeps the cached prefix. Also don't flag compaction
+moving the prefix once when it crosses its threshold, a history processor the
+user configures explicitly (`ProcessHistory`) whose docs say it costs the
+cached prefix, a request-only change
+to `request_context.messages` that every later request applies the same way
+(redacting a part from the first request that sends it), or code using today's
+mechanism where a rule is marked *(pending #N)*.
 
 ## Sub-agent finding format
 

@@ -1,6 +1,10 @@
+---
+description: "A Pydantic AI RAG example that answers questions about documentation using vector search with pgvector and OpenAI embeddings, exposed to the agent as a tool."
+---
+
 # RAG
 
-RAG search example. This demo allows you to ask question of the [logfire](https://pydantic.dev/logfire) documentation.
+RAG search example. This demo allows you to ask questions about an October 2024 snapshot of the [Logfire](https://pydantic.dev/logfire) documentation.
 
 Demonstrates:
 
@@ -35,6 +39,9 @@ python/uv-run -m pydantic_ai_examples.rag build
 ```
 
 (Note building the database doesn't use Pydantic AI right now, instead it uses the OpenAI SDK directly.)
+
+!!! note "Embedding model and index schema"
+    This example uses `text-embedding-3-small` for documents and queries, storing its 1,536-dimensional output in a `vector(1536)` column. If you change the model or dimensions, stop PostgreSQL, delete the example's `postgres-data` directory (this removes the entire local example database), update `DB_SCHEMA` if needed, then restart PostgreSQL and rerun `build`. pgvector's HNSW `vector` index supports up to 2,000 dimensions.
 
 You can then ask the agent a question with:
 

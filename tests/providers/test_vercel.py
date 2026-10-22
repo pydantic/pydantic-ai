@@ -1,6 +1,6 @@
 import re
 
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -12,6 +12,7 @@ from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
 
@@ -26,7 +27,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -69,6 +69,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     deepseek_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
     google_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
     grok_mock = mocker.patch(f'{ns}.grok_model_profile', wraps=grok_model_profile)
+    groq_mock = mocker.patch(f'{ns}.groq_model_profile', wraps=groq_model_profile)
     mistral_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     openai_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
 
@@ -76,53 +77,60 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     profile = provider.model_profile('openai/gpt-4o')
     openai_mock.assert_called_with('gpt-4o')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test anthropic provider
     profile = provider.model_profile('anthropic/claude-sonnet-4-5')
     anthropic_mock.assert_called_with('claude-sonnet-4-5')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
     profile = provider.model_profile('bedrock/anthropic.claude-sonnet-4-5')
     amazon_mock.assert_called_with('anthropic.claude-sonnet-4-5')
     assert profile is not None
-    assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     # Test cohere provider
     profile = provider.model_profile('cohere/command-r-plus')
     cohere_mock.assert_called_with('command-r-plus')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test deepseek provider
     profile = provider.model_profile('deepseek/deepseek-chat')
     deepseek_mock.assert_called_with('deepseek-chat')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+
+    # Test groq provider — the suffix after the first `/` keeps its own `openai/gpt-oss` prefix,
+    # which is what `groq_model_profile` gates on
+    profile = provider.model_profile('groq/openai/gpt-oss-120b')
+    groq_mock.assert_called_with('openai/gpt-oss-120b')
+    assert profile is not None
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test mistral provider
     profile = provider.model_profile('mistral/mistral-large')
     mistral_mock.assert_called_with('mistral-large')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test vertex provider
     profile = provider.model_profile('vertex/gemini-1.5-pro')
     google_mock.assert_called_with('gemini-1.5-pro')
     assert profile is not None
-    assert profile.json_schema_transformer == GoogleJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == GoogleJsonSchemaTransformer
 
     # Test xai provider
     profile = provider.model_profile('xai/grok-beta')
     grok_mock.assert_called_with('grok-beta')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 def test_vercel_with_http_client():
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = VercelProvider(api_key='test-key', http_client=http_client)
     assert provider.client.api_key == 'test-key'
     assert str(provider.client.base_url) == 'https://ai-gateway.vercel.sh/v1/'
@@ -131,7 +139,7 @@ def test_vercel_with_http_client():
 def test_vercel_provider_model_name_without_slash():
     profile = VercelProvider.model_profile('invalid-model-name')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 def test_vercel_provider_unknown_provider():
@@ -139,4 +147,4 @@ def test_vercel_provider_unknown_provider():
 
     profile = provider.model_profile('unknown/gpt-4')
     assert profile is not None
-    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer

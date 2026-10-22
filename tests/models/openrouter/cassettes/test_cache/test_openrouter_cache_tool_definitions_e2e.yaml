@@ -1,0 +1,101 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '473'
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What tools do you have available? Just list them briefly.
+        role: user
+      model: anthropic/claude-sonnet-4.6
+      stream: false
+      tool_choice: auto
+      tools:
+      - cache_control:
+          ttl: 5m
+          type: ephemeral
+        function:
+          description: ''
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      connection:
+      - keep-alive
+      content-length:
+      - '956'
+      content-type:
+      - application/json
+      permissions-policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
+        "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            I have one tool available:
+
+            - **get_weather**: Retrieves the current weather for a specified city.
+          reasoning: null
+          refusal: null
+          role: assistant
+        native_finish_reason: stop
+      created: 1773009374
+      id: gen-1773009374-OCscsda5VF5I9PRwtZv1
+      model: anthropic/claude-4.6-sonnet-20260217
+      object: chat.completion
+      provider: Amazon Bedrock
+      system_fingerprint: null
+      usage:
+        completion_tokens: 27
+        completion_tokens_details:
+          audio_tokens: 0
+          image_tokens: 0
+          reasoning_tokens: 0
+        cost: 0.002103
+        cost_details:
+          upstream_inference_completions_cost: 0.000405
+          upstream_inference_cost: 0.002103
+          upstream_inference_prompt_cost: 0.001698
+        is_byok: false
+        prompt_tokens: 566
+        prompt_tokens_details:
+          audio_tokens: 0
+          cache_write_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 593
+    status:
+      code: 200
+      message: OK
+version: 1

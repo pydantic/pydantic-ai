@@ -10,9 +10,9 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Never, Self, get_origin
 
-from typing_extensions import Never, Self, TypeVar
+from typing_extensions import TypeVar
 
 from pydantic_graph import BaseNode
 from pydantic_graph.exceptions import GraphBuildingError
@@ -93,7 +93,7 @@ class DecisionBranch(Generic[SourceT]):
 
     Note: with the current design, it is actually _critical_ that this class is invariant in SourceT for the sake
     of type-checking that inputs to a Decision are actually handled. See the `# type: ignore` comment in
-    `tests.graph.beta.test_graph_edge_cases.test_decision_no_matching_branch` for an example of how this works.
+    `tests.graph.builder.test_graph_edge_cases.test_decision_no_matching_branch` for an example of how this works.
     """
 
     source: TypeOrTypeExpression[SourceT]

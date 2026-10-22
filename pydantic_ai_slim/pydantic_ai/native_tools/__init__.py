@@ -8,7 +8,9 @@ from typing import Annotated, Any, Literal, Union
 
 import pydantic
 from pydantic_core import core_schema
-from typing_extensions import TypedDict, deprecated
+from typing_extensions import TypedDict
+
+from pydantic_ai.messages import UploadedFile
 
 __all__ = (
     'AbstractNativeTool',
@@ -17,15 +19,16 @@ __all__ = (
     'XSearchTool',
     'CodeExecutionTool',
     'WebFetchTool',
-    'UrlContextTool',
     'ImageGenerationModelName',
     'ImageGenerationTool',
     'ImageAspectRatio',
+    'ImageSize',
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
+    'AdvisorModelName',
+    'AdvisorTool',
     'NATIVE_TOOL_TYPES',
-    'DEPRECATED_NATIVE_TOOLS',
     'SUPPORTED_NATIVE_TOOLS',
     'NATIVE_TOOLS_REQUIRING_CONFIG',
 )
@@ -37,10 +40,43 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 """
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
-"""Supported aspect ratios for image generation tools."""
+"""Supported aspect ratios for image generation tools.
+
+The direct image API takes the wider
+[`ImageGenerationAspectRatio`][pydantic_ai.images.ImageGenerationAspectRatio], of which these ten are a subset.
+"""
+
+ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
+"""Supported sizes for image generation tools."""
 
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
+
+AdvisorModelName = (
+    Literal[
+        'claude-fable-5-1',
+        'claude-fable-5',
+        'claude-mythos-5-1',
+        'claude-mythos-5',
+        'claude-opus-5-5',
+        'claude-opus-5',
+        'claude-opus-4-8',
+        'claude-opus-4-7',
+        'claude-opus-4-6',
+        'claude-sonnet-5-5',
+        'claude-sonnet-4-6',
+        'claude-haiku-5-5',
+    ]
+    | str
+)
+"""Known Anthropic advisor model names, or any other model ID string.
+
+These are the models Anthropic currently accepts as the *advisor* — the stronger model an
+executor consults mid-generation. The executor/advisor pairing is validated by the API, not here.
+The literals are Anthropic model IDs; on OpenRouter, pass a catalog slug string instead
+(e.g. `anthropic/claude-opus-4.8` or the `~anthropic/claude-opus-latest` alias).
+See [Anthropic's model compatibility list](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool#model-compatibility).
+"""
 
 
 @dataclass(kw_only=True)
@@ -82,6 +118,21 @@ class AbstractNativeTool(ABC):
         """
         return self.kind.replace('_', ' ').title()
 
+    @property
+    def restricting_settings(self) -> frozenset[str]:
+        """The names of the settings set on this instance that narrow what the tool may do.
+
+        These are settings such as domain filters and usage limits, which are usually there for compliance or
+        cost reasons. A model that can't apply one of them treats this instance as unsupported, so the request
+        uses the local fallback when one is provided, leaves the tool out when it is `optional`, and raises
+        [`UserError`][pydantic_ai.exceptions.UserError] otherwise. Settings that only tune results, such as a
+        search context size, are not included.
+
+        Models report which of these they can't apply via
+        [`Model.unsupported_native_tool_settings`][pydantic_ai.models.Model.unsupported_native_tool_settings].
+        """
+        return frozenset()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         NATIVE_TOOL_TYPES[cls.kind] = cls
@@ -108,6 +159,13 @@ class WebSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search the web for information.
 
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+    The restricting settings `allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` are
+    the exception: on a model that can't apply one that is set, the tool is treated as unsupported, so the local
+    fallback runs if one is provided, the tool is left out if it is `optional`, and
+    [`UserError`][pydantic_ai.exceptions.UserError] is raised otherwise.
+    OpenRouter uses its Beta web-search server tool, which lets the model decide whether to search and how often.
+    It accepts the portable settings below, though their effect depends on OpenRouter's selected
+    search engine and downstream provider.
 
     Supported by:
 
@@ -135,6 +193,8 @@ class WebSearchTool(AbstractNativeTool):
 
     * Anthropic
     * OpenAI Responses
+    * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     blocked_domains: list[str] | None = None
@@ -146,7 +206,9 @@ class WebSearchTool(AbstractNativeTool):
 
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
+    * OpenAI Responses, see <https://developers.openai.com/api/docs/guides/tools-web-search#domain-filtering>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     allowed_domains: list[str] | None = None
@@ -160,18 +222,50 @@ class WebSearchTool(AbstractNativeTool):
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
     * OpenAI Responses, see <https://platform.openai.com/docs/guides/tools-web-search>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     max_uses: int | None = None
     """If provided, the tool will stop searching the web after the given number of uses.
 
+    For OpenRouter, this limit is enforced with a non-native search engine or Anthropic's native
+    search. Other native providers ignore it.
+
     Supported by:
 
     * Anthropic
+    * OpenRouter
+    """
+
+    external_web_access: bool | None = None
+    """Whether the hosted web search tool may fetch live web content.
+
+    If `False`, the tool uses only cached or indexed results. If `None`, the parameter is omitted and the provider
+    default is used. OpenAI currently defaults to `True`.
+
+    Supported by:
+
+    * OpenAI Responses `web_search` tool, see <https://developers.openai.com/api/docs/guides/tools-web-search#live-internet-access>
+
+    OpenAI's legacy `web_search_preview` tool ignores this parameter.
     """
 
     kind: str = 'web_search'
     """The kind of tool."""
+
+    @property
+    def restricting_settings(self) -> frozenset[str]:
+        """`allowed_domains`, `blocked_domains` and `max_uses` when set, and `external_web_access` when `False`."""
+        settings: set[str] = set()
+        if self.allowed_domains is not None:
+            settings.add('allowed_domains')
+        if self.blocked_domains is not None:
+            settings.add('blocked_domains')
+        if self.max_uses is not None:
+            settings.add('max_uses')
+        if self.external_web_access is False:
+            settings.add('external_web_access')
+        return frozenset(settings)
 
 
 class WebSearchUserLocation(TypedDict, total=False):
@@ -181,13 +275,17 @@ class WebSearchUserLocation(TypedDict, total=False):
 
     * Anthropic
     * OpenAI Responses
+    * xAI
+    * OpenRouter
     """
 
     city: str
     """The city where the user is located."""
 
     country: str
-    """The country where the user is located. For OpenAI, this must be a 2-letter country code (e.g., 'US', 'GB')."""
+    """The country where the user is located.
+
+    For OpenAI and xAI, this must be a 2-letter ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB')."""
 
     region: str
     """The region or state where the user is located."""
@@ -203,7 +301,7 @@ class XSearchTool(AbstractNativeTool):
     See <https://docs.x.ai/developers/tools/x-search> for more details.
 
     When used via the [`XSearch`][pydantic_ai.capabilities.XSearch] capability with a
-    `fallback_model` set, this tool also works with non-xAI models by delegating to a
+    `fallback_subagent_model` set, this tool also works with non-xAI models by delegating to a
     subagent running the specified xAI model.
 
     Supported by:
@@ -212,7 +310,7 @@ class XSearchTool(AbstractNativeTool):
     """
 
     allowed_x_handles: list[str] | None = None
-    """If provided, only posts from these X handles will be included (max 10).
+    """If provided, only posts from these X handles will be included (max 20).
 
     Supported by:
 
@@ -220,7 +318,7 @@ class XSearchTool(AbstractNativeTool):
     """
 
     excluded_x_handles: list[str] | None = None
-    """If provided, posts from these X handles will be excluded (max 10).
+    """If provided, posts from these X handles will be excluded (max 20).
 
     Supported by:
 
@@ -285,10 +383,10 @@ class XSearchTool(AbstractNativeTool):
     def __post_init__(self) -> None:
         if self.allowed_x_handles is not None and self.excluded_x_handles is not None:
             raise ValueError('Cannot specify both allowed_x_handles and excluded_x_handles')
-        if self.allowed_x_handles and len(self.allowed_x_handles) > 10:
-            raise ValueError('allowed_x_handles cannot contain more than 10 handles')
-        if self.excluded_x_handles and len(self.excluded_x_handles) > 10:
-            raise ValueError('excluded_x_handles cannot contain more than 10 handles')
+        if self.allowed_x_handles and len(self.allowed_x_handles) > 20:
+            raise ValueError('allowed_x_handles cannot contain more than 20 handles')
+        if self.excluded_x_handles and len(self.excluded_x_handles) > 20:
+            raise ValueError('excluded_x_handles cannot contain more than 20 handles')
 
 
 @dataclass(kw_only=True)
@@ -304,6 +402,17 @@ class CodeExecutionTool(AbstractNativeTool):
     * xAI
     """
 
+    files: list[UploadedFile] | None = None
+    """Uploaded files to make available in the code execution environment.
+
+    Only files matching the model provider are used; files from other providers are ignored.
+
+    Supported by:
+
+    * Anthropic
+    * OpenAI Responses
+    """
+
     kind: str = 'code_execution'
     """The kind of tool."""
 
@@ -313,6 +422,10 @@ class WebFetchTool(AbstractNativeTool):
     """Allows your agent to access contents from URLs.
 
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+    The restricting settings `allowed_domains`, `blocked_domains`, and `max_uses` are the exception: on a model that
+    can't apply one that is set, the tool is treated as unsupported, so the local fallback runs if one is provided,
+    the tool is left out if it is `optional`, and [`UserError`][pydantic_ai.exceptions.UserError] is raised
+    otherwise.
 
     Supported by:
 
@@ -367,18 +480,17 @@ class WebFetchTool(AbstractNativeTool):
     kind: str = 'web_fetch'
     """The kind of tool."""
 
-
-@deprecated('Use `WebFetchTool` instead.')
-@dataclass(kw_only=True)
-class UrlContextTool(WebFetchTool):
-    """Deprecated alias for WebFetchTool. Use WebFetchTool instead.
-
-    Overrides kind to 'url_context' so old serialized payloads with {"kind": "url_context", ...}
-    can be deserialized to UrlContextTool for backward compatibility.
-    """
-
-    kind: str = 'url_context'
-    """The kind of tool (deprecated value for backward compatibility)."""
+    @property
+    def restricting_settings(self) -> frozenset[str]:
+        """`allowed_domains`, `blocked_domains` and `max_uses` when set."""
+        settings: set[str] = set()
+        if self.allowed_domains is not None:
+            settings.add('allowed_domains')
+        if self.blocked_domains is not None:
+            settings.add('blocked_domains')
+        if self.max_uses is not None:
+            settings.add('max_uses')
+        return frozenset(settings)
 
 
 @dataclass(kw_only=True)
@@ -474,7 +586,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses
     """
 
-    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None
+    size: ImageSize | None = None
     """The size of the generated image.
 
     * OpenAI Responses: 'auto' (default: model selects the size based on the prompt), '1024x1024', '1024x1536', '1536x1024'
@@ -570,6 +682,15 @@ class MCPServerTool(AbstractNativeTool):
     kind: str = 'mcp_server'
 
     @property
+    def _telemetry_url_derived_id(self) -> str | None:
+        value = getattr(self, '_telemetry_url_derived_id_value', None)
+        return value if isinstance(value, str) else None
+
+    @_telemetry_url_derived_id.setter
+    def _telemetry_url_derived_id(self, value: str | None) -> None:
+        object.__setattr__(self, '_telemetry_url_derived_id_value', value)
+
+    @property
     def unique_id(self) -> str:
         return ':'.join([self.kind, self.id])
 
@@ -600,8 +721,104 @@ class FileSearchTool(AbstractNativeTool):
     For xAI, these are collection IDs for the xAI collections search tool.
     """
 
+    max_num_results: int | None = None
+    """The maximum number of results to return.
+
+    Supported by:
+
+    * xAI (mapped to collections search `limit`, defaults to 10 server-side)
+    """
+
+    instructions: str | None = None
+    """Optional instructions that guide how the collections search results are interpreted and ranked.
+
+    Supported by:
+
+    * xAI
+    """
+
+    retrieval_mode: Literal['hybrid', 'semantic', 'keyword'] | None = None
+    """The retrieval strategy for the search.
+
+    Supported by:
+
+    * xAI (defaults to `hybrid` server-side)
+    """
+
     kind: str = 'file_search'
     """The kind of tool."""
+
+
+@dataclass(kw_only=True)
+class AdvisorTool(AbstractNativeTool):
+    """A native tool that lets a faster executor model consult a stronger advisor model mid-generation.
+
+    The fields map 1:1 to the parameters of Anthropic's advisor tool definition. OpenRouter exposes
+    the advisor as a gateway server tool that honors a subset (`model`, `max_tokens`) and ignores
+    the unsupported fields; see the per-field docstrings for which provider supports each.
+
+    Supported by:
+
+    * Anthropic
+    * OpenRouter
+    """
+
+    model: AdvisorModelName
+    """The advisor model to consult, i.e. the `model` field of the provider's advisor tool definition.
+
+    The executor/advisor pairing is validated by the provider's API, not here. The accepted namespace
+    depends on the executing provider: Anthropic model IDs (e.g. `claude-opus-4-8`) on Anthropic,
+    OpenRouter catalog slugs (e.g. `anthropic/claude-opus-4.8`) on OpenRouter.
+
+    Supported by:
+
+    * Anthropic
+    * OpenRouter
+    """
+
+    max_uses: int | None = None
+    """If provided, the advisor can be consulted at most this many times per request. Maps to `max_uses`.
+
+    This is a per-request cap, not a per-run budget: a run that spans multiple requests resets the
+    count each request. Enforce a conversation-wide ceiling yourself if you need one.
+
+    Supported by:
+
+    * Anthropic
+
+    OpenRouter caps advisor consultations per request with a fixed gateway limit and ignores
+    `max_uses`.
+    """
+
+    max_tokens: int | None = None
+    """If provided, caps the advisor's output tokens (minimum 1024). Maps to `max_tokens` on Anthropic
+    and `max_completion_tokens` on OpenRouter.
+
+    When set, the Anthropic advisor result carries a `stop_reason`.
+
+    Supported by:
+
+    * Anthropic
+    * OpenRouter
+    """
+
+    caching: Literal['5m', '1h'] | None = None
+    """If provided, caches the advisor context ephemerally with the given TTL. Maps to
+    `caching={'type': 'ephemeral', 'ttl': ...}`.
+
+    Supported by:
+
+    * Anthropic
+
+    OpenRouter's advisor tool has no equivalent knob and ignores `caching`.
+    """
+
+    kind: str = 'advisor'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if self.max_tokens is not None and self.max_tokens < 1024:
+            raise ValueError('AdvisorTool.max_tokens must be at least 1024')
 
 
 # Imported after the base class is defined — `_tool_search.py` subclasses
@@ -620,12 +837,9 @@ def _tool_discriminator(tool_data: dict[str, Any] | AbstractNativeTool) -> str:
         return tool_data.kind
 
 
-DEPRECATED_NATIVE_TOOLS: frozenset[type[AbstractNativeTool]] = frozenset({UrlContextTool})  # pyright: ignore[reportDeprecated]
-"""Set of deprecated native tool IDs that should not be offered in new UIs."""
-
-SUPPORTED_NATIVE_TOOLS = frozenset(cls for cls in NATIVE_TOOL_TYPES.values() if cls not in DEPRECATED_NATIVE_TOOLS)
-"""Get the set of all native tool types (excluding deprecated tools)."""
+SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
+"""Set of all native tool types."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool, _tool_search.ToolSearchTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, AdvisorTool, _tool_search.ToolSearchTool}
 )

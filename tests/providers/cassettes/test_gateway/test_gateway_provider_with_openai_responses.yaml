@@ -22,7 +22,7 @@ interactions:
         role: user
       model: gpt-5
       stream: false
-    uri: http://localhost:8787/openai-responses/responses
+    uri: http://localhost:8787/openai/responses
   response:
     headers:
       alt-svc:

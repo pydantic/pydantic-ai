@@ -1,0 +1,286 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '142'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Reply with the single word ok.
+        role: user
+      model: gemma-4-31b
+      service_tier: auto
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '646'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-db39cf42-fabe-4722-98a0-597c35228ab4
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: ok
+          role: assistant
+      created: 1787427094
+      id: chatcmpl-db39cf42-fabe-4722-98a0-597c35228ab4
+      model: gemma-4-31b
+      object: chat.completion
+      system_fingerprint: fp_99ee035ebfe796652902
+      time_info:
+        completion_time: 0.00024986
+        created: 1787427094.337268
+        prompt_time: 0.001922189
+        queue_time: 0.00012279
+        total_time: 0.0033884048461914062
+      usage:
+        completion_tokens: 2
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+          image_tokens: 0
+        total_tokens: 22
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '145'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Reply with the single word ok.
+        role: user
+      model: gemma-4-31b
+      service_tier: default
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '645'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-9cc4e5b3-acc8-4852-b8ac-f8ed0e75e1fe
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: ok
+          role: assistant
+      created: 1787427094
+      id: chatcmpl-9cc4e5b3-acc8-4852-b8ac-f8ed0e75e1fe
+      model: gemma-4-31b
+      object: chat.completion
+      system_fingerprint: fp_99ee035ebfe796652902
+      time_info:
+        completion_time: 0.0006743
+        created: 1787427094.5137813
+        prompt_time: 0.002195589
+        queue_time: 0.00012716
+        total_time: 0.004324674606323242
+      usage:
+        completion_tokens: 2
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+          image_tokens: 0
+        total_tokens: 22
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '142'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Reply with the single word ok.
+        role: user
+      model: gemma-4-31b
+      service_tier: flex
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '646'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-ea81aa8d-34f5-4f00-b07c-3b5cb5495194
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: ok
+          role: assistant
+      created: 1787427094
+      id: chatcmpl-ea81aa8d-34f5-4f00-b07c-3b5cb5495194
+      model: gemma-4-31b
+      object: chat.completion
+      system_fingerprint: fp_99ee035ebfe796652902
+      time_info:
+        completion_time: 0.00141156
+        created: 1787427094.6890864
+        prompt_time: 0.001176839
+        queue_time: 0.00081466
+        total_time: 0.004790544509887695
+      usage:
+        completion_tokens: 2
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+          image_tokens: 0
+        total_tokens: 22
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '146'
+      content-type:
+      - application/json
+      host:
+      - api.cerebras.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: Reply with the single word ok.
+        role: user
+      model: gemma-4-31b
+      service_tier: priority
+      stream: false
+    uri: https://api.cerebras.ai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '646'
+      content-type:
+      - application/json
+      inference-id:
+      - chatcmpl-1b9a2290-f143-4a75-a842-4f63c04156ff
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: ok
+          role: assistant
+      created: 1787427094
+      id: chatcmpl-1b9a2290-f143-4a75-a842-4f63c04156ff
+      model: gemma-4-31b
+      object: chat.completion
+      system_fingerprint: fp_99ee035ebfe796652902
+      time_info:
+        completion_time: 0.001950358
+        created: 1787427094.8685675
+        prompt_time: 0.00096741
+        queue_time: 0.0001653
+        total_time: 0.0051310062408447266
+      usage:
+        completion_tokens: 2
+        completion_tokens_details:
+          reasoning_tokens: 0
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+          image_tokens: 0
+        total_tokens: 22
+    status:
+      code: 200
+      message: OK
+version: 1

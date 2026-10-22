@@ -1,611 +1,649 @@
-# pyright: reportDeprecated=false
-# Entire file exercises the deprecated `MCPServer*` hierarchy to maintain coverage until v2-cut.
-"""Tests for the MCP (Model Context Protocol) server implementation."""
+"""Tests for `pydantic_ai.mcp.MCPToolset`.
+
+`TestMCPToolsetConstruction` covers construction-time behavior — kwarg conflict detection, HTTP
+transport adapter for `http_client=`, sampling shortcut, the cache-invalidating message handler.
+
+`TestMCPToolsetIntegration` exercises lifecycle, tool calling, resource methods, and caching
+against an in-process FastMCP server.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import re
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from datetime import timezone
+import subprocess
+import sys
+import warnings
+from collections.abc import Generator
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Literal, cast
+from unittest.mock import AsyncMock
 
 import anyio
+import httpx
+import httpx2
 import pytest
+from inline_snapshot import snapshot
+from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import (
-    BinaryContent,
-    BinaryImage,
-    InstructionPart,
+from pydantic_ai import Agent, ToolsetTool, models
+from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
+    SpeechPart,
     TextPart,
-    ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
-from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.exceptions import (
-    ModelRetry,
-    UnexpectedModelBehavior,
-    UserError,
-)
-from pydantic_ai.models import Model, create_async_http_client
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
 
-from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from .conftest import IsStr, try_import
 
 with try_import() as imports_successful:
-    from mcp import ErrorData, McpError, SamplingMessage
-    from mcp.client.session import ClientSession
-    from mcp.shared.context import RequestContext
-    from mcp.types import (
-        CreateMessageRequestParams,
-        ElicitRequestParams,
-        ElicitResult,
-        ImageContent,
-        Implementation,
-        TextContent,
-        ToolUseContent,
+    from fastmcp.client import Client
+    from fastmcp.client.client import CallToolResult
+    from fastmcp.client.transports import (
+        SSETransport,
+        StdioTransport,
+        StreamableHttpTransport,
     )
+    from fastmcp.exceptions import McpError, ToolError
+    from fastmcp.prompts import Message
+    from fastmcp.server import Context, FastMCP
 
-    from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response, map_from_pai_messages
+    try:
+        from fastmcp.server.tasks import TaskConfig
+    except ImportError:
+        # FastMCP 4 moved `TaskConfig`.
+        from fastmcp.utilities.tasks import TaskConfig
+    # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
+    from mcp import types as mcp_types
+    from starlette.responses import Response
+    from starlette.types import ASGIApp, Receive, Scope, Send
+
+    from pydantic_ai import _mcp, mcp as mcp_module
+    from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+
+    # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
+    if TYPE_CHECKING:
+        TasksExtension: Any
+    else:
+        try:
+            from fastmcp_tasks import TasksExtension
+        except ImportError:
+            TasksExtension = None
+
+    Annotations = mcp_types.Annotations
+    AudioContent = mcp_types.AudioContent
+    BlobResourceContents = mcp_types.BlobResourceContents
+    EmbeddedResource = mcp_types.EmbeddedResource
+    ImageContent = mcp_types.ImageContent
+    ResourceLink = mcp_types.ResourceLink
+    McpTextContent = mcp_types.TextContent
+    TextResourceContents = mcp_types.TextResourceContents
+    from pydantic import AnyUrl, TypeAdapter
+
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2, wire_name
     from pydantic_ai.mcp import (
-        CallToolFunc,
         MCPError,
-        MCPServerSSE,
-        MCPServerStdio,
-        MCPServerStreamableHTTP,
-        Resource,
+        MCPToolset,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        PromptResult,
         ResourceAnnotations,
         ResourceTemplate,
         ServerCapabilities,
-        ToolResult,
-        load_mcp_servers,
+        _make_httpx_client_factory,  # pyright: ignore[reportPrivateUsage]
+        load_mcp_toolsets,
     )
-    from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.messages import TextContent
+    from pydantic_ai.toolsets.prefixed import PrefixedToolset
+
+with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
-with try_import() as logfire_imports_successful:
-    import logfire
-    from logfire.testing import TestExporter
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
-    pytest.mark.anyio,
-    pytest.mark.vcr,
-    # Entire file exercises the deprecated `MCPServer*` hierarchy + `load_mcp_servers` for v2 coverage.
-    pytest.mark.filterwarnings('ignore::DeprecationWarning:pydantic_ai.mcp'),
-    pytest.mark.filterwarnings(r'ignore:`MCPServer\w*` is deprecated:DeprecationWarning'),
-    pytest.mark.filterwarnings('ignore:`load_mcp_servers` is deprecated:DeprecationWarning'),
+    pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
 ]
 
-
-@pytest.fixture
-def mcp_server() -> MCPServerStdio:
-    return MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
 
 
-@pytest.fixture
-def model(openai_api_key: str) -> Model:
-    return OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+def make_mcp_error(code: int, message: str) -> McpError:
+    """Construct an MCP protocol error with either SDK generation.
 
-
-@pytest.fixture
-def agent(model: Model, mcp_server: MCPServerStdio) -> Agent:
-    return Agent(model, toolsets=[mcp_server])
-
-
-@pytest.fixture
-def run_context(model: Model) -> RunContext[int]:
-    return RunContext(deps=0, model=model, usage=RunUsage())
-
-
-async def test_stdio_server(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(20)
-        assert tools[0].name == 'celsius_to_fahrenheit'
-        assert isinstance(tools[0].description, str)
-        assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
-
-        # Test calling the temperature conversion tool
-        result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-        assert result == snapshot(32.0)
-
-
-async def test_reentrant_context_manager():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        async with server:
-            pass
-
-
-async def test_cross_task_mcp_server():
-    """Test that multiple asyncio tasks can share one MCPServer without cancel scope errors.
-
-    Previously, this would raise:
-        RuntimeError: Attempted to exit cancel scope in a different task than it was entered in
+    SDK v1 wraps an `ErrorData`; v2 takes the fields directly.
     """
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    async def task_a():
-        async with server:
-            entered.set()
-            await release.wait()
-
-    async def task_b():
-        await entered.wait()
-        async with server:
-            result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-            assert result == 32.0
-        release.set()
-
-    await asyncio.gather(task_a(), task_b())
-    assert not server.is_running
+    if MCP_SDK_V2:
+        # `cast` because the typecheck environment only knows the SDK v1 constructor signature.
+        return cast(Any, McpError)(code=code, message=message)
+    return McpError(mcp_types.ErrorData(code=code, message=message))
 
 
-async def test_parallel_agent_runs():
-    """Test that multiple parallel agent.run() calls sharing one MCPServer work."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
-
-    async def run_agent(celsius: int) -> AgentRunResult[str]:
-        return await agent.run(f'Convert {celsius}C to F')
-
-    r0, r100, r50 = await asyncio.gather(run_agent(0), run_agent(100), run_agent(50))
-
-    for r in (r0, r100, r50):
-        tool_calls = [
-            m
-            for m in r.all_messages()
-            if isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts)
-        ]
-        assert len(tool_calls) >= 1, f'Expected at least one tool call, got: {r.all_messages()}'
-
-    assert not server.is_running
+def wrap_server_notification(notification: Any) -> Any:
+    """Wrap a notification in the SDK v1 root model; SDK v2 delivers the value unwrapped."""
+    if MCP_SDK_V2:
+        return notification
+    return mcp_types.ServerNotification(root=notification)
 
 
-async def test_parallel_agent_runs_share_one_connection():
-    """Parallel `agent.run()` calls on one MCPServer must reuse a single underlying connection.
+def make_legacy_client(server: FastMCP[None]) -> Client[Any]:
+    """Build a client pinned to a legacy (handshake-era) session.
 
-    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514. Sharing a
-    server instance across concurrent tasks is the whole point of holding a server object;
-    if each sibling task opened its own subprocess we'd silently multiply resource usage.
-    Asserts that 5 concurrent runs open the stdio transport exactly once.
+    FastMCP 4 negotiates a modern session by default and takes `mode='legacy'` to pin the
+    handshake era; FastMCP 3 only speaks the handshake era and has no such parameter.
     """
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
-
-    client_streams_calls = 0
-    original_client_streams = server.client_streams
-
-    @asynccontextmanager
-    async def counting_client_streams():
-        nonlocal client_streams_calls
-        client_streams_calls += 1
-        async with original_client_streams() as pair:
-            yield pair
-
-    with patch.object(server, 'client_streams', counting_client_streams):
-        await asyncio.gather(*[agent.run(f'Convert {c}C to F') for c in range(5)])
-
-    assert client_streams_calls == 1
-    assert not server.is_running
+    return cast(Any, Client)(server, **({'mode': 'legacy'} if MCP_SDK_V2 else {}))
 
 
-async def test_server_shared_across_sibling_tasks():
-    """An MCPServer opened in one task must be shared with sibling tasks spawned later.
-
-    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514 for the
-    fasta2a / FastAPI lifespan pattern: a lifespan task opens `async with server:` and
-    yields, then request-handler tasks — spawned as *siblings* (not descendants) of the
-    lifespan task — enter the same server object. They must share the lifespan's
-    connection; opening a fresh subprocess per request would defeat the lifespan pattern.
-    Asserts the server opens exactly once.
+@pytest.mark.parametrize(
+    'installed,expected',
+    [('1.26.0', False), ('2.0.0a1', True), ('2.0.0', True), ('10.0.0', True)],
+)
+def test_is_mcp_sdk_v2_reads_the_installed_distribution_version(
+    installed: str, expected: bool, monkeypatch: pytest.MonkeyPatch
+):
+    """The generation is read off the installed `mcp` distribution version. SDK v2.0.0 restored
+    `mcp.types` as an exact re-export of the standalone package, so a v2 install serves the v2
+    classes under the v1 module name and neither the module nor its class shapes are a public
+    contract to detect the generation by.
     """
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    import pydantic_ai._mcp_compat as _mcp_compat
 
-    client_streams_calls = 0
-    original_client_streams = server.client_streams
+    def fake_package_version(distribution_name: str) -> str:
+        assert distribution_name == 'mcp'
+        return installed
 
-    @asynccontextmanager
-    async def counting_client_streams():
-        nonlocal client_streams_calls
-        client_streams_calls += 1
-        async with original_client_streams() as pair:
-            yield pair
-
-    ready = asyncio.Event()
-    stop = asyncio.Event()
-
-    async def lifespan_holder() -> None:
-        async with server:
-            ready.set()
-            await stop.wait()
-
-    async def handler() -> ToolResult:
-        async with server:
-            return await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-
-    with patch.object(server, 'client_streams', counting_client_streams):
-        lifespan_task = asyncio.create_task(lifespan_holder())
-        await ready.wait()
-        results = await asyncio.gather(*[handler() for _ in range(5)])
-        stop.set()
-        await lifespan_task
-
-    assert results == [32.0] * 5
-    assert client_streams_calls == 1
-    assert not server.is_running
+    monkeypatch.setattr(_mcp_compat, 'version', fake_package_version)
+    assert _mcp_compat.is_mcp_sdk_v2() is expected
 
 
-@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-async def test_parallel_agent_runs_produce_independent_span_trees():
-    """Each parallel `agent.run()` sharing one MCPServer produces its own independent trace.
-
-    Regression guard added in https://github.com/pydantic/pydantic-ai/pull/4514: each agent
-    run's tool calls must remain children of that run's `agent run` span and not leak
-    across sibling runs' traces.
-    """
-    exporter = TestExporter()
-    logfire.configure(send_to_logfire=False, additional_span_processors=[SimpleSpanProcessor(exporter)])
-    Agent.instrument_all(True)
-    try:
-        server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-        agent = Agent(TestModel(call_tools=['celsius_to_fahrenheit']), toolsets=[server])
-        async with server:
-            await asyncio.gather(*[agent.run(str(c)) for c in range(3)])
-
-        spans = [s for s in exporter.exported_spans if s.context is not None]
-        trace_ids = {s.context.trace_id for s in spans if s.context is not None}
-        assert len(trace_ids) == 3, f'expected 3 independent traces, got {len(trace_ids)}'
-
-        for trace_id in trace_ids:
-            trace_spans = [s for s in spans if s.context is not None and s.context.trace_id == trace_id]
-            names = [s.name for s in trace_spans]
-            assert names.count('agent run') >= 1
-            assert 'running tool' in names
-            # Every span in this trace must actually belong to it — no cross-trace parenting
-            span_ids = {s.context.span_id for s in trace_spans if s.context is not None}
-            for s in trace_spans:
-                if s.parent is not None:
-                    assert s.parent.span_id in span_ids, (
-                        f'span {s.name!r} in trace {trace_id:x} has a parent outside its own trace'
-                    )
-    finally:
-        Agent.instrument_all(False)
+# A fastmcp 4 install has no legacy `httpx` in it — its client extra requires `httpx2`, as does the
+# MCP SDK v2 under it — so `pydantic_ai.mcp` may not import one. Legacy `httpx` is installed here
+# (the `retries` extra pulls it in), so the subprocess makes it unimportable to stand in for the
+# install a user actually gets; the same stand-in `tests/test_httpx2_sdk_readiness.py` uses for the
+# provider modules, spelled out here because only this file runs in the FastMCP 4 CI job.
+_HTTPX_FREE_MCP = """
+import sys
 
 
-async def test_context_manager_initialization_error() -> None:
-    """Test that a failed initialization cleans up and allows re-entry."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    from mcp.client.session import ClientSession
-
-    with patch.object(ClientSession, 'initialize', side_effect=Exception):
-        with pytest.raises(Exception):
-            async with server:
-                pass
-
-    assert not server.is_running
-
-    # Verify re-entry works after a failed initialization
-    async with server:
-        assert server.is_running
-    assert not server.is_running
+class BlockHttpx:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'httpx' or fullname.startswith('httpx.'):
+            raise ImportError('httpx is not installed')
 
 
-async def test_aexit_called_more_times_than_aenter():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+sys.meta_path.insert(0, BlockHttpx())
 
-    with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
-        await server.__aexit__(None, None, None)
+import httpx2
 
-    async with server:
-        pass  # This will call __aenter__ and __aexit__ once each
+from pydantic_ai.mcp import MCPToolset
 
-    with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
-        await server.__aexit__(None, None, None)
+client = httpx2.AsyncClient()
+toolset = MCPToolset(
+    'https://example.com/mcp',
+    auth=httpx2.BasicAuth('user', 'pass'),
+    http_client=client,
+)
+borrowed_client = toolset.client.transport.httpx_client_factory()
+assert borrowed_client is not client
+assert borrowed_client.is_closed is False
 
-
-async def test_aenter_cancelled_during_startup():
-    """Cancelling `__aenter__` while it waits for the session to become ready must tear down
-    the background session task cleanly and leave the server re-entrant.
-    """
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    async def hanging_runner() -> None:
-        await asyncio.Event().wait()
-
-    with patch.object(server, '_session_runner', hanging_runner):
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(server.__aenter__(), timeout=0.1)
-
-    assert not server.is_running
-
-    # Re-entry must work after a cancelled startup
-    async with server:
-        assert server.is_running
-    assert not server.is_running
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), (
+    'the MCP toolset imported httpx'
+)
+"""
 
 
-async def test_aexit_with_hung_transport_teardown(monkeypatch: pytest.MonkeyPatch):
-    """`__aexit__` must be bounded if the transport's own `__aexit__` deadlocks.
-
-    Otherwise a misbehaving server (e.g. subprocess that ignores SIGTERM, HTTP/SSE
-    connection where the server never closes its side) can deadlock the agent's
-    own shutdown — `await session_task_to_await` parks forever inside `__aexit__`.
-
-    Patches `_session_runner` instead of `client_streams` (same pattern as
-    `test_aenter_cancelled_during_startup`) — testing the lifecycle invariant, not
-    the MCP protocol; avoids leaking a real subprocess into later tests.
-    """
-    import time
-
-    import pydantic_ai.mcp as _mcp_module
-
-    grace = 0.2
-    monkeypatch.setattr(_mcp_module, '_SHUTDOWN_GRACE_SECONDS', grace)
-
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    teardown_reached = anyio.Event()
-
-    async def fake_runner_with_hung_teardown() -> None:
-        state = server._session_state  # pyright: ignore[reportPrivateUsage]
-        ready_event = state.ready_event
-        stop_event = state.stop_event
-        assert ready_event is not None and stop_event is not None
-        try:
-            ready_event.set()
-            await stop_event.wait()
-        finally:
-            teardown_reached.set()
-            await asyncio.Event().wait()
-
-    async def enter_then_exit() -> None:
-        async with server:
-            pass
-
-    # Outer `wait_for` is a safety net so a regression doesn't hang the suite —
-    # the real assertion is on elapsed time below. `wait_for` itself can't detect
-    # the regression because `__aexit__` swallows the cancellation it sends.
-    safety_net = 5.0
-    start = time.monotonic()
-    with patch.object(server, '_session_runner', fake_runner_with_hung_teardown):
-        await asyncio.wait_for(enter_then_exit(), timeout=safety_net)
-    elapsed = time.monotonic() - start
-
-    assert teardown_reached.is_set(), 'transport teardown was never reached'
-    assert not server.is_running
-    # With the fix: bounded by ~grace. Without: `__aexit__` awaits the hung task
-    # until `wait_for`'s safety net fires (~5s). Threshold sits comfortably
-    # between the two regimes, with headroom for CI jitter.
-    assert elapsed < safety_net - 1.5, f'shutdown took {elapsed:.2f}s, expected <<{safety_net}s'
-
-
-async def test_aexit_concurrent_does_not_corrupt_nesting_counter():
-    """Regression test: concurrent __aexit__ calls must not corrupt the nesting counter.
-
-    Injects a yield point before real lock acquisition so both tasks pass the
-    pre-lock guard simultaneously — the exact interleaving the TOCTOU race required.
-    """
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    # One active entry — the race only matters when both tasks see counter > 0.
-    server._session_state.nesting_counter = 1  # pyright: ignore[reportPrivateUsage]
-
-    class InterleavingLock:
-        def __init__(self) -> None:
-            self._inner = anyio.Lock()
-
-        async def __aenter__(self) -> None:
-            await anyio.sleep(0)  # yield - lets the other task reach the same point
-            await self._inner.__aenter__()
-
-        async def __aexit__(self, *args: Any) -> None:
-            await self._inner.__aexit__(*args)
-
-    # `_enter_lock` is a `cached_property`; seeding the instance dict primes the cache.
-    vars(server)['_enter_lock'] = InterleavingLock()
-
-    results = await asyncio.gather(
-        server.__aexit__(None, None, None),
-        server.__aexit__(None, None, None),
-        return_exceptions=True,
+@pytest.mark.subprocess(reason='needs an interpreter where legacy `httpx` cannot be imported')
+@pytest.mark.skipif(not MCP_SDK_V2, reason='fastmcp 3 is itself built on legacy httpx')
+def test_mcp_runs_without_legacy_httpx() -> None:
+    result = subprocess.run(
+        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_MCP],
+        capture_output=True,
+        text=True,
     )
-
-    # Exactly one exit must succeed and one must raise ValueError (not silently
-    # corrupt the counter). With a guard outside the lock both would succeed and counter == -1.
-    errors = [r for r in results if isinstance(r, ValueError)]
-    assert len(errors) == 1, f'Expected 1 ValueError, got {len(errors)}: {results}'
-    assert server._session_state.nesting_counter == 0  # pyright: ignore[reportPrivateUsage]
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
 
 
-async def test_recycled_session_state_does_not_corrupt_new_session():
-    """Regression test: an old `_session_runner`'s `finally` must not corrupt a recycled session.
+MCP_FIELD_READS = [
+    ('Annotations', 'last_modified'),
+    ('AudioContent', 'mime_type'),
+    ('BlobResourceContents', 'mime_type'),
+    ('CreateMessageRequestParams', 'max_tokens'),
+    ('CreateMessageRequestParams', 'stop_sequences'),
+    ('CreateMessageRequestParams', 'system_prompt'),
+    ('Icon', 'mime_type'),
+    ('ImageContent', 'mime_type'),
+    ('InitializeResult', 'server_info'),
+    ('PromptsCapability', 'list_changed'),
+    ('Resource', 'mime_type'),
+    ('ResourceLink', 'mime_type'),
+    ('ResourceTemplate', 'mime_type'),
+    ('ResourceTemplate', 'uri_template'),
+    ('ResourcesCapability', 'list_changed'),
+    ('TextResourceContents', 'mime_type'),
+    ('Tool', 'input_schema'),
+    ('Tool', 'output_schema'),
+    ('ToolExecution', 'task_support'),
+    ('ToolsCapability', 'list_changed'),
+]
+"""Every `(class, field)` the compat readers in `pydantic_ai._mcp_compat` read across
+`pydantic_ai.mcp` and `pydantic_ai._mcp`."""
 
-    Race: the last `__aexit__` releases the lock and then awaits the old session task
-    *outside* the lock. A concurrent `__aenter__` grabs the lock and reassigns
-    `state.ready_event` / `state.stop_event` for a fresh session. If the old runner's
-    `finally` writes to `state.*` directly, it can prematurely set the *new* session's
-    `ready_event`, causing the new `__aenter__` to return with `state.client is None`.
 
-    The fix captures local references in `_session_runner` so its `finally` only
-    signals events it owns. This test exercises `_session_runner` directly with
-    controlled timing to verify that contract.
+def test_compat_readers_name_real_sdk_v2_fields():
+    """Each field the compat readers read is a real SDK v2 field whose wire alias is the derived
+    camelCase spelling.
 
-    Reported by Devin in https://github.com/pydantic/pydantic-ai/pull/4514#discussion_r3173639823
+    Nothing else pins this: `[mcp]` installs SDK v1, so the v2 half of every reader is unreachable in
+    the suite, and a wrong snake_case spelling reads as `None` instead of raising — a mistyped
+    `mime_type` would silently drop every media type once the pin widens. The standalone `mcp-types`
+    distribution depends only on Pydantic, so it installs alongside SDK v1 and the fields can be
+    checked against the real v2 models. Its `alias` is the wire (camelCase) name — exactly what
+    `wire_name` derives and the SDK v1 attribute the readers fall back to — so one lookup validates
+    the spelling and the derivation at once.
     """
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    v2_types = pytest.importorskip('mcp_types', reason='the `mcp-types` dev dependency is not installed')
 
-    streams_entered = anyio.Event()
-    streams_can_exit = anyio.Event()
-
-    @asynccontextmanager
-    async def gated_streams() -> AsyncIterator[Any]:
-        # Yield streams that fail ClientSession initialization quickly, so the runner
-        # exits its try block and reaches finally — but block teardown until released.
-        send_a, recv_a = anyio.create_memory_object_stream[Any](0)
-        send_b, recv_b = anyio.create_memory_object_stream[Any](0)
-        try:
-            streams_entered.set()
-            yield (recv_a, send_b)
-        finally:
-            await streams_can_exit.wait()
-            await send_a.aclose()
-            await recv_a.aclose()
-            await send_b.aclose()
-            await recv_b.aclose()
-
-    state = server._session_state  # pyright: ignore[reportPrivateUsage]
-    state.ready_event = anyio.Event()
-    state.stop_event = anyio.Event()
-    state.session_task = asyncio.current_task()  # pretend this task is the active session
-
-    # Capture references to verify which event the runner's `finally` signals.
-    original_ready_event = state.ready_event
-    original_stop_event = state.stop_event
-
-    with patch.object(server, 'client_streams', gated_streams):
-        # Start the runner — it will hang inside ClientSession.initialize() because
-        # gated_streams sends nothing. We'll force it to teardown via task cancellation.
-        runner_task = asyncio.create_task(server._session_runner())  # pyright: ignore[reportPrivateUsage]
-        await streams_entered.wait()
-
-        # Cancel to force the runner into its except/finally path.
-        runner_task.cancel()
-        await asyncio.sleep(0)  # let the cancel propagate into the runner
-
-        # Simulate the recycled-session race: replace state events as if a new
-        # __aenter__ had begun while the old runner is mid-teardown.
-        new_ready_event = anyio.Event()
-        new_stop_event = anyio.Event()
-        state.ready_event = new_ready_event
-        state.stop_event = new_stop_event
-        state.connect_error = None
-
-        # Allow the runner's `client_streams.__aexit__` (and thus its finally) to run.
-        streams_can_exit.set()
-        try:
-            await runner_task
-        except BaseException:
-            pass
-
-        # The runner's `finally` must signal the event it captured at entry — NOT the
-        # event that was swapped in afterwards.
-        assert original_ready_event.is_set(), 'Old runner did not set its own ready_event'
-        assert not new_ready_event.is_set(), 'Old runner corrupted the new session by setting the recycled ready_event'
-        # And it must not have set state.connect_error on the new session — current_task
-        # is still this test, not the runner, so the guarded write should skip it.
-        assert state.connect_error is None
-        # The original stop_event was never used by the test, so it should remain unset.
-        assert not new_stop_event.is_set()
-        # State referenced by the test (acting as fake session_task) is left untouched.
-        _ = original_stop_event
-
-
-async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
-    async with server:
-        tools = await server.get_tools(run_context)
-        assert all(name.startswith('foo_') for name in tools.keys())
-
-        result = await server.call_tool(
-            'foo_celsius_to_fahrenheit', {'celsius': 0}, run_context, tools['foo_celsius_to_fahrenheit']
+    for class_name, field_name in MCP_FIELD_READS:
+        model: type[BaseModel] = getattr(v2_types, class_name)
+        field = model.model_fields.get(field_name)
+        assert field is not None, f'`{class_name}.{field_name}` is not a field on the SDK v2 model'
+        assert field.alias == wire_name(field_name), (
+            f'`{class_name}.{field_name}` has wire alias `{field.alias}`, not `{wire_name(field_name)}`'
         )
-        assert result == snapshot(32.0)
 
 
-async def test_stdio_server_with_cwd(run_context: RunContext[int]):
-    test_dir = Path(__file__).parent
-    server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
-    async with server:
-        tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(20)
+def test_sdk_v2_image_content_accepts_wire_field_name():
+    """The v1 `mimeType` spelling remains a valid constructor alias under SDK v2."""
+    v2_types = pytest.importorskip('mcp_types', reason='the `mcp-types` dev dependency is not installed')
+
+    image = v2_types.ImageContent(type='image', data='eA==', mimeType='image/png')
+
+    assert image.mime_type == 'image/png'
 
 
-async def test_process_tool_call(run_context: RunContext[int]) -> int:
-    called: bool = False
-
-    async def process_tool_call(
-        ctx: RunContext[int],
-        call_tool: CallToolFunc,
-        name: str,
-        tool_args: dict[str, Any],
-    ) -> ToolResult:
-        """A process_tool_call that sets a flag and sends deps as metadata."""
-        nonlocal called
-        called = True
-        return await call_tool(name, tool_args, metadata={'deps': ctx.deps})
-
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
-    async with server:
-        agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), toolsets=[server])
-        result = await agent.run('Echo with deps set to 42', deps=42)
-        assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
-        assert called, 'process_tool_call should have been called'
+# Construction tests don't need a server and don't take async fixtures.
 
 
-async def test_server_instructions_disabled_by_default(run_context: RunContext[int]):
-    """Test that server instructions are not returned by default."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        instructions = await server.get_instructions(run_context)
-        assert instructions is None
+class TestMCPToolsetConstruction:
+    def test_url_builds_streamable_http_transport(self):
+        toolset = MCPToolset('https://example.com/mcp')
+        assert isinstance(toolset.client.transport, StreamableHttpTransport)
+
+    def test_sse_url_builds_sse_transport_with_headers(self):
+        toolset = MCPToolset('https://example.com/sse', headers={'X-Key': 'foo'})
+        assert isinstance(toolset.client.transport, SSETransport)
+        assert toolset.client.transport.headers == {'X-Key': 'foo'}
+
+    def test_url_with_headers_routes_through_explicit_transport(self):
+        toolset = MCPToolset('https://example.com/mcp', headers={'X-Key': 'foo'})
+        assert isinstance(toolset.client.transport, StreamableHttpTransport)
+        assert toolset.client.transport.headers == {'X-Key': 'foo'}
+
+    async def test_http_client_kwarg_uses_factory(self):
+        client = httpx.AsyncClient()
+        toolset = MCPToolset('https://example.com/mcp', http_client=client)
+        assert isinstance(toolset.client.transport, StreamableHttpTransport)
+        assert toolset.client.transport.httpx_client_factory is not None
+        borrowed_client = toolset.client.transport.httpx_client_factory()
+        assert borrowed_client is not client
+        # FastMCP's StreamableHttpTransport calls the factory with `follow_redirects`, which the
+        # mcp SDK's `McpHttpClientFactory` protocol doesn't declare; the factory must accept it.
+        factory = _make_httpx_client_factory(client)
+        assert factory(follow_redirects=True) is not client
+
+        borrowed_clients = [factory(), factory()]
+        assert borrowed_clients[0] is not borrowed_clients[1]
+        for borrowed_client in borrowed_clients:
+            async with borrowed_client:
+                assert borrowed_client.is_closed is False
+            await borrowed_client.aclose()
+            assert client.is_closed is False
+
+        await client.aclose()
+
+    async def test_sse_url_with_http_client_uses_factory(self):
+        client = httpx.AsyncClient()
+        toolset = MCPToolset('https://example.com/sse', http_client=client)
+        assert isinstance(toolset.client.transport, SSETransport)
+        assert toolset.client.transport.httpx_client_factory is not None
+        assert toolset.client.transport.httpx_client_factory() is not client
+        factory = _make_httpx_client_factory(client)
+        assert factory(follow_redirects=True) is not client
+        await client.aclose()
+
+    @pytest.mark.parametrize(
+        'method_name',
+        ['request', 'send', 'get', 'post', 'put', 'patch', 'delete', 'head', 'options'],
+    )
+    async def test_http_client_factory_applies_auth(self, method_name: str):
+        """Test the private factory because MCP transports only call `stream`, `post`, and `delete`."""
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+        url = 'https://example.com/mcp'
+
+        if method_name == 'request':
+            await borrowed_client.request('POST', url)
+        elif method_name == 'send':
+            await borrowed_client.send(client.build_request('POST', url))
+        else:
+            await getattr(borrowed_client, method_name)(url)
+
+        assert authorization_headers == ['Basic dXNlcjpwYXNz']
+        await client.aclose()
+
+    async def test_http_client_factory_preserves_per_request_auth(self):
+        """Test the private factory because MCP transports never pass explicit per-call `auth`."""
+        authorization_headers: list[str | None] = []
+        httpx_module = cast(Any, httpx2 if MCP_SDK_V2 else httpx)
+
+        async def handle_request(request: Any) -> Any:
+            authorization_headers.append(request.headers.get('Authorization'))
+            return httpx_module.Response(200)
+
+        client = httpx_module.AsyncClient(transport=httpx_module.MockTransport(handle_request))
+        borrowed_client = _make_httpx_client_factory(client)(auth=httpx_module.BasicAuth('user', 'pass'))
+
+        await borrowed_client.post('https://example.com/mcp', auth=httpx_module.BasicAuth('override', 'auth'))
+        without_factory_auth = _make_httpx_client_factory(client)()
+        await without_factory_auth.delete('https://example.com/mcp')
+
+        assert authorization_headers == ['Basic b3ZlcnJpZGU6YXV0aA==', None]
+        await client.aclose()
+
+    def test_http_kwargs_with_non_url_input_raises(self):
+        """HTTP-only kwargs (headers/auth/verify/http_client) must error out when the connection
+        target isn't an HTTP URL — otherwise the kwargs are silently dropped on stdio / Path /
+        in-process inputs."""
+        from fastmcp.server import FastMCP
+
+        with pytest.raises(ValueError, match='only apply to HTTP transports built from a URL'):
+            MCPToolset(FastMCP(name='in_process'), headers={'X-Key': 'foo'})
+
+    def test_headers_and_http_client_conflict_raises(self):
+        with pytest.raises(ValueError, match='mutually exclusive'):
+            MCPToolset(
+                'https://example.com/mcp',
+                headers={'X-Key': 'foo'},
+                http_client=httpx.AsyncClient(),
+            )
+
+    def test_pre_built_client_with_handler_kwargs_raises(self):
+        client = Client('https://example.com/mcp')
+        with pytest.raises(ValueError, match=re.escape('pre-built `fastmcp.Client`')):
+            MCPToolset(client, headers={'X-Key': 'foo'})
+
+    def test_pre_built_client_with_overridden_init_timeout_raises(self):
+        client = Client('https://example.com/mcp')
+        with pytest.raises(ValueError, match='init_timeout'):
+            MCPToolset(client, init_timeout=30)
+
+    def test_pre_built_client_with_overridden_read_timeout_raises(self):
+        client = Client('https://example.com/mcp')
+        with pytest.raises(ValueError, match='read_timeout'):
+            MCPToolset(client, read_timeout=30)
+
+    def test_pre_built_client_used_as_is(self):
+        client = Client('https://example.com/mcp')
+        toolset = MCPToolset(client)
+        assert toolset.client is client
+
+    def test_sampling_model_and_handler_conflict(self):
+        with pytest.raises(ValueError, match=r'sampling_model.*sampling_handler'):
+            MCPToolset(
+                'https://example.com/mcp',
+                sampling_model=models.infer_model('test'),
+                sampling_handler=lambda *_: None,  # type: ignore[arg-type,return-value]
+            )
+
+    def test_sampling_model_installs_handler(self):
+        toolset = MCPToolset('https://example.com/mcp', sampling_model=models.infer_model('test'))
+        assert toolset.client._session_kwargs.get('sampling_callback') is not None  # pyright: ignore[reportPrivateUsage]
+
+    def test_id_property(self):
+        toolset = MCPToolset('https://example.com/mcp', id='example')
+        assert toolset.id == 'example'
+
+    def test_repr_includes_id(self):
+        toolset = MCPToolset('https://example.com/mcp', id='example')
+        assert "id='example'" in repr(toolset)
+
+    def test_repr_without_id(self):
+        toolset = MCPToolset('https://example.com/mcp')
+        assert 'MCPToolset(client=' in repr(toolset)
+
+    def test_pre_init_property_access_raises(self):
+        toolset = MCPToolset('https://example.com/mcp')
+        with pytest.raises(AttributeError, match='only available after initialization'):
+            _ = toolset.server_info
+        with pytest.raises(AttributeError, match='only available after initialization'):
+            _ = toolset.capabilities
+        with pytest.raises(AttributeError, match='only available after initialization'):
+            _ = toolset.instructions
+        assert toolset.is_running is False
+
+    def test_tool_name_conflict_hint_mentions_prefixed(self):
+        toolset = MCPToolset('https://example.com/mcp')
+        assert '.prefixed' in toolset.tool_name_conflict_hint
+
+    def test_eq_and_hash(self):
+        client = Client('https://example.com/mcp')
+        a = MCPToolset(client, id='same')
+        b = MCPToolset(client, id='same')
+        c = MCPToolset(client, id='other')
+        assert a == b
+        assert a != c
+        assert hash(a) == hash(b)
+
+    def test_id_setter(self):
+        toolset = MCPToolset('https://example.com/mcp')
+        toolset.id = 'new'
+        assert toolset.id == 'new'
+
+    def test_explicit_timeouts_override_defaults(self):
+        """Passing `init_timeout` / `read_timeout` explicitly bypasses the `_UNSET` sentinel
+        resolution branch."""
+        toolset = MCPToolset('https://example.com/mcp', init_timeout=10, read_timeout=120)
+        # Both kwargs flow into the FastMCP `Client`; verify the read timeout was forwarded.
+        assert toolset.client._init_timeout is not None  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_server_instructions_enabled(run_context: RunContext[int]):
-    """Test that server instructions are returned when include_instructions=True."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
-    async with server:
-        instructions = await server.get_instructions(run_context)
-        assert instructions == InstructionPart(content='Be a helpful assistant.', dynamic=True)
+class TestResourceTypeMapping:
+    """The PAI-shaped `Resource` / `ResourceTemplate` / `MCPError` types are kept under
+    `pydantic_ai.mcp.*`. They were ported from the deprecated `MCPServer*` path; these tests pin
+    the wire-level field mapping so drifts from the MCP SDK schema are caught."""
+
+    def test_resource_template_from_mcp_sdk(self):
+        sdk_template = mcp_types.ResourceTemplate(
+            uriTemplate='file:///{path}',
+            name='file',
+            title='File',
+            description='Read a file',
+            mimeType='application/octet-stream',
+            annotations=mcp_types.Annotations(audience=['user'], priority=0.7),
+            _meta={'origin': 'test'},
+        )
+        template = ResourceTemplate.from_mcp_sdk(sdk_template)
+        assert template.uri_template == 'file:///{path}'
+        assert template.name == 'file'
+        assert template.title == 'File'
+        assert template.description == 'Read a file'
+        assert template.mime_type == 'application/octet-stream'
+        assert isinstance(template.annotations, ResourceAnnotations)
+        assert template.annotations.audience == ['user']
+        assert template.annotations.priority == 0.7
+        assert template.metadata == {'origin': 'test'}
+
+    def test_mcp_error_str_includes_code_and_data(self):
+        err = MCPError('boom', code=-32002, data={'extra': 1})
+        assert 'boom' in str(err)
+        assert '-32002' in str(err)
+        assert 'extra' in str(err)
+
+    def test_mcp_error_str_without_data(self):
+        err = MCPError('boom', code=-32002)
+        assert 'boom' in str(err)
+        assert '-32002' in str(err)
 
 
-async def test_server_instructions_included_in_agent_request() -> None:
-    """Test that MCP server instructions are injected into agent model requests."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
-    agent = Agent(TestModel(call_tools=[]), toolsets=[server])
+@pytest.fixture
+async def fastmcp_server() -> FastMCP[None]:
+    """In-process FastMCP server with a representative tool/resource surface."""
+    server: FastMCP[None] = FastMCP('test_server', instructions='You are an MCP test server.')
 
-    async with agent:
-        result = await agent.run('Hello')
+    @server.tool(annotations={'title': 'Echo', 'readOnlyHint': True})
+    async def echo(message: str) -> str:
+        """Echo a message back."""
+        return f'Echo: {message}'
 
-    first_message = result.all_messages()[0]
-    assert isinstance(first_message, ModelRequest)
-    assert first_message.instructions == 'Be a helpful assistant.'
+    @server.tool()
+    async def add(a: int, b: int) -> dict[str, int]:
+        """Add two numbers and return the result."""
+        return {'sum': a + b}
+
+    @server.tool()
+    async def boom() -> str:
+        """A tool that always raises an error — used to test error handling."""
+        raise ValueError('boom')
+
+    @server.tool()
+    async def image_tool() -> ImageContent:
+        """A tool that returns an image content block."""
+        encoded = base64.b64encode(b'fake_image_bytes').decode('utf-8')
+        return ImageContent(type='image', data=encoded, mimeType='image/png')
+
+    @server.tool()
+    async def embedded_blob_tool() -> EmbeddedResource:
+        """A tool that returns an embedded blob resource."""
+        encoded = base64.b64encode(b'fake_blob_bytes').decode('utf-8')
+        # SDK v2 retypes every `uri` from `AnyUrl` to `str` and rejects an `AnyUrl` instance, so the
+        # URIs here are plain strings, cast to satisfy the v1 annotation these tests type-check against.
+        return EmbeddedResource(
+            type='resource',
+            resource=BlobResourceContents(uri=cast(AnyUrl, 'resource://blob.bin'), blob=encoded),
+        )
+
+    @server.tool()
+    async def resource_link_tool() -> ResourceLink:
+        """A tool that returns a resource link."""
+        return ResourceLink(type='resource_link', uri=cast(AnyUrl, 'resource://greeting.txt'), name='greeting')
+
+    @server.resource('resource://greeting.txt')
+    async def greeting() -> str:
+        return 'Hello, world!'
+
+    @server.resource('resource://{name}/profile.json')
+    async def profile(name: str) -> str:
+        return f'{{"name": "{name}"}}'
+
+    _register_prompts(server)
+    return server
 
 
-async def test_server_instructions_not_initialized():
-    """Test that get_instructions returns None when include_instructions=True but server not initialized."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], include_instructions=True)
+def _register_prompts(server: FastMCP[None]) -> None:
+    @server.prompt()
+    def simple_prompt() -> str:
+        """A simple prompt template."""
+        return 'This is a simple prompt'
 
-    # Don't enter the context manager to avoid initialization
-    ctx = build_run_context(0)
+    @server.prompt()
+    def parameterized_prompt(name: str, topic: str) -> str:
+        """A prompt template with parameters."""
+        return f"Hello {name}, let's talk about {topic}!"
 
-    result = await server.get_instructions(ctx)
-    assert result is None
+    @server.prompt()
+    def annotated_text_prompt() -> list[Message]:
+        """A prompt template with annotated text content."""
+        return [
+            Message(
+                content=McpTextContent(
+                    type='text',
+                    text='annotated text',
+                    annotations=Annotations(audience=['user'], priority=1.0),
+                )
+            )
+        ]
+
+    @server.prompt()
+    def text_meta_prompt() -> list[Message]:
+        """A prompt template with `_meta` text metadata."""
+        return [Message(content=McpTextContent(type='text', text='meta text', _meta={'source': 'mcp'}))]
+
+    @server.prompt()
+    def image_prompt() -> list[Message]:
+        """A prompt template with image content."""
+        return [
+            Message(
+                content=ImageContent(
+                    type='image',
+                    data=base64.b64encode(b'image-bytes').decode('utf-8'),
+                    mimeType='image/jpeg',
+                    annotations=Annotations(audience=['user'], priority=0.8),
+                )
+            )
+        ]
+
+    @server.prompt()
+    def audio_prompt() -> list[Message]:
+        """A prompt template with audio content."""
+        return [
+            Message(
+                content=AudioContent(
+                    type='audio',
+                    data=base64.b64encode(b'audio-bytes').decode('utf-8'),
+                    mimeType='audio/mpeg',
+                    annotations=Annotations(audience=['assistant'], priority=0.3),
+                )
+            )
+        ]
+
+    @server.prompt()
+    def embedded_resource_prompt() -> list[Message]:
+        """A prompt template with an embedded text resource."""
+        return [
+            Message(
+                content=EmbeddedResource(
+                    type='resource',
+                    resource=TextResourceContents(
+                        uri=cast(AnyUrl, 'resource://product_name.txt'),
+                        text='Pydantic AI',
+                        mimeType='text/plain',
+                    ),
+                    annotations=Annotations(audience=['user'], priority=0.5),
+                )
+            )
+        ]
 
 
-def build_run_context(deps: int) -> RunContext[int]:
-    """Helper function to build a run context for MCP tests."""
+@pytest.fixture
+def run_context() -> RunContext:
     return RunContext(
-        deps=deps,
+        deps=None,
         model=TestModel(),
         usage=RunUsage(),
         prompt=None,
@@ -614,2272 +652,2118 @@ def build_run_context(deps: int) -> RunContext[int]:
     )
 
 
-def test_sse_server():
-    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
-    assert sse_server.url == 'http://localhost:8000/sse'
-    assert sse_server.log_level is None
+class TestMCPToolsetIntegration:
+    """End-to-end coverage against an in-process FastMCP server."""
 
+    async def test_lifecycle_exposes_init_state(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        assert toolset.is_running is False
+        async with toolset:
+            assert toolset.is_running is True
+            assert toolset.server_info.name == 'test_server'
+            assert toolset.capabilities.tools is True
+            assert toolset.instructions == 'You are an MCP test server.'
+        assert toolset.is_running is False
 
-def test_sse_server_with_include_instructions():
-    """Test that SSE server can be configured with include_instructions=True."""
-    sse_server = MCPServerSSE(url='http://localhost:8000/sse', include_instructions=True)
-    assert sse_server.include_instructions is True
+    async def test_http_client_auth_and_lifecycle_across_agent_runs(self):
+        class BearerAuth(httpx.Auth):
+            def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
 
+        class BearerAuth2(httpx2.Auth):
+            def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response, None]:
+                request.headers['Authorization'] = 'Bearer secret'
+                yield request
 
-def test_streamable_http_server_with_include_instructions():
-    """Test that StreamableHTTP server can be configured with include_instructions=True."""
-    http_server = MCPServerStreamableHTTP(url='http://localhost:8000/mcp', include_instructions=True)
-    assert http_server.include_instructions is True
+        class AuthorizationGuard:
+            def __init__(self, app: ASGIApp) -> None:
+                self.app = app
+                self.authorization_headers: list[str | None] = []
 
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+                # Only HTTP requests reach the guard: the test enters the app's lifespan directly.
+                authorization = next(
+                    (value.decode() for name, value in scope['headers'] if name.lower() == b'authorization'), None
+                )
+                self.authorization_headers.append(authorization)
+                if authorization != 'Bearer secret':
+                    await Response(status_code=401)(scope, receive, send)
+                    return
 
-def test_sse_server_with_header_and_timeout():
-    with pytest.warns(DeprecationWarning, match="'sse_read_timeout' is deprecated, use 'read_timeout' instead."):
-        sse_server = MCPServerSSE(
-            url='http://localhost:8000/sse',
-            headers={'my-custom-header': 'my-header-value'},
-            timeout=10,
-            sse_read_timeout=100,
-            log_level='info',
+                await self.app(scope, receive, send)
+
+        server: FastMCP[None] = FastMCP('auth_server')
+
+        @server.tool
+        async def ping() -> str:
+            return 'pong'
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        guarded_app = AuthorizationGuard(app)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        auth: httpx.Auth | httpx2.Auth
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=guarded_app))
+            auth = BearerAuth2()
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=guarded_app))
+            auth = BearerAuth()
+
+        try:
+            async with app.router.lifespan_context(app):
+                # The guard rejects requests made through the bare client, without `auth`.
+                assert (await client.post('http://testserver/mcp')).status_code == 401
+                guarded_app.authorization_headers.clear()
+
+                toolset = MCPToolset('http://testserver/mcp', http_client=client, auth=auth)
+                agent = Agent(TestModel(call_tools=['ping']), toolsets=[toolset])
+
+                first_result = await agent.run('ping')
+                second_result = await agent.run('ping')
+
+            assert first_result.output == '{"ping":"pong"}'
+            assert second_result.output == '{"ping":"pong"}'
+            assert guarded_app.authorization_headers
+            assert set(guarded_app.authorization_headers) == {'Bearer secret'}
+            assert client.is_closed is False
+        finally:
+            await client.aclose()
+
+    async def test_aexit_called_before_aenter_raises(self, fastmcp_server: FastMCP[None]):
+        """Calling `__aexit__` before any `__aenter__` should raise — `_running_count` is 0."""
+        toolset = MCPToolset(fastmcp_server)
+        with pytest.raises(ValueError, match='called more times than'):
+            await toolset.__aexit__(None, None, None)
+
+    async def test_aexit_called_more_times_than_aenter(self, fastmcp_server: FastMCP[None]):
+        """Calling `__aexit__` more times than `__aenter__` should raise."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            pass
+        with pytest.raises(ValueError, match='called more times than'):
+            await toolset.__aexit__(None, None, None)
+
+    async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server, include_instructions=True)
+        async with toolset:
+            tools_first = await toolset.get_tools(run_context)
+            tools_second = await toolset.get_tools(run_context)
+            assert {'echo', 'add', 'boom'} <= set(tools_first)
+            # Second call should hit the cache (covers the cached-return branch).
+            assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
+        """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""
+        server: FastMCP[None] = FastMCP('apps_server')
+
+        @server.tool(meta={'ui': {'visibility': ['app']}})
+        async def save_checkpoint() -> None:
+            """Saves the view state; only the UI calls this."""
+
+        @server.tool(meta={'ui': {'visibility': []}})
+        async def hidden_everywhere() -> None:
+            """Visible to neither the model nor the UI."""
+
+        @server.tool(meta={'ui': {'visibility': ['app', 'model']}})
+        async def create_view() -> None:
+            """Opens the view; both the model and the UI call this."""
+
+        @server.tool(meta={'ui': {'resourceUri': 'ui://view'}})
+        async def read_me() -> None:
+            """Carries UI metadata without a `visibility`."""
+
+        toolset = MCPToolset(server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        assert sorted(tools) == snapshot(['create_view', 'read_me'])
+
+    async def test_tool_annotations_keep_the_wire_spelling(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Tool filters read `metadata['annotations']` by key, so the keys track the wire spelling
+        rather than the attribute names of whichever MCP SDK generation happens to be installed."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+        assert (tools['echo'].tool_def.metadata or {})['annotations'] == snapshot(
+            {
+                'title': 'Echo',
+                'readOnlyHint': True,
+                'destructiveHint': None,
+                'idempotentHint': None,
+                'openWorldHint': None,
+            }
         )
-    assert sse_server.url == 'http://localhost:8000/sse'
-    assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
-    assert sse_server.timeout == 10
-    assert sse_server.read_timeout == 100
-    assert sse_server.log_level == 'info'
 
+    async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server, include_instructions=True)
+        async with toolset:
+            part = await toolset.get_instructions(run_context)
+        assert part is not None
+        assert part.content == 'You are an MCP test server.'
+        assert part.dynamic is False
 
-def test_sse_server_conflicting_timeout_params():
-    with pytest.raises(TypeError, match="'read_timeout' and 'sse_read_timeout' cannot be set at the same time."):
-        MCPServerSSE(
-            url='http://localhost:8000/sse',
-            read_timeout=50,
-            sse_read_timeout=100,
-        )
+    async def test_get_instructions_returns_none_when_disabled(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            assert await toolset.get_instructions(run_context) is None
 
+    async def test_get_instructions_returns_none_pre_init(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server, include_instructions=True)
+        # Without entering, instructions aren't populated yet.
+        assert await toolset.get_instructions(run_context) is None
 
-async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
-        assert result.output == snapshot('0 degrees Celsius is equal to 32 degrees Fahrenheit.')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='What is 0 degrees Celsius in Fahrenheit?',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='celsius_to_fahrenheit',
-                            args='{"celsius":0}',
-                            tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=195,
-                        output_tokens=19,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='celsius_to_fahrenheit',
-                            content=32.0,
-                            tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='0 degrees Celsius is equal to 32 degrees Fahrenheit.')],
-                    usage=RequestUsage(
-                        input_tokens=227,
-                        output_tokens=13,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
+    async def test_tools_no_caching_when_disabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server, cache_tools=False)
+        async with toolset:
+            await toolset.get_tools(run_context)
+            assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
+    async def test_call_tool_returns_structured_content(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('add', {'a': 2, 'b': 3}, run_context, tools['add'])
+        assert result == {'sum': 5}
 
-async def test_agent_with_conflict_tool_name(agent: Agent):
-    @agent.tool_plain
-    def get_none() -> None:  # pragma: no cover
-        """Return nothing"""
-        return None
+    async def test_call_tool_returns_text(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+        assert result == 'Echo: hi'
 
-    async with agent:
-        with pytest.raises(
-            UserError,
-            match=re.escape(
-                "MCPServerStdio(command='python', args=['-m', 'tests.mcp_server']) defines a tool whose name conflicts with existing tool from the agent: 'get_none'. Set the `tool_prefix` attribute to avoid name conflicts."
-            ),
-        ):
-            await agent.run('Get me a conflict')
+    async def test_tool_error_raises_model_retry(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(ModelRetry):
+                await toolset.call_tool('boom', {}, run_context, tools['boom'])
 
+    async def test_tool_error_raises_tool_error_when_configured(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(ToolError):
+                await toolset.call_tool('boom', {}, run_context, tools['boom'])
 
-async def test_agent_with_prefix_tool_name(openai_api_key: str):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(
-        model,
-        toolsets=[server],
+    async def test_tool_error_raises_tool_failed_when_configured(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(ToolFailed, match='boom'):
+                await toolset.call_tool('boom', {}, run_context, tools['boom'])
+
+    @pytest.mark.parametrize(
+        ('tool_error_behavior', 'expected_exception'),
+        [
+            pytest.param('retry', ModelRetry, id='retry'),
+            pytest.param('failed', ToolFailed, id='failed'),
+        ],
     )
+    async def test_direct_tool_error_is_converted(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        tool_error_behavior: Literal['retry', 'failed'],
+        expected_exception: type[ModelRetry] | type[ToolFailed],
+    ):
+        """A direct FastMCP `ToolError` still follows the configured model-visible behavior."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior=tool_error_behavior)
 
-    @agent.tool_plain
-    def get_none() -> None:  # pragma: no cover
-        """Return nothing"""
-        return None
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = AsyncMock(side_effect=ToolError('direct tool error'))
+            with pytest.raises(expected_exception, match='direct tool error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
-    async with agent:
-        # This means that we passed the _prepare_request_parameters check and there is no conflict in the tool name
-        with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
-            await agent.run('No conflict')
+    async def test_tool_failed_preserves_structured_error_content(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Structured MCP error details remain model-visible instead of collapsing to the first text block.
 
+        This uses an in-process client result because no external model or HTTP provider boundary is involved.
+        """
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+        structured_error = {'errorCategory': 'validation', 'isRetryable': False, 'detail': 'bad input'}
 
-async def test_agent_with_server_not_running(agent: Agent, allow_model_requests: None):
-    result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
-    assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
+        async def call_tool(*args: Any, **kwargs: Any) -> Any:
+            assert kwargs['raise_on_error'] is False
+            return CallToolResult(
+                content=[
+                    mcp_types.TextContent(type='text', text='bad input'),
+                    mcp_types.ImageContent(
+                        type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png'
+                    ),
+                ],
+                structured_content=structured_error,
+                meta=None,
+                is_error=True,
+            )
 
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool
+            with pytest.raises(ToolFailed) as exc_info:
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
 
-async def test_log_level_unset(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    assert server.log_level is None
-    async with server:
-        result = await server.direct_call_tool('get_log_level', {})
-        assert result == snapshot('unset')
+        assert json.loads(exc_info.value.message) == structured_error
 
+    @pytest.mark.parametrize(
+        'content',
+        [
+            pytest.param([], id='empty'),
+            pytest.param(
+                [mcp_types.ImageContent(type='image', data=base64.b64encode(b'image').decode(), mimeType='image/png')],
+                id='non-text',
+            ),
+        ],
+    )
+    async def test_tool_failed_without_text_uses_fallback_message(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        content: list[mcp_types.ContentBlock],
+    ):
+        """An MCP error without text keeps FastMCP's informative fallback instead of an empty message."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
 
-async def test_stdio_server_list_resources(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        resources = await server.list_resources()
-        assert resources == snapshot(
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = AsyncMock(
+                return_value=CallToolResult(content=content, structured_content=None, meta=None, is_error=True)
+            )
+            with pytest.raises(ToolFailed, match="Tool 'echo' returned an error"):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    @pytest.mark.parametrize(
+        'leaf_factory',
+        [
+            pytest.param(lambda: ToolError('grouped tool error'), id='tool-error'),
+            pytest.param(lambda: make_mcp_error(400, 'grouped tool error'), id='mcp-error'),
+        ],
+    )
+    async def test_call_tool_unwraps_real_exception_group_to_model_retry(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext, leaf_factory: Any
+    ):
+        """A tool/protocol error that surfaces wrapped in an `ExceptionGroup` is converted to a
+        recoverable `ModelRetry`, not a fatal crash.
+
+        This is a unit test because the wrapping is a timing-dependent race in the MCP client's
+        anyio task group (an empty-bodied tool error colliding with the session's GET-stream
+        teardown) that can't be triggered deterministically. Rather than hand-build the group, we
+        inject a failure at the real escape seam — `self.client.call_tool` — and let a genuine
+        `anyio` task group produce the `ExceptionGroup`, so its structure matches production.
+        """
+        toolset = MCPToolset(fastmcp_server)
+
+        async def call_tool_in_failing_task_group(*args: Any, **kwargs: Any) -> Any:
+            async def fail() -> None:
+                raise leaf_factory()
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(fail)
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_in_failing_task_group
+            with pytest.raises(ModelRetry, match='grouped tool error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    @pytest.mark.parametrize(
+        ('leaf_factory', 'expected_exception'),
+        [
+            pytest.param(lambda: ToolError('grouped tool error'), ToolFailed, id='tool-error'),
+            pytest.param(
+                lambda: make_mcp_error(400, 'grouped protocol error'),
+                ModelRetry,
+                id='mcp-error',
+            ),
+        ],
+    )
+    async def test_call_tool_unwraps_real_exception_group_with_failed_behavior(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        leaf_factory: Any,
+        expected_exception: type[ToolFailed] | type[ModelRetry],
+    ):
+        """Failed behavior converts completed tool errors but keeps grouped protocol errors retryable."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='failed')
+
+        async def call_tool_in_failing_task_group(*args: Any, **kwargs: Any) -> Any:
+            async def fail() -> None:
+                raise leaf_factory()
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(fail)
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_in_failing_task_group
+            with pytest.raises(expected_exception, match=r'grouped (tool|protocol) error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    async def test_call_tool_reraises_grouped_errors_it_must_not_convert(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Groups we must not silently turn into a retry are re-raised unchanged: a group that also
+        contains a non-tool error, and (with `tool_error_behavior='error'`) any grouped tool error."""
+
+        def failing_call_tool(*excs: BaseException) -> Any:
+            async def call_tool(*args: Any, **kwargs: Any) -> Any:
+                async def fail(exc: BaseException) -> None:
+                    raise exc
+
+                async with anyio.create_task_group() as tg:
+                    for exc in excs:
+                        tg.start_soon(fail, exc)
+
+            return call_tool
+
+        # A mixed group (tool error + an unrelated error) must propagate, not be swallowed.
+        retry_toolset = MCPToolset(fastmcp_server)
+        async with retry_toolset:
+            tools = await retry_toolset.get_tools(run_context)
+            retry_toolset.client.call_tool = failing_call_tool(
+                ToolError('grouped tool error'), ValueError('unrelated failure')
+            )
+            with pytest.raises(BaseExceptionGroup):
+                await retry_toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+        # With `tool_error_behavior='error'`, even a pure tool-error group propagates unchanged.
+        error_toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+        async with error_toolset:
+            tools = await error_toolset.get_tools(run_context)
+            error_toolset.client.call_tool = failing_call_tool(ToolError('grouped tool error'))
+            with pytest.raises(BaseExceptionGroup):
+                await error_toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    @pytest.mark.parametrize('behavior', ['retry', 'failed'])
+    async def test_call_tool_converts_bare_mcp_error_to_model_retry(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext, behavior: Literal['retry', 'failed']
+    ):
+        """A bare, un-grouped `McpError` — a JSON-RPC error the server/gateway returns for a call it
+        refuses, rather than a `ToolError` or a result-level error — is a protocol error, so like the
+        grouped protocol-error case it stays a recoverable `ModelRetry` even under
+        `tool_error_behavior='failed'`, instead of escaping the toolset and crashing the run.
+
+        A unit test because it injects at the real escape seam (`self.client.call_tool`): no in-process
+        FastMCP tool surfaces a bare protocol `McpError` instead of a `ToolError`.
+        """
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior=behavior)
+
+        async def call_tool_raising_bare_mcp_error(*args: Any, **kwargs: Any) -> Any:
+            raise make_mcp_error(400, 'bare protocol error')
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_raising_bare_mcp_error
+            with pytest.raises(ModelRetry, match='bare protocol error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    async def test_call_tool_propagates_bare_mcp_error_when_configured(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """With `tool_error_behavior='error'`, a bare `McpError` propagates unchanged to the caller."""
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+
+        async def call_tool_raising_bare_mcp_error(*args: Any, **kwargs: Any) -> Any:
+            raise make_mcp_error(400, 'bare protocol error')
+
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.client.call_tool = call_tool_raising_bare_mcp_error
+            with pytest.raises(McpError, match='bare protocol error'):
+                await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+    async def test_process_tool_call_hook_runs(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        seen: list[tuple[str, dict[str, Any]]] = []
+
+        async def hook(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
+            seen.append((name, args))
+            return await call_tool(name, args, metadata=None)
+
+        toolset = MCPToolset(fastmcp_server, process_tool_call=hook)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+        assert result == 'Echo: hi'
+        assert seen == [('echo', {'message': 'hi'})]
+
+    async def test_list_resources_returns_pai_types(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            resources = await toolset.list_resources()
+            cached = await toolset.list_resources()
+        assert any(r.name == 'greeting' for r in resources)
+        assert resources == cached
+
+    async def test_list_resources_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, cache_resources=False)
+        async with toolset:
+            await toolset.list_resources()
+            assert toolset._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_list_resource_templates(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            templates = await toolset.list_resource_templates()
+        # The `profile` resource has a `{name}` placeholder so it's a template.
+        assert any('{name}' in t.uri_template for t in templates)
+
+    async def test_read_resource_text(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            content = await toolset.read_resource('resource://greeting.txt')
+        assert content == 'Hello, world!'
+
+    async def test_read_resource_via_resource_object(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            resources = await toolset.list_resources()
+            greeting = next(r for r in resources if r.name == 'greeting')
+            content = await toolset.read_resource(greeting)
+        assert content == 'Hello, world!'
+
+    async def test_read_resource_template_instance(self, fastmcp_server: FastMCP[None]):
+        """Reading a resource produced from a template (`resource://{name}/profile.json`)."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            content = await toolset.read_resource('resource://alice/profile.json')
+        assert content == '{"name": "alice"}'
+
+    async def test_resource_methods_without_capability(self, fastmcp_server: FastMCP[None]):
+        """When the server's `capabilities.resources` is `False`, the methods return empty lists
+        without round-tripping to the server."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            # Force the capability off to exercise the early-return branches.
+            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
+            assert await toolset.list_resources() == []
+            assert await toolset.list_resource_templates() == []
+
+    async def test_list_prompts_returns_pai_types(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            prompts = await toolset.list_prompts()
+        assert prompts == snapshot(
             [
-                Resource(name='kiwi_resource', description='', mime_type='image/jpeg', uri='resource://kiwi.jpg'),
-                Resource(name='marcelo_resource', description='', mime_type='audio/mpeg', uri='resource://marcelo.mp3'),
-                Resource(
-                    name='product_name_resource',
-                    description='',
-                    mime_type='text/plain',
-                    annotations=ResourceAnnotations(audience=['user', 'assistant'], priority=0.5),
-                    uri='resource://product_name.txt',
+                Prompt(
+                    name='simple_prompt', description='A simple prompt template.', metadata={'fastmcp': {'tags': []}}
+                ),
+                Prompt(
+                    name='parameterized_prompt',
+                    description='A prompt template with parameters.',
+                    arguments=[
+                        PromptArgument(
+                            name='name',
+                            # FastMCP generates this text and has reworded it across releases; pin only
+                            # that the argument's JSON schema is conveyed.
+                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
+                            required=True,
+                        ),
+                        PromptArgument(
+                            name='topic',
+                            # FastMCP generates this text and has reworded it across releases; pin only
+                            # that the argument's JSON schema is conveyed.
+                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
+                            required=True,
+                        ),
+                    ],
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='annotated_text_prompt',
+                    description='A prompt template with annotated text content.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='text_meta_prompt',
+                    description='A prompt template with `_meta` text metadata.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='image_prompt',
+                    description='A prompt template with image content.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='audio_prompt',
+                    description='A prompt template with audio content.',
+                    metadata={'fastmcp': {'tags': []}},
+                ),
+                Prompt(
+                    name='embedded_resource_prompt',
+                    description='A prompt template with an embedded text resource.',
+                    metadata={'fastmcp': {'tags': []}},
                 ),
             ]
         )
 
+    async def test_get_prompt_simple(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('simple_prompt')
+        if MCP_SDK_V2:
+            assert result.metadata == {
+                'io.modelcontextprotocol/serverInfo': {'name': 'test_server', 'version': IsStr()}
+            }
+        else:
+            assert result.metadata is None
+        assert replace(result, metadata=None) == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content='This is a simple prompt'))],
+                description='A simple prompt template.',
+            )
+        )
 
-async def test_stdio_server_list_resource_templates(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        resource_templates = await server.list_resource_templates()
-        assert resource_templates == snapshot(
+    async def test_get_prompt_parameterized(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('parameterized_prompt', {'name': 'Alice', 'topic': 'AI'})
+        if MCP_SDK_V2:
+            assert result.metadata == {
+                'io.modelcontextprotocol/serverInfo': {'name': 'test_server', 'version': IsStr()}
+            }
+        else:
+            assert result.metadata is None
+        assert replace(result, metadata=None) == snapshot(
+            PromptResult(
+                messages=[PromptMessage(role='user', content=TextContent(content="Hello Alice, let's talk about AI!"))],
+                description='A prompt template with parameters.',
+            )
+        )
+
+    async def test_list_prompts_caches_when_enabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_prompts()
+            assert toolset._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+            second = await toolset.list_prompts()
+        assert first == second
+
+    async def test_list_prompts_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, cache_prompts=False)
+        async with toolset:
+            await toolset.list_prompts()
+            assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_cache_invalidation_on_notification(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=None)
+        toolset._cached_prompts = []  # pyright: ignore[reportPrivateUsage]
+
+        await handler(
+            wrap_server_notification(
+                mcp_types.PromptListChangedNotification(method='notifications/prompts/list_changed')
+            )
+        )
+        assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_prompts_without_capability(self, fastmcp_server: FastMCP[None]):
+        """`list_prompts` returns `[]` and `get_prompt` raises `MCPError` when prompts capability is absent."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset._server_capabilities = ServerCapabilities()  # pyright: ignore[reportPrivateUsage]
+            assert await toolset.list_prompts() == []
+            with pytest.raises(MCPError, match='does not advertise the `prompts` capability') as exc_info:
+                await toolset.get_prompt('does_not_matter')
+            assert exc_info.value.code == -32601
+
+    async def test_list_prompts_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_prompts = AsyncMock(side_effect=make_mcp_error(-32603, 'boom'))
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_prompts()
+
+    async def test_get_prompt_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            with pytest.raises(MCPError, match='Unknown prompt'):
+                await toolset.get_prompt('does_not_exist')
+
+    async def test_map_prompt_content(self, fastmcp_server: FastMCP[None]):
+        """`get_prompt` maps every MCP prompt content type to its Pydantic AI equivalent.
+
+        Plain `TextContent` without annotations is already covered by `test_get_prompt_simple`,
+        so this exercises annotated text, image, audio, and embedded resource. `ResourceLink`
+        prompt content is covered separately in `test_get_prompt_maps_resource_link` because the
+        in-process FastMCP server serializes resource links to text rather than emitting a
+        `resource_link` content block.
+        """
+        from pydantic_ai.mcp import EmbeddedResource as PaiEmbeddedResource
+        from pydantic_ai.messages import BinaryContent, BinaryImage
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            # TextContent with annotations preserved in metadata
+            annotated = await toolset.get_prompt('annotated_text_prompt')
+            assert annotated.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=TextContent(
+                            content='annotated text',
+                            metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=1.0)},
+                        ),
+                    )
+                ]
+            )
+
+            # ImageContent → BinaryImage
+            image = await toolset.get_prompt('image_prompt')
+            assert image.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=BinaryImage(
+                            data=b'image-bytes',
+                            media_type='image/jpeg',
+                            vendor_metadata={'mcp_annotations': ResourceAnnotations(audience=['user'], priority=0.8)},
+                        ),
+                    )
+                ]
+            )
+
+            # AudioContent → BinaryContent
+            audio = await toolset.get_prompt('audio_prompt')
+            assert audio.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=BinaryContent(
+                            data=b'audio-bytes',
+                            media_type='audio/mpeg',
+                            vendor_metadata={
+                                'mcp_annotations': ResourceAnnotations(audience=['assistant'], priority=0.3)
+                            },
+                        ),
+                    )
+                ]
+            )
+
+            # EmbeddedResource with annotations
+            embedded = await toolset.get_prompt('embedded_resource_prompt')
+            assert embedded.messages == snapshot(
+                [
+                    PromptMessage(
+                        role='user',
+                        content=PaiEmbeddedResource(
+                            uri='resource://product_name.txt',
+                            content='Pydantic AI',
+                            mime_type='text/plain',
+                            annotations=ResourceAnnotations(audience=['user'], priority=0.5),
+                        ),
+                    )
+                ]
+            )
+
+    async def test_get_prompt_maps_resource_link(self, fastmcp_server: FastMCP[None]):
+        """A `resource_link` prompt content block maps to a Pydantic AI `ResourceLink`.
+
+        FastMCP can't emit `resource_link` prompt content (it serializes the link to text), so we
+        patch the client to return a real MCP `GetPromptResult` carrying one and assert the mapping.
+        """
+        from pydantic_ai.mcp import ResourceLink as PaiResourceLink
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.get_prompt = AsyncMock(
+                return_value=mcp_types.GetPromptResult(
+                    description='A prompt template with a resource link.',
+                    messages=[
+                        mcp_types.PromptMessage(
+                            role='user',
+                            content=ResourceLink(
+                                type='resource_link',
+                                uri=cast(AnyUrl, 'resource://kiwi.jpg'),
+                                name='kiwi-image',
+                                title='Kiwi Image',
+                                description='A photo of a kiwi fruit',
+                                mimeType='image/jpeg',
+                            ),
+                        )
+                    ],
+                )
+            )
+            result = await toolset.get_prompt('resource_link_prompt')
+        assert result.messages == snapshot(
             [
-                ResourceTemplate(
-                    name='greeting_resource_template',
-                    description='Dynamic greeting resource template.',
-                    mime_type='text/plain',
-                    uri_template='resource://greeting/{name}',
+                PromptMessage(
+                    role='user',
+                    content=PaiResourceLink(
+                        uri='resource://kiwi.jpg',
+                        name='kiwi-image',
+                        title='Kiwi Image',
+                        description='A photo of a kiwi fruit',
+                        mime_type='image/jpeg',
+                    ),
                 )
             ]
         )
 
+    async def test_map_prompt_content_text_meta(self, fastmcp_server: FastMCP[None]):
+        """MCP `_meta` on prompt text is preserved in the mapped content metadata."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.get_prompt('text_meta_prompt')
+        [message] = result.messages
+        content = message.content
+        assert isinstance(content, TextContent)
+        assert content.metadata == {'mcp_meta': {'source': 'mcp'}}
 
-async def test_log_level_set(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
-    assert server.log_level == 'info'
-    async with server:
-        result = await server.direct_call_tool('get_log_level', {})
-        assert result == snapshot('info')
+    async def test_message_handler_ignores_non_list_changed_notifications(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
-
-async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('What is the weather in Mexico City?')
-        assert result.output == snapshot(
-            'The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
-        )
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='What is the weather in Mexico City?',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_weather_forecast',
-                            args='{"location":"Mexico City"}',
-                            tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=194,
-                        output_tokens=18,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_weather_forecast',
-                            content='The weather in Mexico City is sunny and 26 degrees Celsius.',
-                            tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            content='The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=234,
-                        output_tokens=19,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_text_resource(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('Get me the product name')
-        assert result.output == snapshot('The product name is "Pydantic AI".')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me the product name',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_product_name',
-                            args='{}',
-                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=200,
-                        output_tokens=12,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_product_name',
-                            content='Pydantic AI',
-                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='The product name is "Pydantic AI".')],
-                    usage=RequestUsage(
-                        input_tokens=224,
-                        output_tokens=12,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('Get me the product name via get_product_name_link')
-        assert result.output == snapshot('The product name is "Pydantic AI".')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me the product name via get_product_name_link',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_product_name_link',
-                            args='{}',
-                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=305,
-                        output_tokens=12,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_product_name_link',
-                            content='Pydantic AI\n',
-                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='The product name is "Pydantic AI".')],
-                    usage=RequestUsage(
-                        input_tokens=332,
-                        output_tokens=11,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_image_resource(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent:
-        result = await agent.run('Get me the image resource')
-        assert result.output == snapshot(
-            'This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
-        )
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me the image resource',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_image_resource',
-                            args='{}',
-                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=191,
-                        output_tokens=12,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_image_resource',
-                            content=IsInstance(BinaryImage),
-                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            content='This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=1332,
-                        output_tokens=19,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_image_resource_link(
-    allow_model_requests: None, agent: Agent, image_content: BinaryContent
-):
-    async with agent:
-        result = await agent.run('Get me the image resource via get_image_resource_link')
-        assert result.output == snapshot(
-            'This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
-        )
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me the image resource via get_image_resource_link',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_image_resource_link',
-                            args='{}',
-                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=305,
-                        output_tokens=12,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_image_resource_link',
-                            content=IsInstance(BinaryImage),
-                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            content='This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=1452,
-                        output_tokens=29,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_audio_resource(
-    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
-):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
-    async with agent:
-        result = await agent.run("What's the content of the audio resource?", model=model)
-        assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
-                    usage=RequestUsage(
-                        input_tokens=383, output_tokens=137, details={'thoughts_tokens': 125, 'text_prompt_tokens': 383}
-                    ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                    provider_url='https://generativelanguage.googleapis.com/',
-                    provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_audio_resource',
-                            content=IsInstance(BinaryContent),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
-                    usage=RequestUsage(
-                        input_tokens=575,
-                        output_tokens=15,
-                        input_audio_tokens=144,
-                        details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
-                    ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                    provider_url='https://generativelanguage.googleapis.com/',
-                    provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_audio_resource_link(
-    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
-):
-    model = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key=gemini_api_key))
-    async with agent:
-        result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
-        assert result.output == snapshot('00:05')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content="What's the content of the audio resource via get_audio_resource_link?",
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_audio_resource_link',
-                            args={},
-                            tool_call_id=IsStr(),
-                            provider_name='google',
-                            provider_details={'thought_signature': IsStr()},
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=605, output_tokens=168, details={'thoughts_tokens': 154, 'text_prompt_tokens': 605}
-                    ),
-                    model_name='gemini-2.5-pro',
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                    provider_url='https://generativelanguage.googleapis.com/',
-                    provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_audio_resource_link',
-                            content=IsInstance(BinaryContent),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='00:05')],
-                    usage=RequestUsage(
-                        input_tokens=801,
-                        output_tokens=5,
-                        input_audio_tokens=144,
-                        details={'text_prompt_tokens': 657, 'audio_prompt_tokens': 144},
-                    ),
-                    model_name='gemini-2.5-pro',
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                    provider_url='https://generativelanguage.googleapis.com/',
-                    provider_details={'finish_reason': 'STOP'},
-                    provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent:
-        result = await agent.run('Get me an image')
-        assert result.output == snapshot(
-            "Here's an image of a kiwi fruit cut in half. The vibrant green flesh contrasts with the tiny black seeds, making it visually appealing. If you need more images or a different kind, just let me know!"
-        )
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me an image',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_image_resource',
-                            args='{}',
-                            tool_call_id='call_KL2BXptkWmKifse91X727M7y',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=393,
-                        output_tokens=11,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-CpxEaVAApbQvDQSTnqrFd0mxu7Cs3',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_image_resource',
-                            content=IsInstance(BinaryImage),
-                            tool_call_id='call_KL2BXptkWmKifse91X727M7y',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            content="Here's an image of a kiwi fruit cut in half. The vibrant green flesh contrasts with the tiny black seeds, making it visually appealing. If you need more images or a different kind, just let me know!"
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=1196,
-                        output_tokens=43,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-CpxEdNdePHwVHTJLjmaHWzNUfpoNo',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('Get me a dict, respond on one line')
-        assert result.output == snapshot('{"foo":"bar","baz":123}')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me a dict, respond on one line',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
-                    usage=RequestUsage(
-                        input_tokens=195,
-                        output_tokens=11,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_dict',
-                            content={'foo': 'bar', 'baz': 123},
-                            tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='{"foo":"bar","baz":123}')],
-                    usage=RequestUsage(
-                        input_tokens=222,
-                        output_tokens=11,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_unstructured_dict(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('Get me an unstructured dict, respond on one line')
-        assert result.output == snapshot('{"foo":"bar","baz":123}')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me an unstructured dict, respond on one line',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_unstructured_dict', args='{}', tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd'
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=343,
-                        output_tokens=12,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_unstructured_dict',
-                            content={'foo': 'bar', 'baz': 123},
-                            tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='{"foo":"bar","baz":123}')],
-                    usage=RequestUsage(
-                        input_tokens=374,
-                        output_tokens=10,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
-        assert result.output == snapshot(
-            'I called the tool with the correct parameter, and it returned: "This is not an error."'
-        )
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me an error, pass False as a value, unless the tool tells you otherwise',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_error',
-                            args='{"value":false}',
-                            tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=203,
-                        output_tokens=15,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        RetryPromptPart(
-                            content='Error executing tool get_error: This is an error. Call the tool with True instead',
-                            tool_name='get_error',
-                            tool_call_id='call_rETXZWddAGZSHyVHAxptPGgc',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_error',
-                            args='{"value":true}',
-                            tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=250,
-                        output_tokens=15,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_error',
-                            content='This is not an error',
-                            tool_call_id='call_4xGyvdghYKHN8x19KWkRtA5N',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            content='I called the tool with the correct parameter, and it returned: "This is not an error."'
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=277,
-                        output_tokens=22,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
-    async with agent:
-        result = await agent.run('Call the none tool and say Hello')
-        assert result.output == snapshot('Hello! How can I assist you today?')
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Call the none tool and say Hello',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
-                    usage=RequestUsage(
-                        input_tokens=193,
-                        output_tokens=11,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_none',
-                            content=[],
-                            tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='Hello! How can I assist you today?')],
-                    usage=RequestUsage(
-                        input_tokens=212,
-                        output_tokens=11,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_returning_multiple_items(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent:
-        result = await agent.run('Get me multiple items and summarize in one sentence')
-        assert result.output == snapshot(
-            'The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
-        )
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(
-                            content='Get me multiple items and summarize in one sentence',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='get_multiple_items',
-                            args='{}',
-                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=398,
-                        output_tokens=11,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'tool_calls',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-CpzU5Mhbq7bf8kaSOksp2KUTqG4u0',
-                    finish_reason='tool_call',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='get_multiple_items',
-                            content=[
-                                'This is a string',
-                                'Another string',
-                                {'foo': 'bar', 'baz': 123},
-                                IsInstance(BinaryImage),
-                            ],
-                            tool_call_id='call_pyHWn85cReaMKhKpY5J4cGev',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        TextPart(
-                            content='The content includes two strings, a dictionary with keys "foo" and "baz," and an image of a kiwi fruit.'
-                        )
-                    ],
-                    usage=RequestUsage(
-                        input_tokens=1220,
-                        output_tokens=26,
-                        details={
-                            'accepted_prediction_tokens': 0,
-                            'audio_tokens': 0,
-                            'reasoning_tokens': 0,
-                            'rejected_prediction_tokens': 0,
-                        },
-                    ),
-                    model_name='gpt-4o-2024-08-06',
-                    timestamp=IsDatetime(),
-                    provider_name='openai',
-                    provider_url='https://api.openai.com/v1/',
-                    provider_details={
-                        'finish_reason': 'stop',
-                        'timestamp': IsDatetime(),
-                    },
-                    provider_response_id='chatcmpl-CpzU6VAYJTRYnthvYDAolptinBLkS',
-                    finish_reason='stop',
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-async def test_tool_metadata_extraction():
-    """Test that MCP tool metadata is properly extracted into ToolDefinition."""
-
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-        tools = [tool.tool_def for tool in (await server.get_tools(ctx)).values()]
-        # find `celsius_to_fahrenheit`
-        celsius_to_fahrenheit = next(tool for tool in tools if tool.name == 'celsius_to_fahrenheit')
-        assert celsius_to_fahrenheit.metadata is not None
-        assert celsius_to_fahrenheit.metadata.get('annotations') is not None
-        assert celsius_to_fahrenheit.metadata.get('annotations', {}).get('title', None) == 'Celsius to Fahrenheit'
-        assert celsius_to_fahrenheit.metadata.get('output_schema') is not None
-        assert celsius_to_fahrenheit.metadata.get('output_schema', {}).get('type', None) == 'object'
-
-
-async def test_client_sampling(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server.sampling_model = TestModel(custom_output_text='sampling model response')
-    async with server:
-        result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
-        assert result == snapshot(
-            {
-                '_meta': None,
-                'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, '_meta': None},
-                'model': 'test',
-                'stopReason': None,
-            }
-        )
-
-
-async def test_client_sampling_disabled(run_context: RunContext[int]):
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
-    server.sampling_model = TestModel(custom_output_text='sampling model response')
-    async with server:
-        with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
-            await server.direct_call_tool('use_sampling', {'foo': 'bar'})
-
-
-async def test_mcp_server_raises_mcp_error(
-    allow_model_requests: None, mcp_server: MCPServerStdio, agent: Agent, run_context: RunContext[int]
-) -> None:
-    mcp_error = McpError(error=ErrorData(code=400, message='Test MCP error conversion'))
-
-    async with agent:
-        with patch.object(
-            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
-            'send_request',
-            new=AsyncMock(side_effect=mcp_error),
-        ):
-            with pytest.raises(ModelRetry, match='Test MCP error conversion'):
-                await mcp_server.direct_call_tool('test_tool', {})
-
-
-def test_map_from_mcp_params_model_request():
-    params = CreateMessageRequestParams(
-        messages=[
-            SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
-            SamplingMessage(
-                role='user',
-                content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
-            ),
-        ],
-        maxTokens=8,
-    )
-    pai_messages = map_from_mcp_params(params)
-    assert pai_messages == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
-                    UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png')],
-                        timestamp=IsNow(tz=timezone.utc),
-                    ),
-                ]
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=None)
+        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
+        # `LoggingMessageNotification` is unrelated to any cache.
+        await handler(
+            wrap_server_notification(
+                mcp_types.LoggingMessageNotification(
+                    method='notifications/message',
+                    params=mcp_types.LoggingMessageNotificationParams(level='info', data='hi'),
+                )
             )
-        ]
-    )
-
-
-def test_map_from_mcp_params_model_response():
-    params = CreateMessageRequestParams(
-        messages=[
-            SamplingMessage(role='assistant', content=TextContent(type='text', text='xx')),
-        ],
-        maxTokens=8,
-    )
-    pai_messages = map_from_mcp_params(params)
-    assert pai_messages == snapshot(
-        [
-            ModelResponse(
-                parts=[TextPart(content='xx')],
-                timestamp=IsNow(tz=timezone.utc),
-            )
-        ]
-    )
-
-
-def test_map_from_mcp_params_unsupported_user_content():
-    params = CreateMessageRequestParams(
-        messages=[
-            SamplingMessage(
-                role='user',
-                content=ToolUseContent(type='tool_use', id='123', name='tool', input={}),
-            ),
-        ],
-        maxTokens=8,
-    )
-    with pytest.raises(NotImplementedError, match='ToolUseContent cannot be used as user content'):
-        map_from_mcp_params(params)
-
-
-def test_map_from_pai_messages_with_binary_content():
-    """Test that map_from_pai_messages correctly converts image and audio content to MCP format.
-
-    Note: `data` in this case are base64-encoded bytes (e.g., base64.b64encode(b'raw')).
-    map_from_pai_messages decodes this to get the base64 string for MCP.
-    """
-
-    message = ModelRequest(
-        parts=[
-            UserPromptPart(content='text message'),
-            UserPromptPart(content=[BinaryContent(data=b'raw_image_bytes', media_type='image/png')]),
-            # TODO uncomment when audio content is supported
-            # UserPromptPart(content=[BinaryContent(data=b'raw_audio_bytes', media_type='audio/wav'), 'text after audio']),
-        ]
-    )
-    system_prompt, sampling_msgs = map_from_pai_messages([message])
-    assert system_prompt == ''
-    assert [m.model_dump(by_alias=True) for m in sampling_msgs] == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': {'type': 'text', 'text': 'text message', 'annotations': None, '_meta': None},
-                '_meta': None,
-            },
-            {
-                'role': 'user',
-                'content': {
-                    'type': 'image',
-                    'data': 'cmF3X2ltYWdlX2J5dGVz',
-                    'mimeType': 'image/png',
-                    'annotations': None,
-                    '_meta': None,
-                },
-                '_meta': None,
-            },
-        ]
-    )
-
-    # Unsupported content type raises NotImplementedError
-    message_with_video = ModelRequest(
-        parts=[UserPromptPart(content=[BinaryContent(data=b'raw_video_bytes', media_type='video/mp4')])]
-    )
-    with pytest.raises(
-        NotImplementedError, match="Unsupported content type: <class 'pydantic_ai.messages.BinaryContent'>"
-    ):
-        map_from_pai_messages([message_with_video])
-
-
-def test_map_from_model_response_unexpected_part_raises_error():
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ToolCallPart, expected TextPart'):
-        map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='test-tool')]))
-
-
-def test_map_from_model_response_mixed_parts():
-    result = map_from_model_response(
-        ModelResponse(
-            parts=[
-                TextPart(content='Hello '),
-                ThinkingPart(content='Should I say world?'),
-                TextPart(content='world!'),
-                ThinkingPart(content='That sounded good.'),
-            ]
         )
-    )
-    assert result.model_dump(by_alias=True) == snapshot(
-        {'type': 'text', 'text': 'Hello world!', 'annotations': None, '_meta': None}
-    )
+        assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
+    async def test_message_handler_ignores_non_notification_messages(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
-async def test_elicitation_callback_functionality(run_context: RunContext[int]):
-    """Test that elicitation callback is actually called and works."""
-    # Track callback execution
-    callback_called = False
-    callback_message = None
-    callback_response = 'Yes, proceed with the action'
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=None)
+        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
+        # Exception messages are passed through but shouldn't crash or invalidate caches.
+        await handler(RuntimeError('transport error'))
+        assert toolset._cached_tools == []  # pyright: ignore[reportPrivateUsage]
 
-    async def mock_elicitation_callback(
-        context: RequestContext[ClientSession, Any, Any], params: ElicitRequestParams
-    ) -> ElicitResult:
-        nonlocal callback_called, callback_message
-        callback_called = True
-        callback_message = params.message
-        return ElicitResult(action='accept', content={'response': callback_response})
+    async def test_message_handler_invalidates_caches(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
 
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], elicitation_callback=mock_elicitation_callback)
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=None)
+        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
+        toolset._cached_resources = []  # pyright: ignore[reportPrivateUsage]
 
-    async with server:
-        # Call the tool that uses elicitation
-        result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+        await handler(
+            wrap_server_notification(mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed'))
+        )
+        assert toolset._cached_tools is None  # pyright: ignore[reportPrivateUsage]
 
-        # Verify the callback was called
-        assert callback_called, 'Elicitation callback should have been called'
-        assert callback_message == 'Should I continue?', 'Callback should receive the question'
-        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
-
-
-async def test_elicitation_callback_not_set(run_context: RunContext[int]):
-    """Test that elicitation fails when no callback is set."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    async with server:
-        # Should raise an error when elicitation is attempted without callback
-        with pytest.raises(ModelRetry, match='Elicitation not supported'):
-            await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
-
-
-async def test_read_text_resource(run_context: RunContext[int]):
-    """Test reading a text resource (converted to string)."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        # Test reading by URI string
-        content = await server.read_resource('resource://product_name.txt')
-        assert isinstance(content, str)
-        assert content == snapshot('Pydantic AI\n')
-
-        # Test reading by Resource object
-        resource = Resource(uri='resource://product_name.txt', name='product_name_resource')
-        content_from_resource = await server.read_resource(resource)
-        assert isinstance(content_from_resource, str)
-        assert content_from_resource == snapshot('Pydantic AI\n')
-
-
-async def test_read_blob_resource(run_context: RunContext[int]):
-    """Test reading a binary resource (converted to BinaryContent)."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        content = await server.read_resource('resource://kiwi.jpg')
-        assert isinstance(content, BinaryContent)
-        assert content.media_type == snapshot('image/jpeg')
-        # Verify it's JPEG data (starts with JPEG magic bytes)
-        assert content.data.startswith(bytes.fromhex('ffd8ffe0'))  # JPEG magic bytes
-
-
-async def test_read_resource_template(run_context: RunContext[int]):
-    """Test reading a resource template with parameters (converted to string)."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        content = await server.read_resource('resource://greeting/Alice')
-        assert isinstance(content, str)
-        assert content == snapshot('Hello, Alice!')
-
-
-async def test_read_resource_error(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource converts McpError to MCPError for generic errors."""
-    mcp_error = McpError(
-        error=ErrorData(code=-32603, message='Failed to read resource', data={'details': 'disk error'})
-    )
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
-            'read_resource',
-            new=AsyncMock(side_effect=mcp_error),
-        ):
-            with pytest.raises(MCPError, match='Failed to read resource') as exc_info:
-                await mcp_server.read_resource('resource://error')
-
-            # Verify the exception has the expected attributes
-            assert exc_info.value.code == -32603
-            assert exc_info.value.message == 'Failed to read resource'
-            assert exc_info.value.data == {'details': 'disk error'}
-
-
-async def test_read_resource_empty_contents(mcp_server: MCPServerStdio) -> None:
-    """Test that read_resource returns empty list when server returns empty contents."""
-    from mcp.types import ReadResourceResult
-
-    # Mock a result with empty contents
-    empty_result = ReadResourceResult(contents=[])
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
-            'read_resource',
-            new=AsyncMock(return_value=empty_result),
-        ):
-            result = await mcp_server.read_resource('resource://empty')
-            assert result == []
-
-
-async def test_list_resources_error(mcp_server: MCPServerStdio) -> None:
-    """Test that list_resources converts McpError to MCPError."""
-    mcp_error = McpError(
-        error=ErrorData(code=-32603, message='Failed to list resources', data={'details': 'server overloaded'})
-    )
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
-            'list_resources',
-            new=AsyncMock(side_effect=mcp_error),
-        ):
-            with pytest.raises(MCPError, match='Failed to list resources') as exc_info:
-                await mcp_server.list_resources()
-
-            # Verify the exception has the expected attributes
-            assert exc_info.value.code == -32603
-            assert exc_info.value.message == 'Failed to list resources'
-            assert exc_info.value.data == {'details': 'server overloaded'}
-            assert (
-                str(exc_info.value) == "Failed to list resources (code: -32603, data: {'details': 'server overloaded'})"
+        toolset._cached_tools = []  # pyright: ignore[reportPrivateUsage]
+        await handler(
+            wrap_server_notification(
+                mcp_types.ResourceListChangedNotification(method='notifications/resources/list_changed')
             )
-
-
-async def test_list_resource_templates_error(mcp_server: MCPServerStdio) -> None:
-    """Test that list_resource_templates converts McpError to MCPError."""
-    mcp_error = McpError(error=ErrorData(code=-32001, message='Service unavailable'))
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._get_client(),  # pyright: ignore[reportPrivateUsage]
-            'list_resource_templates',
-            new=AsyncMock(side_effect=mcp_error),
-        ):
-            with pytest.raises(MCPError, match='Service unavailable') as exc_info:
-                await mcp_server.list_resource_templates()
-
-            # Verify the exception has the expected attributes
-            assert exc_info.value.code == -32001
-            assert exc_info.value.message == 'Service unavailable'
-
-
-def test_load_mcp_servers(tmp_path: Path):
-    config = tmp_path / 'mcp.json'
-
-    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}', encoding='utf-8')
-    server = load_mcp_servers(config)[0]
-    assert server == MCPServerStreamableHTTP(url='https://example.com/mcp', id='potato', tool_prefix='potato')
-
-    config.write_text(
-        '{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}', encoding='utf-8'
-    )
-    server = load_mcp_servers(config)[0]
-    assert server == MCPServerStdio(
-        command='python', args=['-m', 'tests.mcp_server'], id='potato', tool_prefix='potato'
-    )
-
-    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}', encoding='utf-8')
-    server = load_mcp_servers(config)[0]
-    assert server == MCPServerSSE(url='https://example.com/sse', id='potato', tool_prefix='potato')
-
-    with pytest.raises(FileNotFoundError):
-        load_mcp_servers(tmp_path / 'does_not_exist.json')
-
-
-def test_load_mcp_servers_with_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test environment variable expansion in config files."""
-    config = tmp_path / 'mcp.json'
-
-    # Test with environment variables in command
-    monkeypatch.setenv('PYTHON_CMD', 'python3')
-    monkeypatch.setenv('MCP_MODULE', 'tests.mcp_server')
-    config.write_text(
-        '{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "${MCP_MODULE}"]}}}', encoding='utf-8'
-    )
-
-    servers = load_mcp_servers(config)
-
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.command == 'python3'
-    assert server.args == ['-m', 'tests.mcp_server']
-    assert server.id == 'my_server'
-    assert server.tool_prefix == 'my_server'
-
-
-def test_load_mcp_servers_env_var_in_env_dict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test environment variable expansion in env dict."""
-    config = tmp_path / 'mcp.json'
-
-    # Test with environment variables in env dict
-    monkeypatch.setenv('API_KEY', 'secret123')
-    config.write_text(
-        '{"mcpServers": {"my_server": {"command": "python", "args": ["-m", "tests.mcp_server"], '
-        '"env": {"API_KEY": "${API_KEY}"}}}}',
-        encoding='utf-8',
-    )
-
-    servers = load_mcp_servers(config)
-
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.env == {'API_KEY': 'secret123'}
-
-
-def test_load_mcp_servers_env_var_expansion_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test environment variable expansion in URL."""
-    config = tmp_path / 'mcp.json'
-
-    # Test with environment variables in URL
-    monkeypatch.setenv('SERVER_HOST', 'example.com')
-    monkeypatch.setenv('SERVER_PORT', '8080')
-    config.write_text(
-        '{"mcpServers": {"web_server": {"url": "https://${SERVER_HOST}:${SERVER_PORT}/mcp"}}}', encoding='utf-8'
-    )
-
-    servers = load_mcp_servers(config)
-
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStreamableHTTP)
-    assert server.url == 'https://example.com:8080/mcp'
-
-
-def test_load_mcp_servers_undefined_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test that undefined environment variables raise an error."""
-    config = tmp_path / 'mcp.json'
-
-    # Make sure the environment variable is not set
-    monkeypatch.delenv('UNDEFINED_VAR', raising=False)
-
-    config.write_text('{"mcpServers": {"my_server": {"command": "${UNDEFINED_VAR}", "args": []}}}', encoding='utf-8')
-
-    with pytest.raises(ValueError, match='Environment variable \\$\\{UNDEFINED_VAR\\} is not defined'):
-        load_mcp_servers(config)
-
-
-def test_load_mcp_servers_partial_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test environment variables in partial strings."""
-    config = tmp_path / 'mcp.json'
-
-    monkeypatch.setenv('HOST', 'example.com')
-    monkeypatch.setenv('PATH_SUFFIX', 'mcp')
-    config.write_text('{"mcpServers": {"server": {"url": "https://${HOST}/api/${PATH_SUFFIX}"}}}', encoding='utf-8')
-
-    servers = load_mcp_servers(config)
-
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStreamableHTTP)
-    assert server.url == 'https://example.com/api/mcp'
-
-
-def test_load_mcp_servers_with_non_string_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test that non-string primitive values (int, bool, null) in nested structures are passed through unchanged."""
-    config = tmp_path / 'mcp.json'
-
-    # Create a config with environment variables and extra fields containing primitives
-    # The extra fields will be ignored during validation but go through _expand_env_vars
-    monkeypatch.setenv('PYTHON_CMD', 'python')
-    config.write_text(
-        '{"mcpServers": {"my_server": {"command": "${PYTHON_CMD}", "args": ["-m", "tests.mcp_server"], '
-        '"metadata": {"count": 42, "enabled": true, "value": null}}}}',
-        encoding='utf-8',
-    )
-
-    # This should successfully expand env vars and ignore the metadata field
-    servers = load_mcp_servers(config)
-
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.command == 'python'
-
-
-def test_load_mcp_servers_with_default_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test ${VAR:-default} syntax for environment variable expansion."""
-    config = tmp_path / 'mcp.json'
-
-    # Test with undefined variable using default
-    monkeypatch.delenv('UNDEFINED_VAR', raising=False)
-    config.write_text(
-        '{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-python3}", "args": []}}}', encoding='utf-8'
-    )
-
-    servers = load_mcp_servers(config)
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.command == 'python3'
-
-    # Test with defined variable (should use actual value, not default)
-    monkeypatch.setenv('DEFINED_VAR', 'actual_value')
-    config.write_text(
-        '{"mcpServers": {"server": {"command": "${DEFINED_VAR:-default_value}", "args": []}}}', encoding='utf-8'
-    )
-
-    servers = load_mcp_servers(config)
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.command == 'actual_value'
-
-    # Test with empty string as default
-    monkeypatch.delenv('UNDEFINED_VAR', raising=False)
-    config.write_text('{"mcpServers": {"server": {"command": "${UNDEFINED_VAR:-}", "args": []}}}', encoding='utf-8')
-
-    servers = load_mcp_servers(config)
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.command == ''
-
-
-def test_load_mcp_servers_with_default_values_in_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test ${VAR:-default} syntax in URLs."""
-    config = tmp_path / 'mcp.json'
-
-    # Test with default values in URL
-    monkeypatch.delenv('HOST', raising=False)
-    monkeypatch.setenv('PROTOCOL', 'https')
-    config.write_text(
-        '{"mcpServers": {"server": {"url": "${PROTOCOL:-http}://${HOST:-localhost}:${PORT:-8080}/mcp"}}}',
-        encoding='utf-8',
-    )
-
-    servers = load_mcp_servers(config)
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStreamableHTTP)
-    assert server.url == 'https://localhost:8080/mcp'
-
-
-def test_load_mcp_servers_with_default_values_in_env_dict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test ${VAR:-default} syntax in env dictionary."""
-    config = tmp_path / 'mcp.json'
-
-    monkeypatch.delenv('API_KEY', raising=False)
-    monkeypatch.setenv('CUSTOM_VAR', 'custom_value')
-    config.write_text(
-        '{"mcpServers": {"server": {"command": "python", "args": [], '
-        '"env": {"API_KEY": "${API_KEY:-default_key}", "CUSTOM": "${CUSTOM_VAR:-fallback}"}}}}',
-        encoding='utf-8',
-    )
-
-    servers = load_mcp_servers(config)
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.env == {'API_KEY': 'default_key', 'CUSTOM': 'custom_value'}
-
-
-def test_load_mcp_servers_with_complex_default_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test ${VAR:-default} syntax with special characters in default."""
-    config = tmp_path / 'mcp.json'
-
-    monkeypatch.delenv('PATH_VAR', raising=False)
-    # Test default with slashes, dots, and dashes
-    config.write_text(
-        '{"mcpServers": {"server": {"command": "${PATH_VAR:-/usr/local/bin/python-3.10}", "args": []}}}',
-        encoding='utf-8',
-    )
-
-    servers = load_mcp_servers(config)
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.command == '/usr/local/bin/python-3.10'
-
-
-def test_load_mcp_servers_with_mixed_syntax(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Test mixing ${VAR} and ${VAR:-default} syntax in the same config."""
-    config = tmp_path / 'mcp.json'
-
-    monkeypatch.setenv('REQUIRED_VAR', 'required_value')
-    monkeypatch.delenv('OPTIONAL_VAR', raising=False)
-    config.write_text(
-        '{"mcpServers": {"server": {"command": "${REQUIRED_VAR}", "args": ["${OPTIONAL_VAR:-default_arg}"]}}}',
-        encoding='utf-8',
-    )
-
-    servers = load_mcp_servers(config)
-    assert len(servers) == 1
-    server = servers[0]
-    assert isinstance(server, MCPServerStdio)
-    assert server.command == 'required_value'
-    assert server.args == ['default_arg']
-
-
-async def test_server_info(mcp_server: MCPServerStdio) -> None:
-    with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.server_info` is only instantiated after initialization.'
+        )
+        assert toolset._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_message_handler_forwards_to_user_handler(self, fastmcp_server: FastMCP[None]):
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        seen: list[Any] = []
+
+        async def user_handler(message: Any) -> None:
+            seen.append(message)
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=user_handler)
+        notification = wrap_server_notification(
+            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+        )
+        await handler(notification)
+        assert seen == [notification]
+
+    async def test_call_tool_returns_image(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        from pydantic_ai.messages import BinaryContent
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('image_tool', {}, run_context, tools['image_tool'])
+        assert isinstance(result, BinaryContent)
+        assert result.media_type == 'image/png'
+
+    async def test_call_tool_returns_embedded_blob(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        from pydantic_ai.messages import BinaryContent
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('embedded_blob_tool', {}, run_context, tools['embedded_blob_tool'])
+        assert isinstance(result, BinaryContent)
+
+    async def test_call_tool_returns_resource_link_uri(self, fastmcp_server: FastMCP[None], run_context: RunContext):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('resource_link_tool', {}, run_context, tools['resource_link_tool'])
+        # `_map_mcp_tool_result` for ResourceLink returns the URI string.
+        assert result == 'resource://greeting.txt'
+
+    async def test_log_level_is_set_after_aenter(self, fastmcp_server: FastMCP[None]):
+        client = make_legacy_client(fastmcp_server)
+        toolset = MCPToolset(client, log_level='warning')
+        async with toolset:
+            assert toolset.is_running
+
+    async def test_log_level_warns_but_connects_on_modern_session(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
     ):
-        mcp_server.server_info
-    async with mcp_server:
-        assert mcp_server.server_info is not None
-        assert mcp_server.server_info.name == 'Pydantic AI MCP Server'
+        """`logging/setLevel` left the protocol in the 2026-07-28 revision. An unapplied log level
+        doesn't stop an application from working, so the session opens and warns rather than
+        failing — raising would turn an upstream protocol removal into a break on our side."""
+        toolset = MCPToolset(fastmcp_server, log_level='warning')
+        with pytest.warns(UserWarning, match='`log_level` was not applied'):
+            async with toolset:
+                assert toolset.is_running
 
-
-async def test_capabilities(mcp_server: MCPServerStdio) -> None:
-    with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.capabilities` is only instantiated after initialization.'
+    async def test_sampling_and_elicitation_warn_on_modern_session(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
     ):
-        mcp_server.capabilities
-    async with mcp_server:
-        assert mcp_server.capabilities is not None
-        assert mcp_server.capabilities.resources is True
-        assert mcp_server.capabilities.tools is True
-        assert mcp_server.capabilities.prompts is True
-        assert mcp_server.capabilities.logging is True
-        assert mcp_server.capabilities.completions is False
-        assert mcp_server.capabilities.experimental is None
+        """A modern session refuses server-initiated requests, so a handler configured against one
+        can never fire. The names are reported together, so a user setting both learns about
+        both. Pinned to no task extension: with `fastmcp-tasks` loaded the elicitation handler
+        still fires for task input and is not reported."""
 
+        async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('elicitation handler should never be called')  # pragma: no cover
 
-async def test_resource_methods_without_capability(mcp_server: MCPServerStdio) -> None:
-    """Test that resource list methods return empty values when resources capability is not available."""
-    async with mcp_server:
-        # Mock the capabilities to not support resources
-        mock_capabilities = ServerCapabilities(resources=False)
-        with patch.object(mcp_server, '_server_capabilities', mock_capabilities):
-            # list_resources should return empty list
-            result = await mcp_server.list_resources()
-            assert result == []
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: None)
+        toolset = MCPToolset(
+            fastmcp_server,
+            sampling_model=TestModel(custom_output_text='sampled'),
+            elicitation_handler=elicitation_handler,
+        )
+        with pytest.warns(UserWarning, match=r'`sampling_model`, `elicitation_handler` will never be called'):
+            async with toolset:
+                assert toolset.is_running
 
-            # list_resource_templates should return empty list
-            result = await mcp_server.list_resource_templates()
-            assert result == []
-
-
-async def test_instructions(mcp_server: MCPServerStdio) -> None:
-    with pytest.raises(
-        AttributeError, match='The `MCPServerStdio.instructions` is only available after initialization.'
+    async def test_elicitation_handler_not_reported_dead_when_tasks_extension_is_loaded(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
     ):
-        mcp_server.instructions
-    async with mcp_server:
-        assert mcp_server.instructions == 'Be a helpful assistant.'
+        """With `fastmcp-tasks` loaded, a task parked on `input_required` is answered through the
+        elicitation handler, so on a modern session the handler can still fire and must not be
+        reported as dead — while sampling has no task path and is still warned about."""
 
+        async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
 
-async def test_client_info_passed_to_session() -> None:
-    """Test that provided client_info is passed unchanged to ClientSession."""
-    implementation = Implementation(
-        name='MyCustomClient',
-        version='2.5.3',
-        title='Custom MCP client',
-        websiteUrl='https://example.com/client',
-    )
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], client_info=implementation)
+        async def fake_call_tool_task(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
 
-    async with server:
-        result = await server.direct_call_tool('get_client_info', {})
-        assert result == {
-            'name': 'MyCustomClient',
-            'version': '2.5.3',
-            'title': 'Custom MCP client',
-            'websiteUrl': 'https://example.com/client',
-        }
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: fake_call_tool_task)
+        toolset = MCPToolset(
+            fastmcp_server,
+            sampling_model=TestModel(custom_output_text='sampled'),
+            elicitation_handler=elicitation_handler,
+        )
+        with pytest.warns(UserWarning, match=r'^`sampling_model` will never be called') as caught:
+            async with toolset:
+                assert toolset.is_running
+        assert 'elicitation_handler' not in str(caught[0].message)
 
+    async def test_no_dead_handler_warning_for_elicitation_alone_when_tasks_extension_is_loaded(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When the elicitation handler is the only server-initiated option configured and the
+        task extension is loaded, there is nothing dead to warn about at all."""
 
-async def test_client_info_not_set() -> None:
-    """Test that when client_info is not set, the default MCP client info is used."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+        async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
 
-    async with server:
-        result = await server.direct_call_tool('get_client_info', {})
-        # When client_info is not set, the MCP library provides default client info
-        assert result is not None
-        assert isinstance(result, dict)
-        assert result['name'] == 'mcp'
+        async def fake_call_tool_task(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
 
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: fake_call_tool_task)
+        toolset = MCPToolset(fastmcp_server, elicitation_handler=elicitation_handler)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            async with toolset:
+                assert toolset.is_running
 
-async def test_agent_run_stream_with_mcp_server_http(allow_model_requests: None, model: Model):
-    server = MCPServerStreamableHTTP(url='https://mcp.deepwiki.com/mcp', timeout=30)
-    agent = Agent(model, toolsets=[server], instructions='Be concise.')
+    async def test_set_sampling_model_replaces_the_reported_handler(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
+    ):
+        """`set_sampling_model` swaps out the callback a `sampling_handler=` argument installed, so
+        the warning names only the option still in effect rather than both."""
 
-    # This should not raise an error.
-    # See https://github.com/pydantic/pydantic-ai/issues/2818#issuecomment-3476480829
-    async with agent.run_stream('Summarize the pydantic/pydantic-ai repo in one sentence') as result:
-        output = await result.get_output()
-    assert output == snapshot(
-        'The `pydantic/pydantic-ai` repository is a Python agent framework designed to facilitate the development of production-grade Generative AI applications and workflows with a focus on type-safety and an ergonomic developer experience.'
-    )
+        async def sampling_handler(messages: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('sampling handler should never be called')  # pragma: no cover
 
+        toolset = MCPToolset(fastmcp_server, sampling_handler=sampling_handler)
+        toolset.set_sampling_model(TestModel(custom_output_text='sampled'))
 
-async def test_custom_http_client_not_closed():
-    custom_http_client = create_async_http_client()
+        with pytest.warns(UserWarning, match=r'^`sampling_model` will never be called') as caught:
+            async with toolset:
+                assert toolset.is_running
+        assert 'sampling_handler' not in str(caught[0].message)
 
-    assert not custom_http_client.is_closed
+    @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+    async def test_agent_sampling_model_outlives_entered_agent(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """A sampling model set inside `async with agent:` keeps its client open after the agent context exits.
 
-    my_mcp_server = MCPServerStreamableHTTP(
-        url='https://mcp.deepwiki.com/mcp', http_client=custom_http_client, timeout=30
-    )
+        With `defer_model_check=True` the agent context enters a model it infers from the model ID and closes
+        that model's client on exit, so MCP sampling must get its own model rather than that one.
+        """
+        monkeypatch.setenv('OPENAI_API_KEY', 'test')
+        # Give each inferred provider its own HTTP client; the autouse test fixture shares one per test.
+        monkeypatch.setattr('pydantic_ai.providers._openai_compatible.create_async_httpx2_client', httpx2.AsyncClient)
+        toolset = MCPToolset(fastmcp_server)
+        agent = Agent('openai-responses:gpt-4o', toolsets=[toolset], defer_model_check=True)
+        async with agent:
+            agent.set_mcp_sampling_model()
 
-    tools = await my_mcp_server.list_tools()
-    assert len(tools) > 0
-
-    assert not custom_http_client.is_closed
-
-
-async def test_http_client_mutually_exclusive_with_headers():
-    server = MCPServerStreamableHTTP(
-        url='https://example.com/mcp',
-        http_client=create_async_http_client(),
-        headers={'Authorization': 'Bearer token'},
-    )
-    with pytest.raises(ValueError, match='`http_client` is mutually exclusive with `headers`'):
-        async with server:
+        sampling_model = toolset.sampling_model
+        assert sampling_model is not None
+        provider = sampling_model.provider
+        assert isinstance(provider, OpenAIProvider)
+        assert not provider.client.is_closed()
+        async with sampling_model:
             pass
 
+    async def test_sampling_and_elicitation_do_not_warn_on_legacy_session(
+        self, fastmcp_server: FastMCP[None], as_legacy_mcp_session: None
+    ):
+        """The warning is specific to a modern session — a legacy one still delivers both."""
+        toolset = MCPToolset(fastmcp_server, sampling_model=TestModel(custom_output_text='sampled'))
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            async with toolset:
+                assert toolset.is_running
 
-# ============================================================================
-# Tool and Resource Caching Tests
-# ============================================================================
+    async def test_server_metadata_read_from_era_neutral_properties(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None
+    ):
+        """A modern session has no `initialize` handshake, so server metadata comes off the
+        client's era-neutral properties instead of `initialize_result`."""
+        present_as_modern_session(
+            monkeypatch,
+            server_info=mcp_types.Implementation(name='era-neutral', version='9.9'),
+            server_capabilities=mcp_types.ServerCapabilities(),
+            instructions='from the era-neutral property',
+        )
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            assert toolset.server_info.name == 'era-neutral'
+            assert toolset.instructions == 'from the era-neutral property'
+
+    async def test_missing_server_info_is_tolerated_on_modern_session(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None
+    ):
+        """`serverInfo` is an optional display-only stamp on modern sessions, so a server that
+        omits it still connects; only reading `server_info` fails, and says why."""
+        present_as_modern_session(monkeypatch, server_capabilities=mcp_types.ServerCapabilities())
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            assert toolset.is_running
+            with pytest.raises(AttributeError, match='did not send implementation info'):
+                toolset.server_info
+
+    async def test_non_string_era_neutral_instructions_are_dropped(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None
+    ):
+        """A malformed, non-string value in the era-neutral property is dropped rather than stored."""
+        present_as_modern_session(
+            monkeypatch,
+            server_info=mcp_types.Implementation(name='era-neutral', version='9.9'),
+            server_capabilities=mcp_types.ServerCapabilities(),
+            instructions=1234,
+        )
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            assert toolset.instructions is None
+
+    async def test_modern_session_without_era_neutral_metadata_is_rejected(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None
+    ):
+        """`initialize_result` alone decides the era, so a client that reports a modern session
+        without capabilities to read fails with an actionable error. Deriving the era from the
+        properties instead would send this case down the legacy path, where the missing
+        `initialize_result` surfaces as a bare assertion."""
+        present_as_modern_session(monkeypatch)
+
+        toolset = MCPToolset(fastmcp_server)
+        with pytest.raises(UserError, match=r'exposes no `server_capabilities`'):
+            await toolset.list_tools()
+
+    async def test_uninitialized_fastmcp3_client_gets_actionable_error(
+        self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch
+    ):
+        """On FastMCP 3 a missing `initialize_result` means the client never initialized (e.g. it
+        was built with `auto_initialize=False`), not a modern session — the error must say so
+        rather than blame a session generation that doesn't exist in that line."""
+        monkeypatch.setattr(mcp_module, '_MCP_SDK_V2', False)
+        monkeypatch.setattr(Client, 'initialize_result', property(lambda self: None))
+
+        toolset = MCPToolset(fastmcp_server)
+        with pytest.raises(UserError, match=r'was it built with `auto_initialize=False`'):
+            await toolset.list_tools()
+
+    async def test_label_falls_back_to_repr(self):
+        toolset = MCPToolset('https://example.com/mcp')
+        assert 'MCPToolset' in toolset.label
+
+    @pytest.mark.parametrize(
+        'toolset_max_retries,ctx_max_retries,expected',
+        [
+            pytest.param(None, 5, 5, id='inherits-ctx'),
+            pytest.param(2, 5, 2, id='explicit-wins'),
+        ],
+    )
+    async def test_tool_for_tool_def_retry_budget(
+        self, run_context: RunContext, toolset_max_retries: int | None, ctx_max_retries: int, expected: int
+    ):
+        """Resolution table for `tool_for_tool_def`: an explicit `max_retries` wins, else `ctx.max_retries`.
+
+        A unit rather than an agent-run test because `ToolsetTool.max_retries` is only observable
+        end-to-end as a retry *count*; the durable end-to-end proof lives in
+        `tests/durable_exec/test_dbos.py::test_dbos_mcp_tool_inherits_agent_retries`.
+        """
+        toolset = MCPToolset('https://example.com/mcp', max_retries=toolset_max_retries)
+        tool = toolset.tool_for_tool_def(
+            ToolDefinition(name='foo', description='', parameters_json_schema={'type': 'object'}),
+            ctx=replace(run_context, max_retries=ctx_max_retries),
+        )
+        assert tool.max_retries == expected
+
+    @pytest.mark.parametrize(
+        'toolset_max_retries,ctx_max_retries,expected',
+        [
+            pytest.param(None, 5, 5, id='inherits-ctx'),
+            pytest.param(2, 5, 2, id='explicit-wins'),
+        ],
+    )
+    async def test_get_tools_resolves_retries_via_tool_for_tool_def(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        toolset_max_retries: int | None,
+        ctx_max_retries: int,
+        expected: int,
+    ):
+        """`get_tools` builds every tool through `tool_for_tool_def`, so the two agree by construction.
+
+        A unit because the retry budget is only observable end-to-end as a count. Pinned because these
+        used to be separate `ToolsetTool` construction sites, and their divergence was the #5180 bug.
+        """
+        toolset = MCPToolset(fastmcp_server, max_retries=toolset_max_retries)
+        tools = await toolset.get_tools(replace(run_context, max_retries=ctx_max_retries))
+        assert tools
+        assert {tool.max_retries for tool in tools.values()} == {expected}
+
+    async def test_direct_call_tool_propagates_error_when_configured(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server, tool_error_behavior='error')
+        async with toolset:
+            with pytest.raises(ToolError):
+                await toolset.direct_call_tool('boom', {})
 
 
-async def test_tools_caching_enabled_by_default() -> None:
-    """Test that list_tools() caches results by default."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        # First call - should fetch from server and cache
-        tools1 = await server.list_tools()
-        assert len(tools1) > 0
-        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+class TestToolResultMapping:
+    """Direct unit tests for `_map_mcp_tool_result` — easier than crafting a server response
+    that bypasses FastMCP's `structured_content` shortcut."""
 
-        # Second call - should return cached value (cache is still populated)
-        tools2 = await server.list_tools()
-        assert tools2 == tools1
-        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+    def test_text_content_returns_str(self):
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='hello'))
+        assert out == 'hello'
 
-async def test_tools_no_caching_when_disabled() -> None:
-    """Test that list_tools() does not cache when cache_tools=False."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_tools=False)
-    async with server:
-        # First call - should not populate cache
-        tools1 = await server.list_tools()
-        assert len(tools1) > 0
-        assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+    def test_text_content_with_json_object_is_parsed(self):
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
-        # Second call - cache should still be None
-        tools2 = await server.list_tools()
-        assert tools2 == tools1
-        assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='{"a": 1}'))
+        assert out == {'a': 1}
 
+    def test_text_content_with_json_array_is_parsed(self):
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
-async def test_tools_cache_invalidation_on_notification() -> None:
-    """Test that tools cache is invalidated when ToolListChangedNotification is received."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        # Get initial tools - hidden_tool should NOT be present (it's disabled at startup)
-        tools1 = await server.list_tools()
-        tool_names1 = [t.name for t in tools1]
-        assert 'hidden_tool' not in tool_names1
-        assert 'enable_hidden_tool' in tool_names1
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='[1, 2, 3]'))
+        assert out == [1, 2, 3]
 
-        # Enable the hidden tool (server sends ToolListChangedNotification)
-        await server.direct_call_tool('enable_hidden_tool', {})
+    def test_text_content_with_invalid_json_falls_back_to_text(self):
+        from pydantic_ai.mcp import _map_mcp_tool_result  # type: ignore[attr-defined]
 
-        # Get tools again - hidden_tool should now be present (cache was invalidated)
-        tools2 = await server.list_tools()
-        tool_names2 = [t.name for t in tools2]
-        assert 'hidden_tool' in tool_names2
+        # Starts with `{` but isn't valid JSON.
+        out = _map_mcp_tool_result(mcp_types.TextContent(type='text', text='{not valid'))
+        assert out == '{not valid'
 
 
-async def test_resources_caching_enabled_by_default() -> None:
-    """Test that list_resources() caches results by default."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        assert server.capabilities.resources
+class TestSamplingHandler:
+    @pytest.mark.skipif(MCP_SDK_V2, reason='Modern MCP sessions do not support server-initiated sampling')
+    async def test_continue_tool_history_through_sampling(self):
+        def get_weather() -> str:
+            return 'Sunny in London'
 
-        # First call - should fetch from server and cache
-        resources1 = await server.list_resources()
-        assert server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
+        source_agent = Agent(TestModel(), tools=[get_weather])
+        history = (await source_agent.run('What is the weather?')).all_messages()
+        tool_calls = [part for message in history for part in message.parts if isinstance(part, ToolCallPart)]
+        assert len(tool_calls) == 1
+        expected_tool_call = tool_calls[0]
+        received_messages: list[ModelMessage] = []
 
-        # Second call - should return cached value (cache is still populated)
-        resources2 = await server.list_resources()
-        assert resources2 == resources1
-        assert server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
+        def sample(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            received_messages.extend(messages)
+            return ModelResponse(parts=[TextPart('Enjoy the sunshine')])
 
+        server: FastMCP[None] = FastMCP('sampling-history')
 
-async def test_resources_no_caching_when_disabled() -> None:
-    """Test that list_resources() does not cache when cache_resources=False."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], cache_resources=False)
-    async with server:
-        assert server.capabilities.resources
+        @server.tool()
+        async def continue_conversation(ctx: Context) -> str:
+            result = await Agent(MCPSamplingModel(ctx.session)).run('Thanks', message_history=history)
+            return result.output
 
-        # First call - should not populate cache
-        resources1 = await server.list_resources()
-        assert server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+        toolset = MCPToolset(server, sampling_model=FunctionModel(sample))
+        async with toolset:
+            assert await toolset.direct_call_tool('continue_conversation', {}) == 'Enjoy the sunshine'
 
-        # Second call - cache should still be None
-        resources2 = await server.list_resources()
-        assert resources2 == resources1
-        assert server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
+        received_calls = [
+            part for message in received_messages for part in message.parts if isinstance(part, ToolCallPart)
+        ]
+        received_results = [
+            part for message in received_messages for part in message.parts if isinstance(part, ToolReturnPart)
+        ]
+        assert received_calls == [expected_tool_call]
+        assert len(received_results) == 1
+        assert (received_results[0].tool_name, received_results[0].tool_call_id, received_results[0].content) == (
+            'get_weather',
+            expected_tool_call.tool_call_id,
+            'Sunny in London',
+        )
 
+    async def test_sampling_handler_round_trip(self):
+        """Drive the sampling handler built from `sampling_model=` to cover its body."""
+        from pydantic_ai.mcp import _build_sampling_handler  # type: ignore[attr-defined]
 
-async def test_resources_cache_invalidation_on_notification() -> None:
-    """Test that resources cache is invalidated when ResourceListChangedNotification is received."""
-    from mcp.types import ResourceListChangedNotification, ServerNotification
-
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        assert server.capabilities.resources
-
-        # Populate cache
-        await server.list_resources()
-        assert server._cached_resources is not None  # pyright: ignore[reportPrivateUsage]
-
-        # Simulate receiving a resource list changed notification
-        notification = ServerNotification(ResourceListChangedNotification())
-        await server._handle_notification(notification)  # pyright: ignore[reportPrivateUsage]
-
-        # Cache should be invalidated
-        assert server._cached_resources is None  # pyright: ignore[reportPrivateUsage]
-
-
-async def test_cache_cleared_on_connection_close() -> None:
-    """Test that caches are cleared when the connection is closed."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    # First connection
-    async with server:
-        await server.list_tools()
-        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
-
-    # After exiting, cache should be cleared by __aexit__
-    assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
-
-    # Reconnect and verify cache starts empty
-    async with server:
-        assert server._cached_tools is None  # pyright: ignore[reportPrivateUsage]
-        # Fetch again to populate
-        await server.list_tools()
-        assert server._cached_tools is not None  # pyright: ignore[reportPrivateUsage]
+        model = TestModel()
+        handler = _build_sampling_handler(model)
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))],
+            maxTokens=42,
+            temperature=0.5,
+            stopSequences=['STOP'],
+        )
+        result = await handler([], params, None)  # type: ignore[arg-type, misc]
+        assert isinstance(result, mcp_types.CreateMessageResult)
+        assert result.model == model.model_name
 
 
-async def test_server_capabilities_list_changed_fields() -> None:
-    """Test that ServerCapabilities correctly parses listChanged fields."""
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        caps = server.capabilities
-        assert isinstance(caps.prompts_list_changed, bool)
-        assert isinstance(caps.tools_list_changed, bool)
-        assert isinstance(caps.resources_list_changed, bool)
+class TestSamplingMessageMapping:
+    """Cover the mapping helpers in `pydantic_ai._mcp` that translate MCP sampling messages
+    to/from PAI message parts. Exercised via the sampling handler that `MCPToolset(sampling_model=...)` installs."""
+
+    async def test_unmapped_request_parts_remain_ignored(self):
+        """Pin mapper behavior for parts the agent normally transforms before model requests."""
+        assert _mcp.map_from_pai_messages(
+            [ModelRequest(parts=[SpeechPart(speaker='user'), ToolAvailabilityDeltaPart(tools_added=['weather'])])]
+        ) == ('', [])
+
+    async def test_map_handles_image_audio_and_role_transitions(self):
+        from pydantic_ai import _mcp as _mcp_helpers
+
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hello')),
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='hi back')),
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=mcp_types.ImageContent(
+                        type='image',
+                        data=base64.b64encode(b'fake').decode(),
+                        mimeType='image/png',
+                    ),
+                ),
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=mcp_types.AudioContent(
+                        type='audio',
+                        data=base64.b64encode(b'fake').decode(),
+                        mimeType='audio/wav',
+                    ),
+                ),
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='final')),
+            ],
+            systemPrompt='you are helpful',
+            maxTokens=10,
+        )
+        pai_messages = _mcp_helpers.map_from_mcp_params(params)
+        # Should alternate Request/Response, with the trailing assistant becoming the final ModelResponse.
+        kinds = [type(m).__name__ for m in pai_messages]
+        assert kinds == ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+
+    async def test_map_rejects_unsupported_content_types(self):
+        from pydantic_ai import _mcp as _mcp_helpers
+
+        # Tool calls belong to assistant messages.
+        tool_use_params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=mcp_types.ToolUseContent(type='tool_use', id='t', name='foo', input={}),
+                ),
+            ],
+            maxTokens=10,
+        )
+        with pytest.raises(NotImplementedError, match='cannot be used as user content'):
+            _mcp_helpers.map_from_mcp_params(tool_use_params)
+
+        # Audio sampling responses are also explicitly unsupported.
+        audio_response_params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=mcp_types.AudioContent(
+                        type='audio',
+                        data=base64.b64encode(b'fake').decode(),
+                        mimeType='audio/wav',
+                    ),
+                ),
+            ],
+            maxTokens=10,
+        )
+        with pytest.raises(NotImplementedError):
+            _mcp_helpers.map_from_sampling_content(audio_response_params.messages[0].content)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize('as_list', [False, True])
+    @pytest.mark.parametrize('is_error', [False, True])
+    async def test_map_tool_history(self, as_list: bool, is_error: bool):
+        """Pin native wire conversion independently of a model provider's history interpretation."""
+        tool_call = mcp_types.ToolUseContent(type='tool_use', id='call-1', name='weather', input={'city': 'London'})
+        tool_result = mcp_types.ToolResultContent(
+            type='tool_result',
+            toolUseId='call-1',
+            content=[mcp_types.TextContent(type='text', text='unavailable' if is_error else 'sunny')],
+            isError=is_error,
+        )
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='assistant', content=[tool_call] if as_list else tool_call),
+                mcp_types.SamplingMessage(role='user', content=[tool_result] if as_list else tool_result),
+            ],
+            maxTokens=10,
+        )
+        mapped = _mcp.map_from_mcp_params(params)
+        assert isinstance(mapped[0], ModelResponse)
+        assert mapped[0].parts == [ToolCallPart(tool_name='weather', args={'city': 'London'}, tool_call_id='call-1')]
+        assert isinstance(mapped[1], ModelRequest)
+        result = mapped[1].parts[0]
+        assert isinstance(result, ToolReturnPart)
+        assert (result.tool_name, result.tool_call_id, result.content, result.outcome) == (
+            'weather',
+            'call-1',
+            'unavailable' if is_error else 'sunny',
+            'failed' if is_error else 'success',
+        )
+
+    async def test_map_parallel_tool_history_with_structured_result(self):
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=[
+                        mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                        mcp_types.ToolUseContent(type='tool_use', id='two', name='second', input={}),
+                    ],
+                ),
+                mcp_types.SamplingMessage(
+                    role='user',
+                    content=[
+                        mcp_types.ToolResultContent(
+                            type='tool_result', toolUseId='one', content=[], structuredContent={'value': 1}
+                        ),
+                        mcp_types.ToolResultContent(
+                            type='tool_result',
+                            toolUseId='two',
+                            content=[
+                                mcp_types.TextContent(type='text', text='line one'),
+                                mcp_types.TextContent(type='text', text='line two'),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+            maxTokens=10,
+        )
+        mapped = _mcp.map_from_mcp_params(params)
+        assert len(mapped) == 2
+        assert isinstance(mapped[1], ModelRequest)
+        assert [
+            (part.tool_name, part.tool_call_id, part.content)
+            for part in mapped[1].parts
+            if isinstance(part, ToolReturnPart)
+        ] == [
+            ('first', 'one', {'value': 1}),
+            ('second', 'two', ['line one', 'line two']),
+        ]
+
+    @pytest.mark.parametrize('invalid_case', ['orphan', 'assistant-result'])
+    async def test_map_rejects_invalid_tool_history(self, invalid_case: str):
+        tool_result = mcp_types.ToolResultContent(
+            type='tool_result',
+            toolUseId='one',
+            content=[],
+        )
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(
+                    role='assistant',
+                    content=mcp_types.ToolUseContent(type='tool_use', id='one', name='first', input={}),
+                ),
+                mcp_types.SamplingMessage(
+                    role='assistant' if invalid_case == 'assistant-result' else 'user', content=tool_result
+                ),
+            ],
+            maxTokens=10,
+        )
+        if invalid_case == 'orphan':
+            params.messages.pop(0)
+            with pytest.raises(UnexpectedModelBehavior, match='no matching tool call'):
+                _mcp.map_from_mcp_params(params)
+        else:
+            with pytest.raises(NotImplementedError, match=r'Unsupported .* content type'):
+                _mcp.map_from_mcp_params(params)
+
+    async def test_map_handles_consecutive_assistant_messages(self):
+        """Two assistant messages in a row append into the same `ModelResponse` (no intervening request)."""
+        from pydantic_ai import _mcp as _mcp_helpers
+
+        params = mcp_types.CreateMessageRequestParams(
+            messages=[
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='one')),
+                mcp_types.SamplingMessage(role='assistant', content=mcp_types.TextContent(type='text', text='two')),
+            ],
+            maxTokens=10,
+        )
+        pai_messages = _mcp_helpers.map_from_mcp_params(params)
+        assert [type(m).__name__ for m in pai_messages] == ['ModelResponse']
+
+    async def test_map_from_model_response_skips_thinking_and_rejects_unknown(self):
+        from pydantic_ai import _mcp as _mcp_helpers
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
+
+        # `ThinkingPart` is silently skipped, leaving the text content.
+        result = _mcp_helpers.map_from_model_response(
+            ModelResponse(parts=[ThinkingPart(content='hidden'), TextPart(content='visible')])
+        )
+        assert result.text == 'visible'
+
+        # Unsupported parts (e.g. tool calls) raise a clear error.
+        with pytest.raises(UnexpectedModelBehavior):
+            _mcp_helpers.map_from_model_response(ModelResponse(parts=[ToolCallPart(tool_name='foo', args='{}')]))
+
+
+class TestResourceMethodErrorPaths:
+    async def test_list_resources_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        """Server errors from `list_resources` are wrapped in `MCPError`."""
+        from unittest.mock import AsyncMock
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_resources = AsyncMock(side_effect=make_mcp_error(-32603, 'boom'))
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_resources()
+
+    async def test_list_resource_templates_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        from unittest.mock import AsyncMock
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.list_resource_templates = AsyncMock(side_effect=make_mcp_error(-32603, 'boom'))
+            with pytest.raises(MCPError, match='boom'):
+                await toolset.list_resource_templates()
+
+    async def test_read_resource_wraps_mcp_error(self, fastmcp_server: FastMCP[None]):
+        from unittest.mock import AsyncMock
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            toolset.client.read_resource = AsyncMock(side_effect=make_mcp_error(-32002, 'not found'))
+            with pytest.raises(MCPError, match='not found'):
+                await toolset.read_resource('resource://missing')
+
+
+class TestLoadMCPToolsets:
+    async def test_loads_toolsets_from_config_without_env(self):
+        """Stdio entries without an `env` field also produce valid toolsets."""
+        config = {
+            'mcpServers': {
+                'alpha': {'command': 'python', 'args': ['-m', 'tests.mcp_server']},
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            toolsets = load_mcp_toolsets(config_path)
+        assert len(toolsets) == 1
+
+    async def test_loads_toolsets_from_config_with_prefix(self):
+        config = {
+            'mcpServers': {
+                'alpha': {'command': 'python', 'args': ['-m', 'tests.mcp_server'], 'env': {'FOO': 'bar'}},
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            toolsets = load_mcp_toolsets(config_path)
+        # Single server entry, wrapped with `.prefixed('alpha')`.
+        assert len(toolsets) == 1
+        # The wrapped toolset is a `PrefixedToolset`, not an `MCPToolset` directly.
+        assert isinstance(toolsets[0], PrefixedToolset)
+        assert isinstance(toolsets[0].wrapped, MCPToolset)
+
+    async def test_load_mcp_toolsets_missing_file_raises(self):
+        with pytest.raises(FileNotFoundError):
+            load_mcp_toolsets('/nonexistent/path/to/config.json')
+
+    @pytest.mark.subprocess(reason='serves a Streamable HTTP MCP server from a separate process')
+    async def test_load_mcp_toolsets_http_entry(self):
+        """A URL-configured toolset completes a real Streamable HTTP tool call."""
+        process = await anyio.open_process(
+            [
+                sys.executable,
+                '-c',
+                (
+                    'import socket\n'
+                    'import uvicorn\n'
+                    'from fastmcp import FastMCP\n'
+                    "mcp = FastMCP('test_server')\n"
+                    "mcp.tool(name='get_weather_forecast')"
+                    "(lambda location: f'The weather in {location} is sunny and 26 degrees Celsius.')\n"
+                    "server_socket = socket.create_server(('127.0.0.1', 0))\n"
+                    'print(server_socket.getsockname()[1], flush=True)\n'
+                    "uvicorn.run(mcp.http_app(), fd=server_socket.fileno(), lifespan='on', log_level='warning')"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        async def read_stderr() -> str:  # pragma: no cover
+            assert process.stderr is not None
+            try:
+                return (await process.stderr.receive()).decode()
+            except anyio.EndOfStream:  # pragma: no cover
+                return '<no stderr>'
+
+        try:
+            assert process.stdout is not None
+            try:
+                port = int((await process.stdout.receive()).decode().strip())
+            except anyio.EndOfStream:  # pragma: no cover
+                raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
+            config = {
+                'mcpServers': {
+                    'beta': {'url': f'http://127.0.0.1:{port}/mcp', 'headers': {'X-Key': 'foo'}},
+                }
+            }
+            with TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / 'mcp.json'
+                config_path.write_text(json.dumps(config), encoding='utf-8')
+                toolsets = load_mcp_toolsets(config_path)
+
+            assert len(toolsets) == 1
+            assert isinstance(toolsets[0], PrefixedToolset)
+            wrapped = toolsets[0].wrapped
+            assert isinstance(wrapped, MCPToolset)
+            assert isinstance(wrapped.client.transport, StreamableHttpTransport)
+            assert wrapped.client.transport.headers == {'X-Key': 'foo'}
+
+            try:
+                with anyio.fail_after(10):
+                    agent = Agent(TestModel(call_tools=['beta_get_weather_forecast']), toolsets=toolsets)
+                    result = await agent.run('weather')
+            except BaseException:  # pragma: no cover
+                if process.returncode is not None:
+                    raise AssertionError(f'HTTP MCP test server exited during startup: {await read_stderr()}') from None
+                raise
+        finally:
+            with anyio.CancelScope(shield=True):
+                if process.returncode is None:  # pragma: no branch
+                    process.terminate()
+                    with anyio.move_on_after(5) as graceful_shutdown:
+                        await process.wait()
+                    if graceful_shutdown.cancel_called:  # pragma: lax no cover
+                        process.kill()
+                if process.returncode is None:  # pragma: no branch
+                    await process.wait()  # pragma: lax no cover
+
+        assert result.output == snapshot(
+            '{"beta_get_weather_forecast":"The weather in a is sunny and 26 degrees Celsius."}'
+        )
+
+    async def test_load_mcp_toolsets_accepts_explicit_null_optional_values(self):
+        """Explicit JSON `null` keeps working for optional values used by shared MCP configs."""
+        config = {
+            'mcpServers': {
+                'stdio': {'command': 'python', 'args': None, 'env': None, 'cwd': None},
+                'http': {'url': 'https://example.com/mcp', 'headers': None},
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            toolsets = load_mcp_toolsets(config_path)
+
+        assert len(toolsets) == snapshot(2)
+        assert isinstance(toolsets[0], PrefixedToolset)
+        stdio = toolsets[0].wrapped
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == []
+        assert stdio.client.transport.env is None
+        assert stdio.client.transport.cwd is None
+        assert isinstance(toolsets[1], PrefixedToolset)
+        http = toolsets[1].wrapped
+        assert isinstance(http, MCPToolset)
+        assert isinstance(http.client.transport, StreamableHttpTransport)
+        assert http.client.transport.headers == {}
+
+    async def test_load_mcp_toolsets_expands_env_vars(self, monkeypatch: pytest.MonkeyPatch):
+        """`${VAR_NAME}` references in the config are resolved from `os.environ`; default-syntax
+        (`${VAR_NAME:-fallback}`) returns the fallback when unset; missing required vars raise."""
+        monkeypatch.setenv('MCP_TEST_TOKEN', 'secret-value')
+        config = {
+            'mcpServers': {
+                'alpha': {
+                    'url': 'https://${MCP_TEST_HOST:-localhost:8000}/mcp',
+                    'headers': {'Authorization': 'Bearer ${MCP_TEST_TOKEN}'},
+                },
+                # `args` is the list-valued field, so it covers expansion inside a list.
+                'beta': {'command': 'python', 'args': ['-m', '${MCP_TEST_TOKEN}']},
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            toolsets = load_mcp_toolsets(config_path)
+
+        wrapped = toolsets[0].wrapped  # type: ignore[attr-defined]
+        assert isinstance(wrapped, MCPToolset)
+        assert isinstance(wrapped.client.transport, StreamableHttpTransport)
+        assert wrapped.client.transport.headers == {'Authorization': 'Bearer secret-value'}
+        assert str(wrapped.client.transport.url) == 'https://localhost:8000/mcp'
+
+        stdio = toolsets[1].wrapped  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownVariableType]
+        assert isinstance(stdio, MCPToolset)
+        assert isinstance(stdio.client.transport, StdioTransport)
+        assert stdio.client.transport.args == ['-m', 'secret-value']
+
+    async def test_load_mcp_toolsets_undefined_env_var_raises(self):
+        """A `${VAR}` reference without a default and not set in the environment raises a clear `ValueError`."""
+        config = {'mcpServers': {'alpha': {'url': 'https://${MCP_TEST_UNDEFINED}/mcp'}}}
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValueError, match=r'\$\{MCP_TEST_UNDEFINED\} is not defined'):
+                load_mcp_toolsets(config_path)
+
+    @pytest.mark.parametrize(
+        'config,loc',
+        [
+            pytest.param(['not an object'], (), id='root-not-an-object'),
+            pytest.param({'someOtherKey': {}}, ('mcpServers',), id='missing-mcp-servers-key'),
+            pytest.param({'mcpServers': {'alpha': None}}, ('mcpServers', 'alpha'), id='entry-not-an-object'),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 123}}}, ('mcpServers', 'alpha', 'command'), id='command-not-a-str'
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': 'not-a-list'}}},
+                ('mcpServers', 'alpha', 'args'),
+                id='args-not-a-list',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'env'),
+                id='env-not-a-mapping',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/sse', 'headers': 'not-a-mapping'}}},
+                ('mcpServers', 'alpha', 'headers'),
+                id='headers-not-a-mapping',
+            ),
+            # The `Raises:` block and the PR body name these inner types specifically: each used to
+            # load without complaint and only misbehave once the server was contacted.
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'args': ['-p', 8080]}}},
+                ('mcpServers', 'alpha', 'args', 1),
+                id='args-item-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'cwd': 123}}},
+                ('mcpServers', 'alpha', 'cwd'),
+                id='cwd-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'command': 'echo', 'env': {'PORT': 8080}}}},
+                ('mcpServers', 'alpha', 'env', 'PORT'),
+                id='env-value-not-a-str',
+            ),
+            pytest.param(
+                {'mcpServers': {'alpha': {'url': 'http://localhost:8000/mcp', 'headers': {'X-Count': 5}}}},
+                ('mcpServers', 'alpha', 'headers', 'X-Count'),
+                id='headers-value-not-a-str',
+            ),
+        ],
+    )
+    async def test_load_mcp_toolsets_rejects_config_not_matching_the_schema(
+        self, config: object, loc: tuple[str | int, ...]
+    ):
+        """A config that doesn't match the `mcpServers` shape raises `ValidationError`, pointing at the field.
+
+        Covers the inner types as well as the fields themselves — an item inside `args`, a `cwd`, and
+        the values inside `env` and `headers`. Those are the shapes that used to load without
+        complaint and only misbehave later, once the server was contacted, so `loc` is asserted down
+        to the offending index or key.
+        """
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValidationError) as exc_info:
+                load_mcp_toolsets(config_path)
+
+        assert [error['loc'] for error in exc_info.value.errors()] == [loc]
+        # `ValidationError` subclasses `ValueError`, so callers catching `ValueError` still work.
+        assert isinstance(exc_info.value, ValueError)
+
+    async def test_load_mcp_toolsets_ignores_keys_other_mcp_clients_write(self):
+        """A config shared with another MCP client still loads; its extra keys are ignored."""
+        config = {
+            'mcpServers': {
+                'alpha': {'command': 'python', 'args': ['-m', 'x'], 'type': 'stdio', 'disabled': False, 'timeout': 30}
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            assert len(load_mcp_toolsets(config_path)) == 1
+
+    async def test_load_mcp_toolsets_rejects_invalid_server_entry(self):
+        """A server entry with neither `command` nor `url` is a `ValueError`, not a schema problem."""
+        config = {'mcpServers': {'alpha': {'something': 'else'}}}
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            with pytest.raises(ValueError, match=r"MCP server config 'alpha' must have either"):
+                load_mcp_toolsets(config_path)
+
+    async def test_load_mcp_toolsets_passes_primitive_values_through_env_expansion(self):
+        """Non-string/dict/list values (ints, bools, null) in the config flow through
+        `_expand_env_vars` unchanged."""
+        config = {
+            'mcpServers': {
+                'alpha': {
+                    'command': 'python',
+                    'args': ['-m', 'tests.mcp_server'],
+                    # Primitive values: `_expand_env_vars` should return these as-is.
+                    'startup_timeout': 30,
+                    'enable_telemetry': True,
+                    'log_file': None,
+                },
+            }
+        }
+        with TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / 'mcp.json'
+            config_path.write_text(json.dumps(config), encoding='utf-8')
+            toolsets = load_mcp_toolsets(config_path)
+        assert len(toolsets) == 1
+
+
+def test_construction_does_not_emit_warnings(recwarn: Any) -> None:
+    """Building an `MCPToolset` from a URL must not emit `FastMCPDeprecationWarning` for the
+    `sse_read_timeout` parameter — the StreamableHttp path migrated off it (the FastMCP `Client`
+    `timeout` carries the read timeout instead)."""
+    MCPToolset('https://example.com/mcp', headers={'X-Key': 'foo'})
+    deprecation_messages = [str(w.message) for w in recwarn if 'sse_read_timeout' in str(w.message)]
+    assert deprecation_messages == [], deprecation_messages
+
+
+@pytest.fixture
+def as_mcp_sdk_v2(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Take the MCP SDK v2 branches.
+
+    The SDK generation is read once at import into a module-level constant, so tests that synthesize
+    v2-only client state use this fixture even when a different supported stack is installed.
+    """
+    monkeypatch.setattr(mcp_module, '_MCP_SDK_V2', True)
+
+
+def present_as_modern_session(monkeypatch: pytest.MonkeyPatch, **properties: Any) -> None:
+    """Present the client as a modern (sessionless) one: `initialize_result` is the era signal,
+    and the era-neutral properties named in `properties` are the only metadata available."""
+    monkeypatch.setattr(Client, 'initialize_result', property(lambda self: None))
+    era_neutral_properties = {
+        'server_info': None,
+        'server_capabilities': None,
+        'instructions': None,
+        **properties,
+    }
+    for name, value in era_neutral_properties.items():
+        monkeypatch.setattr(Client, name, property(lambda self, value=value: value), raising=False)
+
+
+@pytest.fixture
+def as_modern_mcp_session(monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None) -> None:
+    """Additionally present the client as a modern (sessionless) session, with the metadata a
+    happy-path server would expose."""
+    present_as_modern_session(
+        monkeypatch,
+        server_info=mcp_types.Implementation(name='modern', version='9.9'),
+        server_capabilities=mcp_types.ServerCapabilities(),
+    )
+
+
+@pytest.fixture
+def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Present the connected client as a handshake-era session."""
+    init_result = mcp_types.InitializeResult(
+        protocolVersion='2025-11-25',
+        capabilities=mcp_types.ServerCapabilities(),
+        serverInfo=mcp_types.Implementation(name='legacy', version='1.0'),
+    )
+    monkeypatch.setattr(Client, 'initialize_result', property(lambda self: init_result))
+
+
+class TestMCPToolsetBackgroundTasks:
+    """Task-augmented execution across both generations.
+
+    FastMCP 3 speaks SEP-1686, where the server declares per-tool `execution.taskSupport` and
+    `MCPToolset` routes the call according to that declaration and the client's task preference.
+    FastMCP 4 speaks SEP-2663, where the client no longer routes at all — an ordinary call to a
+    task-only tool is driven to completion transparently — and `use_task=True` explicitly routes
+    through the tasks extension while still waiting for the completed result.
+    """
+
+    @pytest.fixture
+    async def task_server(self) -> FastMCP[None]:
+        server: FastMCP[None] = FastMCP('task_server')
+        if MCP_SDK_V2:
+            # The FastMCP 4 compatibility environment installs the task extra so this integration
+            # is exercised rather than skipped.
+            assert TasksExtension is not None
+            # FastMCP 4 moved task execution into an optional extension package.
+            getattr(server, 'add_extension')(TasksExtension())
+
+        @server.tool(task=TaskConfig(mode='required'))
+        async def task_required_tool() -> str:
+            """A tool that requires task-augmented execution."""
+            await asyncio.sleep(0)
+            return 'task_required_completed'
+
+        @server.tool(task=TaskConfig(mode='optional'))
+        async def task_optional_tool(ctx: Context) -> str:
+            """A tool that may run either as a task or synchronously."""
+            await asyncio.sleep(0)
+            mode = 'task' if ctx.is_background_task else 'sync'
+            return f'task_optional_{mode}'
+
+        @server.tool(task=TaskConfig(mode='forbidden'))
+        async def task_forbidden_tool() -> str:
+            """A tool that forbids task-augmented execution."""
+            return 'task_forbidden_completed'
+
+        @server.tool()
+        async def plain_tool() -> str:
+            """A tool with no task support - `execution` is `None`."""
+            return 'plain_completed'
+
+        return server
+
+    async def test_get_tools_exposes_client_task_routing(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """FastMCP 3 exposes its client-side routing choice; FastMCP 4 routes server-side."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+
+        client_routes_tasks = not MCP_SDK_V2
+        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is client_routes_tasks
+        assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is client_routes_tasks
+        assert (tools['task_forbidden_tool'].tool_def.metadata or {}).get('task') is False
+        assert (tools['plain_tool'].tool_def.metadata or {}).get('task') is False
+
+        toolset = MCPToolset(task_server, prefer_tasks=False)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+
+        assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is client_routes_tasks
+        assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is False
+
+    async def test_explicit_forbidden_task_support_stays_on_sync_path(
+        self, run_context: RunContext[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The in-process FastMCP server omits `execution` for forbidden tools, so supply the
+        explicit protocol value to cover that distinct wire shape."""
+        toolset = MCPToolset('https://example.com/mcp')
+        monkeypatch.setattr(
+            toolset,
+            'list_tools',
+            AsyncMock(
+                return_value=[
+                    mcp_types.Tool(
+                        name='forbidden_tool',
+                        inputSchema={'type': 'object'},
+                        execution=mcp_types.ToolExecution(taskSupport='forbidden'),
+                    )
+                ]
+            ),
+        )
+        direct_call_tool = AsyncMock(return_value='completed')
+        monkeypatch.setattr(toolset, 'direct_call_tool', direct_call_tool)
+
+        tools = await toolset.get_tools(run_context)
+        metadata = tools['forbidden_tool'].tool_def.metadata
+        assert metadata is not None
+        assert metadata['task'] is False
+        result = await toolset.call_tool('forbidden_tool', {}, run_context, tools['forbidden_tool'])
+
+        assert result == 'completed'
+        direct_call_tool.assert_awaited_once_with('forbidden_tool', {}, use_task=False)
+
+    async def test_required_tool_follows_generation_task_semantics(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """FastMCP 3 routes required tasks explicitly; FastMCP 4 drives them transparently."""
+        toolset = MCPToolset(task_server, prefer_tasks=False)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            assert (tools['task_required_tool'].tool_def.metadata or {}).get('task') is (not MCP_SDK_V2)
+            result = await toolset.call_tool('task_required_tool', {}, run_context, tools['task_required_tool'])
+        assert result == 'task_required_completed'
+
+    async def test_optional_tool_follows_default_generation_task_semantics(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """Both generations run optional tools as tasks by default, but only v1 routes client-side."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            assert (tools['task_optional_tool'].tool_def.metadata or {}).get('task') is (not MCP_SDK_V2)
+            result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
+        assert result == 'task_optional_task'
+
+    async def test_optional_tool_follows_generation_semantics_when_tasks_disabled(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        toolset = MCPToolset(task_server, prefer_tasks=False)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
+        assert result == ('task_optional_task' if MCP_SDK_V2 else 'task_optional_sync')
+
+    async def test_agent_follows_generation_semantics_when_tasks_disabled(self, task_server: FastMCP[None]) -> None:
+        toolset = MCPToolset(task_server, prefer_tasks=False)
+        agent = Agent(TestModel(call_tools=['task_optional_tool']), toolsets=[toolset])
+
+        result = await agent.run('Call the optional task tool')
+
+        expected_result = 'task_optional_task' if MCP_SDK_V2 else 'task_optional_sync'
+        assert result.output == f'{{"task_optional_tool":"{expected_result}"}}'
+
+    async def test_reconstructed_tool_definition_preserves_task_routing(
+        self,
+        task_server: FastMCP[None],
+        run_context: RunContext[None],
+    ) -> None:
+        """Serialized tool metadata preserves the effective routing choice for durable workers.
+
+        Both flag directions are asserted: the `True` direction is the one that fails loudly if
+        `tool_for_tool_def` ever drops metadata (a sync call to the required tool is rejected by
+        the server), while the `False` direction alone would be indistinguishable from that."""
+        toolset = MCPToolset(task_server, prefer_tasks=False)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            adapter = TypeAdapter(ToolDefinition)
+
+            def round_trip(name: str) -> ToolsetTool[None]:
+                tool_def = adapter.validate_json(adapter.dump_json(tools[name].tool_def))
+                return toolset.tool_for_tool_def(tool_def, ctx=run_context)
+
+            optional_result = await toolset.call_tool(
+                'task_optional_tool', {}, run_context, round_trip('task_optional_tool')
+            )
+            required_result = await toolset.call_tool(
+                'task_required_tool', {}, run_context, round_trip('task_required_tool')
+            )
+
+        assert optional_result == ('task_optional_task' if MCP_SDK_V2 else 'task_optional_sync')
+        assert required_result == 'task_required_completed'
+
+    async def test_forbidden_tool_stays_on_sync_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_forbidden_tool', {}, run_context, tools['task_forbidden_tool'])
+        assert result == 'task_forbidden_completed'
+
+    async def test_plain_tool_stays_on_sync_path(
+        self, task_server: FastMCP[None], run_context: RunContext[None]
+    ) -> None:
+        """A tool with no `execution.taskSupport` stays on the regular sync `tools/call`. Sending
+        `task=True` to such a server would violate the SEP."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('plain_tool', {}, run_context, tools['plain_tool'])
+        assert result == 'plain_completed'
+
+    async def test_direct_call_tool_with_use_task(self, task_server: FastMCP[None]) -> None:
+        """`direct_call_tool(..., use_task=True)` is the low-level escape hatch for users calling without
+        a `ToolDefinition` - `mode='required'` works directly."""
+        toolset = MCPToolset(task_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('task_required_tool', {}, use_task=True)
+        assert result == 'task_required_completed'
+
+    async def test_task_call_on_a_legacy_session_is_rejected(
+        self, fastmcp_server: FastMCP[None], as_mcp_sdk_v2: None
+    ) -> None:
+        """Under MCP SDK v2, tasks ride a client extension that a legacy session never negotiates,
+        so a legacy client has no task path at all."""
+        client = make_legacy_client(fastmcp_server)
+        toolset = MCPToolset(client)
+        async with toolset:
+            with pytest.raises(UserError, match='not supported by FastMCP 4 clients using legacy protocol mode'):
+                await toolset.direct_call_tool('echo', {'message': 'hi'}, use_task=True)
+
+    async def test_task_call_without_fastmcp_tasks_installed_is_rejected(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MCP SDK v2 moved tasks out of fastmcp core into the separate `fastmcp-tasks` package;
+        the error names the `mcp-tasks` extra that installs it."""
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: None)
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            with pytest.raises(ImportError, match=r'`mcp-tasks` optional group'):
+                await toolset.direct_call_tool('echo', {'message': 'hi'}, use_task=True)
+
+    async def test_sdk_v2_disables_client_task_routing(
+        self, task_server: FastMCP[None], run_context: RunContext[None], as_mcp_sdk_v2: None
+    ) -> None:
+        """Client-side task routing is a SEP-1686 (SDK v1) concept, so a server-declared
+        `taskSupport` must not route SDK v2 calls into the client task path: a legacy session has
+        no such path at all, and a modern one completes task tools on an ordinary call anyway."""
+        client = make_legacy_client(task_server)
+        toolset = MCPToolset(client)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            for name in ('task_required_tool', 'task_optional_tool', 'task_forbidden_tool', 'plain_tool'):
+                assert (tools[name].tool_def.metadata or {}).get('task') is False, name
+
+    async def test_task_call_dispatches_through_fastmcp_tasks(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On a modern session the call goes through `fastmcp_tasks.call_tool_task`, which hands back
+        a handle whose `result()` resolves to the same `CallToolResult` the direct path returns."""
+        calls: list[str] = []
+
+        async def call_tool_task(client: Any, **kwargs: Any) -> Any:
+            calls.append(kwargs['name'])
+            result = await client.call_tool(**kwargs)
+            return SimpleNamespace(result=AsyncMock(return_value=result))
+
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: call_tool_task)
+
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            result = await toolset.direct_call_tool('echo', {'message': 'hi'}, use_task=True)
+        assert result == 'Echo: hi'
+        assert calls == ['echo']
+
+    @pytest.mark.parametrize('prefer_tasks', [True, False])
+    async def test_process_tool_call_preserves_task_preference(
+        self,
+        task_server: FastMCP[None],
+        run_context: RunContext[None],
+        prefer_tasks: bool,
+    ) -> None:
+        """The delegate carries the effective client-side preference when the wrapper invokes it."""
+
+        async def passthrough(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
+            return await call_tool(name, args)
+
+        toolset = MCPToolset(
+            task_server,
+            process_tool_call=passthrough,
+            prefer_tasks=prefer_tasks,
+        )
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            result = await toolset.call_tool('task_optional_tool', {}, run_context, tools['task_optional_tool'])
+        assert result == ('task_optional_task' if MCP_SDK_V2 or prefer_tasks else 'task_optional_sync')
+
+    async def test_process_tool_call_preserves_metadata_and_task_preference(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext[None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Mocks `direct_call_tool` to pin the exact delegate kwargs: a wrapper's `metadata` must
+        arrive alongside the baked-in `use_task`. The task-preference half is covered end-to-end
+        against the real server above; this pins the internal call shape that carries both."""
+
+        async def add_metadata(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
+            return await call_tool(name, args, metadata={'trace_id': '123'})
+
+        toolset = MCPToolset(
+            fastmcp_server,
+            process_tool_call=add_metadata,
+            prefer_tasks=False,
+        )
+        direct_call_tool = AsyncMock(return_value='completed')
+        monkeypatch.setattr(toolset, 'direct_call_tool', direct_call_tool)
+        tools = await toolset.get_tools(run_context)
+
+        result = await toolset.call_tool('echo', {'message': 'hi'}, run_context, tools['echo'])
+
+        assert result == 'completed'
+        direct_call_tool.assert_awaited_once_with(
+            'echo',
+            {'message': 'hi'},
+            metadata={'trace_id': '123'},
+            use_task=False,
+        )
+
+    async def test_process_tool_call_can_short_circuit_without_calling_server(
+        self, run_context: RunContext[None], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A callback can return a cached result without making an MCP tool call.
+
+        Mocks `direct_call_tool` because the property under test is that no server call happens at
+        all (`assert_not_awaited`), which no real-server response could demonstrate."""
+
+        async def short_circuit(ctx: RunContext[Any], call_tool: Any, name: str, args: dict[str, Any]) -> Any:
+            return 'cached'
+
+        toolset = MCPToolset('https://example.com/mcp', process_tool_call=short_circuit)
+        direct_call_tool = AsyncMock(side_effect=AssertionError('tool call should not run'))
+        monkeypatch.setattr(toolset, 'direct_call_tool', direct_call_tool)
+        tool = toolset.tool_for_tool_def(ToolDefinition(name='durable_tool'), ctx=run_context)
+
+        result = await toolset.call_tool('durable_tool', {}, run_context, tool)
+
+        assert result == 'cached'
+        direct_call_tool.assert_not_awaited()

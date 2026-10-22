@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from prefect.cache_policies import CachePolicy
 from prefect.results import ResultStorage
+from prefect.tasks import RetryConditionCallable
 from typing_extensions import TypedDict
 
 from pydantic_ai.durable_exec.prefect._cache_policies import DEFAULT_PYDANTIC_AI_CACHE_POLICY
@@ -18,6 +19,9 @@ class TaskConfig(TypedDict, total=False):
 
     retry_delay_seconds: float | list[float]
     """Delay between retries in seconds. Can be a single value or a list for custom backoff."""
+
+    retry_condition_fn: RetryConditionCallable
+    """Predicate deciding whether a failed task should be retried."""
 
     timeout_seconds: float
     """Maximum time in seconds for the task to complete."""
