@@ -378,6 +378,28 @@ next please
             in judge.prompts
         )
 
+    async def test_a_cut_user_prompt_step_uses_up_the_budget(self) -> None:
+        compaction = RelevanceCompaction(
+            _Judge().model, max_tokens=2_000, target_tokens=913, keep_tokens=10, truncated_result_chars=10
+        )
+        history = _history('junk a ', 'last b ')
+        history.insert(1, ModelResponse(parts=[TextPart('GIST question')]))
+        history.insert(2, ModelRequest(parts=[UserPromptPart('answer ' * 200)]))
+
+        result = await compact_now(compaction, history, model=TestModel())
+
+        # The user's answer is over the budget but never dropped, so nothing is left for the junk step.
+        assert _shape(result) == [
+            'system sys',
+            'user do the task',
+            'text GIST question',
+            f'user {"answer " * 200}',
+            'call c1',
+            'return c1 2800',
+            'text done',
+            'user next please',
+        ]
+
     async def test_a_user_prompt_step_that_does_not_fit_the_summary_is_kept(self) -> None:
         prompts: list[str] = []
         compaction = RelevanceCompaction(

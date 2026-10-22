@@ -410,9 +410,13 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             if cost <= reduce_budget:
                 reduced.add(index)
                 reduce_budget -= cost
+            elif steps[index].has_user_prompt and self.summarizer is None:
+                # Never dropped: cut anyway, and what it costs leaves less for the steps ranked after it.
+                reduced.add(index)
+                reduce_budget -= cost
             elif steps[index].has_user_prompt:
-                # Never dropped: cut when there is no summarizer, else kept rather than overfilling its input.
-                (kept if self.summarizer is not None else reduced).add(index)
+                # Kept rather than overfilling the summarizer's input, which it does not use.
+                kept.add(index)
         return kept, reduced
 
     def _reduced_tokens(self, messages: Sequence[ModelMessage], step: _Step) -> int:
