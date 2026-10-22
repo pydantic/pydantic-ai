@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
@@ -53,6 +53,9 @@ _GRID = (
     'Coordinates are on a grid from 0 to {last} over the most recent screenshot, whatever its size: (0, 0) is the '
     'top left corner and ({last}, {last}) the bottom right.'
 )
+
+_DROP_BATCH = 25
+"""How many old screenshots `keep_screenshots` drops at once, as Anthropic recommends for prompt caching."""
 
 _SCREENSHOT_REMOVED = '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
 
@@ -137,11 +140,11 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
     """Pause after the last action before the closing screenshot, so animations and page loads can finish."""
 
     keep_screenshots: int | None = None
-    """How many of the most recent screenshots each model request carries, or `None` for all of them.
+    """The fewest recent screenshots each model request carries, or `None` for all of them.
 
-    Older ones are replaced with a short note in the request only: the run's history keeps every image. Setting it
-    bounds a long run's input tokens, but each new screenshot then changes an earlier part of the request, so the
-    provider's prompt cache restarts there on every call.
+    Older ones are replaced with a short note, 25 at a time, so the request stays the same between drops and the
+    provider's prompt cache keeps working. Only the request changes: the run's history keeps every image. Use it to
+    bound long runs; a short run costs the same either way.
     """
 
     id: str | None = 'computer'
@@ -269,31 +272,39 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         return request_context
 
 
+def _screenshots(messages: list[ModelMessage]) -> Iterator[tuple[int, int, int]]:
+    """Where each `computer` screenshot sits in the messages, oldest first: message, part and item index."""
+    for message_index, message in enumerate(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        for part_index, part in enumerate(message.parts):
+            content: Any = part.content if isinstance(part, ToolReturnPart) else None
+            if (
+                not isinstance(part, ToolReturnPart)
+                or part.tool_kind != COMPUTER_KIND.id
+                or not isinstance(content, list)
+            ):
+                continue
+            for item_index, item in enumerate(cast(list[Any], content)):
+                if isinstance(item, BinaryContent) and item.is_image:
+                    yield message_index, part_index, item_index
+
+
 def _drop_old_screenshots(messages: list[ModelMessage], keep: int) -> list[ModelMessage]:
-    """Replace `computer` screenshots beyond the newest `keep` with a note, in copies of the messages that change."""
-    seen = 0
-    rebuilt: list[ModelMessage] = []
-    for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            parts = list(message.parts)
-            changed = False
-            for index, part in reversed(list(enumerate(parts))):
-                content: Any = part.content if isinstance(part, ToolReturnPart) else None
-                if (
-                    not isinstance(part, ToolReturnPart)
-                    or part.tool_kind != COMPUTER_KIND.id
-                    or not isinstance(content, list)
-                ):
-                    continue
-                items = list(cast(list[Any], content))
-                for item_index, item in enumerate(items):
-                    if isinstance(item, BinaryContent) and item.is_image:
-                        seen += 1
-                        if seen > keep:
-                            items[item_index] = _SCREENSHOT_REMOVED
-                            parts[index] = replace(part, content=items)
-                            changed = True
-            if changed:
-                message = replace(message, parts=parts)
-        rebuilt.append(message)
-    return rebuilt[::-1]
+    """Replace the oldest screenshots with a note, `_DROP_BATCH` at a time, keeping at least the newest `keep`.
+
+    The dropped ones only change once per batch, so the request's prefix, and the provider's prompt cache, stays the
+    same in between. Copies the messages that change.
+    """
+    found = list(_screenshots(messages))
+    drop = max(0, len(found) - keep) // _DROP_BATCH * _DROP_BATCH
+    rebuilt = list(messages)
+    for message_index, part_index, item_index in found[:drop]:
+        message = cast(ModelRequest, rebuilt[message_index])
+        part = cast(ToolReturnPart, message.parts[part_index])
+        items = list(cast(list[Any], part.content))
+        items[item_index] = _SCREENSHOT_REMOVED
+        parts = list(message.parts)
+        parts[part_index] = replace(part, content=items)
+        rebuilt[message_index] = replace(message, parts=parts)
+    return rebuilt
