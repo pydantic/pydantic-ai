@@ -131,7 +131,12 @@ function TaskBox({ task, onError }: { task: TaskEntry; onError: (message: string
       } else if ((await api.steer(task.id, value)).steered) {
         setText('')
       } else {
-        onError('This worker has just finished. Send your message again to prompt it on its own.')
+        // A one-shot worker's composer gives way to its note once the row shows it finished.
+        onError(
+          task.resumable
+            ? 'This worker has just finished. Send your message again to prompt it on its own.'
+            : 'This worker has just finished. It is one-shot, so it takes no follow-ups.',
+        )
       }
     } catch (error) {
       onError(message(error))

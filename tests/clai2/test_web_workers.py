@@ -147,6 +147,7 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
 
         saved = web_.get(f'/api/tasks/{task_id}').json()
         assert saved['task']['status'] == 'finished'
+        assert saved['task']['backgroundable'] is False, 'a finished task has no run to background'
         assert [item['text'] for item in saved['items']] == ['child', 'child done', 'focus on tests', 'steered']
         assert web_.post(f'/api/tasks/{task_id}/steer', {'text': 'more'}).json() == {'steered': False}
         assert web_.get('/api/tasks/nope').status_code == 404
@@ -315,6 +316,7 @@ def test_workers_echo_steering_only_for_a_live_task() -> None:
     workers.observe(TaskEvent(task=task))
     workers.observe(TaskEvent(task=task))
     assert [type(message) for message in published] == [TaskChanged, TaskItems], 'an unchanged row is not sent again'
+    assert isinstance(changed := published[0], TaskChanged) and changed.task.backgroundable
     workers.steered('t', 'hello')
     assert [item.text for item in workers.items()['t']] == ['look', 'hello']
 
