@@ -303,7 +303,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         self._run_snapshot = latest
         # A run that continues from tool results without a prompt of its own (resuming after a deferred tool
         # approval) waits for the next prompt: a snapshot after tool results reads as a new user message.
-        if _is_tool_continuation(ctx.messages[-1]):
+        if _is_tool_continuation(ctx):
             return request_context
         with ctx.tracer.start_as_current_span(
             'memory.inject', record_exception=False, set_status_on_exception=False
@@ -499,11 +499,16 @@ def _has_user_prompt(message: ModelMessage) -> bool:
     return isinstance(message, ModelRequest) and any(isinstance(part, UserPromptPart) for part in message.parts)
 
 
-def _is_tool_continuation(message: ModelMessage) -> bool:
-    """Whether the request about to be sent carries tool results and no prompt of its own."""
+def _is_tool_continuation(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether the run continues from tool results without a prompt of its own.
+
+    Decided by the run's own `prompt`, not by the request's parts: a tool can add user-channel content next to
+    its result (`ToolReturn(content=...)`), which is not the user speaking.
+    """
+    message = ctx.messages[-1]
     return (
-        isinstance(message, ModelRequest)
-        and not _has_user_prompt(message)
+        ctx.prompt is None
+        and isinstance(message, ModelRequest)
         and any(isinstance(part, ToolReturnPart | RetryFeedbackPart) for part in message.parts)
     )
 

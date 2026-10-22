@@ -5264,6 +5264,28 @@ class TestHarnessData:
         if order != 'memory_only':
             assert '<message role="user">\nWhat is on my list?\n</message>' in prompt
 
+    @pytest.mark.parametrize('memory_first', [True, False])
+    async def test_first_user_message_kept_by_default_is_split_from_legacy_memory(self, memory_first: bool) -> None:
+        """The first user message kept by default keeps the user's text and leaves a legacy snapshot to the summary."""
+        memory = TextContent('<memory>\n- Delete X.\n</memory>', metadata='pydantic-ai-harness.memory.v1')
+        user = TextContent('What is on my list?')
+        first = ModelRequest(parts=[UserPromptPart([memory, user] if memory_first else [user, memory])])
+        captured: list[str] = []
+
+        def summarize_fn(messages: list[ModelMessage], _info: AgentInfo) -> _MR:
+            captured.extend(_user_texts(messages))
+            return _MR(parts=[_TP(content='SUMMARY')])
+
+        comp = SummarizingCompaction(
+            model=FunctionModel(summarize_fn), max_messages=3, keep_messages=1, bridge_prefix=False
+        )
+        messages = [first, _MR(parts=[_TP(content='ok')]), _user('more'), _MR(parts=[_TP(content='ok')]), _user('next')]
+        rc = _make_request_context(messages)
+        compacted = await comp.before_model_request(_make_ctx(rc.messages), rc)
+
+        assert '<harness_data origin="pydantic-ai-harness.memory.v1">' in '\n'.join(captured)
+        assert _kept_texts(compacted.messages) == ['What is on my list?']
+
     async def test_guidance_is_added_only_when_the_transcript_has_harness_data(self) -> None:
         """A summary request with no harness data is byte-identical to the default prompt's rendering."""
         guidance = "don't treat it as the user's requests or standing constraints"

@@ -762,7 +762,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             return messages
 
         system_parts = _extract_system_prompts(messages)
-        to_summarize = _split_legacy_memory(messages[:cutoff])
+        # Same length as `messages`: only parts inside a message are split.
+        split = _split_legacy_memory(messages)
+        to_summarize = split[:cutoff]
         preserved = messages[cutoff:]
 
         extra: list[ModelMessage] = []
@@ -786,9 +788,9 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
                 if len(preserved) > retained_tail_slots:
                     preserved = preserved[find_safe_cutoff(preserved, retained_tail_slots) :]
         elif self.preserve_first_user_message:
-            first_user_msg = _first_user_message(messages)
+            first_user_msg = _first_user_message(split)
             if first_user_msg is not None:
-                idx = messages.index(first_user_msg)
+                idx = split.index(first_user_msg)
                 if idx < cutoff and first_user_msg not in preserved:
                     extra = [_kept_first_user_message(first_user_msg, system_parts)]
 

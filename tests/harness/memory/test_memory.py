@@ -16,7 +16,15 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
 
-from pydantic_ai import Agent, AgentSpec, DeferredToolRequests, DeferredToolResults, ModelRetry, RunContext
+from pydantic_ai import (
+    Agent,
+    AgentSpec,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ModelRetry,
+    RunContext,
+    ToolReturn,
+)
 from pydantic_ai.capabilities import AbstractCapability, ToolSearch
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
@@ -1699,7 +1707,8 @@ class TestInjection:
         assert _memory_contexts(captured[1]) == _memory_contexts(captured[0])
         assert '- likes tea' in _memory_contexts(captured[1])[0]
 
-    async def test_memory_filled_during_a_deferred_approval_waits_for_the_next_prompt(self) -> None:
+    @pytest.mark.parametrize('tool_content', [False, True])
+    async def test_memory_filled_during_a_deferred_approval_waits_for_the_next_prompt(self, tool_content: bool) -> None:
         store = InMemoryStore()
         captured: list[list[ModelMessage]] = []
 
@@ -1709,8 +1718,9 @@ class TestInjection:
                 return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
             return ModelResponse(parts=[TextPart('done')])
 
-        def lookup() -> str:
-            return 'found'
+        def lookup() -> str | ToolReturn:
+            # A tool's own user-channel content sits next to its result: it isn't the user speaking.
+            return ToolReturn(return_value='found', content='Here is what I found.') if tool_content else 'found'
 
         agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)], output_type=[str, DeferredToolRequests])
         agent.tool_plain(requires_approval=True)(lookup)
