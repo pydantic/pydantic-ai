@@ -1147,7 +1147,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     [`openai_store`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
     which defaults to `True` on OpenAI's side), except on the Responses WebSocket that created it:
     a request on that socket can continue from a response it hasn't stored, while it's still the
-    latest on its lane. A response the socket reports as unstored isn't continued from anywhere else.
+    latest on its lane. A response the socket reports as unstored isn't continued from anywhere else, and a
+    socket request with `openai_store=False` continues only from its lane's response.
     Defaults to `'auto'` for requests sent over a Responses WebSocket
     (see [`openai_transport`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_transport])
     unless `openai_conversation_id` is set.
