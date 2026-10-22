@@ -1435,7 +1435,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
+        system_prompt, anthropic_messages = await self._map_message(
+            messages, model_request_parameters, model_settings, computer_toolset_sent=_sends_computer_toolset(tools)
+        )
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
         self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
@@ -1831,7 +1833,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         _append_revealed_tool_params(tools, revealed_tool_order)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
-        system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
+        system_prompt, anthropic_messages = await self._map_message(
+            messages, map_parameters, model_settings, computer_toolset_sent=_sends_computer_toolset(tools)
+        )
         request_scoped_texts = _request_scoped_tail_texts(messages)
         self._apply_per_block_caching_fallback(resolved_cache_ttl, anthropic_messages, request_scoped_texts)
         self._apply_explicit_message_caching(model_settings, anthropic_messages, request_scoped_texts)
@@ -2007,7 +2011,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
-                if computer_def is not None and _is_computer_member(item, computer_def):
+                if _is_computer_member(item, computer_def):
                     computer_blocks.append(_computer_block(item))
                     continue
                 items.append(
@@ -2357,6 +2361,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
+        *,
+        computer_toolset_sent: bool = False,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         messages = self._trim_before_compaction(messages)
@@ -2398,7 +2404,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         advisor_active = any(isinstance(t, AdvisorTool) for t in model_request_parameters.native_tools)
         # Computer calls replayed as toolset member calls, whose results must be one per member call.
         # Without the toolset in this request, past member calls are sent back as plain `computer` calls.
-        native_computer = self._sent_computer_toolset(model_settings, model_request_parameters)
         computer_calls: dict[str, list[dict[str, Any]]] = {}
         bm25_requested = any(
             isinstance(t, ToolSearchTool) and t.strategy == 'bm25' for t in model_request_parameters.native_tools
@@ -2652,9 +2657,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
                     elif isinstance(response_part, ToolCallPart):
                         if (
-                            native_computer
+                            computer_toolset_sent
                             and response_part.provider_name == self.system
-                            and (blocks := _computer_blocks(response_part))
+                            and (blocks := (response_part.provider_details or {}).get('computer_blocks'))
                         ):
                             # Sent back as the member calls they came as, so each result can echo its toolset.
                             computer_calls[_guard_tool_call_id(t=response_part)] = blocks
@@ -3356,16 +3361,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return None
         return computer_tool(model_request_parameters)
 
-    def _sent_computer_toolset(
-        self, model_settings: AnthropicModelSettings, model_request_parameters: ModelRequestParameters
-    ) -> bool:
-        """Whether this request sends the computer toolset: the model takes it, and tool choice doesn't leave it out."""
-        native_computer = self._native_computer_tool(model_request_parameters)
-        tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        return native_computer is not None and not (
-            isinstance(tool_choice, tuple) and native_computer.name not in tool_choice[1]
-        )
-
     async def _map_computer_results(
         self, part: ToolReturnPart, blocks: list[dict[str, Any]]
     ) -> list[beta_tool_result_block_param.BetaToolResultBlockParam]:
@@ -4046,7 +4041,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
-                    if computer_def is not None and _is_computer_member(current_block, computer_def):
+                    if _is_computer_member(current_block, computer_def):
                         block = _computer_block(current_block)
                         if computer_input:
                             block['input'] = pydantic_core.from_json(''.join(computer_input))
@@ -4080,7 +4075,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
             if computer_def is not None and computer_group:
                 yield self._parts_manager.handle_part(
-                    vendor_part_id=f'computer-{computer_group[0]["id"]}',
+                    vendor_part_id=computer_group[0]['id'],
                     part=_computer_call_part(computer_group, computer_def.name, self.provider_name),
                 )
 
@@ -4881,15 +4876,12 @@ def _is_computer_member(
     return computer_def is not None and isinstance(block, BetaToolUseBlock) and block.toolset_name == 'computer'
 
 
+def _sends_computer_toolset(tools: list[BetaToolUnionParam]) -> bool:
+    return any(tool.get('type') == 'computer_toolset_20260801' for tool in tools)
+
+
 def _computer_block(item: BetaToolUseBlock) -> dict[str, Any]:
     return {'id': item.id, 'name': item.name, 'input': cast(dict[str, Any], item.input)}
-
-
-def _computer_blocks(part: ModelResponsePart | None) -> list[dict[str, Any]]:
-    """The member calls a `computer` call part was made from, or none for any other part."""
-    if isinstance(part, ToolCallPart) and part.provider_details and 'computer_blocks' in part.provider_details:
-        return list(part.provider_details['computer_blocks'])
-    return []
 
 
 def _given(input: dict[str, Any], key: str, default: Any) -> Any:

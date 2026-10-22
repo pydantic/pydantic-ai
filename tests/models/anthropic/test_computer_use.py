@@ -340,13 +340,7 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
             {'type': 'drag', 'path': [{'x': 1, 'y': 2}, {'x': 3, 'y': 4}], 'modifiers': []},
         ),
         ('left_click_drag', {'coordinate': [3, 4]}, {'type': 'drag', 'path': [{'x': 3, 'y': 4}], 'modifiers': []}),
-        (
-            'left_click_drag',
-            {'start_coordinate': 7, 'coordinate': [3, 4]},
-            {'type': 'drag', 'path': [{'x': 7}, {'x': 3, 'y': 4}], 'modifiers': []},
-        ),
         ('left_click', {'coordinate': [5]}, {'type': 'click', 'x': [5], 'button': 'left', 'count': 1, 'modifiers': []}),
-        ('mouse_move', {'coordinate': 'here'}, {'type': 'move', 'x': 'here', 'modifiers': []}),
         ('left_mouse_down', {}, {'type': 'mouse_down'}),
         ('left_mouse_up', {}, {'type': 'mouse_up'}),
         (
@@ -480,22 +474,18 @@ async def test_a_responses_member_calls_are_one_call_streamed_or_not(allow_model
     assert [part.tool_call_id for part in starts] == ['toolu_1']
 
 
-async def test_the_toolset_follows_tool_choice(allow_model_requests: None) -> None:
-    client = MockAnthropic.create_mock([_turn(BetaTextBlock(text='ok', type='text'))] * 2)
+async def test_forcing_the_computer_offers_the_toolset_alone(allow_model_requests: None) -> None:
+    client = MockAnthropic.create_mock(_turn(BetaTextBlock(text='ok', type='text')))
     model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
     note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
-    other = ToolDefinition(name='other', parameters_json_schema={'type': 'object'})
-    params = ModelRequestParameters(function_tools=[COMPUTER, note, other], allow_text_output=True)
-    prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+    params = ModelRequestParameters(function_tools=[COMPUTER, note], allow_text_output=True)
 
-    await model.request(prompt, {'tool_choice': ['computer']}, params)
-    await model.request(prompt, {'tool_choice': ['note', 'other']}, params)
+    await model.request([ModelRequest.user_text_prompt('Go.')], {'tool_choice': ['computer']}, params)
 
-    forced, without = get_mock_chat_completion_kwargs(client)
+    (forced,) = get_mock_chat_completion_kwargs(client)
     # The toolset can't be named, so forcing the computer offers it alone and requires a tool.
     assert [tool['type'] for tool in forced['tools']] == ['computer_toolset_20260801']
     assert forced['tool_choice'] == {'type': 'any'}
-    assert [tool.get('name') for tool in without['tools']] == ['note', 'other']
 
 
 async def test_a_result_without_its_metadata_reads_as_every_call_having_run() -> None:

@@ -42,19 +42,19 @@ from .computer import ComputerAction
 __all__ = (
     'CommandResult',
     'FileEntry',
-    'SupportsCommands',
-    'SupportsComputerUse',
-    'SupportsFilesystem',
-    'SupportsRealpath',
-    'UnsupportedComputerActionError',
     'WorkspaceBackend',
     'WorkspaceCommand',
     'WorkspaceError',
     'WorkspaceOutputLimitError',
-    'WorkspaceReadOnlyError',
     'WorkspaceRef',
+    'WorkspaceReadOnlyError',
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
+    'UnsupportedComputerActionError',
+    'SupportsCommands',
+    'SupportsComputerUse',
+    'SupportsFilesystem',
+    'SupportsRealpath',
 )
 
 
