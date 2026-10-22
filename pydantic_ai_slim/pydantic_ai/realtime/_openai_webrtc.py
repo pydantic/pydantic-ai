@@ -21,23 +21,28 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
+import httpx2
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 from pydantic_core import to_json
 
 from .. import _utils
-from .._http import AsyncHTTPClient
+from .._http import AsyncHTTPClient, legacy_httpx
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from .model import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
 
 if TYPE_CHECKING:
     import httpx
-    import httpx2
 
 
 #: A hangup runs from a session's shielded teardown, so it must not hang there: a call that doesn't end
 #: quickly is reported, not waited on.
 HANG_UP_TIMEOUT = 10.0
 HANG_UP_MAX_RETRIES = 1
+
+#: The failures to reach the provider that a hangup is retried on, from either HTTP client a provider can have.
+_TRANSPORT_ERRORS: tuple[type[Exception], ...] = (httpx2.TransportError,) + (
+    (legacy_httpx.TransportError,) if legacy_httpx is not None else ()
+)
 
 
 @contextmanager
@@ -145,9 +150,24 @@ async def hang_up_call(
     """`POST .../realtime/calls/{call_id}/hangup` to end a call; one the provider no longer knows is already over.
 
     For a provider whose SDK client can't reach the hangup endpoint (Azure OpenAI's `/openai/v1` API, whatever
-    `api_version` the client is configured with); OpenAI goes through the SDK.
+    `api_version` the client is configured with); OpenAI goes through the SDK. As the SDK would, a failure to
+    reach the provider or a 5xx is retried `HANG_UP_MAX_RETRIES` times: a hangup that fails leaves the call up.
     """
-    response = await http_client.post(hangup_url, headers=headers, timeout=HANG_UP_TIMEOUT)
+    retries_left = HANG_UP_MAX_RETRIES
+    while True:
+        try:
+            response = await http_client.post(hangup_url, headers=headers, timeout=HANG_UP_TIMEOUT)
+        except _TRANSPORT_ERRORS:
+            if not retries_left:
+                raise
+        else:
+            if response.status_code < 500 or not retries_left:
+                _check_hang_up_response(response, model_name)
+                return
+        retries_left -= 1
+
+
+def _check_hang_up_response(response: httpx.Response | httpx2.Response, model_name: str) -> None:
     if response.status_code == 404:
         try:
             data = response.json()

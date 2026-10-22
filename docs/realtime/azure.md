@@ -327,7 +327,7 @@ model = AzureRealtimeModel(
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
 | Native tools | Unsupported | The API offers remote MCP servers (plus Foundry tools and agents on Voice Live) but no web or file search; Pydantic AI doesn't expose the MCP support yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)), so configure [local fallbacks](tools.md#native-tools) |
-| Browser WebRTC | Limited parameter support | [GA only](#browser-webrtc-and-microsoft-entra-id); the server can't end the call, so `hang_up()` raises `UserError` and the call ends when the browser hangs up |
+| Browser WebRTC | Limited parameter support | [GA only](#browser-webrtc-and-microsoft-entra-id) |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 

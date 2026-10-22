@@ -1093,9 +1093,8 @@ async def test_azure_hangs_up_on_its_v1_calls_endpoint(endpoint: str, api_versio
         ),
         (404, {'error': {'code': '404', 'message': 'Resource not found'}}, False),
         (404, None, False),
-        (500, {'error': {'message': 'boom'}}, False),
     ],
-    ids=['ended', 'other-404', 'not-json', 'server-error'],
+    ids=['ended', 'other-404', 'not-json'],
 )
 async def test_azure_hang_up_of_a_call_that_already_ended_is_not_an_error(
     status: int, body: dict[str, Any] | None, ended: bool
@@ -1117,6 +1116,43 @@ async def test_azure_hang_up_of_a_call_that_already_ended_is_not_an_error(
         with pytest.raises(ModelHTTPError) as exc_info:
             await hang_up
         assert exc_info.value.status_code == status
+
+
+@pytest.mark.parametrize(
+    'first,second,succeeds',
+    [
+        ('connect-error', 200, True),
+        (503, 200, True),
+        ('connect-error', 'connect-error', False),
+        (500, 500, False),
+    ],
+    ids=['connect-error-then-ok', '5xx-then-ok', 'unreachable', 'persistent-5xx'],
+)
+async def test_azure_hang_up_retries_once_as_the_sdk_does(first: int | str, second: int | str, succeeds: bool) -> None:
+    """A failed hangup leaves the call up, so a failure to reach Azure or a 5xx is retried once, like OpenAI's."""
+    outcomes = [first, second]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        outcome = outcomes.pop(0)
+        if outcome == 'connect-error':
+            raise httpx2.ConnectError('unreachable', request=request)
+        assert isinstance(outcome, int)
+        return httpx2.Response(outcome)
+
+    provider = AzureProvider(
+        azure_endpoint='https://example.openai.azure.com/openai/v1',
+        api_key='k',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    hang_up = AzureRealtimeModel('gpt-realtime', provider=provider).hang_up(
+        WebRTCSession(provider_name='azure', session_id='rtc_x')
+    )
+    if succeeds:
+        await hang_up
+    else:
+        with pytest.raises((httpx2.ConnectError, ModelHTTPError)):
+            await hang_up
+    assert outcomes == []
 
 
 async def test_any_other_not_found_hang_up_is_an_error() -> None:
