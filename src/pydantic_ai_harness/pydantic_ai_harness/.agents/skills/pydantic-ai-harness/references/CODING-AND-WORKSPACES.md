@@ -388,7 +388,7 @@ Python up to 3.14.
   `['--memory', '2g']`, `['--volume', f'{project}:/workspace']` to work on a host directory.
 - A missing `working_dir` is created as the container's user: with `--user`, use a mount or
   `working_dir=None`.
-- New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` for none).
+- New containers get `--pids-limit 2048`; a `--pids-limit` in `docker_args` replaces it (`-1` removes it).
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
 
