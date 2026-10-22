@@ -29,6 +29,12 @@
       "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
       "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "1b295e087b0c5d9ce099eef747012b54cb660fed111f5b9c051942f8c5ed9d9f",
+      "reason": "Adds `FileUnderstanding` to `CAPABILITY_TYPES`; every existing capability type is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8453"
     }
   ]
 }
