@@ -341,6 +341,22 @@ _FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
 _TOOL_SEARCH_NATIVE_ID = 'tool_search'
 """The `with_native` value that marks a member of the native tool search's corpus (`ToolSearchTool.kind`)."""
 
+
+def _can_be_sandboxed(tool_def: ToolDefinition) -> bool:
+    """Whether a tool may go inside `run_code` at all, whatever the selector says.
+
+    Framework control tools (tool search, capability loading) drive protocol-level flows; a local fallback
+    (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
+    the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
+    `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+    """
+    return (
+        tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
+        and not tool_def.unless_native
+        and not _is_code_execution_tool(tool_def)
+    )
+
+
 _Placement: TypeAlias = Literal['native', 'sandboxed', 'hidden']
 """Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, or nowhere yet."""
 
@@ -1014,6 +1030,32 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return None  # pragma: no cover - `CodeMode` always contributes `run_code`
         return tool.toolset if isinstance(tool.toolset, cls) else None
 
+    async def functions_revealed_by(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> dict[str, str]:
+        """Map each of `names` that revealing it adds to `run_code` to the function name code calls it by.
+
+        Called while this step's tools are current, for tools a search just found: the next step sandboxes
+        the ones the selector picks, and where two names sanitize to the same function, the one listed
+        first keeps it, exactly as `get_tools` will. Names already callable, kept native, or hidden behind
+        another name map to nothing.
+        """
+        tool_manager = ctx.tool_manager
+        run_code = (
+            None if tool_manager is None or tool_manager.tools is None else tool_manager.tools.get(_RUN_CODE_TOOL_NAME)
+        )
+        if not isinstance(run_code, _RunCodeTool):
+            return {}  # pragma: no cover - the agent installs this step's tools before any tool runs
+        current = {run_code.sanitized_to_original.get(function, function) for function in run_code.callable_defs}
+        revealed = set(names) - current
+        owners: dict[str, str] = {}
+        for name, tool in run_code.wrapped_tools.items():
+            if name in current or (
+                name in revealed
+                and _can_be_sandboxed(tool.tool_def)
+                and await matches_tool_selector(self.tool_selector, ctx, tool.tool_def)
+            ):
+                owners.setdefault(_sanitize_tool_name(name), name)
+        return {name: function for function, name in owners.items() if name in revealed}
+
     async def observe_stream_event(self, event: AgentStreamEvent, ctx: RunContext[AgentDepsT]) -> None:
         """Feed one model stream event to the streamed execution tiers this toolset runs."""
         if self.speculation is not None:
@@ -1057,17 +1099,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         placements: dict[str, _Placement] = {}
         for name, tool in wrapped_tools.items():
             tool_def = tool.tool_def
-            # Framework control tools (tool search, capability loading) stay native to
-            # drive protocol-level flows. Any other registered `tool_kind` is an ordinary tool.
-            if tool_def.tool_kind in _FRAMEWORK_CONTROL_TOOL_KINDS:
-                placements[name] = 'native'
-            elif tool_def.unless_native:
-                # Keep the local fallback native so `Model.prepare_request` can drop it
-                # when the provider supports the native tool.
-                placements[name] = 'native'
-            elif _is_code_execution_tool(tool_def):
-                # A tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-                # `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+            if not _can_be_sandboxed(tool_def):
                 placements[name] = 'native'
             elif not ctx.is_tool_available(tool_def):
                 # Use the run's public availability predicate so Tool Search and deferred

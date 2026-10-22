@@ -34,7 +34,6 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOS,
     CodeModeResourceLimits,
     CodeModeToolset,
-    _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     as_os_handler,
     in_durable_execution,
 )
@@ -210,10 +209,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       `'regex'` `ToolSearch` strategies, or a `tools` selector that keeps another deferred tool
       native, only the native tool search can find them, so they're declared for it and the
       declaration is dropped once they move into `run_code`;
-    - announce newly-discovered tools via a short
+    - announce the functions `run_code` gains from tools a search found via a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
-      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming the functions
-      `run_code` calls them by.
+      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], naming them as `run_code`
+      calls them. Loading a capability appends only the catalog update.
+
+    The cache stays intact only if a callable `tools` selector gives the same answer for a tool
+    before and after it's revealed: one that sandboxes a tool only once it's revealed declares it
+    natively first and then drops the declaration.
 
     This pays off when paired with [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] or
     deferred capabilities: the prompt cache survives discoveries at the cost of a larger
@@ -345,7 +348,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         execute result).
         """
         if self.dynamic_catalog and tool_def.tool_kind == 'tool-search':
-            self._announce_newly_discovered(ctx, _extract_discovered_names(result))
+            await self._announce_newly_callable(ctx, _extract_discovered_names(result))
         return result
 
     async def after_model_request(
@@ -362,27 +365,35 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         if self.dynamic_catalog:
             for part in response.parts:
                 if isinstance(part, NativeToolSearchReturnPart):
-                    self._announce_newly_discovered(ctx, _extract_discovered_names(part.content))
+                    await self._announce_newly_callable(ctx, _extract_discovered_names(part.content))
         return response
 
-    def _announce_newly_discovered(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> None:
-        """Enqueue names absent from visible history and the current step's pending queue."""
-        announced = _visible_announced_tools(ctx.messages)
-        fresh = list(dict.fromkeys(n for n in names if n not in announced and n not in self._in_flight_announcements))
-        if not fresh:
+    async def _announce_newly_callable(self, ctx: RunContext[AgentDepsT], names: Sequence[str]) -> None:
+        """Enqueue the functions `run_code` gains from tools a search found, unless already announced.
+
+        Only a found tool the next step actually sandboxes is announced, under the function name that step
+        gives it: not one the `tools` selector keeps native, nor one whose name sanitizes to a function another
+        tool keeps. Names already announced in visible history or this step are skipped.
+        """
+        toolset = CodeModeToolset.from_run_context(ctx)
+        if toolset is None:
+            return  # pragma: no cover - `CodeMode` always contributes `run_code`
+        announced = _visible_announced_tools(ctx.messages) | self._in_flight_announcements
+        functions = await toolset.functions_revealed_by(ctx, [name for name in names if name not in announced])
+        if not functions:
             return
-        self._in_flight_announcements.update(fresh)
+        self._in_flight_announcements.update(functions)
         # A name can come from a remote MCP server, so the text names each function only by the Python
         # identifier `run_code` calls it by, which can't carry markup or prose. The tool names as found are
         # kept in the metadata, which the model never sees.
-        listing = ', '.join(f'`{function}`' for function in dict.fromkeys(_sanitize_tool_name(name) for name in fresh))
+        listing = ', '.join(f'`{function}`' for function in functions.values())
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
         ctx.enqueue(
             SystemPromptPart(
                 content=f'{_DISCOVERY_ANNOUNCEMENT_PREFIX}: {listing}.',
-                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': fresh},
+                metadata={'origin': _DISCOVERY_ANNOUNCEMENT_ORIGIN, 'tools': list(functions)},
             )
         )
 
