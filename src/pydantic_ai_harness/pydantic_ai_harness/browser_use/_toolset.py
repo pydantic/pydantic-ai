@@ -409,6 +409,10 @@ class BrowserAgentFactory(Protocol):
     browser-use's signal handling off (`enable_signal_handler=False`) -- the
     sub-agent must not install its own SIGINT handling inside a host
     application.
+
+    With `sensitive_data` set, `request.settings.tools` arrives without
+    browser-use's `evaluate` action. A factory that builds its own tools or
+    agent must exclude it too; the capability cannot enforce that.
     """
 
     def __call__(self, request: BrowserTask) -> BrowserAgent:
@@ -435,6 +439,21 @@ def _safe_tools(settings: BrowserAgentSettings, *, has_secrets: bool) -> Tools[N
     for action in excluded:
         settings.tools.exclude_action(action)
     return settings.tools
+
+
+def _without_evaluate(settings: BrowserAgentSettings) -> BrowserAgentSettings:
+    """`settings` with `evaluate` removed from its tools, for any factory to forward beside secrets.
+
+    Only `evaluate`: unlike the file actions, which a custom factory may re-enable with its own
+    controls, nothing a factory adds makes a page script safe beside substituted secrets.
+    """
+    if settings.tools is None:
+        tools = Tools[None](
+            exclude_actions=['evaluate'], display_files_in_done_text=settings.display_files_in_done_text
+        )
+        return replace(settings, tools=tools)
+    settings.tools.exclude_action('evaluate')
+    return settings
 
 
 def default_browser_agent(request: BrowserTask) -> BrowserAgent:
@@ -655,7 +674,9 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                 output_schema=self._output_schema,
                 sensitive_data=_scope_flat_secrets(self._sensitive_data, session.browser_profile.allowed_domains),
                 extend_system_message=self._extend_system_message,
-                settings=self._settings,
+                # Here rather than only in `default_browser_agent`, so a custom factory that
+                # forwards `settings.tools` drops `evaluate` too.
+                settings=self._settings if self._sensitive_data is None else _without_evaluate(self._settings),
             )
         )
         if not self._browser_use_telemetry:
