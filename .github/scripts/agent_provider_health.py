@@ -27,6 +27,13 @@ MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
+# The recheck, artifact-replacement and stop steps `shared/provider-health.md` adds to each agent job.
+# `agentic_workflow_guard.py` requires these names in every compiled lock.
+AGENT_START_HEALTH_STEPS = (
+    'Recheck Z.AI provider health at agent start',
+    'Replace health decision for the incident monitor',
+    'Stop before inference on a blocked provider-health decision',
+)
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
 _NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
 # During GitHub's 2026-10-22 Issues degradation, 34% of gate reads returned HTTP 200 with no readable incident,
@@ -895,6 +902,9 @@ def _stage_from_attempt_jobs(jobs: list[dict[str, object]]) -> Stage | None:
         for index in failures:
             step = parsed[index]
             name = _string(step.get('name')) if step is not None else None
+            # The agent-start recheck fails closed. Its replaced artifact carries a block; an error is a gate error.
+            if name in AGENT_START_HEALTH_STEPS:
+                continue
             if name == 'Restore full history and tags for dynamic versioning' or (
                 _string(job.get('name')) == 'pre_activation' and name == 'Setup Scripts'
             ):
