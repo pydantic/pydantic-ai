@@ -51,7 +51,10 @@ from typing import Literal
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector as TextDetector
 from pydantic_ai_harness.guardrails._tool_guardrail import ToolResultInfo
-from pydantic_ai_harness.guardrails._tool_return_text import detect_tool_return_content, is_text_tool_return
+from pydantic_ai_harness.guardrails._tool_return_text import (
+    detect_tool_return_content as _detect_tool_return_content,
+    is_text_tool_return as _is_text_tool_return,
+)
 
 _NEWLINE = r'(?:\r?\n|\\+n)'
 """A line break as it reaches a detector.
@@ -428,7 +431,7 @@ def for_tool_result_text(
                     'A text detector used with for_tool_result_text() must replace a tool result with text.'
                 )
             return verdict
-        if is_text_tool_return(result):
+        if _is_text_tool_return(result):
             # `ToolReturn`'s type parameter does not type `return_value`, so the guard cannot narrow it.
             assert isinstance(result.return_value, str)
             verdict = detector(result.return_value)
@@ -440,7 +443,7 @@ def for_tool_result_text(
                     'A text detector used with for_tool_result_text() must replace a tool result with text.'
                 )
 
-            content_verdict, content = detect_tool_return_content(detector, result.content)
+            content_verdict, content = _detect_tool_return_content(detector, result.content)
             if content_verdict is not None:
                 return content_verdict
 
