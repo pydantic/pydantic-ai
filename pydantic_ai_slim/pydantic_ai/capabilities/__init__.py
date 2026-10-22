@@ -35,6 +35,7 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
+from .batch_model_requests import BatchModelRequests
 from .caching import Caching
 from .capability import Capability
 from .combined import CombinedCapability
@@ -132,6 +133,7 @@ __all__ = [
     'on_event',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
+    'BatchModelRequests',
     'Caching',
     'Capability',
     'CAPABILITY_TYPES',

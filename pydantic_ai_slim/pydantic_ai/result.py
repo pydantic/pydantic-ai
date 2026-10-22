@@ -29,6 +29,7 @@ from ._sync_stream import SyncStreamBridge
 from .messages import AgentStreamEvent, ModelResponseStreamEvent
 from .output import (
     OutputDataT,
+    PendingModelResponse,
     ToolOutput,
 )
 from .tool_manager import ToolManager
@@ -284,6 +285,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
+        if not allow_partial and message.state == 'suspended' and self._output_schema.allows_pending_model_response:
+            # The stream ended while the provider is still working on the response, as the run was asked to.
+            return cast(OutputDataT, PendingModelResponse(response=message))
         final_result_event = self._raw_stream_response.final_result_event
         if final_result_event is None:
             raise exceptions.UnexpectedModelBehavior('Invalid response, unable to find output')  # pragma: no cover

@@ -41,7 +41,6 @@ from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
-    Model,
     ModelRequestParameters,
     StreamedResponse,
     _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
@@ -50,10 +49,11 @@ from . import (
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
     _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
+from ._in_memory_batch import InMemoryBatchModel
 
 
 @dataclass(init=False)
-class FunctionModel(Model):
+class FunctionModel(InMemoryBatchModel):
     """A model controlled by a local function.
 
     Apart from `__init__`, all methods are private or match those of the base class.

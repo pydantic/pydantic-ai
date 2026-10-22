@@ -753,6 +753,11 @@ navigation:
         slug: "guides/image-generation"
         aliases:
           - "image-generation"
+      - page: "Batch Processing"
+        path: "batch.md"
+        slug: "guides/batch"
+        aliases:
+          - "batch"
       - page: "Embeddings"
         path: "embeddings.md"
         slug: "guides/embeddings"
@@ -1200,6 +1205,9 @@ navigation:
               - page: "base"
                 path: "api/models/base.md"
                 slug: "api/models/base"
+              - page: "batch"
+                path: "api/models/batch.md"
+                slug: "api/models/batch"
               - page: "bedrock"
                 path: "api/models/bedrock.md"
                 slug: "api/models/bedrock"

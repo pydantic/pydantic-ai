@@ -997,7 +997,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     @asynccontextmanager
     async def _durable_model_scope(
-        self, model_id: str | None, run_context: RunContext[AgentDepsT]
+        self, model_id: str | None, run_context: RunContext[AgentDepsT], *, serving: bool = False
     ) -> AsyncGenerator[tuple[Model, RunContext[AgentDepsT]]]:
         """Enter a model durable unit: guard the run context, then rebuild the request's model.
 
@@ -1006,7 +1006,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
         the model -- or from a `resolve_model_id` capability rebuilding it -- would be dropped.
         Models rebuilt inside the unit are owned and context-managed here; the agent's default and
-        `models=` registry instances keep their existing external lifecycle owner.
+        `models=` registry instances keep their existing external lifecycle owner. A unit that sends a model request
+        passes `serving`, so the yielded model is wrapped by the capabilities'
+        [`get_wrapper_model`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model], as the core wraps it
+        outside durable execution.
         Pairing the two here means a unit can't get its model without the guard, instead of each
         engine remembering to install it per unit (Temporal has its own chokepoint in
         `deserialize_run_context`, so it doesn't use this).
@@ -1018,7 +1021,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 ctx.model = active_model
                 if isinstance(ctx, _RestrictedRunContext):
                     ctx._expose_field('model')  # pyright: ignore[reportPrivateUsage]
-                yield active_model, ctx
+                # The workflow side applied the capabilities' model wrappers to its own copy of the model, which
+                # doesn't send requests, so they're applied again to the model that does.
+                root_capability = ctx.root_capability
+                serving_model = (
+                    root_capability.get_wrapper_model(active_model) if serving and root_capability is not None else None
+                )
+                yield serving_model or active_model, ctx
 
     @contextmanager
     def _request_policy_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[None]:
@@ -1797,13 +1806,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return IdentityParameterTransport[ModelCompactMessagesParams]()
 
     async def _model_request_operation(self, params: ModelRequestParams) -> ModelResponse:
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+        async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
             response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
         self._stamp_response(response, params.messages)
         return response
 
     async def _model_request_stream_operation(self, params: ModelRequestParams) -> StreamedActivityResult:
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, durable_ctx):
+        async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, durable_ctx):
             async with model.request_stream(
                 params.messages, params.model_settings, params.model_request_parameters, durable_ctx
             ) as streamed:
@@ -1820,7 +1829,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if params.run_context is None:
             await self._cancel_suspended_response_without_run_context(params.model_id, params.response)
             return
-        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+        async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (model, _):
             await model.cancel_suspended_response(params.response)
 
     async def _compact_messages_operation(self, params: ModelCompactMessagesParams) -> ModelResponse:

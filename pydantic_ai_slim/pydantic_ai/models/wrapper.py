@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
@@ -25,6 +25,9 @@ from . import (
     infer_model,
 )
 from ._request_timeout import RequestDeadline
+
+if TYPE_CHECKING:
+    from .batch import Batch, BatchRequest, BatchResult, BatchResultStatus, EncodedBatchRequest
 
 __all__ = ['WrapperModel']
 
@@ -65,6 +68,41 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         return await self.wrapped.request(messages, model_settings, model_request_parameters)
+
+    @property
+    def batch_max_requests(self) -> int | None:
+        return self.wrapped.batch_max_requests
+
+    @property
+    def batch_max_bytes(self) -> int | None:
+        return self.wrapped.batch_max_bytes
+
+    def batch_request_size(self, request: EncodedBatchRequest) -> int:
+        return self.wrapped.batch_request_size(request)
+
+    def _batch_credential(self) -> str:
+        return self.wrapped._batch_credential()
+
+    def _batch_unlisted_status(self, batch: Batch) -> BatchResultStatus | None:
+        return self.wrapped._batch_unlisted_status(batch)
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        return await self.wrapped.batch_encode(request)
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        return await self.wrapped.batch_create(requests)
+
+    async def batch_status(self, batch: Batch) -> Batch:
+        return await self.wrapped.batch_status(batch)
+
+    async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        return await self.wrapped.batch_results(batch)
+
+    async def batch_cancel(self, batch: Batch) -> Batch:
+        return await self.wrapped.batch_cancel(batch)
+
+    def batch_decode(self, result: BatchResult, request: BatchRequest) -> ModelResponse:
+        return self.wrapped.batch_decode(result, request)
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         return await self.wrapped.cancel_suspended_response(response)
