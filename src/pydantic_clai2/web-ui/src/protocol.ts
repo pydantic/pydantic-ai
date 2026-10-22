@@ -233,13 +233,13 @@ export interface LiveEntry {
 }
 
 /** A prompt can steer the running turn; a `/command` or `!` shell line, queued from the terminal, cannot. */
-export type QueuedKind = 'prompt' | 'command' | 'shell'
+export type InputKind = 'prompt' | 'command' | 'shell'
 
 /** An input waiting for the session's running turn or command to end, editable until it runs. */
 export interface QueuedItem {
   id: string
   text: string
-  kind: QueuedKind
+  kind: InputKind
 }
 
 /** A message about one live session, sent only to the connections watching it. */
