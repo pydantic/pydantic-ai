@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.smart_search._toolset import SmartSearchToolset
+from pydantic_ai_harness.smart_search._toolset import SmartSearchToolset, validate_settings
 
 
 @dataclass
@@ -86,20 +86,24 @@ class SmartSearch(AbstractCapability[AgentDepsT]):
     instructions at all.
     """
 
+    _toolset: SmartSearchToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
-        if not 0 <= self.threshold <= 1:
-            raise ValueError(f'`threshold` must be between 0 and 1, got {self.threshold}')
-        # Negated so NaN, which an agent spec can pass through unvalidated, fails too instead of hanging the search.
-        if not self.concurrency >= 1:
-            raise ValueError(f'`concurrency` must be a positive integer, got {self.concurrency}')
+        validate_settings(self.threshold, self.concurrency)
 
     def get_toolset(self) -> SmartSearchToolset[AgentDepsT]:
-        """Build the toolset providing `smart_search`."""
-        return SmartSearchToolset[AgentDepsT](
-            model=self.model,
-            threshold=self.threshold,
-            concurrency=self.concurrency,
-            cache_index=self.cache_index,
-            guidance=self.guidance,
-            id=self.id or 'smart_search',
-        )
+        """Provide the stable `smart_search` toolset, shared with every per-run copy.
+
+        A run whose capabilities differ from the agent's (an instrumented one, or one given extra
+        `capabilities`) asks for the toolset again; a new one would start with an empty `cache_index`.
+        """
+        if self._toolset is None:
+            self._toolset = SmartSearchToolset[AgentDepsT](
+                model=self.model,
+                threshold=self.threshold,
+                concurrency=self.concurrency,
+                cache_index=self.cache_index,
+                guidance=self.guidance,
+                id=self.id or 'smart_search',
+            )
+        return self._toolset

@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import re
 import textwrap
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
-import pydantic_ai_harness.smart_search._index as smart_search_index
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import (
@@ -38,6 +38,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceTimeoutError
 from pydantic_ai_harness.smart_search import SmartSearch, SmartSearchResult
+
+if TYPE_CHECKING:
+    from logfire.testing import CaptureLogfire
 
 PY_SOURCE = textwrap.dedent(
     '''\
@@ -228,18 +231,18 @@ class VanishingBackend(LocalWorkspaceBackend):
 
 
 @pytest.fixture
-def chunked(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """The paths the index chunks, in order, to tell a rebuilt index from a reused one.
+def indexed(capfire: CaptureLogfire, instrument_all_agents: None) -> Callable[[], list[int | None]]:
+    """The files each search so far chunked and indexed, read off its span in the order the searches ended.
 
-    Nothing public tells them apart: every search re-reads every file to detect changes, and both return the same
-    result. So this counts calls to the index's chunker.
+    `None` for a search that failed before indexing. This tells a rebuilt index from a reused one, which return
+    the same result, as every search re-reads every file to detect changes.
     """
-    paths: list[str] = []
-    source_chunks = smart_search_index.source_chunks
 
-    def counting(text: str, path: str):
-        paths.append(path)
-        return source_chunks(text, path)
+    def read() -> list[int | None]:
+        return [
+            span['attributes'].get('smart_search.indexed_files')
+            for span in capfire.exporter.exported_spans_as_dict()
+            if span['name'] == 'smart search'
+        ]
 
-    monkeypatch.setattr(smart_search_index, 'source_chunks', counting)
-    return paths
+    return read

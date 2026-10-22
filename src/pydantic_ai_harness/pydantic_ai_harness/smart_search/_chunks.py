@@ -12,6 +12,7 @@ workspace is searched where it lives, never on the host.
 from __future__ import annotations
 
 import posixpath
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -31,6 +32,19 @@ MAX_FILE_BYTES = 1024 * 1024
 MAX_CHUNK_CHARS = 12_000
 WHOLE_DECLARATION_LINES = 160
 WINDOW, OVERLAP = 60, 10
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
+
+
+def split_lines(text: str) -> list[str]:
+    """`text`'s lines, numbered as editors, ripgrep and Python's tokenizer number them.
+
+    Unlike `str.splitlines`, a form feed, U+2028 and the other separators it also splits on stay inside
+    their line, so snippet line numbers match the file and the `ast` ranges of Python.
+    """
+    lines = _LINE_BREAK.split(text)
+    if lines[-1] == '':
+        lines.pop()
+    return lines
 
 
 class LineTooLong(ValueError):
@@ -80,9 +94,9 @@ def _chunks_from_ranges(lines: list[str], path: str, ranges: list[Range]) -> lis
     out: list[Chunk] = []
     next_line = 1
     for r in ranges:
-        start, end = min(r.start, next_line), min(r.end, len(lines))
-        if end < start:
-            continue  # pragma: no cover
+        start, end = min(r.start, next_line), r.end
+        # `ast` ranges lie within the lines `split_lines` counts, so a range never ends before it starts.
+        assert start <= end <= len(lines), (path, r)
         part = lines[start - 1 : end]
         whole = end - start < WHOLE_DECLARATION_LINES and len('\n'.join(part)) <= MAX_CHUNK_CHARS
         size, overlap = (len(part), 0) if whole else (WINDOW, OVERLAP)
@@ -95,7 +109,7 @@ def _chunks_from_ranges(lines: list[str], path: str, ranges: list[Range]) -> lis
 
 def source_chunks(text: str, path: str) -> list[Chunk]:
     """Cut one file's text into snippets: along its declarations for Python that parses, else line windows."""
-    lines = text.splitlines()
+    lines = split_lines(text)
     if path.endswith('.py'):
         try:
             ranges = python_ranges(text)

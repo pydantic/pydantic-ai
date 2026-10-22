@@ -33,6 +33,7 @@ from pydantic_ai_harness.smart_search._chunks import (
     list_files,
     read_or_error,
     source_chunks,
+    split_lines,
 )
 from pydantic_ai_harness.smart_search._retrieve import Bm25
 
@@ -64,6 +65,8 @@ class Shortlist:
     hits: list[Hit]
     files: int
     snippets: int
+    indexed: int
+    """Files chunked and indexed by this search: all of them unless a cached index is reused."""
     skipped: list[tuple[str, str]]
     """`(path, reason)` for each listed file that could not be searched."""
 
@@ -98,9 +101,9 @@ class SnippetIndex:
         """Snippets currently indexed."""
         return self._bm25.size
 
-    def update(self, batch: Sequence[tuple[str, bytes]]) -> int:
-        """Index the files in `batch` that are new or changed. Returns the batch's line count."""
-        lines = 0
+    def update(self, batch: Sequence[tuple[str, bytes]]) -> tuple[int, int]:
+        """Index the files in `batch` that are new or changed. Returns the batch's line count and the files indexed."""
+        lines = indexed = 0
         for path, raw in batch:
             digest = _digest(raw)
             file = self._files.get(path)
@@ -108,8 +111,9 @@ class SnippetIndex:
                 if file is not None:
                     self._retire(file)
                 file = self._files[path] = self._index(path, raw, digest)
+                indexed += 1
             lines += file.lines
-        return lines
+        return lines, indexed
 
     def _index(self, path: str, raw: bytes, digest: bytes) -> _File:
         file = _File(digest=digest, lines=raw.count(b'\n'))
@@ -122,7 +126,7 @@ class SnippetIndex:
             file.skipped = 'not UTF-8'
             return file
         # Counted the way chunking splits lines, so separators like U+2028 cannot slip past the line budget.
-        file.lines = len(text.splitlines())
+        file.lines = len(split_lines(text))
         try:
             chunks = source_chunks(text, path)
         except LineTooLong as exc:
@@ -215,7 +219,7 @@ class SnippetIndexes:
         slot = self._slot(key)
         async with slot.lock:
             try:
-                files, skipped = await _refresh(workspace, root, glob, slot.index)
+                files, indexed, skipped = await _refresh(workspace, root, glob, slot.index)
             except ModelRetry:
                 # Over a search budget: keep no partial index of a directory that cannot be searched.
                 if self._slots.get(key) is slot:
@@ -224,16 +228,16 @@ class SnippetIndexes:
             hits = await anyio.to_thread.run_sync(slot.index.shortlist, query, k)
         # Parallel searches can leave more than `max_cached` indexes; trim once this one is no longer busy.
         self._evict()
-        return Shortlist(hits=hits, files=files, snippets=slot.index.snippets, skipped=skipped)
+        return Shortlist(hits=hits, files=files, snippets=slot.index.snippets, indexed=indexed, skipped=skipped)
 
 
 async def _refresh(
     workspace: Workspace, root: str, glob: str | None, index: SnippetIndex
-) -> tuple[int, list[tuple[str, str]]]:
-    """Bring `index` up to date with `root`. Returns the listed file count and the skipped files."""
+) -> tuple[int, int, list[tuple[str, str]]]:
+    """Bring `index` up to date with `root`. Returns the listed and the (re)indexed file counts, and the skipped files."""
     paths, skipped = await list_files(workspace, root, glob)
     readable: set[str] = set()
-    lines = size = 0
+    lines = size = indexed = 0
     for offset in range(0, len(paths), _READ_BATCH):
         batch = paths[offset : offset + _READ_BATCH]
         contents = await gather(*(read_or_error(workspace, posixpath.join(root, path)) for path in batch))
@@ -247,11 +251,13 @@ async def _refresh(
                 size += len(raw)
         if size > MAX_TOTAL_BYTES:
             raise ModelRetry(f'Search exceeds {MAX_TOTAL_BYTES >> 30} GiB of source. Narrow the directory or glob.')
-        lines += await anyio.to_thread.run_sync(index.update, read)
+        batch_lines, batch_indexed = await anyio.to_thread.run_sync(index.update, read)
+        lines += batch_lines
+        indexed += batch_indexed
         if lines > MAX_TOTAL_LINES:
             raise ModelRetry(f'Search exceeds {MAX_TOTAL_LINES:,} lines of source. Narrow the directory or glob.')
     await anyio.to_thread.run_sync(index.prune, readable)
-    return len(paths), skipped + index.skipped(paths)
+    return len(paths), indexed, skipped + index.skipped(paths)
 
 
 async def read_snippets(workspace: Workspace, root: str, directory: str, hits: Sequence[Hit]) -> list[Chunk]:
@@ -262,7 +268,7 @@ async def read_snippets(workspace: Workspace, root: str, directory: str, hits: S
     digests = {hit.path: hit.digest for hit in hits}
     contents = await gather(*(read_or_error(workspace, posixpath.join(root, path)) for path in digests))
     lines = {
-        path: raw.decode('utf-8').splitlines()
+        path: split_lines(raw.decode('utf-8'))
         for path, raw in zip(digests, contents)
         if isinstance(raw, bytes) and _digest(raw) == digests[path]
     }
