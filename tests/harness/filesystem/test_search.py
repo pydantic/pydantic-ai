@@ -506,6 +506,8 @@ async def test_a_brace_alternative_naming_a_hidden_directory_searches_it_with_rg
     excluded = '!{.github,src}'
     assert await tools.search_files('needle', include_glob=excluded, workspace=workspace) == 'No matches found.'
     assert await tools.grep('needle', glob=excluded, workspace=workspace) == 'No matches found.'
+    vendored = '!**/{.venv,node_modules}/**'
+    assert await tools.grep('needle', glob=vendored, workspace=workspace) == 'src/x.yml:1:needle'
 
 
 async def test_a_glob_naming_a_hidden_directory_searches_it_with_rg(tmp_path: Path) -> None:
