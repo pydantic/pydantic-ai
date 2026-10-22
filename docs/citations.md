@@ -37,7 +37,10 @@ A [`Citation`][pydantic_ai.messages.Citation] has one or more `sources` and an o
 [`anchor`][pydantic_ai.messages.CitationAnchor], which holds Python character offsets into the text part:
 `part.content[anchor.start:anchor.end]`. Providers point at different things, so there are three cases:
 
-- A [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] selects the text the sources support.
+- A [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] selects the text the sources support. Some
+  providers, such as Google, give that range. Others, such as Anthropic, give no position in the answer: they split it
+  into text parts and cite whole parts, so the anchor covers the whole part and is only as narrow as the provider's
+  split.
 - A [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] selects a citation marker, such as `[1]`, that
   the model wrote into its answer.
 - A citation without an anchor belongs to the text part, but its position in the text is unknown.
