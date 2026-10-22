@@ -1339,8 +1339,9 @@ class RealtimeSession:
         Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
         over; it also returns if the session closes or ends (a response passed a usage limit), if the
-        exchange fails (a tool raised, or its result would pass a usage limit) so the reply can no longer
-        come, or if the provider refuses the request for the reply (reported as a
+        exchange fails so the reply can no longer come (a tool raised and its failure did not go to the
+        model, or its result would pass a usage limit), or if the provider refuses the request for the
+        reply (reported as a
         [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
@@ -1886,24 +1887,22 @@ class RealtimeSession:
         # they arrive, so the stream carries nothing the barge-in already cut off.
         self._flush_tap(tap)
         self._interrupted_audio_part_index = self._audio_part_index
-        if not self._profile.get('supports_output_truncation', False):
-            # Best effort on a model without output truncation (xAI): the unheard audio is still
-            # flushed and the response cancelled; only the provider-side transcript sync is
-            # unavailable.
-            if cancel:
-                await self._send_frame(CancelResponse())
-            self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
-            return True
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
         played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
-        # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         truncations = self._truncations_at(playhead)
-        try:
-            await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
-        except RealtimeError:
-            # As in `interrupt(played_ms=...)`: the truncations may have reached the provider before the link failed.
-            self._apply_core(self._playback_interruption(played_ms, truncations))
-            raise
+        # Truncate before cancelling, under one hold of the send lock, for the same reasons as above. Without
+        # output truncation (xAI) only the cancel goes out, but history still records where playback stopped,
+        # including on a reply that finished generating before the user spoke over it.
+        supports_truncation = self._profile.get('supports_output_truncation', False)
+        frames = [*(truncations if supports_truncation else ()), *([CancelResponse()] if cancel else [])]
+        if frames:
+            try:
+                await self._send_frame(*frames)
+            except RealtimeError:
+                # As in `interrupt(played_ms=...)`: the frames may have reached the provider before the link failed,
+                # and either way the listener heard only this much.
+                self._apply_core(self._playback_interruption(played_ms, truncations))
+                raise
         self._apply_core(self._playback_interruption(played_ms, truncations))
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
@@ -2099,14 +2098,19 @@ class RealtimeSession:
                 return error
         return None
 
-    def _park_error(self, error: BaseException) -> None:
-        """Park a background failure for iteration or close, ending receive-only views if nobody is iterating."""
+    def _park_error(self, error: BaseException, *, abandons_exchange: bool = True) -> None:
+        """Park a background failure for iteration or close, ending receive-only views if nobody is iterating.
+
+        `abandons_exchange` is `False` for a tool failure whose result went out anyway (see
+        `_sends_failed_tool_results`): the model got what it needs and answers it, so the exchange goes on.
+        """
         self._parked_errors.append(error)
         self._queue_put(error)
-        # A tool that raised, or a usage limit tripped by the request its result would make, stops the model from
-        # getting what it needs, so the exchange waiting on it is over: a caller in `wait_for_reply()` is done
-        # waiting for it.
-        self._apply_core(ExchangeAbandoned())
+        if abandons_exchange:
+            # A tool that raised, or a usage limit tripped by the request its result would make, stops the model from
+            # getting what it needs, so the exchange waiting on it is over: a caller in `wait_for_reply()` is done
+            # waiting for it.
+            self._apply_core(ExchangeAbandoned())
         if not self._iterator_active and self._pump_task is not None:
             self._receive_ending = True
             self._pump_task.cancel()
@@ -2613,8 +2617,8 @@ class RealtimeSession:
                 self._connection._tool_call_unanswered(call_part.tool_call_id)  # pyright: ignore[reportPrivateUsage]
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
-            # never arrives.
-            self._park_error(e)
+            # never arrives. A failure that went out is answered like any other result, so the exchange goes on.
+            self._park_error(e, abandons_exchange=not sent)
             return
         finally:
             validation_done.set()
