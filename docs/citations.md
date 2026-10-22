@@ -143,23 +143,22 @@ provider's and can change with the provider's API.
 
 [Stored message history](message-history.md#storing-and-loading-messages-to-json) keeps
 [`TextPart.citations`][pydantic_ai.messages.TextPart.citations] and the provider data in `provider_details['citations']`.
-When you send that history to the provider that produced the citations, Pydantic AI sends the provider's own citation
-data back with the text, so the model still knows which of its earlier statements came from which source:
+When you send that history to the provider that produced the citations, Pydantic AI sends some of the provider's own
+citation data back with the text, so the model still knows which of its earlier statements came from which source:
 
-| Provider | Citations sent back | Only when |
-| --- | --- | --- |
-| Anthropic | Web search citations, and citations of plain-text documents and fetched pages | Documents and fetched pages need `citations=True` |
-| Amazon Bedrock | Citations of plain-text documents | `citations=True`, on Anthropic models |
-| OpenAI Responses | URL and file citations | Item IDs are sent; see [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
+| Provider | Citations sent back |
+| --- | --- |
+| Anthropic | Web search citations |
+| OpenAI Responses | URL and file citations, when item IDs are sent; see [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
 
-Other providers' APIs can't receive citations, so their answers are sent as plain text, as are citations from a
-different provider. Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the
-text.
+These citations aren't sent back, and the text they belong to is sent as plain text:
 
-A citation is only sent back while it still matches the request; otherwise it's left out, and its text is still
-sent. Leaving out earlier messages, as a [history processor](message-history.md#processing-message-history) or
-[compaction](capabilities/compaction.md) can, keeps Anthropic and Bedrock document citations working as long as the
-cited document is still in the history. An OpenAI URL citation is left out if the text around its link was edited.
+- citations of documents and fetched pages, on Anthropic and Amazon Bedrock
+- citations from other providers, whose APIs can't receive them
+- citations from a different provider than the one the history is sent to
+- an OpenAI URL citation whose text around the link was edited
+
+Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the text.
 
 Sending citations back doesn't affect prompt caching: the same history is sent the same way on every turn.
 

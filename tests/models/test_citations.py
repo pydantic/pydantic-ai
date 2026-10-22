@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-import json
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Literal, assert_never
+from typing import Literal, assert_never
 from urllib.parse import urlparse
 
 import pytest
-from pydantic import JsonValue
 
 from pydantic_ai import (
     Agent,
     BinaryContent,
     Citation,
-    CompactionPart,
     ContentCitationAnchor,
     DocumentCitationSource,
     MarkerCitationAnchor,
@@ -29,12 +24,11 @@ from pydantic_ai.native_tools import WebFetchTool, WebSearchTool
 from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
-from ..conftest import RequestCapture, try_import
+from ..conftest import try_import
 from .citation_utils import citations_from_messages
-from .conftest import content_blocks
 
 with try_import() as anthropic_available:
-    from pydantic_ai.models.anthropic import AnthropicCompaction, AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_available:
@@ -51,9 +45,6 @@ with try_import() as openai_available:
 with try_import() as openrouter_available:
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openrouter import OpenRouterProvider
-
-with try_import() as vercel_available:
-    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
@@ -865,70 +856,34 @@ async def test_document_citations(
     assert citations_from_messages(result.all_messages()) == case.expected
 
 
-NativeCitationReplayProvider = Literal[
-    'anthropic-messages', 'anthropic-document', 'anthropic-tool-document', 'bedrock-converse', 'openai-responses'
-]
+NativeCitationReplayProvider = Literal['anthropic-messages', 'openai-responses']
 
 
 @pytest.mark.parametrize(
     'provider',
     [
         pytest.param('anthropic-messages', id='anthropic-messages'),
-        pytest.param('anthropic-document', id='anthropic-document'),
-        pytest.param('anthropic-tool-document', id='anthropic-tool-document'),
-        # Matching on the body would record the two turns sorted by body, out of order for the cache-prefix check.
-        pytest.param('bedrock-converse', id='bedrock-converse', marks=pytest.mark.vcr()),
         pytest.param('openai-responses', id='openai-responses'),
     ],
 )
 async def test_native_citation_replay_after_persisted_history(
     provider: NativeCitationReplayProvider,
-    request: pytest.FixtureRequest,
     allow_model_requests: None,
     anthropic_api_key: str,
     openai_api_key: str,
 ) -> None:
     """Each provider accepts its own persisted native citation history on the next request."""
-    available = {
-        'anthropic-messages': anthropic_available,
-        'anthropic-document': anthropic_available,
-        'anthropic-tool-document': anthropic_available,
-        'bedrock-converse': bedrock_available,
-        'openai-responses': openai_available,
-    }[provider]
-    if not available():
+    if not {'anthropic-messages': anthropic_available, 'openai-responses': openai_available}[provider]():
         pytest.skip(f'{provider} dependencies not installed')
     agent: Agent[None, str]
-    first_prompt: str | list[str | BinaryContent]
-    if provider in ('anthropic-messages', 'anthropic-document', 'anthropic-tool-document'):
-        model = AnthropicModel(
-            'claude-sonnet-4-5',
-            provider=AnthropicProvider(api_key=anthropic_api_key),
-            settings=ANTHROPIC_SETTINGS,
-        )
-        if provider == 'anthropic-messages':
-            agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
-            first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
-        elif provider == 'anthropic-tool-document':
-            agent = Agent(model, tools=[read_shipping_policy], model_settings=ModelSettings(citations=True))
-            first_prompt = TOOL_DOCUMENT_PROMPT
-        else:
-            agent = Agent(model, model_settings=ModelSettings(citations=True))
-            first_prompt = [
-                'According to the document, what is the return window? Answer in one sentence and cite the document.',
-                BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
-            ]
-    elif provider == 'bedrock-converse':
+    if provider == 'anthropic-messages':
         agent = Agent(
-            BedrockConverseModel(
-                'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
+            AnthropicModel(
+                'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
             ),
-            model_settings=ModelSettings(citations=True),
+            capabilities=[NativeTool(WebSearchTool(max_uses=1))],
         )
-        first_prompt = [
-            'According to the document, what is the return window? Answer in one sentence and cite the document.',
-            BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
-        ]
+        first_prompt = "Use web search to find Pydantic AI's documentation and cite it."
     else:
         agent = Agent(
             OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key)),
@@ -943,174 +898,6 @@ async def test_native_citation_replay_after_persisted_history(
     history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
     second_result = await agent.run('Continue.', message_history=history)
     assert second_result.output
-
-
-RETURNS_POLICY = BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain')
-SHIPPING_POLICY = BinaryContent(data=b'Orders ship within two business days.', media_type='text/plain')
-WARRANTY_POLICY = BinaryContent(data=b'Every product has a two-year warranty.', media_type='text/plain')
-
-
-def _replayed_document_indices(body: dict[str, JsonValue]) -> list[list[JsonValue]]:
-    """The `document_index` of each replayed document citation, per text block that has citations."""
-    return [
-        [citation.get('document_index') for citation in citations if isinstance(citation, dict)]
-        for block in content_blocks(body, 'text')
-        if isinstance(citations := block.get('citations'), list)
-    ]
-
-
-@pytest.mark.moves_cache_prefix(reason='compaction replaces the history before it')
-async def test_anthropic_document_citation_replay_after_compacted_history(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
-) -> None:
-    """Document citations replay correctly once compaction has left the earlier history out.
-
-    The first answer cites the returns policy. The second prompt is large enough to be compacted, and Anthropic
-    answers it from the compaction summary, without citations. Later requests start at the compaction block, so the
-    returns answer and its document are no longer sent. The warranty policy sent after compaction is cited, and its
-    citation is replayed with the index it has in the request that is actually sent: 0.
-    """
-    if not anthropic_available():
-        pytest.skip('anthropic dependencies not installed')
-    model = AnthropicModel(
-        'claude-sonnet-4-6',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
-        settings=ANTHROPIC_SETTINGS,
-    )
-    agent = Agent(
-        model,
-        model_settings=ModelSettings(citations=True),
-        capabilities=[AnthropicCompaction(token_threshold=50_000)],
-    )
-    # About 55k tokens, over the threshold, with no line ending in a space, which pre-commit would strip.
-    padding = ' '.join(['The quick brown fox jumps over the lazy dog.'] * 5000)
-
-    returns = await agent.run(['What is the return window? Cite the document.', RETURNS_POLICY])
-    shipping = await agent.run(
-        [f'Background notes: {padding}\n\nHow long does shipping take? Cite the document.', SHIPPING_POLICY],
-        message_history=returns.all_messages(),
-    )
-    assert any(isinstance(part, CompactionPart) for part in shipping.new_messages()[-1].parts)
-    warranty = await agent.run(
-        ['How long is the warranty? Cite the document.', WARRANTY_POLICY], message_history=shipping.all_messages()
-    )
-    assert citations_from_messages(warranty.new_messages())
-    await agent.run('Thanks. Repeat the warranty in one sentence.', message_history=warranty.all_messages())
-
-    # Only the warranty answer is sent with a citation.
-    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0]])
-
-
-@pytest.mark.moves_cache_prefix(reason='the last request leaves the first exchange out of the history')
-async def test_anthropic_document_citation_replay_after_history_trimmed(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
-) -> None:
-    """A document citation follows its document to its new position when earlier history is left out.
-
-    The shipping policy is the second document when it's cited (index 1). Leaving the first exchange out makes it the
-    only document, so the citation is replayed with index 0. Index 1 would make Anthropic reject the request.
-    """
-    if not anthropic_available():
-        pytest.skip('anthropic dependencies not installed')
-    model = AnthropicModel(
-        'claude-sonnet-4-5',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
-        settings=ANTHROPIC_SETTINGS,
-    )
-    agent = Agent(model, model_settings=ModelSettings(citations=True))
-
-    returns = await agent.run(['What is the return window? Cite the document.', RETURNS_POLICY])
-    shipping = await agent.run(
-        ['How long does shipping take? Cite the document.', SHIPPING_POLICY], message_history=returns.all_messages()
-    )
-    [shipping_answer] = [
-        part for part in shipping.new_messages()[-1].parts if isinstance(part, TextPart) and part.citations
-    ]
-    assert [citation['document_index'] for citation in (shipping_answer.provider_details or {})['citations']] == [1]
-
-    # What a history processor that keeps only the latest exchange would send.
-    result = await agent.run(
-        'Thanks. Repeat the shipping time in one sentence.', message_history=shipping.all_messages()[2:]
-    )
-    assert result.output
-
-    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0]])
-
-
-# Body matching would sort this conversation's turns out of order; the requests are pinned by `request_capture`.
-@pytest.mark.vcr()
-async def test_anthropic_document_citation_replay_counts_fetched_pages(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
-) -> None:
-    """A page fetched by Web Fetch is numbered like any other document, so later citations are replayed past it.
-
-    The returns policy, the fetched license page and the shipping policy are documents 0, 1 and 2 when Anthropic cites
-    them. Replaying all three citations with those indices shows our numbering of the request matches Anthropic's.
-    """
-    if not anthropic_available():
-        pytest.skip('anthropic dependencies not installed')
-    model = AnthropicModel(
-        'claude-sonnet-4-5',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
-        settings=ModelSettings(max_tokens=4096, citations=True),
-    )
-    agent = Agent(model, capabilities=[NativeTool(WebFetchTool(max_uses=1))])
-
-    # The license is a plain-text page with no trailing whitespace or smart characters, which recording would rewrite.
-    license_and_returns = await agent.run(
-        [
-            'What is the return window? Then fetch https://raw.githubusercontent.com/pydantic/pydantic-ai/main/LICENSE '
-            'and say which license Pydantic AI uses. Answer in two sentences, citing the document and the page.',
-            RETURNS_POLICY,
-        ]
-    )
-    shipping = await agent.run(
-        ['How long does shipping take? Cite the document.', SHIPPING_POLICY],
-        message_history=license_and_returns.all_messages(),
-    )
-    await agent.run('Thanks. Reply only OK.', message_history=shipping.all_messages())
-
-    cited = [
-        [citation['document_index'] for citation in (part.provider_details or {})['citations']]
-        for part in _cited_text_parts(shipping.all_messages())
-    ]
-    assert cited == snapshot([[0], [1], [2]])
-    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == cited
-
-
-# Body matching would sort this conversation's turns out of order; the requests are pinned by `request_capture`.
-@pytest.mark.vcr()
-async def test_anthropic_document_citation_replay_after_vercel_round_trip(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
-) -> None:
-    """Citations survive a Vercel AI frontend holding the history, and are sent back on the text that comes back.
-
-    Anthropic answers a sentence citing two documents in several text blocks. The Vercel adapter shows them as one
-    text part and loads it back as one, so the next request sends a single text block with both citations.
-    """
-    if not anthropic_available() or not vercel_available():
-        pytest.skip('anthropic or Vercel AI dependencies not installed')
-    model = AnthropicModel(
-        'claude-sonnet-4-5',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
-        settings=ModelSettings(max_tokens=4096, citations=True),
-    )
-    agent = Agent(model)
-
-    result = await agent.run(
-        [
-            'In one sentence, give the return window and the shipping time, citing both documents.',
-            RETURNS_POLICY,
-            SHIPPING_POLICY,
-        ]
-    )
-    assert len(_cited_text_parts(result.all_messages())) == 2
-
-    history = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(result.all_messages()))
-    assert len(_cited_text_parts(history)) == 1
-    await agent.run('Thanks. Reply only OK.', message_history=history)
-
-    assert _replayed_document_indices(request_capture.bodies('/v1/messages')[-1]) == snapshot([[0, 1]])
 
 
 def read_shipping_policy() -> BinaryContent:
@@ -1194,91 +981,3 @@ async def test_bedrock_tool_return_document_citations(
             ),
         ]
     )
-
-
-def read_warranty_policy() -> BinaryContent:
-    """Read the warranty policy document."""
-    return WARRANTY_POLICY
-
-
-@contextmanager
-def _converse_request_bodies(model: BedrockConverseModel) -> Generator[list[dict[str, Any]]]:
-    """The Converse request bodies as sent, read off boto's `before-send` event, which fires on cassette replay too.
-
-    Both operations count: without `max_tokens`, a Claude request goes out as `ConverseStream`.
-    """
-    bodies: list[dict[str, Any]] = []
-
-    def capture(request: Any, **_: Any) -> None:
-        bodies.append(json.loads(request.body))
-
-    event = 'before-send.bedrock-runtime'
-    model.client.meta.events.register_last(event, capture)
-    try:
-        yield bodies
-    finally:
-        model.client.meta.events.unregister(event, capture)
-
-
-def _bedrock_document_indices(messages: list[ModelMessage]) -> list[list[Any]]:
-    """The `documentIndex` of each document citation Bedrock returned, per cited text part."""
-    return [
-        [citation['location']['documentChar']['documentIndex'] for citation in part.provider_details['citations']]
-        for message in messages
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-        if isinstance(part, TextPart) and part.provider_details and 'citations' in part.provider_details
-    ]
-
-
-def _replayed_bedrock_document_indices(body: dict[str, Any]) -> list[list[Any]]:
-    """The `documentIndex` of each replayed document citation, per `citationsContent` block."""
-    return [
-        [citation['location']['documentChar']['documentIndex'] for citation in block['citationsContent']['citations']]
-        for message in body['messages']
-        for block in message['content']
-        if 'citationsContent' in block
-    ]
-
-
-# Body matching would sort this conversation's turns out of order, as for the test above; the requests are pinned
-# from the `before-send` event instead.
-@pytest.mark.vcr()
-@pytest.mark.moves_cache_prefix(reason='the last request leaves the first exchange out of the history')
-async def test_bedrock_document_citation_replay_after_history_trimmed(
-    allow_model_requests: None, request: pytest.FixtureRequest
-) -> None:
-    """Document citations follow their documents, including one a tool returned, when earlier history is left out.
-
-    A support conversation cites the shipping policy from the prompt, the warranty policy a tool returned, and the
-    returns policy from the prompt. Leaving the first exchange out takes the shipping policy with it, so the warranty
-    and returns policies move from 1 and 2 to 0 and 1. Bedrock's citations in the answer to that request show its own
-    numbering, which the replayed citations have to match.
-    """
-    if not bedrock_available():
-        pytest.skip('bedrock dependencies not installed')
-    model = BedrockConverseModel(
-        'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
-    )
-    agent = Agent(model, tools=[read_warranty_policy], model_settings=ModelSettings(citations=True))
-
-    shipping = await agent.run(['How long does shipping take? Cite the document.', SHIPPING_POLICY])
-    warranty = await agent.run(
-        'How long is the warranty? Read the warranty policy and cite it.', message_history=shipping.all_messages()
-    )
-    returns = await agent.run(
-        ['What is the return window? Cite the document.', RETURNS_POLICY], message_history=warranty.all_messages()
-    )
-    # Bedrock numbers the documents shipping 0, warranty 1 (in the tool result) and returns 2.
-    assert _bedrock_document_indices(returns.all_messages()) == snapshot([[0], [1], [2]])
-
-    # What a history processor that leaves out the first exchange would send.
-    with _converse_request_bodies(model) as bodies:
-        summary = await agent.run(
-            'Without reading any policy again, summarise the warranty and the return window in two sentences, '
-            'citing the documents.',
-            message_history=returns.all_messages()[2:],
-        )
-
-    assert _replayed_bedrock_document_indices(bodies[-1]) == snapshot([[0], [1]])
-    assert _bedrock_document_indices(summary.new_messages()) == snapshot([[0], [1]])
