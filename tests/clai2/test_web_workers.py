@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Part
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.subagents import DelegationStartEvent
+from pydantic_ai_harness.subagents import DelegationStartEvent, TaskQuestionEvent
 from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     ItemAdded,
@@ -221,6 +221,9 @@ def test_a_resumed_or_joined_run_starts_from_the_tasks_history() -> None:
     )
     workers.observe(TaskEvent(task=task))
     assert workers.items() == {}, 'a change of the task alone, such as a question it waits on, starts no transcript'
+    question = TaskQuestionEvent(task_id='t', agent_name='self', question_id='q', question='Which?')
+    workers.observe(TaskEvent(task=task, event=question))
+    assert workers.items() == {}, 'nor does its question, a task-control message'
     start = DelegationStartEvent(agent_name='self', task='look again', truncated=False, inherits_tools=True, model=None)
     start.task_id = 't'
     workers.observe(TaskEvent(task=task, event=start))
