@@ -98,6 +98,13 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 openai_responses_supports_prompt_cache_diagnostics=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # OpenAI multiplexes up to 32 named `stream_id` lanes on one Responses WebSocket. Set here rather than
+                # in `openai_model_profile` because Azure OpenAI and xAI document WebSocket mode with one response in
+                # flight per connection, and xAI accepts a `stream_id` without echoing it on its events.
+                # https://developers.openai.com/api/docs/guides/websocket-mode
+                # https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/websockets
+                # https://docs.x.ai/developers/advanced-api-usage/websocket-mode
+                openai_responses_supports_websocket_stream_id=True,
             ),
         )
 

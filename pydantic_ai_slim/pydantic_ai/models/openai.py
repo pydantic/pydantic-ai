@@ -120,6 +120,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
+from ..providers._oauth_provider import OAuthCredentialsProvider
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
@@ -2627,30 +2628,39 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Yield a model bound to one caller-owned Responses WebSocket.
 
         The source model continues to use HTTP. Pass the yielded model to an Agent,
-        an individual run, or a model-selection capability. Concurrent requests run on
-        separate `stream_id` lanes of the one socket. A provider error, a stream closed
-        early, or a cancellation ends only its own request; a transport failure fails the
-        socket, and later requests raise `ModelAPIError`. The socket closes when the
-        context exits.
+        an individual run, or a model-selection capability. On OpenAI's API, concurrent
+        requests run on separate `stream_id` lanes of the one socket; on other endpoints
+        they take turns. A provider error, a stream closed early, or a cancellation ends
+        only its own request; a transport failure fails the socket, and later requests
+        raise `ModelConnectionError`. The socket closes when the context exits, and a
+        request still running then raises `UserError`.
 
         Install `pydantic-ai-slim[openai-responses-websocket]` to enable this method.
-        Standalone token counting and compaction continue to use HTTP.
+        Standalone token counting and compaction continue to use HTTP, and `max_retries`
+        doesn't apply to requests on the socket.
 
         Args:
             extra_headers: Additional handshake headers, merged over the headers from
                 the model settings and the provider's client defaults.
             websocket_connection_options: Options for the underlying `websockets`
                 connection, typed against the openai SDK's `WebSocketConnectionOptions` TypedDict.
+                `max_size` and `max_queue` default to `None`, which lifts the `websockets` limits
+                on message size and on unread frames.
 
         Returns:
             A clone of this model bound to the open WebSocket connection. The source
             model is unchanged and keeps using HTTP.
         """
         if _is_azure(self.client, self._provider.name):
-            raise UserError('Responses WebSockets are not supported with Azure OpenAI models.')
+            raise UserError('`connect()` does not support Azure OpenAI models.')
+        if isinstance(self._provider, OAuthCredentialsProvider):
+            raise UserError(
+                f'`connect()` does not support the {self.system!r} provider: its OAuth credentials are only added '
+                'to HTTP requests, so the WebSocket handshake would not be authenticated.'
+            )
 
         try:
-            from ._openai_responses_websocket import ResponsesWebSocket
+            from ._openai_responses_websocket import NAMED_LANE_LIMIT, ResponsesWebSocket
         except ImportError as exc:
             raise ImportError(
                 'Install `pydantic-ai-slim[openai-responses-websocket]` to use Responses WebSockets.'
@@ -2673,6 +2683,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 headers,
                 timeout,
                 websocket_connection_options or {},
+                NAMED_LANE_LIMIT if self.profile.get('openai_responses_supports_websocket_stream_id', False) else 0,
             )
         try:
             connected = _utils.replace_no_init(self, _websocket=websocket)
@@ -2762,7 +2773,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return _translate_openai_cache(self.profile, model_settings, model_request_parameters), model_request_parameters
 
     def _unsupported_settings(self) -> frozenset[str]:
-        return _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
+        unsupported = _with_profile_unsupported_settings(self.unsupported_settings, self.profile)
+        # A WebSocket request is sent once: the SDK retries only HTTP requests.
+        return (unsupported | {'max_retries'}) if self._websocket is not None else unsupported
 
     @property
     def system(self) -> str:
@@ -4134,7 +4147,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return auto_id, trimmed
         if setting == 'auto' or at_boundary:
             return None, messages
-        if self._history_boundary(messages) == 'transport':
+        latest_response = next(
+            (m for m in reversed(messages) if isinstance(m, ModelResponse) and m.provider_name == self.system), None
+        )
+        if latest_response is not None and not self._is_response_id_reachable(latest_response):
             for index in range(len(messages) - 1, -1, -1):
                 message = messages[index]
                 if (
@@ -4184,14 +4200,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             lane = self._websocket_lane
             return lane is not None and response.provider_response_id == lane.latest_response_id
         return self._websocket is None
-
-    def _history_boundary(self, messages: list[ModelMessage]) -> Literal['transport'] | None:
-        for m in reversed(messages):
-            if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                if not self._is_response_id_reachable(m):
-                    return 'transport'
-                return None
-        return None
 
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage], *, allow_no_new_messages: bool = False
@@ -5336,11 +5344,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {**hook_provider_details, **(self.provider_details or {})}
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
-        if not self._is_websocket:
-            return super().get_stream_cancel_errors()
-        from ._openai_responses_websocket import WebSocketTransportError
-
-        return (WebSocketTransportError,)
+        # Closing a WebSocket response interrupts its pending read with a connection error at the `read` phase.
+        return (ModelConnectionError,) if self._is_websocket else super().get_stream_cancel_errors()
 
     async def close_stream(self) -> None:
         await self._response.source.close()

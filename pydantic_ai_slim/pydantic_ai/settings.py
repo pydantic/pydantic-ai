@@ -328,7 +328,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI (except on a Responses WebSocket from `OpenAIResponsesModel.connect()`, which sends each request once)
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic

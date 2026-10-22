@@ -22,11 +22,20 @@ from openai.types.responses.response_steer_failed_event import ResponseSteerFail
 from openai.types.responses.response_steer_pending_event import ResponseSteerPendingEvent
 from openai.types.responses.responses_server_event import ResponsesServerEvent, ResponseWsError
 from openai.types.websocket_connection_options import WebSocketConnectionOptions
-from pydantic_core import to_json
+from pydantic_core import from_json, to_json
 from websockets.exceptions import InvalidStatus, WebSocketException
 
 from .. import _model_errors
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from .._utils import is_str_dict
+from ..exceptions import (
+    ModelAPIError,
+    ModelConnectionError,
+    ModelHTTPError,
+    ModelTimeoutError,
+    TransportPhase,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from . import _suggest_known_model_id_from_provider_error  # pyright: ignore[reportPrivateUsage]
 
 
@@ -34,10 +43,6 @@ class ConnectionOptions(WebSocketConnectionOptions):
     """Include the opening-handshake timeout omitted by the SDK's options type."""
 
     open_timeout: None
-
-
-class WebSocketTransportError(ModelAPIError):
-    """A transport failure on a Responses WebSocket."""
 
 
 # OpenAI accepts up to 32 distinct named `stream_id` values per connection and never releases one
@@ -78,11 +83,13 @@ class ResponsesWebSocket:
     model_name: str
     model_id_namespace: str
     headers: Mapping[str, str]
+    named_lane_limit: int
+    """How many named `stream_id` lanes concurrent requests may use; with none, they wait for the default lane."""
     closed: bool = False
     """The owning `connect()` context exited."""
     connection_closed: bool = False
     failure: str | None = None
-    """Why the socket failed. Later requests raise `WebSocketTransportError` so a fallback can take over."""
+    """Why the socket failed. Later requests raise `ModelConnectionError` so a fallback can take over."""
     lanes: list[ResponsesWebSocketLane] = field(default_factory=lambda: [ResponsesWebSocketLane(None)])
     reading: bool = False
     changed: anyio.Event = field(default_factory=anyio.Event)
@@ -97,6 +104,7 @@ class ResponsesWebSocket:
         headers: Mapping[str, str],
         timeout: Timeout,
         options: WebSocketConnectionOptions,
+        named_lane_limit: int,
     ) -> Self:
         # Unless the caller sets them, lift the `websockets` limits on message size and on unread frames:
         # - OpenAI events can exceed the 1 MiB default message size; an image generation result does.
@@ -118,21 +126,43 @@ class ResponsesWebSocket:
                 f'{exc} Use HTTP or supply an SDK client with WebSocket-compatible authentication.'
             ) from exc
         except InvalidStatus as exc:
-            if exc.response.status_code < 400:
+            status_code = exc.response.status_code
+            if status_code < 400:
                 raise ModelAPIError(
-                    model_name=model_name, message=f'WebSocket handshake failed with status {exc.response.status_code}'
+                    model_name=model_name, message=f'WebSocket handshake failed with status {status_code}'
                 ) from exc
-            raise ModelHTTPError(
-                status_code=exc.response.status_code,
+            text = bytes(exc.response.body).decode(errors='replace')
+            # Read like the SDK reads an HTTP error response, so the rejection gets the category it gets over HTTP.
+            try:
+                parsed: object = from_json(text)
+            except ValueError:
+                parsed = None
+            error: object = parsed.get('error', parsed) if is_str_dict(parsed) else None
+            fields = (
+                {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+            )
+            code = fields.get('code')
+            error_type = fields.get('type')
+            raise ModelHTTPError.for_category(
+                _model_errors.openai_compatible_category(status_code, code, error_type, fields.get('message', text)),
+                status_code=status_code,
                 model_name=model_name,
-                body=bytes(exc.response.body).decode(errors='replace'),
+                body=error if error is not None else text,
                 # `dict(exc.response.headers)` raises `MultipleValuesError` on a repeated header.
                 headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
+                provider_error_code=code,
+                provider_error_type=error_type,
             ) from exc
-        except (OSError, WebSocketException, TimeoutError) as exc:
-            raise ModelAPIError(model_name=model_name, message=f'WebSocket connection failed: {exc}') from exc
+        except TimeoutError as exc:
+            raise ModelTimeoutError(
+                model_name=model_name, message='WebSocket connection timed out.', phase='connect'
+            ) from exc
+        except (OSError, WebSocketException) as exc:
+            raise ModelConnectionError(
+                model_name=model_name, message=f'WebSocket connection failed: {exc}', phase='connect'
+            ) from exc
 
-        return cls(connection, model_name, model_id_namespace, cls.effective_headers(client, headers))
+        return cls(connection, model_name, model_id_namespace, cls.effective_headers(client, headers), named_lane_limit)
 
     @staticmethod
     def effective_headers(client: AsyncOpenAI, extra_headers: Mapping[str, str]) -> dict[str, str]:
@@ -152,11 +182,20 @@ class ResponsesWebSocket:
         try:
             with anyio.fail_after(timeout.pool):
                 while True:
-                    if self.closed:
-                        raise UserError('This Responses WebSocket is closed. Open a new `model.connect()` context.')
-                    if self.failure is not None:
-                        raise WebSocketTransportError(model_name=self.model_name, message=self.failure)
-                    if (lane := self._idle_lane(response_id)) is not None:
+                    # The request hasn't been sent.
+                    self._check_usable('connect')
+                    idle = [lane for lane in self.lanes if not lane.active]
+                    lane = next((lane for lane in idle if lane.latest_response_id == response_id), None)
+                    if lane is None:
+                        # Reusing a lane evicts the response it cached, which another conversation may still
+                        # continue from.
+                        lane = next((lane for lane in idle if lane.latest_response_id is None), None)
+                    if lane is None and len(self.lanes) <= self.named_lane_limit:
+                        lane = ResponsesWebSocketLane(f'lane-{len(self.lanes)}')
+                        self.lanes.append(lane)
+                    if lane is None:
+                        lane = min(idle, key=lambda lane: lane.last_used, default=None)
+                    if lane is not None:
                         self.uses += 1
                         lane.active = True
                         lane.last_used = self.uses
@@ -167,25 +206,18 @@ class ResponsesWebSocket:
                     else:
                         await self.changed.wait()
         except TimeoutError as exc:
-            raise ModelAPIError(
-                model_name=self.model_name, message='No Responses WebSocket lane became free within the pool timeout.'
+            raise ModelTimeoutError(
+                model_name=self.model_name,
+                message='No Responses WebSocket lane became free within the pool timeout.',
+                phase='pool',
             ) from exc
 
-    def _idle_lane(self, response_id: str | None) -> ResponsesWebSocketLane | None:
-        idle = [lane for lane in self.lanes if not lane.active]
-        if response_id is not None:
-            for lane in idle:
-                if lane.latest_response_id == response_id:
-                    return lane
-        # Reusing a lane evicts the response it cached, which another conversation may still continue from.
-        for lane in idle:
-            if lane.latest_response_id is None:
-                return lane
-        if len(self.lanes) <= NAMED_LANE_LIMIT:
-            lane = ResponsesWebSocketLane(f'lane-{len(self.lanes)}')
-            self.lanes.append(lane)
-            return lane
-        return min(idle, key=lambda lane: lane.last_used, default=None)
+    def _check_usable(self, phase: TransportPhase) -> None:
+        """Raise for a closed context, or for a failed socket as a connection error at the request's `phase`."""
+        if self.closed:
+            raise UserError('This Responses WebSocket is closed. Open a new `model.connect()` context.')
+        if self.failure is not None:
+            raise ModelConnectionError(model_name=self.model_name, message=self.failure, phase=phase)
 
     def release(self, lane: ResponsesWebSocketLane, *, finished: bool) -> None:
         """Free a lane, or hold an unfinished one until the reader discards the rest of its response."""
@@ -213,9 +245,11 @@ class ResponsesWebSocket:
             with anyio.fail_after(timeout.write):
                 await self.connection.send_raw(data)
         except (OSError, WebSocketException, TimeoutError) as exc:
-            failure = f'WebSocket request failed: {exc}'
+            timed_out = isinstance(exc, TimeoutError)
+            failure = 'WebSocket request timed out.' if timed_out else f'WebSocket request failed: {exc}'
             await self._fail(failure)
-            raise ModelAPIError(model_name=self.model_name, message=failure) from exc
+            error = ModelTimeoutError if timed_out else ModelConnectionError
+            raise error(model_name=self.model_name, message=failure, phase='write') from exc
         except BaseException:
             # `websockets` writes an unfragmented frame before its only suspension point, so a cancelled send still
             # reaches the server: discard that response when it arrives instead of reusing the lane before then.
@@ -226,16 +260,17 @@ class ResponsesWebSocket:
     async def receive(self, lane: ResponsesWebSocketLane) -> ResponsesServerEvent:
         with anyio.CancelScope() as lane.receiving:
             while not lane.events:
-                # A closed connection fails the next read, so that is where a closed context surfaces too.
-                if self.failure is not None:
-                    raise WebSocketTransportError(model_name=self.model_name, message=self.failure)
+                # The request was sent, so the provider may have acted on it.
+                self._check_usable('read')
                 if self.reading:
                     await self.changed.wait()
                 else:
                     await self._read()
             return lane.events.popleft()
-        raise WebSocketTransportError(
-            model_name=self.model_name, message='WebSocket response interrupted before completion: the response closed.'
+        raise ModelConnectionError(
+            model_name=self.model_name,
+            message='WebSocket response interrupted before completion: the response closed.',
+            phase='read',
         )
 
     async def _read(self) -> None:
@@ -307,9 +342,8 @@ class ResponsesWebSocketStream:
             with anyio.fail_after(self.timeout.read):
                 event = await self.websocket.receive(self.lane)
         except TimeoutError as exc:
-            raise WebSocketTransportError(
-                model_name=self.websocket.model_name,
-                message=f'WebSocket response interrupted before completion: {exc}',
+            raise ModelTimeoutError(
+                model_name=self.websocket.model_name, message='WebSocket response timed out.', phase='read'
             ) from exc
 
         if isinstance(event, ResponseWsError):

@@ -396,6 +396,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     endpoints may reject the field (OpenRouter does), so it stays off for them.
     """
 
+    openai_responses_supports_websocket_stream_id: bool
+    """Whether the Responses WebSocket endpoint runs concurrent responses on separate `stream_id` lanes. Default: `False`.
+
+    When `True`, concurrent requests on a model from
+    [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] each run on their own
+    named `stream_id` lane of the connection. When `False`, requests send no `stream_id` and take turns on the
+    connection, since an endpoint that doesn't route events by `stream_id` would hand one request another's events.
+    Set by `OpenAIProvider`.
+    """
+
     openai_responses_requires_streaming: bool
     """Whether the Responses endpoint serves streaming responses only. Default: `False`.
 

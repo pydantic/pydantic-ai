@@ -37,11 +37,16 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import Hooks, SelectModel
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
     ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UserError,
 )
 from pydantic_ai.messages import ModelResponsePart
@@ -77,6 +82,9 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentials, OpenAIChatGPTProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
+    from pydantic_ai.providers.together import TogetherProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
 READINESS_WAIT_TIMEOUT = 10
@@ -208,9 +216,29 @@ async def test_azure_connection_is_rejected_before_handshake(sockets: SocketHarn
         azure_endpoint='https://example.openai.azure.com/',
     ) as client:
         model = OpenAIResponsesModel('gpt-4o', provider=AzureProvider(openai_client=client))
-        with pytest.raises(UserError, match='not supported with Azure OpenAI'):
+        with pytest.raises(UserError, match=r'`connect\(\)` does not support Azure OpenAI models'):
             async with model.connect():
                 pass
+    assert sockets.connect_count == 0
+
+
+@pytest.mark.parametrize('provider_name', ['openai-chatgpt', 'openai-codex'])
+async def test_oauth_credential_provider_is_rejected_before_handshake(sockets: SocketHarness, provider_name: str):
+    """OAuth credentials are added to HTTP requests only, so the handshake would carry the SDK's placeholder key."""
+    provider = (
+        OpenAIChatGPTProvider(
+            OpenAIChatGPTCredentials(
+                client_id='client', access_token='access', refresh_token='refresh', scope='chatgpt.tokens.use.direct'
+            )
+        )
+        if provider_name == 'openai-chatgpt'
+        else OpenAICodexProvider(OpenAICodexCredentials(access_token='access', refresh_token='refresh', account_id='a'))
+    )
+    source = OpenAIResponsesModel('gpt-4o', provider=provider)
+    async with source:
+        with pytest.raises(UserError, match=rf"`connect\(\)` does not support the '{provider_name}' provider"):
+            async with source.connect():
+                pytest.fail('The handshake should not be attempted')  # pragma: no cover
     assert sockets.connect_count == 0
 
 
@@ -452,7 +480,11 @@ def on_lane(events: list[Frame], stream_id: str) -> list[Frame]:
 
 @dataclass
 class ScriptedSocket:
-    """Control interruptions and concurrency beneath the real SDK event parser."""
+    """Control interruptions and concurrency beneath the real SDK event parser.
+
+    Not a cassette: the tests using it need lanes interleaved on cue, transport failures, and provider errors at
+    chosen points, which a live recording can't produce on demand. The recorded tests cover the real API's frames.
+    """
 
     responses: deque[list[Frame]] = field(default_factory=lambda: deque([text_events()]))
     sent: list[Frame] = field(default_factory=list[Frame])
@@ -518,6 +550,7 @@ class SocketHarness:
 
 @pytest.fixture
 def sockets(monkeypatch: pytest.MonkeyPatch) -> SocketHarness:
+    """Replace the `websockets` connection with `ScriptedSocket`s, recording each handshake."""
     harness = SocketHarness()
 
     async def connect(uri: str, *, additional_headers: Mapping[str, str], **options: object) -> ScriptedSocket:
@@ -582,6 +615,42 @@ async def test_connected_fallback_survives_primary_errors_across_tool_round_trip
     assert [socket.close_count for socket in sockets.opened] == [1, 1]
 
 
+async def test_fallback_on_connection_errors_takes_over_from_a_failed_socket(
+    allow_model_requests: None, sockets: SocketHarness
+):
+    """A socket transport failure raises `ModelConnectionError`, as over HTTP, so a fallback limited to it takes over."""
+    socket = sockets.pending[0]
+    socket.responses.clear()
+    socket.push(ConnectionClosedError(None, None))
+    http_requests: list[httpx2.Request] = []
+
+    def http_handler(request: httpx2.Request) -> httpx2.Response:
+        http_requests.append(request)
+        response = text_events(response_id='resp_http')[-1]['response']
+        assert isinstance(response, dict)
+        response['output'] = [
+            {
+                'type': 'message',
+                'id': 'msg_http',
+                'role': 'assistant',
+                'status': 'completed',
+                'content': [{'type': 'output_text', 'text': 'from HTTP', 'annotations': [], 'logprobs': []}],
+            }
+        ]
+        return httpx2.Response(200, json=response)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test', http_client=http_client))
+        async with source.connect() as connected:
+            agent = Agent(FallbackModel(connected, source, fallback_on=(ModelConnectionError,)))
+            assert (await agent.run('hello')).output == 'from HTTP'
+            # The failed socket raises before sending, so the fallback serves every later request.
+            assert (await agent.run('again')).output == 'from HTTP'
+
+    assert len(socket.sent) == 1
+    assert len(http_requests) == 2
+
+
 @pytest.mark.parametrize('owned_http_client', [False, True])
 async def test_independent_lifetimes(
     allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch, owned_http_client: bool
@@ -628,6 +697,7 @@ async def test_independent_lifetimes(
 
 
 async def test_context_exit_interrupts_request(allow_model_requests: None, sockets: SocketHarness):
+    """A request the caller's own context exit interrupts raises `UserError`, which `FallbackModel` doesn't catch."""
     socket = sockets.pending[0]
     socket.responses.clear()
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
@@ -636,7 +706,7 @@ async def test_context_exit_interrupts_request(allow_model_requests: None, socke
         async with source.connect() as connected:
 
             async def request() -> None:
-                with pytest.raises(ModelAPIError, match='interrupted before completion'):
+                with pytest.raises(UserError, match='This Responses WebSocket is closed'):
                     await Agent(connected).run('hello')
 
             tasks.start_soon(request)
@@ -675,6 +745,33 @@ async def test_concurrent_requests_share_the_socket_on_separate_lanes(
     assert [frame.get('stream_id') for frame in socket.sent] == [None, 'lane-1']
     assert sockets.opened == [socket]
     assert socket.close_count == 1
+
+
+async def test_endpoint_without_stream_id_lanes_takes_turns(allow_model_requests: None, sockets: SocketHarness):
+    """Without `stream_id` support in the provider's profile, no lane is named and concurrent requests take turns."""
+    socket = sockets.pending[0]
+    socket.responses.clear()
+    source = OpenAIResponsesModel('openai/gpt-oss-120b', provider=TogetherProvider(api_key='test'))
+    results: dict[str, str] = {}
+
+    async with source.connect() as connected:
+
+        async def run(prompt: str) -> None:
+            results[prompt] = (await Agent(connected).run(prompt)).output
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run, 'first')
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await socket.receiving.wait()
+            tasks.start_soon(run, 'second')
+            await anyio.wait_all_tasks_blocked()
+            # The second request waits for the connection instead of going out alongside the first.
+            assert len(socket.sent) == 1
+            socket.responses.append(text_events('second', 'resp_second'))
+            socket.push(*text_events('first', 'resp_first'))
+
+    assert results == {'first': 'first', 'second': 'second'}
+    assert [frame.get('stream_id') for frame in socket.sent] == [None, None]
 
 
 async def test_alternating_conversations_continue_on_their_own_lanes(
@@ -763,8 +860,9 @@ async def test_waiting_for_a_lane_honors_the_pool_timeout(
             tasks.start_soon(first_run)
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 await socket.receiving.wait()
-            with pytest.raises(ModelAPIError, match='No Responses WebSocket lane became free'):
+            with pytest.raises(ModelTimeoutError, match='No Responses WebSocket lane became free') as raised:
                 await Agent(connected, model_settings={'timeout': 0.01}).run('waiting')
+            assert raised.value.phase == 'pool'
             socket.push(*text_events('first', 'resp_first'))
 
     assert results == ['first']
@@ -792,6 +890,73 @@ async def test_abandoned_response_holds_its_lane_until_drained(
         assert socket.close_count == 0
 
     assert [frame.get('stream_id') for frame in socket.sent] == [None, None]
+
+
+async def test_error_frame_evicts_the_lane_response(allow_model_requests: None, sockets: SocketHarness):
+    """A request rejected with an error frame evicts its lane's cached response, so continuing from it replays."""
+    socket = sockets.pending[0]
+    error: Frame = {
+        'type': 'error',
+        'status': 400,
+        'error': {'type': 'invalid_request_error', 'code': 'invalid_test', 'message': 'rejected'},
+    }
+    socket.responses = deque([text_events(response_id='resp_first'), [error], text_events(response_id='resp_next')])
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto'}
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
+
+    async with source.connect() as connected:
+        agent = Agent(connected)
+        first = await agent.run('first')
+        with pytest.raises(ModelHTTPError):
+            await agent.run('rejected', message_history=first.all_messages())
+        await agent.run('continue', message_history=first.all_messages())
+
+    assert [(frame.get('stream_id'), frame.get('previous_response_id')) for frame in socket.sent] == [
+        (None, None),
+        (None, 'resp_first'),
+        (None, None),
+    ]
+    assert socket.sent[-1]['input'] == [
+        {'role': 'user', 'content': 'first'},
+        {'role': 'assistant', 'content': 'ready'},
+        {'role': 'user', 'content': 'continue'},
+    ]
+
+
+async def test_abandoned_response_evicts_the_lane_response(
+    allow_model_requests: None, sockets: SocketHarness, monkeypatch: pytest.MonkeyPatch
+):
+    """A response closed early evicts its lane's cached response, so continuing from it on that lane replays."""
+    # Without named lanes, the continuation waits for the abandoned lane rather than taking a fresh one.
+    monkeypatch.setattr('pydantic_ai.models._openai_responses_websocket.NAMED_LANE_LIMIT', 0)
+    socket = sockets.pending[0]
+    abandoned = text_events('abandoned', 'resp_abandoned')
+    socket.responses = deque(
+        [text_events(response_id='resp_first'), abandoned[:3], text_events(response_id='resp_next')]
+    )
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto'}
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'), settings=settings)
+
+    async with source.connect() as connected:
+        first = await Agent(connected).run('first')
+        async with connected.request_stream(
+            [*first.all_messages(), ModelRequest.user_text_prompt('abandon')], settings, ModelRequestParameters()
+        ) as response:
+            async for _ in response:  # pragma: no branch
+                break
+        socket.push(*abandoned[3:])
+        await Agent(connected).run('continue', message_history=first.all_messages())
+
+    assert [(frame.get('stream_id'), frame.get('previous_response_id')) for frame in socket.sent] == [
+        (None, None),
+        (None, 'resp_first'),
+        (None, None),
+    ]
+    assert socket.sent[-1]['input'] == [
+        {'role': 'user', 'content': 'first'},
+        {'role': 'assistant', 'content': 'ready'},
+        {'role': 'user', 'content': 'continue'},
+    ]
 
 
 async def test_closing_a_response_after_its_terminal_was_routed_frees_its_lane(
@@ -836,11 +1001,13 @@ async def test_connection_scoped_error_fails_the_socket(allow_model_requests: No
             # Without a `stream_id`, these belong to the idle default lane rather than the named lane waiting.
             socket.push(text_events()[2], failure)
         expected = 'ended' if code is None else f'{code}: ended'
-        with pytest.raises(ModelAPIError, match=f'Responses WebSocket connection failed: {expected}$'):
+        with pytest.raises(ModelConnectionError, match=f'Responses WebSocket connection failed: {expected}$') as raised:
             await Agent(connected).run('second')
+        assert raised.value.phase == 'read'
         assert socket.close_count == 1
-        with pytest.raises(ModelAPIError, match='Responses WebSocket connection failed'):
+        with pytest.raises(ModelConnectionError, match='Responses WebSocket connection failed') as raised:
             await Agent(connected).run('third')
+        assert raised.value.phase == 'connect'
 
     assert len(socket.sent) == 2
 
@@ -1205,12 +1372,35 @@ async def test_concrete_seed_validates_history_across_transports(
     ]
 
 
-def test_compatible_response_is_not_a_history_boundary():
-    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
-    http_response = ModelResponse(
-        parts=[TextPart('HTTP answer')], provider_name='openai', provider_response_id='resp_http'
-    )
-    assert source._history_boundary([http_response]) is None  # pyright: ignore[reportPrivateUsage]
+async def test_concrete_seed_over_http_keeps_history_without_a_transport_change(allow_model_requests: None):
+    """Over HTTP, an HTTP response after a concrete seed is no transport change, so the seed's prefix isn't trimmed."""
+    bodies: list[Frame] = []
+
+    def http_handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(FRAME_ADAPTER.validate_json(request.content))
+        return httpx2.Response(200, json=text_events(response_id='resp_next')[-1]['response'])
+
+    settings: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'resp_seed'}
+    history: list[ModelRequest | ModelResponse] = [
+        ModelRequest.user_text_prompt('first'),
+        ModelResponse(parts=[TextPart('seed')], provider_name='openai', provider_response_id='resp_seed'),
+        ModelRequest.user_text_prompt('second'),
+        # Without an ID, this response can't be continued from, so the concrete seed applies.
+        ModelResponse(parts=[TextPart('HTTP answer')], provider_name='openai'),
+        ModelRequest.user_text_prompt('third'),
+    ]
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(http_handler)) as http_client:
+        source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test', http_client=http_client))
+        await source.request(history, settings, ModelRequestParameters())
+
+    assert bodies[0]['previous_response_id'] == 'resp_seed'
+    assert bodies[0]['input'] == [
+        {'role': 'user', 'content': 'first'},
+        {'role': 'assistant', 'content': 'seed'},
+        {'role': 'user', 'content': 'second'},
+        {'role': 'assistant', 'content': 'HTTP answer'},
+        {'role': 'user', 'content': 'third'},
+    ]
 
 
 @pytest.mark.parametrize('seed_after_compaction', [False, True])
@@ -1815,9 +2005,17 @@ async def test_errors(allow_model_requests: None, sockets: SocketHarness, failur
             assert 'invalid_test: test failure' in str(raised.value)
         elif failure == 'failed':
             assert 'server_error' in str(raised.value)
+        elif transport_failure:
+            # The classes and phases the same failure raises over HTTP.
+            assert type(raised.value) is (ModelTimeoutError if failure == 'timeout' else ModelConnectionError)
+            assert isinstance(raised.value, ModelConnectionError)
+            assert raised.value.phase == ('write' if failure == 'send' else 'read')
+            assert str(raised.value)
         if failure in ('disconnect', 'send'):
-            with pytest.raises(ModelAPIError, match='WebSocket'):
+            with pytest.raises(ModelConnectionError, match='WebSocket') as recover:
                 await Agent(connected).run('recover')
+            # The failed socket never sends the request.
+            assert recover.value.phase == 'connect'
         elif not transport_failure:
             socket.responses = deque([text_events(response_id='resp_recovered')])
             assert (await Agent(connected).run('recover')).output == 'ready'
@@ -2007,9 +2205,10 @@ async def test_handshake_timeout(sockets: SocketHarness, timeout_source: str):
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=client), settings=settings)
     async with client, source:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            with pytest.raises(ModelAPIError, match='WebSocket connection failed') as raised:
+            with pytest.raises(ModelTimeoutError, match='WebSocket connection timed out') as raised:
                 async with source.connect():
                     pytest.fail('The stalled handshake should time out')  # pragma: no cover
+        assert raised.value.phase == 'connect'
         assert isinstance(raised.value.__cause__, TimeoutError)
         assert sockets.connecting.is_set()
         assert sockets.opened == []
@@ -2026,20 +2225,23 @@ async def test_send_timeout(allow_model_requests: None, sockets: SocketHarness):
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     async with source, source.connect() as connected:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            with pytest.raises(ModelAPIError, match='WebSocket request failed') as raised:
+            with pytest.raises(ModelTimeoutError, match='WebSocket request timed out') as raised:
                 await Agent(connected, model_settings=settings).run('hello')
+        assert raised.value.phase == 'write'
         assert isinstance(raised.value.__cause__, TimeoutError)
         assert socket.sending.is_set()
         assert socket.sent == []
         assert socket.close_count == 1
-        with pytest.raises(ModelAPIError, match='WebSocket request failed'):
+        with pytest.raises(ModelConnectionError, match='WebSocket request timed out') as raised:
             await Agent(connected).run('cannot reuse')
+        assert raised.value.phase == 'connect'
     assert socket.close_count == 1
     assert asyncio.all_tasks() == before
 
 
 @pytest.mark.parametrize('status_code', [200, 302, 401, None])
 async def test_handshake_errors(sockets: SocketHarness, status_code: int | None):
+    """A rejected handshake keeps its status, body and headers; an unreachable host is a connection error."""
     if status_code is not None:
         sockets.connect_error = InvalidStatus(
             HandshakeResponse(
@@ -2053,12 +2255,16 @@ async def test_handshake_errors(sockets: SocketHarness, status_code: int | None)
         sockets.connect_error = OSError('unreachable')
     source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
     try:
-        expected_error = ModelHTTPError if status_code is not None and status_code >= 400 else ModelAPIError
+        expected_error = (
+            ModelConnectionError if status_code is None else ModelHTTPError if status_code >= 400 else ModelAPIError
+        )
         with pytest.raises(expected_error) as raised:
             async with source.connect():
                 pytest.fail('The handshake should fail')  # pragma: no cover
         assert type(raised.value) is expected_error
         assert sockets.connect_count == 1
+        if isinstance(raised.value, ModelConnectionError):
+            assert raised.value.phase == 'connect'
         if isinstance(raised.value, ModelHTTPError):
             assert raised.value.status_code == status_code
             assert raised.value.body == 'handshake rejected'
@@ -2066,6 +2272,60 @@ async def test_handshake_errors(sockets: SocketHarness, status_code: int | None)
         assert not source.client.is_closed()
     finally:
         await source.client.close()
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'body', 'expected'),
+    [
+        pytest.param(
+            429,
+            b'{"error": {"message": "Slow down.", "type": "requests", "code": "rate_limit_exceeded"}}',
+            ModelRateLimitError,
+            id='rate_limit',
+        ),
+        pytest.param(
+            429,
+            b'{"error": {"message": "No credits.", "type": "insufficient_quota", "code": "insufficient_quota"}}',
+            ModelQuotaExceededError,
+            id='quota',
+        ),
+        pytest.param(503, b'Service unavailable', ModelUnavailableError, id='unavailable'),
+        pytest.param(
+            500, b'{"error": {"message": "Oops.", "type": "server_error", "code": null}}', ModelServerError, id='server'
+        ),
+    ],
+)
+async def test_handshake_rejection_raises_the_http_error_category(
+    allow_model_requests: None, sockets: SocketHarness, status_code: int, body: bytes, expected: type[ModelAPIError]
+):
+    """A rejected handshake raises what the same response to an HTTP request raises."""
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda request: httpx2.Response(status_code, content=body))
+    ) as http_client:
+        client = AsyncOpenAI(api_key='test', http_client=http_client, max_retries=0)
+        source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+        with pytest.raises(ModelHTTPError) as over_http:
+            await source.request([ModelRequest.user_text_prompt('hello')], None, ModelRequestParameters())
+        sockets.connect_error = InvalidStatus(HandshakeResponse(status_code, 'Rejected', Headers(), body))
+        with pytest.raises(ModelHTTPError) as over_websocket:
+            async with source.connect():
+                pytest.fail('The handshake should fail')  # pragma: no cover
+
+    websocket_error, http_error = over_websocket.value, over_http.value
+    assert isinstance(websocket_error, expected)
+    assert (
+        type(websocket_error),
+        websocket_error.status_code,
+        websocket_error.body,
+        websocket_error.provider_error_code,
+        websocket_error.provider_error_type,
+    ) == (
+        type(http_error),
+        status_code,
+        http_error.body,
+        http_error.provider_error_code,
+        http_error.provider_error_type,
+    )
 
 
 @pytest.mark.parametrize('auth_mode', ['sigv4', 'native-bearer'])
@@ -2257,6 +2517,15 @@ async def test_connection_authorization_header(allow_model_requests: None, socke
     async with source.connect(extra_headers={'Authorization': 'Bearer connection-key'}) as connected:
         assert (await Agent(connected, model_settings=request_settings).run('hello')).output == 'ready'
     assert sockets.authorization_headers == ['Bearer connection-key']
+
+
+async def test_max_retries_is_unsupported_over_the_socket(allow_model_requests: None, sockets: SocketHarness):
+    """The SDK retries only HTTP requests, so a connected model warns that it ignores `max_retries`."""
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    async with source.connect() as connected:
+        with pytest.warns(UnsupportedSettingWarning, match='The `max_retries` setting is not supported'):
+            assert (await Agent(connected, model_settings={'max_retries': 1}).run('hello')).output == 'ready'
+    assert len(sockets.opened[0].sent) == 1
 
 
 async def test_request_settings(allow_model_requests: None, sockets: SocketHarness):
