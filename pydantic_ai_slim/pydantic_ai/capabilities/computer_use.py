@@ -77,6 +77,26 @@ def _coordinate_grid(ctx: RunContext[Any]) -> int | None:
     return _profile(ctx.model).get('computer_use_coordinate_grid')
 
 
+def _points(action: ComputerToolAction) -> Sequence[Point]:
+    """The positions an action names."""
+    match action:
+        case Click(x=x, y=y) | Scroll(x=x, y=y) | MoveMouse(x=x, y=y) if x is not None and y is not None:
+            return (Point(x=x, y=y),)
+        case Drag(path=path):
+            return path
+        case _:
+            return ()
+
+
+def _off_screen(actions: list[ComputerToolAction], width: int, height: int, space: str) -> str | None:
+    """Why the first position outside `width` by `height` is refused, if there is one."""
+    for index, action in enumerate(actions, 1):
+        for point in _points(action):
+            if point.x >= width or point.y >= height:
+                return f'Action {index} ({action.type}) at ({point.x}, {point.y}) is outside the {width}x{height} {space}, so no action ran.'
+    return None
+
+
 def _to_pixels(action: ComputerToolAction, width: int, height: int, grid: int) -> ComputerToolAction:
     """Scale an action's grid coordinates to display pixels."""
 
@@ -183,14 +203,18 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if self.require_approval and acts and not ctx.tool_call_approved:
             raise ApprovalRequired
         grid = _coordinate_grid(ctx)
-        if grid is not None and acts:
+        if any(_points(action) for action in actions):
             try:
                 width, height = await ctx.workspace.display_size()
             except WorkspaceUnavailableError:
                 raise
             except WorkspaceError as e:
                 raise ToolFailed(f'Reading the display size failed, so no action ran: {e}') from e
-            actions = [_to_pixels(action, width, height, grid) for action in actions]
+            # The backend would move a position outside the screen to its edge and act there.
+            if refused := _off_screen(actions, grid or width, grid or height, 'grid' if grid else 'screen'):
+                raise ToolFailed(refused)
+            if grid is not None:
+                actions = [_to_pixels(action, width, height, grid) for action in actions]
 
         performed, error = await _perform(ctx, actions)
         acted = any(action.type not in _OBSERVING_ACTIONS for action in actions[:performed])

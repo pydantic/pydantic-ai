@@ -354,17 +354,17 @@ async def test_a_model_selected_later_without_image_input_is_refused_before_its_
 
 
 @pytest.mark.parametrize(
-    'actions, profile',
+    'actions',
     [
-        ([{'type': 'click', 'x': 1, 'y': 1}], ModelProfile()),
-        ([{'type': 'screenshot'}], ModelProfile()),
-        ([{'type': 'click', 'x': 1, 'y': 1}], ModelProfile(computer_use_coordinate_grid=1000)),
+        [{'type': 'type', 'text': 'a'}],
+        [{'type': 'screenshot'}],
+        [{'type': 'click', 'x': 1, 'y': 1}],
     ],
-    ids=['act', 'look', 'size-on-a-grid'],
+    ids=['act', 'look', 'size'],
 )
-async def test_an_environment_that_is_gone_ends_the_run(actions: list[dict[str, Any]], profile: ModelProfile) -> None:
+async def test_an_environment_that_is_gone_ends_the_run(actions: list[dict[str, Any]]) -> None:
     provider = InMemoryProvider()
-    model = _scripted(actions, profile=profile)
+    model = _scripted(actions)
     agent = Agent(model, capabilities=[provider.capability(), ComputerUse(settle_seconds=0)])
     with pytest.raises(WorkspaceUnavailableError, match="environment 'expired' does not exist"):
         await agent.run('Go.', workspace=WorkspaceRef(provider='fake', id='expired'))
@@ -400,7 +400,7 @@ async def test_a_bad_screenshot_is_a_failed_call_that_says_what_ran(screenshot: 
     assert provider.actions == [Click(x=1, y=1)]
 
 
-async def test_a_grid_model_whose_display_size_fails_gets_a_failed_call_and_nothing_runs() -> None:
+async def test_when_the_display_size_fails_the_call_fails_and_nothing_runs() -> None:
     provider = InMemoryProvider()
 
     class NoSize(ProviderBackend):
@@ -411,12 +411,42 @@ async def test_a_grid_model_whose_display_size_fails_gets_a_failed_call_and_noth
         def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
             return NoSize(provider, ref)
 
-    model = _scripted([{'type': 'click', 'x': 500, 'y': 500}], profile=ModelProfile(computer_use_coordinate_grid=1000))
+    model = _scripted([{'type': 'type', 'text': 'a'}, {'type': 'click', 'x': 1, 'y': 1}])
     agent = Agent(model, capabilities=[Supplier(), ComputerUse(settle_seconds=0)])
     (tool_return,) = _returns((await agent.run('Go.')).all_messages())
 
     assert tool_return.outcome == 'failed'
     assert tool_return.content == 'Reading the display size failed, so no action ran: xdotool: cannot open display'
+    assert provider.actions == []
+
+
+@pytest.mark.parametrize(
+    'actions, profile, message',
+    [
+        pytest.param(
+            [{'type': 'click', 'x': 1279, 'y': 799}, {'type': 'click', 'x': 1280, 'y': 10}],
+            ModelProfile(),
+            'Action 2 (click) at (1280, 10) is outside the 1280x800 screen, so no action ran.',
+            id='pixels',
+        ),
+        pytest.param(
+            [{'type': 'drag', 'path': [{'x': 10, 'y': 10}, {'x': 10, 'y': 1000}]}],
+            ModelProfile(computer_use_coordinate_grid=1000),
+            'Action 1 (drag) at (10, 1000) is outside the 1000x1000 grid, so no action ran.',
+            id='grid',
+        ),
+    ],
+)
+async def test_a_position_off_the_screen_fails_the_call_before_anything_runs(
+    actions: list[dict[str, Any]], profile: ModelProfile, message: str
+) -> None:
+    # The display would otherwise move the pointer to its edge and click there.
+    provider = InMemoryProvider()
+    agent = Agent(_scripted(actions, profile=profile), capabilities=[provider.capability(), ComputerUse()])
+    (tool_return,) = _returns((await agent.run('Go.')).all_messages())
+
+    assert tool_return.outcome == 'failed'
+    assert tool_return.content == message
     assert provider.actions == []
 
 
