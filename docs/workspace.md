@@ -280,6 +280,26 @@ This is a preflight check, not a security boundary against concurrent symlink ch
 isolated backend for untrusted commands. On a backend without commands or `SupportsRealpath`,
 `realpath` only normalizes text; see [Resolving symlinks](#resolving-symlinks).
 
+## Mounting storage
+
+A [`Mount`][pydantic_ai.workspaces.Mount] shows storage, such as a bucket, as a folder in the workspace:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import Mount
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[LocalWorkspace('.', mounts=[Mount('data', storage, read_only=True, description='Daily exports')])],
+)
+```
+
+`storage` is any object implementing [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem]
+with paths starting at `/`, so `data/2026/a.csv` is `/2026/a.csv` in it. File tools always reach a mount.
+Shell commands see it only when the workspace can mount that storage; on `LocalWorkspace` they never do.
+Set `shell=True` to require that, or `shell=False` to keep a mount to file tools.
+
 ## Choosing a run's workspace
 
 A run picks its workspace from the first of these that applies:
@@ -520,6 +540,9 @@ A backend is the object that talks to one environment; `Workspace` wraps it to g
 and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular files (not FIFOs or devices). They transfer large files and directory listings in bounded chunks, but shell-derived file operations are slower than native provider file APIs. Local and shell-derived file operations refuse to remove the workspace root or an ancestor, and local writes do not recreate a removed workspace directory. `LocalWorkspace` continues only in a ref naming its configured directory exactly as written, so a ref spelled through a symlink is declined.
 With both, they must reach the same environment. A filesystem-only backend whose storage can hold
 symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
+To let commands see [mounts](#mounting-storage), implement [`SupportsMounts`][pydantic_ai.workspaces.SupportsMounts]:
+`can_mount` says, without I/O, which mounts the backend can provide, and `ensure_mounts` puts the whole set in
+place before the first command of each run.
 
 ### Resolving symlinks
 

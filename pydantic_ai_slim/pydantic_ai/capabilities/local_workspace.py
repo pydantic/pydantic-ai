@@ -1,11 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    Mount,
+    ReadOnlyWorkspace,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceRef,
+)
 
 from .abstract import AbstractCapability
 
@@ -41,6 +48,10 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     Nothing else from this process's environment reaches commands; don't pass `os.environ` (secrets).
     """
 
+    mounts: Sequence[Mount] | Callable[[RunContext[AgentDepsT]], Sequence[Mount]] = ()
+    """Storage to show as folders, such as a bucket, or a function of the run that picks them; file tools reach them,
+    commands don't."""
+
     id: str | None = 'local_workspace'
     """Fixed, so a later `LocalWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
 
@@ -60,4 +71,6 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         if ref is not None and ref != backend.ref:
             # A ref from history never redirects host access away from the configured backend.
             return None
-        return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+        mounts = self.mounts(ctx) if callable(self.mounts) else self.mounts
+        workspace = Workspace(backend, mounts=mounts)
+        return ReadOnlyWorkspace(workspace) if self.read_only else workspace

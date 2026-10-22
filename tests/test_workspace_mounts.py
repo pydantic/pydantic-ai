@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import anyio
+import pytest
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
+    Mount,
+    ReadOnlyWorkspace,
+    SupportsMounts,
+    Workspace,
+    WorkspaceReadOnlyError,
+)
+
+from .durable_exec.test_durable_workspace import FakeDurability
+from .workspace_fakes import FakeWorkspace, MemoryStorage
+
+pytestmark = pytest.mark.anyio
+
+
+class MountingWorkspace(FakeWorkspace, SupportsMounts):
+    """A fake backend whose commands can see mounts of `MemoryStorage`."""
+
+    def __init__(self, *, keys_last: timedelta | None = None) -> None:
+        super().__init__('mounting')
+        self.ensured: list[tuple[list[str], str]] = []
+        self.keys_last = keys_last
+
+    def can_mount(self, mount: Mount) -> bool:
+        return isinstance(mount.storage, MemoryStorage)
+
+    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+        # A real mount awaits the sandbox; this lets the parallel calls in a test overlap it.
+        await anyio.sleep(0)
+        self.ensured.append(([mount.path for mount in mounts], working_dir))
+        return None if self.keys_last is None else datetime.now(UTC) + self.keys_last
+
+
+async def test_file_operations_under_a_mount_reach_its_storage() -> None:
+    storage = MemoryStorage({'/report.csv': b'a,b'})
+    backend = FakeWorkspace('box')
+    workspace = Workspace(backend, mounts=[Mount('data', storage)])
+
+    assert await workspace.read_bytes('data/report.csv') == b'a,b'
+    await workspace.write_bytes('data/out/summary.md', b'# done')
+    await workspace.make_dir('data/empty')
+
+    assert storage.files['/out/summary.md'] == b'# done'
+    assert '/empty' in storage.directories
+    assert not any(path.startswith('/workspace/data') for path in backend.files)
+    assert await workspace.exists('/workspace/data/out')
+    assert [entry.path for entry in await workspace.list_dir('data')] == [
+        '/workspace/data/empty',
+        '/workspace/data/out',
+        '/workspace/data/report.csv',
+    ]
+    assert (await workspace.stat('data/report.csv')).path == '/workspace/data/report.csv'
+    assert await workspace.realpath('data/../data/report.csv') == '/workspace/data/report.csv'
+
+    await workspace.remove('data/out')
+    assert '/out/summary.md' not in storage.files
+
+
+async def test_a_mount_shows_as_a_folder_where_it_is_mounted() -> None:
+    backend = FakeWorkspace('box', {'/workspace/notes.txt': b''})
+    workspace = Workspace(backend, mounts=[Mount('data', MemoryStorage()), Mount('/mnt/shared/team', MemoryStorage())])
+
+    listing = await workspace.list_dir('.')
+    assert [(entry.name, entry.is_dir) for entry in listing] == [('data', True), ('notes.txt', False)]
+    # `/mnt/shared` is not in the environment, but it holds a mount.
+    assert (await workspace.stat('/mnt/shared')).is_dir
+    assert await workspace.exists('/mnt')
+    assert [entry.path for entry in await workspace.list_dir('/mnt/shared')] == ['/mnt/shared/team']
+    with pytest.raises(FileNotFoundError):
+        await workspace.list_dir('/elsewhere')
+
+
+async def test_a_read_only_mount_refuses_writes() -> None:
+    storage = MemoryStorage({'/a.txt': b'a'})
+    workspace = Workspace(FakeWorkspace('box'), mounts=[Mount('data', storage, read_only=True)])
+
+    assert await workspace.read_text('data/a.txt') == 'a'
+    for write in (
+        workspace.write_bytes('data/a.txt', b'b'),
+        workspace.make_dir('data/new'),
+        workspace.remove('data/a.txt'),
+    ):
+        with pytest.raises(WorkspaceReadOnlyError):
+            await write
+    assert storage.files == {'/a.txt': b'a'}
+
+
+async def test_a_mount_or_a_folder_holding_one_cannot_be_removed() -> None:
+    workspace = Workspace(
+        MountingWorkspace(), mounts=[Mount('data', MemoryStorage()), Mount('out/seen', MemoryStorage(), shell=True)]
+    )
+
+    for path in ('data', 'out/seen', 'out'):
+        with pytest.raises(ValueError, match='which is or holds a mount'):
+            await workspace.remove(path)
+
+
+@pytest.mark.parametrize('path', ['.', '', '/', '//', '..', '../up'])
+def test_a_mount_names_a_folder_inside_the_workspace(path: str) -> None:
+    with pytest.raises(ValueError, match='must name a folder'):
+        Mount(path, MemoryStorage())
+
+
+def test_a_workspace_backend_is_not_mount_storage(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match='not be a workspace backend'):
+        Mount('host', LocalWorkspaceBackend(tmp_path))
+
+
+async def test_overlapping_mounts_are_refused() -> None:
+    with pytest.raises(ValueError, match='overlap'):
+        Workspace(FakeWorkspace('box'), mounts=[Mount('data', MemoryStorage()), Mount('data/inner', MemoryStorage())])
+    # A relative and an absolute path can only be compared once the working directory is known.
+    workspace = Workspace(
+        FakeWorkspace('box'), mounts=[Mount('data', MemoryStorage()), Mount('/workspace/data', MemoryStorage())]
+    )
+    with pytest.raises(ValueError, match='overlap'):
+        await workspace.read_bytes('data/a.txt')
+
+
+async def test_commands_see_mounts_the_backend_can_mount() -> None:
+    backend = MountingWorkspace()
+    seen = Mount('seen', MemoryStorage(), description='Shared files')
+    hidden = Mount('hidden', MemoryStorage(), shell=False)
+    workspace = ReadOnlyWorkspace(Workspace(backend, mounts=[seen, hidden]))
+
+    assert workspace.mounts == (seen, hidden)
+    assert workspace.shell_can_see(seen)
+    assert not workspace.shell_can_see(hidden)
+    # Asking only about a mount the shell can't see needs nothing mounted.
+    assert not await workspace.exists('hidden/x')
+    assert backend.ensured == []
+
+
+async def test_the_backend_mounts_once_before_commands_or_file_operations_need_it() -> None:
+    backend = MountingWorkspace()
+    workspace = Workspace(
+        backend, mounts=[Mount('seen', MemoryStorage()), Mount('hidden', MemoryStorage(), shell=False)]
+    )
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(workspace.run, 'ls seen')
+        tg.start_soon(workspace.write_bytes, 'seen/a.txt', b'a')
+        tg.start_soon(workspace.list_dir, '.')
+    await workspace.run('ls')
+
+    assert backend.ensured == [(['seen'], '/workspace')]
+    # Once mounted, the folder is an ordinary path in the environment.
+    assert backend.files['/workspace/seen/a.txt'] == b'a'
+
+
+async def test_shell_true_needs_a_backend_that_can_mount() -> None:
+    with pytest.raises(UserError, match='`shell=True`'):
+        Workspace(FakeWorkspace('box'), mounts=[Mount('data', MemoryStorage(), shell=True)])
+    Workspace(MountingWorkspace(), mounts=[Mount('data', MemoryStorage(), shell=True)])
+
+
+async def test_local_workspace_mounts_reach_storage(tmp_path: Path) -> None:
+    storage = MemoryStorage({'/a.txt': b'a'})
+    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path, mounts=[Mount('data', storage)], read_only=True)])
+
+    result = await agent.run('go')
+
+    assert await result.workspace.read_text('data/a.txt') == 'a'
+    assert not (tmp_path / 'data').exists()
+
+
+async def test_durable_runs_reject_a_workspace_with_other_mounts(tmp_path: Path) -> None:
+    storage = MemoryStorage()
+    agent = Agent(
+        TestModel(),
+        name='ws',
+        capabilities=[LocalWorkspace(tmp_path, mounts=[Mount('data', storage)]), FakeDurability()],
+    )
+    backend = LocalWorkspaceBackend(tmp_path)
+
+    await agent.run('go', workspace=Workspace(backend, mounts=[Mount('data', storage)]))
+    with pytest.raises(UserError, match='policy would be lost'):
+        await agent.run('go', workspace=Workspace(backend, mounts=[Mount('other', storage)]))
+    # A workspace with no policy of its own takes the capability's mounts.
+    result = await agent.run('go', workspace=Workspace(backend))
+    assert result.workspace.mounts == (Mount('data', storage),)
+
+
+class LinkedStorage(MemoryStorage):
+    """Storage with one symlink, `/latest` -> `/2026`."""
+
+    async def realpath(self, path: str) -> str:
+        return path.replace('/latest', '/2026', 1)
+
+
+async def test_realpath_follows_links_the_storage_resolves() -> None:
+    workspace = Workspace(FakeWorkspace('box'), mounts=[Mount('data', LinkedStorage())])
+
+    assert await workspace.realpath('data/latest/a.csv') == '/workspace/data/2026/a.csv'
+    assert await workspace.realpath('data') == '/workspace/data'
+
+
+async def test_commands_clear_mounts_an_earlier_configuration_left() -> None:
+    backend = MountingWorkspace()
+
+    await Workspace(backend).run('ls')
+    assert backend.ensured == []
+    # A workspace that manages mounts but has none for commands still clears what an earlier one left.
+    await Workspace(backend, mounts=[]).run('ls')
+    await Workspace(backend, mounts=[Mount('hidden', MemoryStorage(), shell=False)]).run('ls')
+    assert backend.ensured == [([], '/workspace'), ([], '/workspace')]
+
+
+async def test_mounts_are_ensured_again_before_their_keys_expire() -> None:
+    lasting = MountingWorkspace(keys_last=timedelta(hours=1))
+    expiring = MountingWorkspace(keys_last=timedelta(seconds=30))
+
+    for backend in (lasting, expiring):
+        workspace = Workspace(backend, mounts=[Mount('seen', MemoryStorage())])
+        await workspace.run('ls')
+        await workspace.run('ls')
+
+    assert len(lasting.ensured) == 1
+    assert len(expiring.ensured) == 2

@@ -450,3 +450,39 @@ class ProviderWorkspaces(AbstractCapability[Any]):
             return None
         backend = self.provider.backend(ref)
         return ReadOnlyWorkspace(Workspace(backend)) if self.read_only else backend
+
+
+class MemoryStorage(SupportsFilesystem):
+    """In-memory storage for a mount: paths start at `/`, and it has no working directory or commands."""
+
+    def __init__(self, files: dict[str, bytes] | None = None) -> None:
+        self.files = files if files is not None else {}
+        self.directories = {'/'}
+        for path in self.files:
+            _add_parent_directories(self.directories, path)
+
+    async def read_bytes(self, path: str) -> bytes:
+        if path in self.directories:
+            raise IsADirectoryError(path)
+        try:
+            return self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+
+    async def write_bytes(self, path: str, data: bytes) -> None:
+        _write(self.files, self.directories, path, data)
+
+    async def stat(self, path: str) -> FileEntry:
+        return _stat(self.files, self.directories, path)
+
+    async def list_dir(self, path: str) -> Sequence[FileEntry]:
+        return _list_dir(self.files, self.directories, path)
+
+    async def make_dir(self, path: str) -> None:
+        _make_dir(self.files, self.directories, path)
+
+    async def remove(self, path: str) -> None:
+        _remove(self.files, self.directories, path, '/')
+
+    async def exists(self, path: str) -> bool:
+        return path in self.files or path in self.directories

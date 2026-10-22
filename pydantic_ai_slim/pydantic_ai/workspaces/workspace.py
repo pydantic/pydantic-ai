@@ -7,6 +7,8 @@ import posixpath
 import shlex
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import anyio
@@ -14,6 +16,7 @@ from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
+from .mounts import Mount, SupportsMounts, check_mounts, within
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -24,6 +27,7 @@ from .protocol import (
     WorkspaceCommand,
     WorkspaceError,
     WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
     WorkspaceRef,
     validate_timeout,
 )
@@ -43,6 +47,9 @@ that for quoting and the command template keeps fallback writes below the lower 
 
 _SHELL_MAX_SYMLINKS = 40
 """Symlinks `realpath` follows before giving up, as Linux does (`MAXSYMLINKS`), so a link loop ends."""
+
+_REMOUNT_MARGIN = timedelta(minutes=1)
+"""How long before a backend's `ensure_mounts` deadline (keys expiring) to call it again, so no command starts late."""
 
 _SHELL_CLEANUP_TIMEOUT = 10
 """Maximum time spent removing an interrupted fallback write's temporary files."""
@@ -374,8 +381,27 @@ class _ShellFilesystem(SupportsFilesystem):
 class Workspace(WorkspaceBackend):
     """The workspace API tools and hooks use as `ctx.workspace`: the backend's operations, relative paths, and text."""
 
-    def __init__(self, backend: WorkspaceBackend):
+    def __init__(self, backend: WorkspaceBackend, *, mounts: Sequence[Mount] | None = None):
         self._backend = backend
+        self._mounts = tuple(mounts or ())
+        # An empty list still manages mounts: it removes those an earlier configuration left in the environment.
+        self._manages_mounts = mounts is not None
+        check_mounts([mount.path for mount in self._mounts])
+        self._shell_mounts = tuple(
+            mount
+            for mount in self._mounts
+            if mount.shell is not False and isinstance(backend, SupportsMounts) and backend.can_mount(mount)
+        )
+        for mount in self._mounts:
+            if mount.shell and mount not in self._shell_mounts:
+                raise UserError(
+                    f'Mount {mount.path!r} has `shell=True`, but this workspace cannot make it visible to shell '
+                    'commands. Use `shell=None` to fall back to file tools, or a workspace that can mount this storage.'
+                )
+        self._mount_roots: tuple[tuple[Mount, str], ...] | None = None
+        self._mounted = False
+        self._mounted_until: datetime | None = None
+        self._mount_lock = anyio.Lock()
 
     @property
     def backend(self) -> WorkspaceBackend:
@@ -389,13 +415,27 @@ class Workspace(WorkspaceBackend):
         return isinstance(self._backend, Workspace) and self._backend.read_only
 
     def durable_policy(self) -> tuple[object, ...]:
-        """Configuration a durable unit must rebuild with this wrapper.
+        """Configuration a durable unit must rebuild with this layer.
 
-        Empty unless the wrapper's own arguments change what the unit does. Two workspaces of the
-        same class with different values are different policies: a run-level workspace that a unit
-        would not rebuild is rejected, rather than replaced by the construction-time one.
+        Empty unless the layer's own arguments change what the unit does: its mounts, or a wrapper's
+        constructor values. Two workspaces of the same class with different values are different policies:
+        a run-level workspace that a unit would not rebuild is rejected, rather than replaced by the
+        construction-time one.
         """
-        return ()
+        return self._mounts
+
+    @property
+    def mounts(self) -> tuple[Mount, ...]:
+        """The storage mounted into this workspace."""
+        backend = self._backend
+        return self._mounts or (backend.mounts if isinstance(backend, Workspace) else ())
+
+    def shell_can_see(self, mount: Mount) -> bool:
+        """Whether shell commands see `mount`; when they don't, only file operations reach it."""
+        if mount in self._mounts:
+            return mount in self._shell_mounts
+        backend = self._backend
+        return isinstance(backend, Workspace) and backend.shell_can_see(mount)
 
     @property
     def attached(self) -> bool:
@@ -455,6 +495,7 @@ class Workspace(WorkspaceBackend):
         backend = self._backend
         if not isinstance(backend, SupportsCommands):
             raise UserError('This workspace does not support command execution.')
+        await self._ensure_mounts()
         return await backend.run(command, shell=shell, env=env, timeout=timeout)
 
     async def working_dir(self) -> str:
@@ -477,31 +518,112 @@ class Workspace(WorkspaceBackend):
 
     async def read_bytes(self, path: str) -> bytes:
         """Read a file's contents as bytes."""
-        return await self._filesystem.read_bytes(await self.resolve(path))
+        storage, target = await self._route(path)
+        return await (storage or self._filesystem).read_bytes(target)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         """Write bytes to a file, creating missing parents and replacing existing contents."""
-        await self._filesystem.write_bytes(await self.resolve(path), data)
+        storage, target = await self._route(path, write=True)
+        await (storage or self._filesystem).write_bytes(target, data)
 
     async def stat(self, path: str) -> FileEntry:
         """Return metadata for a file or directory."""
-        return await self._filesystem.stat(await self.resolve(path))
+        storage, target = await self._route(path)
+        if storage is not None:
+            # The storage names entries by its own paths; report them where the workspace shows them.
+            entry = await storage.stat(target)
+            return replace(entry, path=await self.resolve(path))
+        try:
+            return await self._filesystem.stat(target)
+        except FileNotFoundError:
+            if not self._mounts_below(target):
+                raise
+            return FileEntry(name=posixpath.basename(target), path=target, is_dir=True, size=None)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         """List the entries of a directory (non-recursive)."""
-        return await self._filesystem.list_dir(await self.resolve(path))
+        storage, target = await self._route(path)
+        if storage is not None:
+            base = await self.resolve(path)
+            return [replace(entry, path=posixpath.join(base, entry.name)) for entry in await storage.list_dir(target)]
+        below = self._mounts_below(target)
+        # A mount only file operations reach has no folder in the environment, so it joins its parent's listing.
+        roots = [root for root in below if posixpath.dirname(root) == target]
+        try:
+            entries = [entry for entry in await self._filesystem.list_dir(target) if entry.path not in roots]
+        except FileNotFoundError:
+            if not below:
+                raise
+            entries = []
+        entries += [FileEntry(name=posixpath.basename(root), path=root, is_dir=True, size=None) for root in roots]
+        return sorted(entries, key=lambda entry: entry.path)
 
     async def make_dir(self, path: str) -> None:
         """Create a directory, including missing parents."""
-        await self._filesystem.make_dir(await self.resolve(path))
+        storage, target = await self._route(path, write=True)
+        await (storage or self._filesystem).make_dir(target)
 
     async def remove(self, path: str) -> None:
         """Remove a file, or a directory and its contents."""
-        await self._filesystem.remove(await self.resolve(path))
+        storage, target = await self._route(path, write=True)
+        if target == '/' if storage is not None else any(within(root, target) for _, root in await self._roots()):
+            raise ValueError(f'cannot remove {path!r}, which is or holds a mount')
+        await (storage or self._filesystem).remove(target)
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        return await self._filesystem.exists(await self.resolve(path))
+        storage, target = await self._route(path)
+        if storage is not None:
+            return await storage.exists(target)
+        return await self._filesystem.exists(target) or bool(self._mounts_below(target))
+
+    async def _roots(self) -> tuple[tuple[Mount, str], ...]:
+        """Each mount with its absolute path."""
+        if self._mount_roots is None:
+            relative = any(not posixpath.isabs(mount.path) for mount in self._mounts)
+            working_dir = await self.working_dir() if relative else '/'
+            roots = tuple((mount, posixpath.join(working_dir, mount.path)) for mount in self._mounts)
+            # As written, a relative and an absolute path can name the same folder.
+            check_mounts([root for _, root in roots])
+            self._mount_roots = roots
+        return self._mount_roots
+
+    def _mounts_below(self, path: str) -> list[str]:
+        """Paths of the mounts below `path` that only file operations reach."""
+        prefix = path.rstrip('/') + '/'
+        return [
+            root
+            for mount, root in self._mount_roots or ()
+            if root.startswith(prefix) and mount not in self._shell_mounts
+        ]
+
+    async def _route(self, path: str, *, write: bool = False) -> tuple[SupportsFilesystem | None, str]:
+        """The mount storage holding `path` and the path within it, or `None` and `path` for the environment itself."""
+        target = await self.resolve(path)
+        for mount, root in await self._roots():
+            if mount in self._shell_mounts:
+                # The mount must be in place before the environment is asked about it or a folder holding it.
+                if within(target, root) or within(root, target):
+                    await self._ensure_mounts()
+            elif within(target, root):
+                if write and mount.read_only:
+                    raise WorkspaceReadOnlyError(f'The mount at {mount.path!r} is read-only.')
+                return mount.storage, '/' + target[len(root) :].lstrip('/')
+        return None, target
+
+    def _mounts_current(self) -> bool:
+        return self._mounted and (self._mounted_until is None or datetime.now(UTC) < self._mounted_until)
+
+    async def _ensure_mounts(self) -> None:
+        backend = self._backend
+        # With no mount shown to commands, this still clears any an earlier configuration left in the environment.
+        if not self._manages_mounts or not isinstance(backend, SupportsMounts) or self._mounts_current():
+            return
+        # Parallel tool calls share this workspace: the first one mounts and the others wait for it.
+        async with self._mount_lock:
+            if not self._mounts_current():
+                again = await backend.ensure_mounts(self._shell_mounts, await self.working_dir())
+                self._mounted, self._mounted_until = True, None if again is None else again - _REMOUNT_MARGIN
 
     async def realpath(self, path: str) -> str:
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
@@ -518,6 +640,14 @@ class Workspace(WorkspaceBackend):
         if not posixpath.isabs(path):
             # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
             path = posixpath.join(await self.working_dir(), path)
+        storage, target = await self._route(path)
+        if storage is not None:
+            resolved = posixpath.normpath(path)
+            if not isinstance(storage, SupportsRealpath):
+                return resolved
+            # The storage resolves within itself, so the result stays inside the mount.
+            root = resolved if target == '/' else resolved.removesuffix(target)
+            return posixpath.normpath(posixpath.join(root, (await storage.realpath(target)).lstrip('/')))
         backend = self._backend
         if isinstance(backend, SupportsRealpath):
             return await backend.realpath(path)
