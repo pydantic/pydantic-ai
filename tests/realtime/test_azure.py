@@ -22,7 +22,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
-    from pydantic_ai.realtime import RealtimeSessionErrorEvent, TurnDetection
+    from pydantic_ai.realtime import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent, TurnDetection
     from pydantic_ai.realtime.azure import (
         AzureEndOfUtteranceDetection,
         AzureRealtimeConnection,
@@ -851,3 +851,53 @@ async def test_voice_live_ignores_tool_item_pruning() -> None:
     call = ToolCallPart(tool_name='lookup', args='{}', tool_call_id='c1')
     assert await connection._prune_tool_calls([call]) == []  # pyright: ignore[reportPrivateUsage]
     assert not [frame for frame in ws.sent if 'item.delete' in frame]
+
+
+# Recorded from Azure AI Voice Live: the server sends this, then closes the socket with `1008 (policy violation)`.
+_OUTPUT_OVERFLOW_FRAME = {
+    'event_id': 'event_2crZrZhfqSUqFqKzApWLB1',
+    'type': 'error',
+    'error': {
+        'message': 'The session was closed because its outbound buffer exceeded the server limit; the client was not consuming the audio stream fast enough.',
+        'type': 'invalid_request_error',
+        'code': 'session_output_overflow',
+        'param': None,
+        'event_id': None,
+    },
+}
+
+
+def _output_overflow_error(*, recoverable: bool) -> RealtimeSessionErrorEvent:
+    return RealtimeSessionErrorEvent(
+        message='The session was closed because its outbound buffer exceeded the server limit; the client was not consuming the audio stream fast enough.',
+        type='invalid_request_error',
+        code='session_output_overflow',
+        recoverable=recoverable,
+    )
+
+
+async def test_voice_live_output_overflow_ends_the_session() -> None:
+    """Voice Live closes the socket right after `session_output_overflow`, so without a reconnect policy it's fatal.
+
+    The error already says why the session ended, so the close that follows isn't reported again.
+    """
+    connection = _VoiceLiveRealtimeConnection(cast(Any, FakeWebSocket([json.dumps(_OUTPUT_OVERFLOW_FRAME)])))
+    assert [event async for event in connection] == [_output_overflow_error(recoverable=False)]
+
+
+async def test_voice_live_output_overflow_reconnects_with_a_policy() -> None:
+    """With a reconnect policy, the close after `session_output_overflow` re-dials, so the error is recoverable."""
+
+    async def dial() -> Any:
+        return FakeWebSocket([])
+
+    connection = _VoiceLiveRealtimeConnection(
+        cast(Any, FakeWebSocket([json.dumps(_OUTPUT_OVERFLOW_FRAME)])),
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_reconnects': 1},
+    )
+    events = await collect_codec_events(connection)
+    assert events[:2] == [
+        _output_overflow_error(recoverable=True),
+        RealtimeSessionReconnectEvent(state_restored=False),
+    ]
