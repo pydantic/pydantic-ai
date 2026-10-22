@@ -111,11 +111,12 @@ and cannot be persisted for another process.
 reports whether the reconnect carried the conversation through without cutting a turn off.
 
 How a reply the drop caught in flight is handled depends on the mechanism. Gemini reports
-`True` once the server has issued a resumption handle (shortly after connect; a drop before that
-reports `False` and cancels running tools) but closes the cut reply as an interrupted response
-(keeping any partial transcript in history) before the
+`True` once the server has issued a resumption handle (shortly after connect) but closes the cut
+reply as an interrupted response (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input. Gemini issues no handle while a tool call is running, so a resumed
+quiet until the next input. A drop before the first handle reports `False`, cancels running tools,
+and dials a fresh session: the model loses the earlier turns, though the session's
+[message history](history.md) keeps them. Gemini issues no handle while a tool call is running, so a resumed
 session never has a call still running at the drop, and never answers its result. Such a call is
 cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
 the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
@@ -196,8 +197,8 @@ For an idle rather than absolute timeout, reset the watchdog on
 [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent], which providers
 whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
-send. Where that flag is unset, as on Gemini, reset the watchdog from your own input path as
-well — whenever you send audio that is not silence — plus assistant
+send. Where that flag is unset, as on Gemini, GPT-Live, and ElevenLabs Agents, reset the watchdog
+from your own input path as well — whenever you send audio that is not silence — plus assistant
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] activity and
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent]; resetting on output
 alone would hang up on a person mid-sentence. With input transcription enabled, user parts from
@@ -240,9 +241,9 @@ time, the refusal is reported like any other, and `wait_for_reply()` stops waiti
 
 Failures surface from the responsible call where possible; a failed `send_audio()` raises there.
 Receive-loop and tool failures are raised from `async for` while the event stream is being
-iterated. A receive-loop failure ends the session; a tool failure ends only the exchange it was part
-of, so a consumer that catches it and iterates again keeps a working session (see
-[Tools](tools.md#function-tools)). Without an active iterator, the session stops receiving, the audio
+iterated. A receive-loop failure ends the session; a tool failure doesn't (on most providers it ends
+only the exchange it was part of), so a consumer that catches it and iterates again keeps a working
+session (see [Tools](tools.md#function-tools)). Without an active iterator, the session stops receiving, the audio
 and transcript views end, and the failure is raised when the `async with` block exits (from
 [`close()`][pydantic_ai.realtime.RealtimeSession.close]). If the receive side has already failed, the
 next outbound session method raises that failure instead; it is delivered only once.

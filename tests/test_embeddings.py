@@ -26,6 +26,7 @@ from pytest_mock import MockerFixture
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.embeddings import (
     Embedder,
+    EmbeddingModel,
     EmbeddingResult,
     EmbeddingSettings,
     EmbedInputType,
@@ -2653,3 +2654,41 @@ async def test_bedrock_embedding_non_json_response_body_raises_model_api_error(b
 
     assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+class _PlainEmbeddingModel(EmbeddingModel):
+    """A subclass that isn't a dataclass, so it has no fields to compare."""
+
+    @property
+    def model_name(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def system(self) -> str:
+        raise NotImplementedError
+
+    async def embed(
+        self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+    ) -> EmbeddingResult:
+        raise NotImplementedError
+
+
+class _OwnEqualityEmbeddingModel(_PlainEmbeddingModel):
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _OwnEqualityEmbeddingModel)
+
+
+def test_embedding_models_that_differ_only_in_settings_are_not_equal():
+    """`settings` live on the `EmbeddingModel` base, outside the fields a dataclass subclass compares.
+
+    Not a VCR test: equality makes no request.
+    """
+    assert TestEmbeddingModel(settings={'dimensions': 1}) != TestEmbeddingModel(settings={'dimensions': 2})
+    assert TestEmbeddingModel(settings={'dimensions': 1}) == TestEmbeddingModel(settings={'dimensions': 1})
+    assert TestEmbeddingModel() != object()
+
+    model = _PlainEmbeddingModel()
+    assert model == model
+    assert model != _PlainEmbeddingModel()
+    assert {model: 'kept'}[model] == 'kept'
+    assert _OwnEqualityEmbeddingModel() == _OwnEqualityEmbeddingModel(), "a subclass's own `__eq__` is kept"

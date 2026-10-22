@@ -55,7 +55,7 @@ from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsStr, legacy_retry_prompt_part, try_import
+from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part, try_import
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
@@ -140,6 +140,14 @@ async def test_decision_model_extension_point(allow_model_requests: None):
                         },
                     ),
                 },
+                messages=[
+                    ModelRequest(
+                        parts=[UserPromptPart(content='The customer cannot sign in.', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                        conversation_id=IsStr(),
+                    )
+                ],
             )
         ]
     )
@@ -1293,6 +1301,14 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
                         instructions='Which of these does this call for?',
                     ),
                 },
+                messages=[
+                    ModelRequest(
+                        parts=[UserPromptPart(content='Someone else can see my invoices.', timestamp=IsDatetime())],
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                        conversation_id=IsStr(),
+                    )
+                ],
             )
         ]
     )
