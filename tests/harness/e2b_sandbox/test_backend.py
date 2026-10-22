@@ -1150,14 +1150,8 @@ async def test_timeout_stops_a_command_on_a_template_without_ps(fake_e2b: FakeE2
         with anyio.fail_after(5):
             with pytest.raises(WorkspaceTimeoutError):
                 await backend.run(f'sleep 20 & echo $! > {shlex.quote(str(pid_file))}; wait', shell=True, timeout=0.1)
-            child = int(pid_file.read_text())
             # The group stop reaches the background child; the bound only guards a hang.
-            while True:
-                try:
-                    os.kill(child, 0)
-                except ProcessLookupError:
-                    break
-                await anyio.sleep(0.01)  # pragma: lax no cover - the child is often already reaped on the first check
+            await _exited(int(pid_file.read_text()))
     finally:
         for handle in fake_e2b.sandboxes[0].commands.handles:
             handle.close()
@@ -1183,13 +1177,46 @@ async def test_a_leader_stop_reaches_a_command_that_left_its_group(fake_e2b: Fak
                     await anyio.sleep(0.01)
                 group.cancel_scope.cancel()
             assert not any(call.command.startswith('setsid ') for call in fake_e2b.sandboxes[0].commands.calls)
-            pid = int(pid_file.read_text())
-            while True:
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
-                    break
-                await anyio.sleep(0.01)  # pragma: lax no cover - the process may already be gone
+            await _exited(int(pid_file.read_text()))
     finally:
         for handle in fake_e2b.sandboxes[0].commands.handles:
             handle.close()
+
+
+@pytest.mark.skipif(not os.path.exists('/proc/self/stat'), reason='identifies processes through Linux `/proc`')
+async def test_timeout_stops_a_command_whose_name_holds_a_newline(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    # Linux names a process after its executable, and a file name may hold a newline, which a
+    # line-wise read of `/proc/PID/stat` would cut short.
+    fake_e2b.host_root = tmp_path
+    sleep = shutil.which('sleep')
+    assert sleep is not None
+    odd = tmp_path / 'odd\nname'
+    odd.symlink_to(sleep)
+    pid_file = tmp_path / 'pid'
+    backend = await started()
+    try:
+        with anyio.fail_after(5):
+            with pytest.raises(WorkspaceTimeoutError):
+                await backend.run(
+                    f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))} 20', shell=True, timeout=0.5
+                )
+            await _exited(int(pid_file.read_text()))
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()
+
+
+async def _exited(pid: int) -> None:
+    """Wait until `pid` has exited; a zombie no init has reaped yet has exited too, though `kill -0` finds it."""
+    stat = Path(f'/proc/{pid}/stat')
+    has_proc = os.path.exists('/proc/self/stat')
+    while True:
+        try:
+            os.kill(pid, 0)
+            # Reached only while the process still runs.
+            state = stat.read_bytes().rsplit(b') ', 1)[1].split()[0] if has_proc else b''  # pragma: lax no cover
+        except (ProcessLookupError, FileNotFoundError):
+            return
+        if state == b'Z':  # pragma: lax no cover - only where nothing reaps orphans
+            return
+        await anyio.sleep(0.01)  # pragma: lax no cover - the process is often already gone
