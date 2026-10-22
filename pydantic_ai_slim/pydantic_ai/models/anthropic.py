@@ -4343,10 +4343,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
                 block['type'] in ('server_tool_use', 'mcp_tool_use')
                 and block['id'] not in returned_native_tool_call_ids
             )
-            tool_search = block.get('name') in ('tool_search_tool_bm25', 'tool_search_tool_regex')
-            if unpaired and (not suffix_is_tool_result_only or tool_search):
-                # Tool search is retried instead of preserved in flight because Bedrock rejects
-                # that shape even though the direct Anthropic API accepts other native tools there.
+            if unpaired and not suffix_is_tool_result_only:
                 # Keep a cache boundary on the nearest preceding cacheable block. Moving it
                 # forward would cache content the user placed outside the boundary. If no such
                 # block exists, the boundary disappears with the block that carried it.

@@ -321,9 +321,10 @@ Key facts for building realtime agents:
   text context. Images are context-only by default; use `respond=True` to ask for a response to an
   image. Never pair `session.send('...')` with `session.create_response()`, because that asks twice.
   A string sent during a reply queues on OpenAI/Azure/xAI/Eleven Realtime and Gemini 2.5, but interrupts the active
-  reply on Gemini 3.1. On OpenAI GPT-Live a string is never a user turn at all: it is context the model
-  relays or answers (even with `respond=False`, which only doesn't *request* speech), it only lands
-  while audio is flowing (set `openai_live_idle_audio=True` for a session with no microphone), and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect, except the Vertex
+  reply on Gemini 3.1. On OpenAI GPT-Live a string goes to the delegated backend as the user's message and
+  runs it (tools included), and Live speaks the answer, often after a filler line; `respond=False` is context only
+  (which Live may still mention), Live only speaks while audio is flowing (set `openai_live_idle_audio=True` for a
+  session with no microphone), and `respond=False` text over 500 tokens raises `UserError` (a longer typed turn still runs the backend, but Live isn't told what was typed). Gemini speech models reject text output before connect, except the Vertex
   `gemini-live-2.5-flash` half-cascade, which answers in text.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`, or with

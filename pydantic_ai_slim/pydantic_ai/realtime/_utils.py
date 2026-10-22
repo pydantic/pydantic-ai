@@ -60,6 +60,16 @@ def resolve_advertised_tools(
     return tools, resolved
 
 
+class SystemPromptText(str):
+    """`<system>`-tagged text a session delivers for system-prompt parts alone (`enqueue(SystemPromptPart(...))`).
+
+    It goes out as a `str` text turn like any other, so a connection that doesn't look for it delivers it as one; one
+    whose protocol says who wrote what can deliver it as the operator's rather than the user's.
+    """
+
+    __slots__ = ()
+
+
 DEFAULT_MAX_RECONNECTS = 50
 """The `ReconnectPolicy.max_reconnects` default."""
 
