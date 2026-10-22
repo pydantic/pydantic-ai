@@ -4884,6 +4884,30 @@ async def test_dbos_durability_batch_model_resume_from_history(dbos: DBOS) -> No
     assert step_names.count('durability_batch_resume__model.request') == 2
 
 
+async def test_dbos_durability_batch_model_recovery_does_not_submit_again(dbos: DBOS) -> None:
+    """Re-executing the workflow, as recovery does, replays the recorded submission and checks instead of repeating them."""
+    wrapped = SlowBatchTestModel(pending_checks=1)
+    agent = Agent(
+        wrapped,
+        name='durability_batch_recovery',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('go')).output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_durable_agent()
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
+
+    steps = await dbos.list_workflow_steps_async(wfid)
+    handle = await DBOS.fork_workflow_async(wfid, len(steps))
+    assert await handle.get_result() == output
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
+
+
 class _DelayedContinuationModel(ScriptedContinuationModel):
     def continuation_delay(self, response: ModelResponse) -> float | None:
         return 0.01

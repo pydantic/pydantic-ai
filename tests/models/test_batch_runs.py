@@ -467,7 +467,7 @@ async def test_many_concurrent_runs_fill_batches_of_the_default_size() -> None:
 
 async def test_a_batch_waits_up_to_max_wait_for_more_requests() -> None:
     wrapped = SlowBatchTestModel()
-    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_POLLING, max_wait=timedelta(milliseconds=50))])
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_POLLING, max_wait=timedelta(milliseconds=200))])
 
     first = asyncio.create_task(agent.run('one'))
     await wrapped.wait_until(lambda m: m.encoded == 1)

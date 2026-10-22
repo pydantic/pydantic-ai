@@ -107,6 +107,7 @@ from pydantic_ai.models import (
     infer_model,
 )
 from pydantic_ai.models._batch_model import BatchPool
+from pydantic_ai.models.batch import Batch, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -5419,6 +5420,93 @@ async def test_durability_batch_model_requests_share_a_batch_across_workflows(cl
     assert [result.output for result in results] == ['success (no tool calls)'] * 3
     assert [batch.request_count for batch in _shared_batch_wrapped_model.created] == [3]
     assert _shared_batch_wrapped_model.status_checks == 1
+
+
+async def test_durability_batch_model_replay_does_not_submit_again(client: Client):
+    """Replaying a finished workflow reads each model-request activity's recorded result, so nothing is submitted."""
+    _batch_wrapped_model.reset(pending_checks=1)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityBatchWorkflow],
+        plugins=[AgentPlugin(_batch_agent)],
+    ):
+        wf = await client.start_workflow(
+            DurabilityBatchWorkflow.run,
+            args=['go'],
+            id='DurabilityBatchWorkflow_replay',
+            task_queue=TASK_QUEUE,
+        )
+        await wf.result()
+        history = await wf.fetch_history()
+    assert (len(_batch_wrapped_model.created), _batch_wrapped_model.status_checks) == (1, 2)
+
+    await Replayer(
+        workflows=[DurabilityBatchWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        plugins=[AgentPlugin(_batch_agent)],
+    ).replay_workflow(history)
+
+    assert (len(_batch_wrapped_model.created), _batch_wrapped_model.status_checks) == (1, 2)
+
+
+class _LostSubmissionModel(SlowBatchTestModel):
+    """Creates the first batch, then fails as if the connection dropped before the response arrived."""
+
+    async def batch_create(self, requests: Sequence[EncodedBatchRequest]) -> Batch:
+        batch = await super().batch_create(requests)
+        if len(self.created) == 1:
+            raise RuntimeError('The connection dropped after the batch was created.')
+        return batch
+
+
+_lost_submission_model = _LostSubmissionModel()
+
+_lost_submission_agent = Agent(
+    _lost_submission_model,
+    name='durability_lost_submission_agent',
+    capabilities=[
+        BatchModelRequests(**FAST_BATCH_SETTINGS),
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=10)),
+            )
+        ),
+    ],
+)
+
+
+@workflow.defn
+class DurabilityLostSubmissionWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        return await _lost_submission_agent.run(prompt)
+
+
+async def test_durability_batch_model_retried_submission_submits_again(client: Client):
+    """The one window for a second batch: a model-request activity retried after its batch was created.
+
+    Once the activity that submitted the request completes, its recorded result is reused, but an attempt that
+    fails, or times out, after the provider created the batch is retried like any other model request, and the retry
+    submits the request again.
+    """
+    _lost_submission_model.reset(pending_checks=0)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityLostSubmissionWorkflow],
+        plugins=[AgentPlugin(_lost_submission_agent)],
+    ):
+        result = await client.execute_workflow(
+            DurabilityLostSubmissionWorkflow.run,
+            args=['go'],
+            id='DurabilityLostSubmissionWorkflow',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert result.output == 'success (no tool calls)'
+    assert len(_lost_submission_model.created) == 2
 
 
 _continuation_ceiling_model = ScriptedContinuationModel()

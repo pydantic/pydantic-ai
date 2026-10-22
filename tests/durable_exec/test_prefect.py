@@ -5117,6 +5117,37 @@ async def test_prefect_durability_batch_model_in_flow() -> None:
     assert len(set(task_run_ids)) == 4
 
 
+async def test_prefect_durability_batch_model_flow_retry_does_not_submit_again() -> None:
+    """A retried flow loads the recorded results of its model-request tasks, so the request isn't submitted again."""
+    task_runs: list[tuple[str, str | None]] = []
+    wrapped = SlowBatchTestModel(pending_checks=1, on_batch_call=_record_task_run(task_runs))
+    agent = Agent(
+        wrapped,
+        name='durability_batch_flow_retry',
+        capabilities=[BatchModelRequests(**FAST_BATCH_SETTINGS), PrefectDurability()],
+    )
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go')
+        # Fail after the agent run, so the retry has every task's result to load.
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'success (no tool calls)'
+    assert attempts == 2
+    assert task_runs == [
+        ('batch_create', task_runs[0][1]),
+        ('batch_status', task_runs[1][1]),
+        ('batch_status', task_runs[2][1]),
+    ]
+    assert (len(wrapped.created), wrapped.status_checks) == (1, 2)
+
+
 async def test_prefect_durability_batch_model_resume_from_history() -> None:
     """A run resumed from history ending in a pending batch response waits for that same batch.
 
