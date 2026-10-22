@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
+from pydantic import Field
+
 from pydantic_ai.exceptions import ModelAPIError, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -10,7 +14,13 @@ from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
 from pydantic_ai_harness.smart_file_search._index import MAX_CACHED_INDEXES, SnippetIndexes
 from pydantic_ai_harness.smart_file_search._judge import JudgeModel
-from pydantic_ai_harness.smart_file_search._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
+from pydantic_ai_harness.smart_file_search._search import (
+    DEFAULT_CANDIDATES,
+    MAX_CANDIDATES,
+    MAX_LIMIT,
+    SmartFileSearchResult,
+    search_code,
+)
 
 TOOL_NAME = 'smart_file_search'
 
@@ -92,8 +102,8 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         query: str,
         directory: str = '.',
         glob: str | None = None,
-        limit: int = 5,
-        candidates: int = DEFAULT_CANDIDATES,
+        limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = 5,
+        candidates: Annotated[int, Field(ge=1, le=MAX_CANDIDATES)] = DEFAULT_CANDIDATES,
     ) -> SmartFileSearchResult:
         """Find code by what it DOES, described in plain English.
 

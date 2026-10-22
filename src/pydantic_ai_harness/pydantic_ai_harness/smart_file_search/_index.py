@@ -210,7 +210,7 @@ class SnippetIndexes:
         """Drop the least recently searched indexes over `max_cached`, except `keep` and any being searched."""
         # Never evict an index mid-search: a parallel search of it would then build a second one.
         idle = [other for other, kept in self._slots.items() if other != keep and not kept.lock.locked()]
-        for other in idle[: len(self._slots) - self._max_cached]:
+        for other in idle[: max(0, len(self._slots) - self._max_cached)]:
             del self._slots[other]
 
     async def shortlist(self, workspace: Workspace, root: str, glob: str | None, query: str, k: int) -> Shortlist:

@@ -148,17 +148,13 @@ class TestSmartFileSearch:
         assert result.output == 'done'
 
     async def test_a_search_leaves_the_default_request_limit_room_to_keep_working(self, tmp_path: Path) -> None:
-        for i in range(60):
+        for i in range(130):  # more snippets than the default 128 `candidates`
             (tmp_path / f'm{i}.py').write_text('expired = True\n')
-        evaluated: list[int] = []
+        results: list[SmartFileSearchResult] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             returns = tool_returns(messages)
-            evaluated.extend(
-                r.content.coverage.evaluated
-                for r in returns[len(evaluated) :]
-                if isinstance(r.content, SmartFileSearchResult)
-            )
+            results.extend(r.content for r in returns[len(results) :] if isinstance(r.content, SmartFileSearchResult))
             if len(returns) < 2:
                 return ModelResponse(parts=[ToolCallPart('smart_file_search', {'query': 'reject expired sessions'})])
             return ModelResponse(parts=[TextPart('done')])
@@ -168,8 +164,14 @@ class TestSmartFileSearch:
         assert result.output == 'done'
         # Each search spends half of what is left after one request kept for the next turn: (50 - 1 - 1) / 2,
         # then (50 - 26 - 1) / 2 rounded up.
-        assert evaluated == [24, 12]
+        assert [r.coverage.evaluated for r in results] == [24, 12]
         assert result.usage.requests == 3 + 24 + 12
+        # The budget, not the shortlist, capped the search, so only its remedy is offered.
+        assert results[0].warnings == snapshot(
+            [
+                "Judged 24 of the 128 shortlisted snippets: each judged snippet counts as one request, and a search spends at most half of what the run's `request_limit` has left. Raising `candidates` will not judge more; narrow the directory or glob instead."
+            ]
+        )
 
     async def test_parallel_searches_share_the_request_limit(self, tmp_path: Path) -> None:
         for i in range(10):
@@ -239,7 +241,7 @@ class TestSmartFileSearch:
         assert result.coverage.skipped_files == 1
         assert result.warnings == ['1 files skipped (binary, non-UTF-8, minified or unreadable).']
 
-    @pytest.mark.parametrize(('requested', 'expected'), [(None, 128), (48, 48), (0, 1), (500, 140)])
+    @pytest.mark.parametrize(('requested', 'expected'), [(None, 128), (48, 48), (256, 140)])
     async def test_candidate_budget_default_and_bounds(
         self, tmp_path: Path, requested: int | None, expected: int
     ) -> None:
@@ -250,6 +252,16 @@ class TestSmartFileSearch:
         result = await (search(agent) if requested is None else search(agent, candidates=requested))
         assert result.coverage.evaluated == expected
         assert len(model.requests) == expected
+
+    @pytest.mark.parametrize(('argument', 'value'), [('candidates', 0), ('candidates', 257), ('limit', 101)])
+    async def test_out_of_range_arguments_are_retried(self, tmp_path: Path, argument: str, value: int) -> None:
+        model = FakeJev('x')
+        agent = search_agent(tmp_path, model)
+        error = await (
+            search_error(agent, candidates=value) if argument == 'candidates' else search_error(agent, limit=value)
+        )
+        assert argument in error and 'than or equal to' in error
+        assert not model.requests
 
     @pytest.mark.parametrize('query', ['   ', 'x' * 2001])
     async def test_rejects_bad_query(self, tmp_path: Path, query: str) -> None:
@@ -414,7 +426,28 @@ def reject_expired(session):
         assert SmartFileSearch[None](FakeJev('x'), id='code').get_toolset().id == 'code'
         schema = toolset.tools['smart_file_search'].function_schema.json_schema
         assert set(schema['properties']) == {'query', 'directory', 'glob', 'limit', 'candidates'}
-        assert schema['properties']['candidates']['default'] == 128
+        assert schema['properties']['candidates'] == snapshot(
+            {
+                'default': 128,
+                'description': """\
+Snippets to judge after the lexical shortlist (1-256).
+Defaults to 128. Higher = better recall, slower and costlier. Each
+judged snippet counts as one request against the run's request limit.\
+""",
+                'maximum': 256,
+                'minimum': 1,
+                'type': 'integer',
+            }
+        )
+        assert schema['properties']['limit'] == snapshot(
+            {
+                'default': 5,
+                'description': 'Max matches to return (1-100).',
+                'maximum': 100,
+                'minimum': 1,
+                'type': 'integer',
+            }
+        )
         assert schema['required'] == ['query']
 
     @pytest.mark.usefixtures('instrument_all_agents')

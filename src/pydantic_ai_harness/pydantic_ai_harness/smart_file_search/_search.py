@@ -169,8 +169,6 @@ async def search_code(
     query = query.strip()
     if not query or len(query) > MAX_QUERY_CHARS:
         raise ModelRetry(f'Query must contain 1-{MAX_QUERY_CHARS} characters.')
-    limit = max(1, min(limit, MAX_LIMIT))
-    candidates = max(1, min(candidates, MAX_CANDIDATES))
     allowance = judgment_allowance(ctx)
     if allowance == 0:
         raise ToolFailed(_NO_ROOM)
@@ -204,16 +202,24 @@ async def search_code(
             f'No snippet reached threshold {threshold}; this does not prove absence. '
             'Try rephrasing, a narrower directory, or regular grep.'
         )
-    if not coverage.selection_complete:
+    if len(selected) < len(found.hits):
+        warnings.append(
+            f'{len(found.hits) - len(selected)} shortlisted snippets were left out because their files changed '
+            'during the search; search again to include them.'
+        )
+    # Each cap names its own remedy: raising `candidates` cannot help a search the request budget capped.
+    if len(judged) < len(selected):
+        warnings.append(
+            f'Judged {len(judged)} of the {len(selected)} shortlisted snippets: each judged snippet counts as one '
+            "request, and a search spends at most half of what the run's `request_limit` has left. Raising "
+            '`candidates` will not judge more; narrow the directory or glob instead.'
+        )
+    elif len(found.hits) < found.snippets:
         warnings.append(
             f'Judged {len(judged)} of {found.snippets} snippets picked by a lexical shortlist; code with '
             'unrelated wording may be missed. Raise `candidates` or narrow the directory/glob.'
         )
-    if len(judged) < len(selected):
-        warnings.append(
-            f'Judged {len(judged)} of the {len(selected)} shortlisted snippets: each judged snippet counts as one '
-            "request, and a search spends at most half of what the run's `request_limit` has left."
-        )
+
     if found.skipped:
         warnings.append(f'{len(found.skipped)} files skipped (binary, non-UTF-8, minified or unreadable).')
 

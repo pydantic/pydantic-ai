@@ -136,6 +136,10 @@ class TestSmartFileSearchIndex:
         result = await search(search_agent(None, model), workspace=Workspace(EditingBackend(tmp_path)))
         assert _judged_paths(model) == ['kept.py']
         assert (result.coverage.snippets, result.coverage.evaluated) == (3, 1)
+        assert result.warnings == [
+            '2 shortlisted snippets were left out because their files changed during the search; search again '
+            'to include them.'
+        ]
 
     # ------------------------------------------------------------ budgets
 
@@ -259,10 +263,11 @@ class TestSmartFileSearchIndex:
             (tmp_path / name).mkdir()
             (tmp_path / name / f'{name}.py').write_text('x = 1\n')
         agent = search_agent(tmp_path, FakeJev(''), cache_index=True)
-        for name in 'abcdea':  # four indexes are kept: `a` was evicted by `e`, so it is rebuilt
+        for name in 'abcadeba':
             await search(agent, directory=name)
-        await search(agent, directory='e')  # still cached
-        assert indexed() == [1, 1, 1, 1, 1, 1, 0]
+        # Under four, nothing is evicted: `a` is still cached. Then `e` evicts `b`, the least recently searched,
+        # and the rebuilt `b` evicts `c`, leaving `a` cached.
+        assert indexed() == [1, 1, 1, 0, 1, 1, 1, 0]
 
     async def test_an_index_being_searched_is_not_evicted(
         self, tmp_path: Path, indexed: Callable[[], list[int | None]]
