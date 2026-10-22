@@ -1915,6 +1915,73 @@ class TestInjection:
         assert _memory_request_indexes(history) == [len(history) - 2]
         assert [_memory_contexts(list(event.messages)) for event in enqueued] == [[snapshot]]
 
+    async def test_deferred_approval_resume_retried_by_an_earlier_hook_waits_for_the_next_prompt(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        sent: list[list[ModelMessage]] = []
+        resuming = False
+
+        @dataclass
+        class RetryFirstRequest(AbstractCapability[None]):
+            async def before_model_request(
+                self, ctx: RunContext[None], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                if resuming and ctx.run_step == 1:
+                    raise ModelRetry('Try that again.')
+                return request_context
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            if len(sent) == 1:
+                return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='lookup')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        def lookup() -> str:
+            return 'found'
+
+        agent = Agent(
+            FunctionModel(model),
+            deps_type=type(None),
+            capabilities=[RetryFirstRequest(), Memory(store=store)],
+            output_type=[str, DeferredToolRequests],
+        )
+        agent.tool_plain(requires_approval=True)(lookup)
+        first = await agent.run('what do I like?')
+        await _seed(store, 'main/MEMORY.md', '- likes coffee')
+        resuming = True
+
+        resumed = await agent.run(
+            message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'lookup': True}),
+        )
+
+        # The resume is a continuation from the start, so the retry doesn't make it look like a fresh run.
+        assert len(sent) == 2
+        assert _memory_contexts(sent[1]) == _memory_contexts(first.all_messages())
+        assert _memory_contexts(resumed.all_messages()) == _memory_contexts(first.all_messages())
+
+    async def test_suspended_response_resume_adds_no_snapshot_and_no_request(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- likes tea')
+        sent: list[list[ModelMessage]] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)])
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('what do I like?')]),
+            ModelResponse(parts=[TextPart('paused')], state='suspended'),
+        ]
+
+        result = await agent.run(message_history=history)
+
+        # The resumed turn is completed in one request, with nothing enqueued to drain into another.
+        assert len(sent) == 1
+        assert not _memory_contexts(sent[0])
+        assert not _memory_contexts(result.all_messages())
+
     async def test_memory_loaded_mid_run_waits_for_the_next_prompt(self) -> None:
         store = InMemoryStore()
         await _seed(store, 'main/MEMORY.md', '- likes tea')

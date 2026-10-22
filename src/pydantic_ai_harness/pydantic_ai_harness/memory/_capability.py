@@ -151,6 +151,9 @@ class Memory(AbstractCapability[AgentDepsT]):
     _run_snapshot: str | None = field(default=None, init=False, repr=False, compare=False)
 
     _run_started: bool = field(default=False, init=False, repr=False, compare=False)
+
+    _run_continues: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run continues earlier work instead of answering a prompt, decided once when it starts."""
     """Whether this run's first `before_model_request` call ran, which an earlier hook's retry can postpone."""
     """The snapshot the model reads as current during this run, kept so compaction can't take it away."""
 
@@ -177,6 +180,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         clone._resolved_scope = None
         clone._run_snapshot = None
         clone._run_started = False
+        clone._run_continues = _continues_earlier_work(ctx)
         store, scope = clone._resolve_scope(ctx)
         clone._resolved_scope = (store.bind(ctx.workspace) if isinstance(store, FileStore) else store, scope)
         return clone
@@ -308,7 +312,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         # Memory waits for the next prompt when the model has already responded in this run (a deferred
         # `Memory` loaded mid-run) or the run continues from tool results without a prompt of its own (resuming
         # after a deferred tool approval): there, a snapshot follows what the model already saw or tool results.
-        if _responded_in_run(ctx) or _is_tool_continuation(ctx):
+        if self._run_continues or _responded_in_run(ctx):
             return request_context
         with ctx.tracer.start_as_current_span(
             'memory.inject', record_exception=False, set_status_on_exception=False
@@ -517,20 +521,18 @@ def _responded_in_run(ctx: RunContext[AgentDepsT]) -> bool:
     return any(isinstance(message, ModelResponse) and message.run_id == ctx.run_id for message in ctx.messages)
 
 
-def _is_tool_continuation(ctx: RunContext[AgentDepsT]) -> bool:
-    """Whether the run continues from tool results without a prompt of its own.
+def _continues_earlier_work(ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether a run starts without a prompt of its own, from history that ends in a response or in tool results.
 
-    Decided by the run's own `prompt` and the tool results it resumes with, not by whether the request holds a
-    user prompt part: a tool can add user-channel content next to its result (`ToolReturn(content=...)`), which
-    is not the user speaking. Retry feedback alone is not a continuation: a promptless run that a hook retried
-    still starts fresh.
+    That's a deferred tool approval being resumed, a provider-suspended response being continued, or tool
+    results being sent on: a snapshot there would follow what the model already saw. It's decided from the
+    history the run starts with, so a retry before the first request is sent doesn't change it, and it ignores
+    user-channel content a tool added beside its result (`ToolReturn(content=...)`), which isn't the user.
     """
-    message = ctx.messages[-1]
-    return (
-        ctx.prompt is None
-        and isinstance(message, ModelRequest)
-        and any(isinstance(part, ToolReturnPart) for part in message.parts)
-    )
+    if ctx.prompt is not None or not ctx.messages:
+        return False
+    last = ctx.messages[-1]
+    return isinstance(last, ModelResponse) or any(isinstance(part, ToolReturnPart) for part in last.parts)
 
 
 def _validate_positive(name: str, value: int) -> None:
