@@ -18,10 +18,14 @@ BWRAP_WORKS = (
 
 # Runs the remote command on this machine, starting in `$HOME` like a login. `unreachable` and `dropped` fail on
 # purpose, `chatty` prints a login banner first, `slow` takes 30 seconds to log in, and `lossy` loses the
-# connection (`ssh` exits 255) after the command finishes.
+# connection (`ssh` exits 255) after the command finishes. `-n` gives the remote command an empty input, as it does `ssh`'s.
 _FAKE_SSH = """#!/bin/sh
 bin=$(dirname "$0")
-while [ "$1" != -- ]; do printf '%s\\n' "$1" >> "$bin/ssh-options"; shift; done
+while [ "$1" != -- ]; do
+    printf '%s\\n' "$1" >> "$bin/ssh-options"
+    if [ "$1" = -n ]; then exec < /dev/null; fi
+    shift
+done
 destination=$2
 shift 2
 case $destination in

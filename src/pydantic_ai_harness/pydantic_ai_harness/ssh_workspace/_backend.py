@@ -238,6 +238,13 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             ) from error
         before, ready, stderr = result.stderr.partition(_READY)
         if not ready:
+            if result.exit_code == 0 and not before.strip():
+                # The remote `sh` read no script: `-n`, `-f` or `StdinNull` gave `ssh` an empty input.
+                raise WorkspaceUnavailableError(
+                    f'SSH workspace {self._ref.id} is unavailable: the command never reached the host, as `ssh` '
+                    'did not forward its input; remove `-n` or `-f` from `ssh_args` and `StdinNull` from your SSH '
+                    'configuration'
+                )
             reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')
         # The marker carries the status because `ssh` uses exit 255 for a lost connection, and a command can too.

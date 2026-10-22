@@ -32,32 +32,40 @@ _RECOVERABLE_ERRNOS: dict[int | None, str] = {
     errno.ENOTDIR: 'The working directory is no longer a directory.',
 }
 
-_TOO_LONG = 'The command is too long to start; write the script to a file and run the file instead.'
+_TOO_LONG = (
+    'The command is too long to start; write the script to a file, with a file tool or in several shorter '
+    'commands, then run the file.'
+)
 
 
 async def run_model_command(
     workspace: Workspace,
-    command: WorkspaceCommand,
+    build: Callable[[str], WorkspaceCommand],
+    command: str,
     *,
-    shell: bool = False,
     env: Mapping[str, str] | None,
     timeout: float | None,
 ) -> CommandResult:
-    """Run a command that carries the model's, and ask the model to shorten it when it is too long to start.
+    """Run `build(command)`, the model's `command` in the toolset's own invocation, a string for the shell or argv.
 
     The OS refuses to start a command whose arguments and environment together are too large (`E2BIG`),
     so the errno alone does not say whether the model's command or the application's environment is to
-    blame. A short command started with the same environment does: when it starts, the model can fix the
-    failure by sending less. When it fails as well, the original error propagates, as an unwinnable retry
-    would only postpone the end of the run.
+    blame. The same invocation and environment without the model's command does, given to `true`, which
+    ignores its arguments: when that starts, the model can fix the failure by sending less, so it is asked
+    to. When it fails as well, the original error propagates, as an unwinnable retry would only postpone
+    the end of the run.
     """
+    invocation = build(command)
     try:
-        return await workspace.run(command, shell=shell, env=env, timeout=timeout)
+        return await workspace.run(invocation, shell=isinstance(invocation, str), env=env, timeout=timeout)
     except OSError as error:
         if error.errno != errno.E2BIG:
             raise
+        without = build('')
         try:
-            await workspace.run(['true'], env=env, timeout=timeout)
+            await workspace.run(
+                ['true', *([without] if isinstance(without, str) else without)], env=env, timeout=timeout
+            )
         except OSError:
             raise error from None
         raise ModelRetry(_TOO_LONG) from error

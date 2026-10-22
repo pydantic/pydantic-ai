@@ -237,6 +237,12 @@ async def test_a_command_reading_stdin_sees_eof_not_the_rest_of_the_script(tools
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'after', '')
 
 
+async def test_an_ssh_that_does_not_forward_its_input_is_unavailable(tools: FakeRemoteTools) -> None:
+    """The script travels on `ssh`'s input, which `-n` (as `-f` and `StdinNull` do) replaces with an empty one."""
+    with pytest.raises(WorkspaceUnavailableError, match='did not forward its input; remove `-n`'):
+        await SSHWorkspaceBackend('box', ssh_args=['-n']).working_dir()
+
+
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(
     tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

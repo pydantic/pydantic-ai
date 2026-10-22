@@ -828,7 +828,31 @@ class TestSpawnFailures:
             [Shell[None](tools=[tool])], tool, {'command': long_command}, workspace=LocalWorkspaceBackend(tmp_path)
         )
 
-        assert output == 'The command is too long to start; write the script to a file and run the file instead.'
+        assert output == (
+            'The command is too long to start; write the script to a file, with a file tool or in several shorter '
+            'commands, then run the file.'
+        )
+
+    async def test_a_launch_too_long_without_the_models_command_propagates(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # The toolset's own launcher crosses the limit (here, any argument over 1000 characters), so any
+        # command would fail: the application has to fix it, and the model must not be sent into retries.
+        spawn = anyio.open_process
+
+        async def refuse_long_arguments(command: str | Sequence[str], **kwargs: Any) -> anyio.abc.Process:
+            if any(len(part) > 1000 for part in ([command] if isinstance(command, str) else command)):
+                raise OSError(errno.E2BIG, 'Argument list too long')
+            return await spawn(command, **kwargs)
+
+        monkeypatch.setattr(anyio, 'open_process', refuse_long_arguments)
+        with pytest.raises(OSError, match='Argument list too long'):
+            await call_tool(
+                [Shell[None](tools=['shell'])],
+                'shell',
+                {'command': 'echo hi'},
+                workspace=LocalWorkspaceBackend(tmp_path),
+            )
 
     async def test_non_recoverable_errno_propagates(
         self, toolset: ShellToolset[None], monkeypatch: pytest.MonkeyPatch, tmp_path: Path

@@ -384,8 +384,8 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
                 cwd = shlex.quote(await self._cwd_for(ctx))
                 result = await run_model_command(
                     ctx.workspace,
-                    f'cd {cwd} || exit\n{limited_script(actual_command, self._max_file_bytes)}',
-                    shell=True,
+                    lambda cmd: f'cd {cwd} || exit\n{limited_script(cmd, self._max_file_bytes)}',
+                    actual_command,
                     env=self._resolve_env(),
                     timeout=timeout,
                 )

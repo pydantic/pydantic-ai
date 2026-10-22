@@ -173,11 +173,9 @@ class Job:
                 ('wrapper', _WRAPPER),
             )
         )
+        script = f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}'
         result = await run_model_command(
-            workspace,
-            ['sh', '-c', f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}', 'sh', command],
-            env=env,
-            timeout=CONTROL_TIMEOUT,
+            workspace, lambda cmd: ['sh', '-c', script, 'sh', cmd], command, env=env, timeout=CONTROL_TIMEOUT
         )
         if result.exit_code == _MISSING_TOOLS:
             # Without these the launcher would wait out `CONTROL_TIMEOUT` for a status that is never
