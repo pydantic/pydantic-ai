@@ -22,7 +22,7 @@ from pydantic_ai._framing import TOOL_RESULT_TAG, neutralize_tags, wrap
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness._judge import claim_request, claimed_request_limits
-from pydantic_ai_harness.smart_file_search._chunks import Chunk
+from pydantic_ai_harness.smart_search._chunks import Chunk
 
 REQUEST_TIMEOUT_SECONDS = 30
 """The request timeout of a judge given by name; a model instance keeps its own `settings`."""
@@ -74,7 +74,7 @@ def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     """The one-shot judge agent for `query`, named after the capability."""
     agent = Agent(
         model,
-        name='smart_file_search',
+        name='smart_search',
         output_type=Relevance,
         # A judgment is one request: a retry would spend a request the search did not claim.
         retries=0,

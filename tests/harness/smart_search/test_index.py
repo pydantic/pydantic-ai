@@ -1,4 +1,4 @@
-"""Tests for `SmartFileSearch`'s index: discovery through the workspace, budgets, the lexical shortlist, and caching."""
+"""Tests for `SmartSearch`'s index: discovery through the workspace, budgets, the lexical shortlist, and caching."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def _judged_paths(model: FakeJev) -> list[str]:
     return [snippet.path for snippet in judged(model)]
 
 
-class TestSmartFileSearchIndex:
+class TestSmartSearchIndex:
     # ------------------------------------------------------------ discovery
 
     async def test_skips_binary_non_utf8_and_minified_files(self, tmp_path: Path) -> None:
@@ -112,7 +112,7 @@ class TestSmartFileSearchIndex:
         agent = search_agent(project, model)
         for directory in ('..', str(outside), 'link'):
             assert await search_error(agent, directory=directory) == (
-                f'{directory!r} is outside the working directory; `smart_file_search` only searches inside it.'
+                f'{directory!r} is outside the working directory; `smart_search` only searches inside it.'
             )
         assert model.requests == []
 
@@ -151,9 +151,9 @@ class TestSmartFileSearchIndex:
         model = FakeJev('')
         agent = search_agent(tmp_path, model)
         # The real budgets (50M lines, 200k files) are too large to reach in a test.
-        monkeypatch.setattr('pydantic_ai_harness.smart_file_search._index.MAX_TOTAL_LINES', 10)
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_LINES', 10)
         assert await search_error(agent) == 'Search exceeds 10 lines of source. Narrow the directory or glob.'
-        monkeypatch.setattr('pydantic_ai_harness.smart_file_search._chunks.MAX_FILES', 1)
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._chunks.MAX_FILES', 1)
         assert await search_error(agent) == 'Search exceeds 1 files. Narrow the directory.'
         assert await search_error(agent, glob='*.py') == 'Search exceeds 1 files. Narrow the directory or glob.'
         assert model.requests == []
@@ -163,14 +163,14 @@ class TestSmartFileSearchIndex:
 
     async def test_line_budget_counts_carriage_returns(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         (tmp_path / 'a.py').write_bytes(b'x = 1\r' * 50)  # 50 lines to the chunker, no newline at all
-        monkeypatch.setattr('pydantic_ai_harness.smart_file_search._index.MAX_TOTAL_LINES', 10)
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_LINES', 10)
         assert 'lines of source' in await search_error(search_agent(tmp_path, FakeJev('')))
 
     async def test_enforces_byte_budget(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         (tmp_path / 'a.py').write_text('x = 1\n' * 50)
         agent = search_agent(tmp_path, FakeJev(''))
         assert (await search(agent)).matches
-        monkeypatch.setattr('pydantic_ai_harness.smart_file_search._index.MAX_TOTAL_BYTES', 100)  # really 2 GiB
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_BYTES', 100)  # really 2 GiB
         assert 'GiB of source' in await search_error(agent)
 
     async def test_search_over_budget_keeps_no_index(
@@ -180,7 +180,7 @@ class TestSmartFileSearchIndex:
         agent = search_agent(tmp_path, FakeJev(''), cache_index=True)
         await search(agent)
         with monkeypatch.context() as patch:
-            patch.setattr('pydantic_ai_harness.smart_file_search._index.MAX_TOTAL_LINES', 10)
+            patch.setattr('pydantic_ai_harness.smart_search._index.MAX_TOTAL_LINES', 10)
             assert 'lines of source' in await search_error(agent)
         await search(agent)
         assert indexed() == [1, None, 1]  # the index cached by the first search was dropped, so it is rebuilt
@@ -238,7 +238,7 @@ class TestSmartFileSearchIndex:
 
     async def test_retired_snippets_are_compacted(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # Compaction waits for 10,000 retired snippets; indexing that many takes seconds, so compact at once.
-        monkeypatch.setattr('pydantic_ai_harness.smart_file_search._index.COMPACT_AFTER', 0)
+        monkeypatch.setattr('pydantic_ai_harness.smart_search._index.COMPACT_AFTER', 0)
         model = FakeJev('')
         agent = search_agent(tmp_path, model, cache_index=True)
         for name in ('alpha', 'beta', 'gamma'):  # each edit retires the last version's snippet

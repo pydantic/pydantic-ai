@@ -194,11 +194,11 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
   returns only).
 
 
-## SmartFileSearch
+## SmartSearch
 
-Plain-English code search (`.smart_file_search`, no extra). One tool,
-`smart_file_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
-`SmartFileSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
+Plain-English code search (`.smart_search`, no extra). One tool,
+`smart_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
+`SmartSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
 `rg --files` in the workspace (needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run
 commands), cut into line windows (Python: along its `ast`), shortlisted with BM25, and each shortlisted
 snippet is judged by a model.
@@ -207,9 +207,9 @@ snippet is judged by a model.
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
-from pydantic_ai_harness import SmartFileSearch
+from pydantic_ai_harness import SmartSearch
 
-agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartFileSearch(model='test')])
+agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test')])
 ```
 
 - `model` is **required**: any Pydantic AI model or name. A decision model is recommended: `'system-one:<name>'`
@@ -519,7 +519,10 @@ a workspace path (on E2B, `/home/user`, not `Path.home()`); `~` raises `UserErro
 `run_macroscope_review(base=None)` runs `macroscope codereview --raw` in the workspace and returns a
 `MacroscopeReview` of `MacroscopeIssue` findings; the agent fixes them with its other tools. No extra,
 but the `macroscope` CLI must be installed and signed in **inside the workspace**. Options: `base`,
-`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none). Pair with `Coder`
+`command='macroscope'`, `timeout=600.0`, `guidance` (`None` default text, `''` none), `id='macroscope'`
+(keyword-only; capability and toolset id, so two with the same `id` merge or raise, and it works under
+durable execution; a Temporal activity gets `timeout` + 30s). A review the CLI stopped early still returns
+its findings, with `status='timed_out'` or `'interrupted'`. Pair with `Coder`
 or `FileSystem`/`Shell`: `Agent(..., capabilities=[LocalWorkspace('.'), Coder(), Macroscope(base='main')])`.
 
 ## LocalStack
