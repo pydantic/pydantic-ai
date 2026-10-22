@@ -22,8 +22,9 @@ _MENTION = re.compile(r'@(?=[\w-])')
 
 
 def sanitize(text: str) -> str:
-    """`text` with links and URLs removed, mentions defused, and backticks dropped so it fits in a code span."""
-    text = _URL.sub('<link removed>', _MARKDOWN_LINK.sub(r'\1', text))
+    """`text` on one line, with links removed, mentions defused, and backticks dropped so it fits in a code span."""
+    # One line, so a blank line in a docstring cannot end the code span and render the rest as markdown.
+    text = _URL.sub('<link removed>', _MARKDOWN_LINK.sub(r'\1', ' '.join(text.split())))
     return _MENTION.sub('@\N{ZERO WIDTH SPACE}', text).replace('`', "'")
 
 

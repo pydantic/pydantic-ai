@@ -14,6 +14,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+import httpx2
 import logfire
 
 from pydantic_ai.models import infer_model
@@ -62,7 +63,9 @@ async def judge_and_report(github: GitHub, pull: PullRequest, head_sha: str, roo
     pending: dict[GateKey, str] = {}
     for key, gate in GATES.items():
         external_id = f'{key}:{head_sha}:{gate.fingerprint}'
-        if not any(run.external_id == external_id for run in await github.check_runs(head_sha, gate.name)):
+        # Only a completed run counts: one left `in_progress` by a killed job is judged again.
+        runs = await github.check_runs(head_sha, gate.name)
+        if not any(run.status == 'completed' and run.external_id == external_id for run in runs):
             pending[key] = external_id
     if not pending:
         print('Every gate has already reported on this head.')
@@ -75,13 +78,18 @@ async def judge_and_report(github: GitHub, pull: PullRequest, head_sha: str, roo
         prepared = await prepare(github, pull, head_sha)
         results = await evaluate(prepared, infer_model(MODEL), root=root, reach=reach_map(root), keys=set(started))
     except BaseException as e:
-        # A check left `in_progress` reads as still running forever; close each before the error propagates.
-        for check_run_id in started.values():
-            await github.finish_check_run(
-                check_run_id,
-                conclusion='neutral',
-                output={'title': 'The gate failed before judging', 'summary': type(e).__name__, 'annotations': []},
-            )
+        # A check left `in_progress` reads as still running forever, so close each before the error propagates,
+        # each on its own, under an external id a rerun does not count as reported.
+        for key, check_run_id in started.items():
+            try:
+                await github.finish_check_run(
+                    check_run_id,
+                    conclusion='neutral',
+                    output={'title': 'The gate failed before judging', 'summary': type(e).__name__, 'annotations': []},
+                    external_id=f'{pending[key]}:failed',
+                )
+            except httpx2.HTTPError:
+                print(f'Could not close the {key} check run {check_run_id}')
         raise
     moved = (await github.pull_request(pull.number)).head.sha != head_sha
     for result in results:

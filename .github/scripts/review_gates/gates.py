@@ -160,8 +160,10 @@ class Item:
     location: Location
     label: str
     text: str
-    # The sibling the item is judged against, for an item that has one.
-    sibling: Location | None = None
+    # Whether a section of `text` was cut to fit the item budget.
+    cut: bool = False
+    # Another place the item is about: a locator's sibling, or the docs lines a claim came from.
+    related: Location | None = None
 
 
 @dataclass(frozen=True)
@@ -210,16 +212,16 @@ async def evaluate(
             runs.append(group.create_task(_claims_result(prepared, model, semaphore)))
         if 'unaffected-users' in keys:
             items = shared_items(prepared, reach)
-            runs.append(group.create_task(_result(UNAFFECTED_USERS, model, semaphore, items, [])))
+            runs.append(group.create_task(_result(UNAFFECTED_USERS, model, semaphore, items, prepared.partial)))
         if 'sibling-handling' in keys:
             items = sibling_items(prepared, root)
-            runs.append(group.create_task(_result(SIBLING_HANDLING, model, semaphore, items, [])))
+            runs.append(group.create_task(_result(SIBLING_HANDLING, model, semaphore, items, prepared.partial)))
     return [run.result() for run in runs]
 
 
 async def _claims_result(prepared: Prepared, model: Model, semaphore: asyncio.Semaphore) -> GateResult:
     items, notes = await claim_items(prepared, model, semaphore)
-    return await _result(PR_CLAIMS, model, semaphore, items, notes)
+    return await _result(PR_CLAIMS, model, semaphore, items, [*prepared.partial, *notes])
 
 
 async def _result(
@@ -228,6 +230,8 @@ async def _result(
     if len(items) > ITEM_CAP:
         notes = [*notes, f'{len(items) - ITEM_CAP} item(s) over the cap of {ITEM_CAP} were not judged']
         items = items[:ITEM_CAP]
+    if cut := sum(item.cut for item in items):
+        notes = [*notes, f'{cut} item(s) were cut to fit the item budget of {_ITEM_CHARS} characters']
     agent = Agent(model, output_type=gate.question, instructions=gate.instructions)
     async with asyncio.TaskGroup() as group:
         judgements = [group.create_task(_judge(gate, agent, semaphore, item)) for item in items]
@@ -260,6 +264,7 @@ _SKIPPED_LINE = re.compile(r'^\s*(?:#|>|- \[[ xX]\]|\|)')
 _SENTENCE_END = re.compile(r'(?<=[.!?])\s+(?=[A-Z`])')
 _IDENTIFIER = re.compile(r'`([^`]+)`|\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+|[a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b')
 _MIN_CLAIM_WORDS = 4
+_TEST_PATH = re.compile(r'(^|/)tests?/|(^|/)test_[^/]*\.py$|_test\.py$')
 
 
 @dataclass(frozen=True)
@@ -268,12 +273,20 @@ class _Claim:
     text: str
     # Set for a docstring, which describes the function it belongs to.
     function: tuple[SourceFile, Function] | None = None
+    # The docs lines a docs claim came from.
+    lines: Location | None = None
 
 
 async def claim_items(prepared: Prepared, model: Model, semaphore: asyncio.Semaphore) -> tuple[list[Item], list[str]]:
     """One item per behavior claim and the changed function it describes."""
     notes: list[str] = []
-    changed = [(file, function) for file in prepared.files for function in file.changed_functions()]
+    # A claim describes library behavior, which a test function exercises but does not provide.
+    changed = [
+        (file, function)
+        for file in prepared.files
+        if not _TEST_PATH.search(file.path)
+        for function in file.changed_functions()
+    ]
     claims = _claims(prepared)
     if len(claims) > _CLAIM_CAP:
         notes.append(f'{len(claims) - _CLAIM_CAP} claim(s) over the cap of {_CLAIM_CAP} were not read')
@@ -324,8 +337,11 @@ def _claims(prepared: Prepared) -> list[_Claim]:
     claims += [_Claim('the PR description', sentence) for sentence in _sentences(pull.body or '')]
     for file in prepared.files:
         if file.path.startswith('docs/') and file.path.endswith('.md'):
-            added = '\n'.join(line.text for line in file.diff if line.kind == '+')
-            claims += [_Claim(f'the docs page `{file.path}`', sentence) for sentence in _sentences(added)]
+            for start, end, added in _added_runs(file):
+                where = Location(file.path, start, end)
+                claims += [_Claim(f'the docs page `{file.path}`', s, lines=where) for s in _sentences(added)]
+        if _TEST_PATH.search(file.path):
+            continue
         base_docstrings = {
             f.qualname: ast.get_docstring(f.node)
             for f in (python_functions(file.base) if file.base is not None else [])
@@ -335,6 +351,20 @@ def _claims(prepared: Prepared) -> list[_Claim]:
             if docstring and docstring != base_docstrings.get(function.qualname):
                 claims.append(_Claim(f'the docstring of `{function.qualname}`', docstring, (file, function)))
     return [c for c in claims if len(c.text.split()) >= _MIN_CLAIM_WORDS]
+
+
+def _added_runs(file: SourceFile) -> list[tuple[int, int, str]]:
+    """Each run of consecutive added lines, with its first and last head line."""
+    runs: list[tuple[int, int, str]] = []
+    for line in file.diff:
+        if line.kind != '+':
+            continue
+        if runs and runs[-1][1] == line.new - 1:
+            start, _, text = runs[-1]
+            runs[-1] = (start, line.new, f'{text}\n{line.text}')
+        else:
+            runs.append((line.new, line.new, line.text))
+    return runs
 
 
 def _sentences(markdown: str) -> list[str]:
@@ -365,12 +395,13 @@ def _matching_functions(text: str, changed: list[tuple[SourceFile, Function]]) -
 
 
 def _claim_item(claim: _Claim, file: SourceFile, function: Function) -> Item:
-    text = _sections(
+    text, cut = _sections(
         ('Claim', f'(from {claim.source}) {claim.text}'),
         ('Changed function', f'`{function.qualname}` in `{file.path}`\n{file.lines(function.start, function.end)}'),
         ('Change', file.hunk(function.start, function.end)),
     )
-    return Item(Location(file.path, function.start, function.end), f'{claim.source}: {claim.text}', text)
+    location = Location(file.path, function.start, function.end)
+    return Item(location, f'{claim.source}: {claim.text}', text, cut, claim.lines)
 
 
 # --- M2: no behavior change for unaffected users ------------------------------------------------
@@ -381,11 +412,12 @@ _RANKED_REMOVAL = re.compile(r'^\s*(?:if|elif|return|raise)\b')
 def shared_items(prepared: Prepared, reach: dict[str, str]) -> list[Item]:
     """One item per changed site in a shared file, the riskiest kinds of change first."""
     pull = prepared.pull_request
-    about = '; '.join(
+    about = '\n'.join(
         [
             pull.title,
-            *(f'label `{label}`' for label in prepared.labels if label.startswith('pkg:')),
-            *(f'linked issue #{issue.number}: {issue.title}' for issue in prepared.issues),
+            *(f'Label `{label}`.' for label in prepared.labels if label.startswith('pkg:')),
+            ' '.join(_sentences(pull.body or '')),
+            *(f'Linked issue #{i.number}: {i.title}. {" ".join(_sentences(i.body or ""))}' for i in prepared.issues),
         ]
     )
     ranked: list[tuple[int, Item]] = []
@@ -402,13 +434,13 @@ def shared_items(prepared: Prepared, reach: dict[str, str]) -> list[Item]:
                 if enclosing
                 else f'module level\n{file.lines(max(1, start - 5), end + 5)}'
             )
-            text = _sections(
+            text, cut = _sections(
                 ('Pull request is about', about),
                 ('Change', f'in `{file.path}`, {context}'),
                 ('Hunk', file.hunk(start, end)),
                 ('This code runs for', who),
             )
-            item = Item(Location(file.path, start, end), f'change in `{file.path}`', text)
+            item = Item(Location(file.path, start, end), f'change in `{file.path}`', text, cut)
             ranked.append((_rank(file, start, end, enclosing, module_assignments), item))
     return [item for _, item in sorted(ranked, key=lambda pair: pair[0])]
 
@@ -455,27 +487,29 @@ def _rank(file: SourceFile, start: int, end: int, enclosing: Function | None, co
 
 def sibling_items(prepared: Prepared, root: Path) -> list[Item]:
     """One item per pair the locators find."""
-    return [
-        Item(
-            pair.this,
-            f'locator {pair.locator}: {pair.difference}',
-            _sections(
-                ('This code', f'`{pair.this.path}` lines {pair.this.start}-{pair.this.end}\n{pair.this_code}'),
-                (
-                    'Sibling',
-                    f'`{pair.sibling.path}` lines {pair.sibling.start}-{pair.sibling.end}\n{pair.sibling_code}',
-                ),
-                ('Difference found by a script', pair.difference),
-            ),
-            pair.sibling,
+    items: list[Item] = []
+    for pair in locate(prepared.files, root):
+        text, cut = _sections(
+            ('This code', f'`{pair.this.path}` lines {pair.this.start}-{pair.this.end}\n{pair.this_code}'),
+            ('Sibling', f'`{pair.sibling.path}` lines {pair.sibling.start}-{pair.sibling.end}\n{pair.sibling_code}'),
+            ('Difference found by a script', pair.difference),
         )
-        for pair in locate(prepared.files, root)
-    ]
+        items.append(Item(pair.this, f'locator {pair.locator}: {pair.difference}', text, cut, pair.sibling))
+    return items
 
 
-def _sections(*sections: tuple[str, str]) -> str:
-    """Labelled sections, each cut to its share of the item budget."""
-    share = _ITEM_CHARS // len(sections)
-    return '\n\n'.join(
-        f'{label}:\n{body[:share]}{" [... cut]" if len(body) > share else ""}' for label, body in sections
+def _sections(*sections: tuple[str, str]) -> tuple[str, bool]:
+    """Labelled sections within the item budget, and whether any had to be cut.
+
+    Shorter sections are given what they need first, so only the longest are cut, to an equal share.
+    """
+    allowed: dict[str, int] = {}
+    remaining = _ITEM_CHARS
+    for left, (label, body) in enumerate(sorted(sections, key=lambda section: len(section[1]))):
+        allowed[label] = min(len(body), remaining // (len(sections) - left))
+        remaining -= allowed[label]
+    text = '\n\n'.join(
+        f'{label}:\n{body[: allowed[label]]}{" [... cut]" if len(body) > allowed[label] else ""}'
+        for label, body in sections
     )
+    return text, any(len(body) > allowed[label] for label, body in sections)

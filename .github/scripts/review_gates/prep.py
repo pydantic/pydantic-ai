@@ -15,6 +15,11 @@ from pathlib import PurePosixPath
 from .github import COMPARE_FILE_LIMIT, GitHub, Issue, PullRequest
 
 _SOURCE_SUFFIXES = frozenset({'.py', '.ts', '.tsx', '.md'})
+_CODE_SUFFIXES = ('.py', '.ts', '.tsx')
+# Agent-instruction Markdown, whose shell steps locator d reads.
+AGENT_INSTRUCTIONS = re.compile(
+    r'(^|/)(AGENTS|CLAUDE|SKILL)\.md$|^\.(agents|claude)/|^agent_docs/|^\.github/workflows/.+\.md$'
+)
 _GENERATED = re.compile(r'(^|/)cassettes/|(^|/)static/assets/|\.lock(\.yml)?$|(^|/)uv\.lock$')
 _HUNK_HEADER = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 _CLOSING_REF = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b', re.IGNORECASE)
@@ -157,15 +162,31 @@ async def prepare(github: GitHub, pull_request: PullRequest, head_sha: str) -> P
         partial.append(f'only the first {COMPARE_FILE_LIMIT} changed files were read')
     semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
     changed = [f for f in comparison.files if is_source(f.filename)]
-    # A task group, so one failed read cancels the rest instead of leaving them running.
+    # Only what a gate reads: Python base text for docstrings, and head text of code and agent instructions.
+    # Docs claims come from the patch alone. A task group, so one failed read cancels the rest.
     async with asyncio.TaskGroup() as group:
         heads = [
-            group.create_task(_text(github, semaphore, f.filename, None if f.status == 'removed' else head_sha))
+            group.create_task(
+                _text(
+                    github,
+                    semaphore,
+                    f.filename,
+                    head_sha
+                    if f.status != 'removed'
+                    and (f.filename.endswith(_CODE_SUFFIXES) or AGENT_INSTRUCTIONS.search(f.filename))
+                    else None,
+                )
+            )
             for f in changed
         ]
         bases = [
             group.create_task(
-                _text(github, semaphore, f.previous_filename or f.filename, None if f.status == 'added' else base_sha)
+                _text(
+                    github,
+                    semaphore,
+                    f.previous_filename or f.filename,
+                    base_sha if f.status != 'added' and f.filename.endswith('.py') else None,
+                )
             )
             for f in changed
         ]

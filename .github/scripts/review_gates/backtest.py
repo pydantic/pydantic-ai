@@ -63,11 +63,13 @@ class Row(BaseModel):
     start: int
     end: int
     label: str
+    # What the model read, so a flagged item can be judged by hand.
+    text: str
     outcome: str
     yes: dict[str, float]
     # How far the answers lean toward the defect: the least of each field's margin, signed toward it.
     defect_margin: float | None
-    # The labelled findings this item, or the sibling it is judged against, covers.
+    # The labelled findings this item, or the place it relates to, covers.
     finding_idx: list[int]
     error: str | None = None
 
@@ -87,7 +89,7 @@ async def backtest(set_path: Path, out: Path, token: str, root: Path) -> int:
                 defect = GATES[result.gate].defect
                 for j in result.judgements:
                     location = j.item.location
-                    spans = [s for s in (location, j.item.sibling) if s is not None]
+                    spans = [s for s in (location, j.item.related) if s is not None]
                     covered = [
                         f.idx
                         for f in labelled.findings
@@ -110,6 +112,7 @@ async def backtest(set_path: Path, out: Path, token: str, root: Path) -> int:
                             start=location.start,
                             end=location.end,
                             label=j.item.label[:300],
+                            text=j.item.text,
                             outcome=j.outcome,
                             yes=j.yes,
                             defect_margin=margin,

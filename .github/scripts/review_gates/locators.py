@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from .prep import Function, SourceFile, python_functions
+from .prep import AGENT_INSTRUCTIONS, Function, SourceFile, python_functions
 
 Locator = Literal['a', 'b', 'c', 'd', 'e']
 
@@ -28,14 +28,12 @@ _QUOTED_UNION = re.compile(r"""^\s*(?:export\s+)?type\s+\w+\s*=\s*((?:['"]\w+['"
 _LITERAL = re.compile(r'Literal\[([^\]]+)\]')
 _QUOTED = re.compile(r"""['"](\w+)['"]""")
 _DISPATCH = re.compile(r"""\bcase\s+((?:['"]\w+['"]\s*\|?\s*)+)|={2,3}\s*['"](\w+)['"]""")
-_UNHANDLED_CALL = re.compile(r'^\s*(?:void\s+)?([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.\w+\(')
+# A call whose promise is discarded: `void` anywhere on the line, as in a JSX handler, or a bare statement.
+_UNHANDLED_CALL = re.compile(r'(?:\bvoid\s+|^\s*)([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.\w+\(')
 _SHELL_FENCE = re.compile(r'^\s*```(bash|sh|shell|console|zsh)?\s*$')
 _INLINE_PLACEHOLDER = re.compile(r'"[^"\n]*(?:<[^<>\n]+>|\$\{?[A-Z_][A-Z0-9_]*\}?|\{\{?[\w.]+\}?\})[^"\n]*"')
 _SAFE_ROUTING = re.compile(r"""<<-?\s*['"]\w+['"]|--body-file\b|--input\b|-F\s+\S+=@|\bcat\s+>""")
 _RESET_METHOD = re.compile(r'reconnect|reset|resume|^a?close$')
-_AGENT_INSTRUCTIONS = re.compile(
-    r'(^|/)(AGENTS|CLAUDE|SKILL)\.md$|^\.(agents|claude)/|^agent_docs/|^\.github/workflows/.+\.md$'
-)
 
 
 @dataclass(frozen=True)
@@ -142,17 +140,22 @@ def rejection_handling(files: list[SourceFile]) -> Iterator[SiblingPair]:
         lines = file.head.splitlines()
         added = file.added
         for number, line in enumerate(lines, start=1):
-            match = _UNHANDLED_CALL.match(line)
+            match = _UNHANDLED_CALL.search(line)
             statement = ' '.join(lines[number - 1 : number + 2])
             if number not in added or not match or '.catch(' in statement or '.then(' in statement:
                 continue
             client = match.group(1)
-            call = re.compile(rf'^\s*(?:void\s+|await\s+|return\s+)?{re.escape(client)}\.\w+\(')
+            # The sibling is a call on the same client, starting on its own line, with `.catch` chained onto it
+            # within the next two lines.
+            call = re.compile(rf'\b{re.escape(client)}\.\w+\(')
+            caught = re.compile(rf'{re.escape(client)}\.\w+\(.*?\)\s*\.catch\(')
             sibling = next(
                 (
                     n
                     for n, other in enumerate(lines, start=1)
-                    if n != number and call.match(other) and '.catch(' in ' '.join(lines[n - 1 : n + 2])
+                    if n != number
+                    and (found := call.search(other))
+                    and caught.match(' '.join([other[found.start() :], *lines[n : n + 2]]))
                 ),
                 None,
             )
@@ -172,7 +175,7 @@ def rejection_handling(files: list[SourceFile]) -> Iterator[SiblingPair]:
 def value_handling(files: list[SourceFile]) -> Iterator[SiblingPair]:
     """D. A shell step in agent instructions that double-quotes a placeholder another step routes safely."""
     for file in files:
-        if file.head is None or not _AGENT_INSTRUCTIONS.search(file.path):
+        if file.head is None or not AGENT_INSTRUCTIONS.search(file.path):
             continue
         blocks = _shell_blocks(file.head)
         safe = [(start, end) for start, end in blocks if _SAFE_ROUTING.search(file.lines(start, end))]

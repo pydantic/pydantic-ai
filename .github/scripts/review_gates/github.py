@@ -78,6 +78,7 @@ class CheckRun(BaseModel):
     """An existing check run, by its id and the external id that dedupes it."""
 
     id: int
+    status: str
     external_id: str | None = None
 
 
@@ -183,9 +184,13 @@ class GitHub:
         response.raise_for_status()
         return CheckRun.model_validate_json(response.content).id
 
-    async def finish_check_run(self, check_run_id: int, *, conclusion: Conclusion, output: CheckOutput) -> None:
+    async def finish_check_run(
+        self, check_run_id: int, *, conclusion: Conclusion, output: CheckOutput, external_id: str | None = None
+    ) -> None:
+        """Complete a check run; a new `external_id` replaces the one it started with."""
+        body = {'status': 'completed', 'conclusion': conclusion, 'output': output}
         response = await self._client.patch(
             f'{self._repo}/check-runs/{check_run_id}',
-            json={'status': 'completed', 'conclusion': conclusion, 'output': output},
+            json=body if external_id is None else {**body, 'external_id': external_id},
         )
         response.raise_for_status()

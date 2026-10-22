@@ -12,6 +12,7 @@ import pytest
 import yaml
 from pydantic import BaseModel, Field
 
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.decision import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -27,6 +28,7 @@ from pydantic_ai.models.decision import (
 sys.path.insert(0, str(Path(__file__).parent))
 
 import review_gates.__main__ as review_gates_main
+from review_gates import gates
 from review_gates.backtest import BacktestSet, Row, summarize
 from review_gates.checks import sanitize
 from review_gates.gates import GATES, classify
@@ -138,6 +140,22 @@ def test_locator_c_finds_an_unhandled_call_whose_siblings_catch():
     assert (pair.locator, pair.this.start, pair.sibling.start) == ('c', 6, 3)
 
 
+def test_locator_c_finds_a_void_call_inside_a_jsx_handler():
+    base = """export function Banner({ api }: Props) {
+  useEffect(() => { api.load().catch(report) }, [])
+  return (
+    <div>
+    </div>
+  )
+}
+"""
+    head = base.replace(
+        '    <div>\n', '    <div>\n      <button onClick={() => void api.open(id)}>Continue here</button>\n'
+    )
+    [pair] = rejection_handling([changed('web/Banner.tsx', base, head)])
+    assert (pair.locator, pair.this.start, pair.sibling.start) == ('c', 5, 2)
+
+
 def test_locator_d_finds_a_step_that_quotes_a_value_another_step_routes_through_a_file():
     base = """## Step 1
 ```bash
@@ -219,6 +237,11 @@ class FakeRepository:
     head_repository: str = 'someone/pydantic-ai'
     # The head `pulls/<n>` reports once the gates have run; differs from `head_sha` when the PR moved on.
     final_head: str = 'head1'
+    compare_status: int = 200
+    # Leave a changed file's patch out of the compare response, as the API does for a large diff.
+    unpatched: bool = False
+    # Replaces `scripted_answer` for the run.
+    answer: Callable[[str, str], float] | None = None
     check_runs: list[dict[str, str | int]] = field(default_factory=list[dict[str, str | int]])
     finished: dict[int, _Finished] = field(default_factory=dict[int, _Finished])
 
@@ -255,7 +278,10 @@ class FakeRepository:
                 {'filename': 'pkg/backends/ssh.py', 'status': 'added', 'patch': '@@ -0,0 +1,4 @@\n' + ''.join(f'+{line}\n' for line in SSH.splitlines())},
                 {'filename': 'pydantic_ai_slim/pydantic_ai/_output.py', 'status': 'modified', 'patch': '@@ -1 +1 @@\n-LIMIT = 10\n+LIMIT = 5'},
             ]  # fmt: skip
-            return httpx2.Response(200, json={'merge_base_commit': {'sha': 'base1'}, 'files': files})
+            if self.unpatched:
+                del files[0]['patch']
+            body = {'merge_base_commit': {'sha': 'base1'}, 'files': files}
+            return httpx2.Response(self.compare_status, json=body if self.compare_status == 200 else {})
         if path.startswith('contents/'):
             text = texts.get(params['ref'], {}).get(path.removeprefix('contents/'))
             return httpx2.Response(200, text=text) if text is not None else httpx2.Response(404)
@@ -267,10 +293,14 @@ class FakeRepository:
         if path == 'check-runs' and request.method == 'POST':
             posted = json.loads(request.content)
             self.check_runs.append({**posted, 'id': len(self.check_runs) + 1})
-            return httpx2.Response(201, json={'id': len(self.check_runs)})
+            return httpx2.Response(201, json=self.check_runs[-1])
         if path.startswith('check-runs/') and request.method == 'PATCH':
-            self.finished[int(path.removeprefix('check-runs/'))] = _Finished.model_validate_json(request.content)
-            return httpx2.Response(200, json={'id': int(path.removeprefix('check-runs/'))})
+            check_run_id = int(path.removeprefix('check-runs/'))
+            patched = json.loads(request.content)
+            self.finished[check_run_id] = _Finished.model_validate(patched)
+            run = self.check_runs[check_run_id - 1]
+            run.update(status='completed', external_id=patched.get('external_id', run['external_id']))
+            return httpx2.Response(200, json={'id': check_run_id})
         raise AssertionError(f'unexpected request: {request.method} {request.url}')
 
     def conclusions(self) -> dict[str, _Finished]:
@@ -303,7 +333,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRepository:
         return GitHub(httpx2.AsyncClient(base_url='https://api.github.com', transport=transport), repo)
 
     def infer_model(name: str) -> ScriptedDecisionModel:
-        return ScriptedDecisionModel(scripted_answer)
+        return ScriptedDecisionModel(repository.answer or scripted_answer)
 
     monkeypatch.setattr(GitHub, 'connect', connect)
     monkeypatch.setattr(review_gates_main, 'infer_model', infer_model)
@@ -352,6 +382,56 @@ async def test_run_skips_the_check_runs_of_a_pr_that_moved_on(fake: FakeReposito
     await review_gates_main.run(env(fake), ROOT)
 
     assert {result.conclusion for result in fake.conclusions().values()} == {'skipped'}
+
+
+async def test_a_failed_run_closes_its_check_runs_and_a_rerun_judges_again(fake: FakeRepository):
+    fake.compare_status = 502
+
+    with pytest.raises(httpx2.HTTPStatusError):
+        await review_gates_main.run(env(fake), ROOT)
+
+    assert {r.conclusion for r in fake.conclusions().values()} == {'neutral'}
+    assert all(str(run['external_id']).endswith(':failed') for run in fake.check_runs)
+    fake.compare_status = 200
+
+    await review_gates_main.run(env(fake), ROOT)
+
+    assert len(fake.check_runs) == 2 * len(GATES)
+
+
+async def test_an_item_the_model_could_not_answer_is_not_judged(fake: FakeRepository):
+    def answer(state: str, question: str) -> float:
+        if question == 'needs_it':
+            raise ModelHTTPError(status_code=503, model_name='scripted')
+        return scripted_answer(state, question)
+
+    fake.answer = answer
+
+    await review_gates_main.run(env(fake), ROOT)
+
+    sibling = fake.conclusions()['Gate: sibling code handled alike']
+    assert sibling.conclusion == 'neutral'
+    assert '### Not judged (1)' in sibling.output.summary
+
+
+async def test_items_over_the_cap_make_every_gate_neutral(fake: FakeRepository, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(gates, 'ITEM_CAP', 0)
+
+    await review_gates_main.run(env(fake), ROOT)
+
+    for result in fake.conclusions().values():
+        assert result.conclusion == 'neutral'
+        assert 'over the cap of 0 were not judged' in result.output.summary
+
+
+async def test_a_file_without_a_patch_makes_every_gate_neutral(fake: FakeRepository):
+    fake.unpatched = True
+
+    await review_gates_main.run(env(fake), ROOT)
+
+    for result in fake.conclusions().values():
+        assert result.conclusion == 'neutral'
+        assert 'had no patch from the API: pkg/backends/local.py' in result.output.summary
 
 
 async def test_run_judges_nothing_when_ci_tested_an_older_head(fake: FakeRepository):
@@ -411,6 +491,7 @@ def test_backtest_summary_says_where_each_finding_landed():
             start=1,
             end=5,
             label='l',
+            text='t',
             outcome='finding',
             yes={'needs_it': 0.9},
             defect_margin=0.8,
