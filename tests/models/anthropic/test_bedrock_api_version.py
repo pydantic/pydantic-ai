@@ -9,7 +9,6 @@ recorded here; going through the real SDK client checks the pin survives its req
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
 from typing import Any
 
 import httpx2
@@ -41,7 +40,7 @@ _MESSAGE_JSON = {
 }
 
 
-async def _request_body(client: str, settings: ModelSettings) -> dict[str, Any]:
+async def _request_body(settings: ModelSettings, *, bedrock: bool) -> dict[str, Any]:
     bodies: list[dict[str, Any]] = []
 
     def handle(request: httpx2.Request) -> httpx2.Response:
@@ -49,13 +48,13 @@ async def _request_body(client: str, settings: ModelSettings) -> dict[str, Any]:
         return httpx2.Response(200, json=_MESSAGE_JSON)
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as http_client:
-        clients: dict[str, Callable[[], Any]] = {
-            'api': lambda: AsyncAnthropic(api_key='x', http_client=http_client),
-            'bedrock': lambda: AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client),
-        }
+        client = (
+            AsyncAnthropicBedrock(api_key='x', aws_region='us-east-1', http_client=http_client)
+            if bedrock
+            else AsyncAnthropic(api_key='x', http_client=http_client)
+        )
         model = AnthropicModel(
-            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-            provider=AnthropicProvider(anthropic_client=clients[client]()),
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=AnthropicProvider(anthropic_client=client)
         )
         # A small `max_tokens` keeps the request non-streaming, matching the mocked JSON response.
         await Agent(model, model_settings={'max_tokens': 256, **settings}).run('Hello')
@@ -78,11 +77,11 @@ async def _request_body(client: str, settings: ModelSettings) -> dict[str, Any]:
 async def test_legacy_bedrock_pins_anthropic_version(
     allow_model_requests: None, settings: ModelSettings, expected: str
 ):
-    body = await _request_body('bedrock', settings)
+    body = await _request_body(settings, bedrock=True)
     assert body['anthropic_version'] == expected
 
 
 async def test_direct_api_sends_no_body_anthropic_version(allow_model_requests: None):
     """The direct API takes its version from the `anthropic-version` header, so the pin stays off its body."""
-    body = await _request_body('api', {})
+    body = await _request_body({}, bedrock=False)
     assert 'anthropic_version' not in body
