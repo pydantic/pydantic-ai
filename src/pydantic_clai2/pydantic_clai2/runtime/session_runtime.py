@@ -1554,7 +1554,9 @@ async def _run_prompt(
         if tasks is not None:
             tasks.sink = None
         status.activity = 'ready'
-        status.cost = session_usage(session.messages).total.cost
+        total = session_usage(session.messages).total
+        status.cost = total.cost
+        status.cost_is_lower_bound = bool(total.unmeasured_requests)
         session.on_context_usage = None
         session.on_context_window = None
         await renderer.finish()

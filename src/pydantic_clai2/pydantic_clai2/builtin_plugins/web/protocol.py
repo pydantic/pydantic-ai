@@ -25,7 +25,6 @@ from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -209,6 +208,7 @@ class StatusInfo:
     context_tokens: int | None = None
     context_window: int | None = None
     cost: str | None = None
+    cost_is_lower_bound: bool = False
     streamed_tokens: int = 0
     """The turn's output so far, estimated from the characters streamed, as the terminal's `~N streamed tokens`."""
     output_tokens: int | None = None
@@ -489,6 +489,7 @@ class UsageReport:
     total: TurnUsage
     unpriced: list[str]
     """The models without price data, whose responses no cost counts."""
+    unmeasured_requests: int = 0
 
 
 def turn_usage(usage: RunUsage) -> TurnUsage:
@@ -506,7 +507,10 @@ def turn_usage(usage: RunUsage) -> TurnUsage:
 def usage_report(usage: SessionUsage) -> UsageReport:
     """The browser's copy of what `/usage` prints."""
     return UsageReport(
-        turns=[turn_usage(turn) for turn in usage.turns], total=turn_usage(usage.total), unpriced=list(usage.unpriced)
+        turns=[turn_usage(turn) for turn in usage.turns],
+        total=turn_usage(usage.total),
+        unpriced=list(usage.unpriced),
+        unmeasured_requests=usage.total.unmeasured_requests,
     )
 
 
@@ -904,12 +908,17 @@ class CompletionInfo:
     meta: str | None = None
 
 
-def tool_result_text(part: ToolReturnPart | RetryPromptPart) -> str:
+def tool_result_text(part: ToolReturnPart) -> str:
     """What the model got back from a tool, cut to `RESULT_CHARS` for display."""
-    text = part.model_response_str() if isinstance(part, ToolReturnPart) else part.model_response()
+    text = part.model_response_str(wrap_if_error=part.outcome != 'retried')
     if len(text) > RESULT_CHARS:
         return text[:RESULT_CHARS] + f'\n… {len(text) - RESULT_CHARS:,} more characters'
     return text
+
+
+def tool_result_state(part: ToolReturnPart) -> ToolState:
+    """A tool that has to be retried shows as an error; any other result as done."""
+    return 'error' if part.outcome == 'retried' else 'done'
 
 
 def image_id(image: BinaryContent) -> str:
@@ -1002,9 +1011,9 @@ def history_items(messages: Sequence[ModelMessage], *, image_ids: ImageIds | Non
             for part in message.parts:
                 if isinstance(part, UserPromptPart):
                     items.append(user_item(part, id=f'h{len(items)}', image_ids=image_ids))
-                elif isinstance(part, ToolReturnPart | RetryPromptPart) and (tool := tools.get(part.tool_call_id)):
+                elif isinstance(part, ToolReturnPart) and (tool := tools.get(part.tool_call_id)):
                     tool.text = tool_result_text(part)
-                    tool.state = 'done' if isinstance(part, ToolReturnPart) else 'error'
+                    tool.state = tool_result_state(part)
             continue
         for part in message.parts:
             if isinstance(part, TextPart) and part.content:
@@ -1085,7 +1094,7 @@ class EventTranslator:
         if isinstance(event, SandboxCallFinishedEvent):
             result = event.result
             parent = _parent(result.tool_call_id)
-            state: ToolState = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = tool_result_state(result)
             done = SubCallDone(id=parent or '', call_id=result.tool_call_id, text=tool_result_text(result), state=state)
             return [] if parent is None else [done]
         if isinstance(event, FunctionToolCallEvent):
@@ -1096,7 +1105,7 @@ class EventTranslator:
             return [ItemAdded(item=replace(item, state='running'))]
         if isinstance(event, FunctionToolResultEvent):
             result = event.part
-            state = 'done' if isinstance(result, ToolReturnPart) else 'error'
+            state = tool_result_state(result)
             return [ToolDone(id=result.tool_call_id, text=tool_result_text(result), state=state)]
         return self._harness(event)
 

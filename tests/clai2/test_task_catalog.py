@@ -14,7 +14,6 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -147,7 +146,7 @@ async def test_catalog_lists_and_controls_the_current_conversations_tasks() -> N
         ModelRequest(
             parts=[
                 ToolReturnPart('shell', 'README.md', 'ls'),
-                RetryPromptPart('command is required', tool_name='shell', tool_call_id='bad'),
+                ToolReturnPart('shell', 'command is required', tool_call_id='bad', outcome='retried'),
             ]
         ),
     ]

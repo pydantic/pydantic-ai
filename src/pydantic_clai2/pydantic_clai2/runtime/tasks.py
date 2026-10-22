@@ -410,7 +410,9 @@ class Tasks:
                 usage.requests += 1
             else:
                 # As a run counts them: the calls that returned, not those retried or still waiting.
-                usage.tool_calls += sum(isinstance(part, ToolReturnPart) for part in message.parts)
+                usage.tool_calls += sum(
+                    isinstance(part, ToolReturnPart) and part.outcome != 'retried' for part in message.parts
+                )
         return TaskInfo(
             id=record.id,
             parent_id=record.parent_id,

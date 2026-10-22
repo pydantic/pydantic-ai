@@ -3208,7 +3208,9 @@ render as compact used/max, such as `128k/1m`; `None` renders as `?`. Only set
 explicit window override, and clears the window when unloaded. A host built
 outside the shell gets an in-memory `Transcript` and a detached `Status`, so
 tests need no special case. The status row itself is CLAI's; a plugin adds to it
-with `get_status_segments`. While the main run waits on a subagent, the row
+with `get_status_segments`. `cost` is the retained-history cost; when retained
+responses omitted usage information, the shell sets `cost_is_lower_bound` and the
+row prefixes the value with `>=`. While the main run waits on a subagent, the row
 shows that subagent's figures instead. These fields keep the main conversation's
 values meanwhile and show again when it settles; segments stay on the row.
 
