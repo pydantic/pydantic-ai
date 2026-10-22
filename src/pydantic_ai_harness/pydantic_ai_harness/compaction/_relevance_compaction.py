@@ -151,8 +151,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
 
     A *step* is a model response together with the requests that answer it (its tool results, retry
     feedback, and the next user prompt), so removing one never splits a tool call from its result. The
-    system prompt and first user message, pinned content, and the most recent `keep_tokens` of history
-    are never judged.
+    system prompt and first user message, and the most recent `keep_tokens` of history, are never
+    judged. Pinned content survives even when its step is removed.
 
     For every other step, the judge (`model`) is shown the task (the first and latest user prompts), the
     recent conversation and the step, and asked two questions in one request: will the agent need the
@@ -261,7 +261,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         if self.max_tokens is None and self.max_fraction is None:
-            raise ValueError('One of max_tokens or max_fraction must be set.')
+            raise ValueError('One of `max_tokens` or `max_fraction` must be set.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
         validate_token_trigger(
             self.target_tokens,
@@ -279,9 +279,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             ('judge_concurrency', self.judge_concurrency),
         ):
             if value < 1:
-                raise ValueError(f'{name} must be positive.')
+                raise ValueError(f'`{name}` must be positive.')
         if self.truncated_result_chars < 0:
-            raise ValueError('truncated_result_chars must be non-negative.')
+            raise ValueError('`truncated_result_chars` must be non-negative.')
         self._judge_agent = Agent[None, _StepRelevance](
             self.model,
             name='relevance_compaction',

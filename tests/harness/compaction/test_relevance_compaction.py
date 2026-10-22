@@ -134,7 +134,7 @@ def _shape(messages: list[ModelMessage]) -> list[str]:
 
 class TestRelevanceCompaction:
     def test_requires_a_trigger(self) -> None:
-        with pytest.raises(ValueError, match='One of max_tokens or max_fraction must be set'):
+        with pytest.raises(ValueError, match='One of `max_tokens` or `max_fraction` must be set'):
             RelevanceCompaction(TestModel())
 
     @pytest.mark.parametrize(
@@ -148,11 +148,11 @@ class TestRelevanceCompaction:
         ],
     )
     def test_rejects_non_positive_sizes(self, name: str, build: Callable[[], object]) -> None:
-        with pytest.raises(ValueError, match=f'{name} must be positive'):
+        with pytest.raises(ValueError, match=f'`{name}` must be positive'):
             build()
 
     def test_rejects_negative_truncation(self) -> None:
-        with pytest.raises(ValueError, match='truncated_result_chars must be non-negative'):
+        with pytest.raises(ValueError, match='`truncated_result_chars` must be non-negative'):
             RelevanceCompaction(TestModel(), max_tokens=100, truncated_result_chars=-1)
 
     def test_rejects_both_targets(self) -> None:
