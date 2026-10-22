@@ -392,6 +392,24 @@ Python up to 3.14.
 - With Docker, a background child holding stdout/stderr open keeps `run()` waiting: redirect it.
   With Podman, `run()` returns when the command exits.
 
+## Cloud storage
+
+`pydantic_ai_harness.cloud_storage` (extra `cloud-storage`) has one workspace backend per cloud. Each stores files
+and has no shell. All take `credentials=` (keys, or a function returning them) and `endpoint=`.
+
+| Filesystem | URL |
+|---|---|
+| `S3Filesystem(url, *, region=None, ...)` | `s3://bucket/folder/`; R2 and MinIO with `endpoint=` |
+| `GCSFilesystem(url, ...)` | `gs://bucket/folder/` |
+| `AzureFilesystem(url, *, account=None, ...)` | `https://account.blob.core.windows.net/container/folder/` |
+
+Pass one as `agent.run(..., workspace=s3)` to make the bucket the whole workspace.
+`Mount(path, filesystem, *, read_only=False, description=None, shell=False)` (`pydantic_ai.workspaces`) shows one as
+a folder; `LocalWorkspace` takes `mounts=[...]`, or a function of the run context that returns them (one folder per
+customer from `deps`).
+
+- Durable runs rebuild the workspace from capabilities, so mount the bucket on `LocalWorkspace` there.
+
 ## Remote hosts and bubblewrap
 
 ### SSHWorkspace

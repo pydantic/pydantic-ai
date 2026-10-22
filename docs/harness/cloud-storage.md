@@ -28,7 +28,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import FileSystem
 from pydantic_ai_harness.cloud_storage import S3Filesystem
 
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[FileSystem()])
+agent = Agent('{{ anthropic:large }}', capabilities=[FileSystem()])
 exports = S3Filesystem('s3://acme-data/exports/')
 
 
@@ -52,7 +52,7 @@ from pydantic_ai_harness.cloud_storage import S3Filesystem
 
 exports = S3Filesystem('s3://acme-data/exports/')
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[LocalWorkspace('.', mounts=[Mount('exports', exports, read_only=True)]), FileSystem()],
 )
 ```
