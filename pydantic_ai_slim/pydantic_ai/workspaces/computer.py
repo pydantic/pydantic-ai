@@ -223,8 +223,8 @@ class TypeText:
     """Type text at the keyboard focus. Use `keypress` for shortcuts and special keys."""
 
     type: Literal['type'] = 'type'
-    text: Annotated[str, Field(min_length=1, max_length=2_000)]
-    """Up to 2,000 characters; type longer text in several actions."""
+    text: Annotated[str, Field(min_length=1, max_length=2_000, pattern=r'^[^\x00]*$')]
+    """Up to 2,000 characters, without NUL; type longer text in several actions."""
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)

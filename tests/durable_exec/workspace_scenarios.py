@@ -370,7 +370,7 @@ async def check_explicit_rejected(kind: str, type: str, fragment: str, run: Runn
 
 
 async def check_binary(run: Runner, agents: ScenarioAgents) -> None:
-    """Bytes and the expected errors cross the durable boundary unchanged."""
+    """Bytes, display calls (a screenshot is bytes too) and the expected errors cross the durable boundary unchanged."""
     assert await run('binary', None) == {
         'display': [1280, 800, True],
         'round_trip': True,
