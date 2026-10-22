@@ -113,6 +113,9 @@ deploy a changed prompt, tool, or model gets the stored results for the steps it
 - While a step runs, it extends the worker's claim on the task, so a model request or tool call can
   take longer than the worker's `claim_timeout`. If the claim can't be extended, because the task was
   cancelled or another worker claimed it, the step is cancelled and the Absurd SDK's error propagates.
+- Inside a task, an `MCPToolset` keeps one session for the whole run. The first step that runs and
+  needs the server connects to it, so a failed connection fails that step and the task's retry
+  connects again.
 - Checkpoints hold model responses and tool results as JSON in the queue's Postgres tables, and a
   retry uses them as stored. Limit write access to the Absurd schema accordingly, and don't return
   secrets from tools unless they may be stored there.
