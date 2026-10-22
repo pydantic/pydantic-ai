@@ -2314,6 +2314,12 @@ many sessions run at once.
 - **Status dots.** A dot beside a live session in the sidebar shows that it runs a
   turn, that input waits behind its turn, or that it asks you a question.
 - **Esc** and the stop button interrupt the session you are looking at, and only it.
+- **Steering and the queue.** As at the terminal's prompt, Enter queues a message
+  while a turn runs and Alt+Enter (Option+Enter), or the bolt button, steers the turn
+  with it; Alt+Enter with nothing typed steers the oldest queued message. The page
+  lists what waits above the composer, whether it was queued there or in the
+  terminal, and you can edit, steer, or remove each message before it runs. The
+  terminal's queue rows follow those changes.
 - **Idle closing.** A session closes after an hour with no turn, no queued input,
   no background fork or delegated task, and no browser or terminal showing it. Its
   conversation stays saved: click it to resume it. The session `clai2 --web`

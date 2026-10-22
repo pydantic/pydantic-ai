@@ -1310,6 +1310,16 @@ class BedrockConverseModel(Model[BaseClient]):
             _add_anthropic_thinking_fields(existing, thinking, profile)
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             existing['reasoning_effort'] = _GPT_OSS_REASONING_EFFORT_MAP[thinking]
+        elif variant == 'openai_responses' and 'reasoning' not in existing:
+            if thinking is False and profile.get('thinking_always_enabled', False):
+                # GPT-6 Astra and GPT-6.1 Sol reject `effort='none'`, so they reason as little as they can.
+                effort = 'low'
+            elif thinking == 'minimal':
+                # GPT-5.6 and GPT-6 reject `effort='minimal'`, so it maps to the closest level they accept.
+                effort = 'low'
+            else:
+                effort = OPENAI_REASONING_EFFORT_MAP[thinking]
+            existing['reasoning'] = {'effort': effort}
         elif variant == 'qwen' and 'reasoning_config' not in existing:
             existing['reasoning_config'] = _QWEN_REASONING_CONFIG_MAP[thinking]
         elif variant == 'xai' and 'reasoning' not in existing:
@@ -2368,10 +2378,12 @@ def _thinking_rejects_tool_forcing(
 ) -> bool:
     """Whether this request's thinking rejects the forced tool choice Tool Output relies on.
 
-    Extended thinking and thinking on the non-Anthropic variants do, except xAI Grok, which always reasons: Converse
-    accepts a forced `toolChoice` with Grok 4.6 while it reasons, and Grok 4.7 is assumed to match.
+    Extended thinking and thinking on the non-Anthropic variants do, except two. xAI Grok always reasons, and Converse
+    accepts a forced `toolChoice` with Grok 4.6 while it reasons (Grok 4.7 is assumed to match). OpenAI GPT-5.6 and
+    GPT-6 accept output tools while they think, offered without a forced `toolChoice` as their profile doesn't enable
+    forcing.
     """
-    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') != 'xai'
+    return thinking_type == 'enabled' and profile.get('bedrock_thinking_variant') not in ('xai', 'openai_responses')
 
 
 def _support_tool_forcing(

@@ -20,6 +20,7 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
@@ -217,12 +218,14 @@ class BedrockModelProfile(ModelProfile, total=False):
     Default: `False`.
     """
 
-    bedrock_thinking_variant: Literal['anthropic', 'openai', 'qwen', 'xai'] | None
+    bedrock_thinking_variant: Literal['anthropic', 'openai', 'openai_responses', 'qwen', 'xai'] | None
     """Which thinking API shape to use for unified thinking translation.
 
     - `'anthropic'`: Uses `{'thinking': {'type': 'adaptive'}}` for 4.6+ models,
       or `{'thinking': {'type': 'enabled', 'budget_tokens': N}}` for older models.
     - `'openai'`: Uses `{'reasoning_effort': 'low'|'medium'|'high'}`
+    - `'openai_responses'`: Uses `{'reasoning': {'effort': 'none'|'low'|'medium'|'high'|'xhigh'}}`, the Responses API
+      shape that the OpenAI GPT-5.6 and GPT-6 models take on Converse.
     - `'qwen'`: Uses `{'reasoning_config': 'none'|'low'|'high'}`
     - `'xai'`: Uses `{'reasoning': {'effort': 'low'|'medium'|'high'|'xhigh'}}`
     - `None`: No unified thinking support.
@@ -608,8 +611,16 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         'gpt-6-astra',
         'gpt-6.1-sol',
     }:
-        # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
-        return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
+        # Converse rejects `temperature`, `top_p` and `top_k` for these. Reasoning effort takes the Responses API
+        # shape, `{'reasoning': {'effort': ...}}`: Converse rejects the flat `reasoning_effort` that gpt-oss takes as an
+        # unknown parameter. Which models can turn reasoning off follows the OpenAI profile (GPT-6 Astra and GPT-6.1
+        # Sol reject `effort='none'` here too, verified with live requests).
+        return BedrockModelProfile(
+            bedrock_disallows_sampling_settings=True,
+            bedrock_thinking_variant='openai_responses',
+            supports_thinking=True,
+            thinking_always_enabled=openai_model_profile(model_name).get('thinking_always_enabled', False),
+        )
     # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)

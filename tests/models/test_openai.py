@@ -3078,7 +3078,11 @@ def tool_with_datetime(x: datetime) -> str:
     return f'{x}'  # pragma: no cover
 
 
-def tool_with_decimal(x: Decimal) -> str:
+# The lookahead pattern Pydantic before 2.14 generated for `Decimal`, spelled out so the case does not depend on
+# the installed Pydantic version. Schema-only, since Pydantic's default Rust regex engine rejects lookarounds.
+def tool_with_lookaround_pattern(
+    x: Annotated[str, Field(json_schema_extra={'pattern': r'^(?!^[-+.]*$)[+-]?0*\d*\.?\d*$'})],
+) -> str:
     return f'{x}'  # pragma: no cover
 
 
@@ -3193,22 +3197,12 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(True),
         ),
         (
-            tool_with_decimal,
+            tool_with_lookaround_pattern,
             None,
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {
-                        'x': {
-                            'anyOf': [
-                                {'type': 'number'},
-                                {
-                                    'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
-                                    'type': 'string',
-                                },
-                            ]
-                        }
-                    },
+                    'properties': {'x': {'pattern': '^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$', 'type': 'string'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3216,22 +3210,12 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(None),
         ),
         (
-            tool_with_decimal,
+            tool_with_lookaround_pattern,
             True,
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {
-                        'x': {
-                            'anyOf': [
-                                {'type': 'number'},
-                                {
-                                    'type': 'string',
-                                    'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$',
-                                },
-                            ]
-                        }
-                    },
+                    'properties': {'x': {'type': 'string', 'description': 'pattern=^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -6392,7 +6376,7 @@ async def test_openai_provider_with_azure_client_uses_azure_behavior(
         assert model.system == provider_name
         if isinstance(model, OpenAIChatModel):
             assert model.profile.get('openai_chat_supports_document_input') is False
-            # Only the documents the mapping inlines as text remain; any other is replaced by a note.
+            # Only the documents the mapping inlines as text remain, so `FileUnderstanding` describes the rest.
             assert model.profile.get('supported_document_media_types') == snapshot(
                 frozenset({'text/csv', 'text/html', 'text/markdown', 'text/plain'})
             )
