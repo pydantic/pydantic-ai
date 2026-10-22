@@ -4,16 +4,20 @@ import asyncio
 import json
 import sys
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterator
 from contextvars import Context
 from functools import partial
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from pydantic_ai import RunContext
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -306,6 +310,63 @@ async def test_deadline_reports_time_limit_without_waiting(
     result = health.parse_run_result(artifact)
     assert result is not None
     assert result.failure == health.Failure('time_limit', None, None)
+
+
+@pytest.fixture
+def agent_spans() -> Iterator[InMemorySpanExporter]:
+    """Every agent's spans, instrumented as `cli.configure_observability` instruments a workflow run."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
+    yield exporter
+    Agent.instrument_all(False)
+
+
+@pytest.mark.parametrize('chunks_before_cutoff', [0, 1])
+async def test_run_budget_marks_the_spans_it_cuts_off(
+    chunks_before_cutoff: int, agent_spans: InMemorySpanExporter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run budget's cancellation marks the run and its cut-off request as timed out."""
+    budget = 1234
+    monkeypatch.setattr(cli, 'run_timeout_secs', lambda: budget)
+    loop = asyncio.get_running_loop()
+    original_call_later = loop.call_later
+    expire: list[Callable[[], object]] = []
+
+    def schedule(
+        delay: float, callback: Callable[..., object], *args: object, context: Context | None = None
+    ) -> asyncio.TimerHandle:
+        if delay == budget:
+            expire.append(partial(callback, *args))
+        return original_call_later(delay, callback, *args, context=context)
+
+    monkeypatch.setattr(loop, 'call_later', schedule)
+
+    async def cut_off(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        del messages, info
+        for _ in range(chunks_before_cutoff):
+            yield 'partial'
+        expire[0]()
+        await asyncio.Future[None]()
+        yield 'Unreachable'
+
+    async def drain(ctx: RunContext[None], events: AsyncIterable[object]) -> None:
+        async for _ in events:
+            pass
+
+    agent = workflow.build_agent()
+    with agent.override(model=FunctionModel(stream_function=cut_off)), pytest.raises(cli.RunTimeLimitExceeded):
+        await agent.run('Investigate', event_stream_handler=drain)
+    outcomes = [
+        (
+            (span.attributes or {}).get('gen_ai.operation.name'),
+            span.status.status_code.name,
+            (span.attributes or {}).get('error.type'),
+        )
+        for span in agent_spans.get_finished_spans()
+    ]
+    assert sorted(outcomes, key=repr) == [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')]
 
 
 async def test_cancelled_delegate_preserves_usage(monkeypatch: pytest.MonkeyPatch) -> None:

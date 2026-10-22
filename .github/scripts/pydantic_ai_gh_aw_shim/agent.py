@@ -58,6 +58,7 @@ class WorkflowPolicy(AbstractCapability[object]):
         reset_context_state()
         budget = cli.run_timeout_secs()
         cli.run_deadline = time.monotonic() + budget
+        cap = cli.wall_clock_caps.set((*cli.wall_clock_caps.get(), lambda: self.timed_out))
         started = time.monotonic()
         error: BaseException | None = None
         timer = asyncio.get_running_loop().call_later(budget, self.expire, ctx)
@@ -85,6 +86,7 @@ class WorkflowPolicy(AbstractCapability[object]):
         finally:
             timer.cancel()
             cli.run_deadline = None
+            cli.wall_clock_caps.reset(cap)
             run_attempt: int | None = None
             try:
                 parsed_attempt = int(os.environ.get('PYDANTIC_AI_RUN_ATTEMPT', ''))
@@ -153,6 +155,8 @@ def build_agent() -> Agent[None, str]:
         capabilities=[
             ResolveModelId(workflow_model),
             WorkflowPolicy(),
+            # Inside `WorkflowPolicy`, whose run budget it reads through `wall_clock_caps`.
+            cli.MarkTimedOutSpans(),
             cli.RecoverMCPToolErrors(),
             PrepareTools(cli.hold_time_reserve_for_safe_output),
             ProcessHistory(partial(cli.compact_history, preserve_prompt=True)),
@@ -174,5 +178,6 @@ def build_agent() -> Agent[None, str]:
 agent = build_agent()
 
 if os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
-    logfire.instrument_httpx(capture_all=True)
+    # As `cli.configure_observability`: request bodies would repeat each `chat` span's input messages.
+    logfire.instrument_httpx(capture_headers=True, capture_response_body=True)
     logfire.instrument_mcp()

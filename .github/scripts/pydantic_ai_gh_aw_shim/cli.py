@@ -193,11 +193,11 @@ def _mark_timed_out(span: Span) -> None:
 
 
 def _wall_clock_cap_expired() -> bool:
-    return any(expired() for expired in _wall_clock_caps.get())
+    return any(expired() for expired in wall_clock_caps.get())
 
 
 @dataclass
-class _MarkTimedOutSpans(AbstractCapability[object]):
+class MarkTimedOutSpans(AbstractCapability[object]):
     """Mark the agent-run and model-request spans that one of the shim's wall-clock caps cuts off.
 
     OpenTelemetry does not record `asyncio.CancelledError` as an error, so a run or request that
@@ -205,13 +205,15 @@ class _MarkTimedOutSpans(AbstractCapability[object]):
     A cut-off request also has no finish reason, and no usage when the provider reports it only at
     the end of the stream. Other cancellations, such as pydantic-ai stopping a request whose stream
     failed, are left as they are; pydantic-ai already records a cancelled tool span as an error.
-    Each hook runs inside the span pydantic-ai opens for it.
+    Each hook runs inside the span pydantic-ai opens for it. A run reaches `wrap_run` as the
+    `RunTimeLimitExceeded` that the CLAI 2 engine's `WorkflowPolicy.on_run_error` raises in place of
+    the cancellation, which records an error but no `error.type`.
     """
 
     async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         try:
             return await handler()
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, RunTimeLimitExceeded):
             if _wall_clock_cap_expired():
                 _mark_timed_out(get_current_span())
             raise
@@ -477,19 +479,19 @@ TIME_BUDGET_NOTICE = (
 run_deadline: float | None = None
 
 # Whether each wall-clock cap the current work runs under has expired, innermost last.
-_wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('_wall_clock_caps', default=())
+wall_clock_caps: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar('wall_clock_caps', default=())
 
 
 @asynccontextmanager
 async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
     """`asyncio.timeout` that marks the span holding it when it expires.
 
-    It is registered so `_MarkTimedOutSpans` can tell the cancellations it causes from others, and a
+    It is registered so `MarkTimedOutSpans` can tell the cancellations it causes from others, and a
     `TimeoutError` raised by the work it caps leaves it unexpired. `task`'s cap marks the
     `execute_tool Task` span, which otherwise looks like a successful call.
     """
     cap = asyncio.timeout(seconds)
-    token = _wall_clock_caps.set((*_wall_clock_caps.get(), cap.expired))
+    token = wall_clock_caps.set((*wall_clock_caps.get(), cap.expired))
     try:
         async with cap:
             yield
@@ -498,7 +500,7 @@ async def _wall_clock_cap(seconds: float) -> AsyncGenerator[None]:
             _mark_timed_out(get_current_span())
         raise
     finally:
-        _wall_clock_caps.reset(token)
+        wall_clock_caps.reset(token)
 
 
 def _run_seconds_left() -> float | None:
@@ -1313,7 +1315,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
         toolsets=[sub_toolset],
         capabilities=[
             local_workspace(),
-            _MarkTimedOutSpans(),
+            MarkTimedOutSpans(),
             *_anthropic_native_capabilities(),
             ProcessEventStream(_stream_events),
         ],
@@ -1353,7 +1355,7 @@ async def task(ctx: RunContext[object], description: str, prompt: str) -> str:
                     cast('Model[Any]', model),
                     name='delegate-resume',
                     instructions=instructions,
-                    capabilities=[_MarkTimedOutSpans(), ProcessEventStream(_stream_events)],
+                    capabilities=[MarkTimedOutSpans(), ProcessEventStream(_stream_events)],
                 ).run(
                     SUBAGENT_RESUME_PROMPT,
                     message_history=repair_messages(history),
@@ -1452,7 +1454,7 @@ async def run(
             *_anthropic_native_capabilities(),
             ProcessHistory(compact_history),
             ProcessEventStream(_stream_events),
-            _MarkTimedOutSpans(),
+            MarkTimedOutSpans(),
             PrepareTools(hold_time_reserve_for_safe_output),
         ],
     )
