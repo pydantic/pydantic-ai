@@ -1971,6 +1971,13 @@ async def test_bedrock_leaves_out_citations_it_cannot_check(bedrock_provider: Be
                             'not a citation',
                             {**valid, 'sourceContent': []},
                             {**valid, 'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 11}}},
+                            # The range runs past the end of the document, so only slicing makes it match.
+                            {
+                                **valid,
+                                'location': {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 100}},
+                                'sourceContent': [{'text': 'thirty days from purchase.'}],
+                            },
+                            {**valid, 'sourceContent': None},
                         ]
                     },
                 ),

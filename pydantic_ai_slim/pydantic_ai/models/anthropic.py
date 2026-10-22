@@ -214,6 +214,8 @@ def _map_citation_for_replay(
         or not isinstance(start, int)
         or not isinstance(end, int)
         or not 0 <= start < end
+        # Slicing stops at the end of a document, so a range past it could still match.
+        or end - start != len(cited_text)
     ):
         return None
     # Anthropic numbers documents by their position in the request, which moves when earlier history is left out, so

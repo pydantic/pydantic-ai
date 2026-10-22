@@ -552,7 +552,7 @@ def _map_citations_for_replay(
             continue
         index, start, end = char_location.get('documentIndex'), char_location.get('start'), char_location.get('end')
         source_content = [
-            content.get('text') for content in citation.get('sourceContent', []) if _utils.is_str_dict(content)
+            content.get('text') for content in citation.get('sourceContent') or [] if _utils.is_str_dict(content)
         ]
         cited_text = source_content[0] if len(source_content) == 1 else None
         if (
@@ -561,6 +561,8 @@ def _map_citations_for_replay(
             or not isinstance(end, int)
             or not 0 <= start < end
             or not isinstance(cited_text, str)
+            # Slicing stops at the end of a document, so a range past it could still match.
+            or end - start != len(cited_text)
         ):
             continue
         # Bedrock numbers documents by their position in the request, which moves when earlier history is left out,
@@ -1665,8 +1667,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             )
                             # Replay checks citations against the documents' text, which is only sent as text when
                             # citations are enabled.
-                            if settings.get('citations', False)
-                            and profile.get('bedrock_supports_citations', False)
+                            if include_citations
                             and item.provider_name == self.system
                             and isinstance(raw_citations, list)
                             else None
