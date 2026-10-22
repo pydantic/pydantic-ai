@@ -37,7 +37,6 @@ from pydantic_ai.workspaces import (
 from pydantic_ai.workspaces.workspace import workspace_layers
 from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
-from pydantic_ai_harness.bubblewrap_sandbox._workspace import _ENSURE_LOGIN_PATHS  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
 
 from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
@@ -418,7 +417,8 @@ class _RacedLoginSetup(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if not isinstance(command, str) and len(command) > 3 and command[2] == _ENSURE_LOGIN_PATHS:
+        # `set -C` (noclobber) marks the login-path setup script, the one call these tests race.
+        if not isinstance(command, str) and len(command) > 3 and 'set -C' in command[2]:
             script = command[2]
             for creation, raced in self._races.items():
                 assert creation in script
@@ -469,6 +469,66 @@ async def test_a_parent_symlinked_by_another_workspace_meanwhile_is_unavailable(
 
     assert list(elsewhere.iterdir()) == []
     assert tools.bwrap_calls == []
+
+
+class _GatedLoginSetup(LocalWorkspaceBackend):
+    """Holds the login-path setup until released, with the probes answered in-process.
+
+    Both callers then deterministically reach the setup or its lock.
+    """
+
+    def __init__(self, home: Path):
+        super().__init__(home)
+        self.home = str(home.resolve())
+        self.setup_started = anyio.Event()
+        self.release_setup = anyio.Event()
+        self.setup_calls = 0
+
+    async def working_dir(self) -> str:
+        return self.home
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert not isinstance(command, str)
+        assert command[:2] == ['/bin/sh', '-c']
+        if len(command) == 3:
+            return CommandResult(exit_code=0, stdout=self.home + '\n' if '$HOME' in command[2] else '', stderr='')
+        if 'set -C' in command[2]:
+            self.setup_calls += 1
+            self.setup_started.set()
+            await self.release_setup.wait()
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+async def test_concurrent_first_calls_initialize_login_paths_once(tools: FakeRemoteTools) -> None:
+    """Concurrent first commands must not race to create the same missing login files."""
+    backend = _GatedLoginSetup(tools.home)
+    workspace = BubblewrapWorkspace(Workspace(backend))
+    results: list[CommandResult] = []
+
+    async def call() -> None:
+        results.append(await workspace.run(['true']))
+
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(call)
+            group.start_soon(call)
+            await backend.setup_started.wait()
+            await anyio.wait_all_tasks_blocked()
+            assert backend.setup_calls == 1
+            backend.release_setup.set()
+
+    assert [result.exit_code for result in results] == [0, 0]
+    assert len(tools.bwrap_calls) == 2
+    assert (tools.home / '.bashrc').is_file()
+    assert (await workspace.run(['true'])).exit_code == 0
+    assert backend.setup_calls == 1
 
 
 async def test_an_ssh_path_that_is_not_a_directory_is_unavailable(tmp_path: Path) -> None:
@@ -810,60 +870,3 @@ class TestRealBubblewrap:  # pragma: no cover - CI hosts may not have bubblewrap
                 await anyio.sleep(0.1)
 
         assert await workspace.read_text('out') == 'alive\n'
-
-
-async def test_concurrent_first_calls_initialize_login_paths_once(
-    tools: FakeRemoteTools, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Concurrent first commands must not race to create the same missing login files."""
-    home = str(tools.home.resolve())
-    backend = LocalWorkspaceBackend(tools.home)
-    original_run = backend.run
-    setup_started = anyio.Event()
-    release_setup = anyio.Event()
-    setup_calls = 0
-    results: list[CommandResult] = []
-
-    async def working_dir() -> str:
-        return home
-
-    async def run(
-        command: str | Sequence[str],
-        *,
-        shell: bool = False,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
-    ) -> CommandResult:
-        nonlocal setup_calls
-        assert not isinstance(command, str)
-        assert command[:2] == ['/bin/sh', '-c']
-        # Keep the probes in-process so both callers deterministically reach setup or its lock.
-        if len(command) == 3:
-            return CommandResult(exit_code=0, stdout=home + '\n' if '$HOME' in command[2] else '', stderr='')
-        if 'set -C' in command[2]:
-            setup_calls += 1
-            setup_started.set()
-            await release_setup.wait()
-        return await original_run(command, shell=shell, env=env, timeout=timeout)
-
-    monkeypatch.setattr(backend, 'working_dir', working_dir)
-    monkeypatch.setattr(backend, 'run', run)
-    workspace = BubblewrapWorkspace(Workspace(backend))
-
-    async def call() -> None:
-        results.append(await workspace.run(['true']))
-
-    with anyio.fail_after(10):
-        async with anyio.create_task_group() as group:
-            group.start_soon(call)
-            group.start_soon(call)
-            await setup_started.wait()
-            await anyio.wait_all_tasks_blocked()
-            assert setup_calls == 1
-            release_setup.set()
-
-    assert [result.exit_code for result in results] == [0, 0]
-    assert len(tools.bwrap_calls) == 2
-    assert (tools.home / '.bashrc').is_file()
-    assert (await workspace.run(['true'])).exit_code == 0
-    assert setup_calls == 1
