@@ -148,7 +148,7 @@ agent = Agent(model)
     This approach uses Anthropic's SDK with AWS Bedrock credentials. For an alternative using AWS SDK (boto3) directly, see [`BedrockConverseModel`](bedrock.md).
 
 !!! note "Tool search on the legacy `AsyncAnthropicBedrock` client"
-    The legacy `InvokeModel` API doesn't support the `bm25` [tool search](../tools-advanced.md#tool-search) variant, so [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] defaults to `'regex'` on the `AsyncAnthropicBedrock` client (instead of `'bm25'`), and passing `ToolSearch(strategy='bm25')` raises a `UserError`.
+    On the `AsyncAnthropicBedrock` client, [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] with no `strategy` uses the `'regex'` [tool search](../tools-advanced.md#tool-search) variant instead of `'bm25'`. Pass `ToolSearch(strategy='bm25')` to use BM25, which the legacy `InvokeModel` API also accepts. Claude Sonnet 4.5 needs the `tool-search-tool-2025-10-19` beta for either variant on this client: add it with `anthropic_betas=['tool-search-tool-2025-10-19']` in [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]. A `bm25` search recorded in message history replays as `regex` on this client unless the run uses `ToolSearch(strategy='bm25')`.
 
 !!! note "Token counting on the legacy `AsyncAnthropicBedrock` client"
     The Anthropic SDK blocks its high-level token-counting method on Bedrock, so `count_tokens()` (and `count_tokens_before_request`) instead call Bedrock's own `/model/{model}/count-tokens` endpoint. That endpoint only accepts **base** foundation-model IDs (e.g. `anthropic.claude-sonnet-4-20250514-v1:0`); cross-region inference profile IDs (`us.`/`eu.`/`global.` prefixes) and end-of-life model versions are rejected by Bedrock.
@@ -765,6 +765,28 @@ result = agent.run_sync(
 
 !!! note
     Compaction blocks returned by Anthropic contain readable text summaries. They are automatically round-tripped in subsequent requests when included in the message history.
+
+## Server-side tool loops
+
+With a server-side tool such as [web search](../native-tools.md#web-search-tool), Anthropic can sample the model several times within one request, once per tool round. The response's usage sums every pass, which is what Anthropic bills, but each pass re-reads the conversation so far, so the sum can be several times the context the model was given. A response in which [compaction](#message-compaction) ran likewise sums the compaction pass and the pass after it, which saw only the compacted context.
+
+Anthropic reports each pass only under a beta that returns `usage.iterations`. With it, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used], [`per_request_input_tokens_limit`][pydantic_ai.usage.UsageLimits.per_request_input_tokens_limit], and [harness compaction](../harness/compaction.md) measure the context by the last pass's input tokens, cached tokens included. Without it, they read the summed usage.
+
+[`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] and [`anthropic_context_management`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_context_management] send the `compact-2026-01-12` beta, and the betas that the [`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool] and [`anthropic_task_budget`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_task_budget] send return `usage.iterations` too. Otherwise, send the compaction beta yourself:
+
+```python {title="anthropic_server_tool_loop_context.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[WebSearch()],
+    model_settings=AnthropicModelSettings(anthropic_betas=['compact-2026-01-12']),
+)
+```
+
+The response's usage, and so its cost, stays the sum of the passes either way.
 
 ## Code Execution Tool Version
 
