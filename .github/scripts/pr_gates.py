@@ -151,7 +151,12 @@ def protected_paths(github: GitHub, *, pushed: tuple[str, str] | None = None, re
             if label in labels:
                 github.remove_label(label)
                 labels.discard(label)
-                verdict.summary.append(f'Removed `{label}`: the PR changed this scope after it was applied.')
+                reason = (
+                    'the changes since it was applied cannot be listed'
+                    if delta is None
+                    else 'a push changed this scope after it was applied'
+                )
+                verdict.summary.append(f'Removed `{label}`: {reason}.')
 
     # Events come oldest first, so the last `labeled` event for a label names who applied it now.
     appliers: dict[str, _Actor | None] = {}

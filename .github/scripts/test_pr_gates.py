@@ -223,7 +223,7 @@ def test_reopening_voids_every_approval_the_pr_needs():
         events=[_labeled('approved:dependencies'), _labeled('approved:ci-config')],
     )
 
-    assert len(protected_paths(github, reopened=True).failures) == 1
+    assert run('protected-paths', github, {'EVENT_ACTION': 'reopened'}) == 1
     # The PR touches no CI config, so that approval is not the PR's to void.
     assert github.removed == ['approved:dependencies']
 
@@ -362,7 +362,9 @@ def test_the_workflow_runs_every_gate_on_every_pr_event_and_skips_only_the_merge
 
     assert set(workflow.on) == {'pull_request_target', 'merge_group'}
     assert workflow.on['pull_request_target'].paths is None
-    assert {'synchronize', 'labeled', 'unlabeled', 'edited'} <= set(workflow.on['pull_request_target'].types)
+    assert {'synchronize', 'reopened', 'labeled', 'unlabeled', 'edited'} <= set(
+        workflow.on['pull_request_target'].types
+    )
     assert 'concurrency' not in (workflow.model_extra or {})
     for job in workflow.jobs.values():
         assert job.condition == "github.event_name == 'pull_request_target'"

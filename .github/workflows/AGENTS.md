@@ -180,8 +180,10 @@ Two consequences of the trigger, both easy to get backwards:
 
 `approved:<scope>` is the standard for permission labels. Every PR that changes a scope needs
 its label, a maintainer's own included. The gate accepts a label only when its latest `labeled`
-event comes from a `User` whose `.permission` is `write` or `admin`. A push that changes a scope
-removes that scope's label, so an approval covers only the changes the maintainer saw.
+event comes from a `User` whose `.permission` is `write` or `admin`. A push that changes the PR's
+files in a scope removes that scope's label, so an approval covers only the changes the maintainer
+saw. Reopening the PR, or a push whose changes can't be listed (a rebase, a force-push, or 300 or
+more files), removes every approval label the PR needs.
 
 # Agentic workflows (`gh-aw`)
 
