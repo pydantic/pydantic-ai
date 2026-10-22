@@ -3,9 +3,8 @@ name: UI round trip
 # Runs `tests/ui_roundtrip` against the real JavaScript clients of the Vercel AI SDK and AG-UI,
 # pinned in `tests/ui_roundtrip/package-lock.json`. Those tests check that a conversation held by a
 # frontend comes back to the server as the history the server had, which no Python stand-in for
-# the clients can show. Node stays out of `ci.yml`: this job runs on changes to the code that
-# round trip and the request bodies it compares go through, and nightly against `main` for changes
-# anywhere else that affect it.
+# the clients can show. Node stays out of `ci.yml`: this job runs on changes to the library and to
+# these tests, and nightly against `main` for changes anywhere else that affect it.
 # The scheduled run opens an issue when it fails.
 #
 # The `ci.yml` test jobs collect these tests too and skip them, since they have no `node_modules`;
@@ -14,24 +13,18 @@ name: UI round trip
 on:
   pull_request:
     paths:
-      - pydantic_ai_slim/pydantic_ai/ui/**
-      - pydantic_ai_slim/pydantic_ai/messages.py
-      # `test_wire_request` compares the Anthropic and OpenAI request bodies, so the models and the
-      # helpers they render through feed the tests too.
-      - pydantic_ai_slim/pydantic_ai/models/**
-      - pydantic_ai_slim/pydantic_ai/_thinking_part.py
+      # The histories under test come from the agent loop, capabilities and models as much as from
+      # the UI adapters, and the suite takes seconds, so any library change runs it.
+      - pydantic_ai_slim/pydantic_ai/**
       - tests/ui_roundtrip/**
       - .github/workflows/ui-roundtrip.yml
   push:
     branches:
       - main
     paths:
-      - pydantic_ai_slim/pydantic_ai/ui/**
-      - pydantic_ai_slim/pydantic_ai/messages.py
-      # `test_wire_request` compares the Anthropic and OpenAI request bodies, so the models and the
-      # helpers they render through feed the tests too.
-      - pydantic_ai_slim/pydantic_ai/models/**
-      - pydantic_ai_slim/pydantic_ai/_thinking_part.py
+      # The histories under test come from the agent loop, capabilities and models as much as from
+      # the UI adapters, and the suite takes seconds, so any library change runs it.
+      - pydantic_ai_slim/pydantic_ai/**
       - tests/ui_roundtrip/**
       - .github/workflows/ui-roundtrip.yml
   schedule:
