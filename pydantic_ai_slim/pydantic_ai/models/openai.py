@@ -2638,9 +2638,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         The source model continues to use HTTP. Pass the yielded model to an Agent,
         an individual run, or a model-selection capability. Concurrent requests run on
-        separate `stream_id` lanes of the one socket when the SDK client's WebSocket host is
-        `api.openai.com`, or when the profile sets `openai_responses_supports_websocket_stream_id`
-        to `True`; on other hosts, or when it's `False`, they take turns. A provider error,
+        separate `stream_id` lanes of the one socket when the profile's
+        `openai_responses_supports_websocket_stream_id` is `True`, and take turns when it's
+        `False`. When it's unset, lanes run only if the SDK client's WebSocket host is
+        `api.openai.com`. A provider error,
         a stream closed early, or a cancellation ends only its own request; a transport
         failure fails the socket, and later requests raise `ModelConnectionError`. The
         socket closes when the context exits, and a request still running then raises
