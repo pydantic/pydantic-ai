@@ -63,7 +63,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai_harness import BackgroundTools
+from pydantic_ai_harness import BackgroundTools, HarnessDeprecationWarning
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
@@ -1068,8 +1068,11 @@ class TestCompaction:
         ],
     )
     def test_validation_summary_prompt_fields(self, summary_prompt: str):
-        with pytest.raises(ValueError, match=r'`summary_prompt` must contain a `\{messages\}` placeholder'):
+        with pytest.warns(
+            HarnessDeprecationWarning, match=r'`summary_prompt` must contain a `\{messages\}` placeholder'
+        ) as warned:
             SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)
+        assert warned[0].filename == __file__
 
     def test_summary_prompt_with_escaped_braces_is_accepted(self):
         comp = SummarizingCompaction(
