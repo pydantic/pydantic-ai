@@ -135,6 +135,10 @@ class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsComputerU
         super().__init__(inner)
         self._display = inner
 
+    @property
+    def has_display(self) -> bool:
+        return self._display.has_display
+
     async def display_size(self) -> tuple[int, int]:
         return await self._display.display_size()
 

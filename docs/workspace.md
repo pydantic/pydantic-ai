@@ -524,9 +524,9 @@ symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#res
 
 ### Controlling a display
 
-A backend whose environment has a graphical display implements
-[`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]: `display_size`, `screenshot`
-(PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
+A backend whose environments can have a graphical display implements
+[`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]: `has_display`, which says without I/O
+whether this environment has one, `display_size`, `screenshot` (PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
 such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()` and
 `ctx.workspace.act(...)`; under durable execution, calls from workflow code run as workspace
 operations, like file calls. A Linux environment that runs an X server can delegate to
@@ -538,6 +538,10 @@ from pydantic_ai.workspaces import ComputerAction, SupportsComputerUse, X11Compu
 
 
 class MyDesktopSandbox(MySandbox, SupportsComputerUse):
+    @property
+    def has_display(self) -> bool:
+        return True
+
     async def display_size(self) -> tuple[int, int]:
         return await X11Computer(self).display_size()
 
@@ -551,8 +555,9 @@ class MyDesktopSandbox(MySandbox, SupportsComputerUse):
 Starting the X server is the environment's job, for example an image whose entrypoint runs `Xvfb :1`.
 New action kinds may be added to `ComputerAction`, so `act` must raise
 [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for a kind it
-doesn't know; the conformance suite checks this. Pydantic AI never controls a display on its own: only a
-backend that implements `SupportsComputerUse` has one, so the local backend never drives your screen.
+doesn't know; the conformance suite checks this. Coordinates are pixels of the screenshot, so a backend
+whose screen is scaled, such as a high-density display, reports the screenshot's size and scales actions to
+match. `LocalWorkspace` has no display.
 
 ### Resolving symlinks
 
