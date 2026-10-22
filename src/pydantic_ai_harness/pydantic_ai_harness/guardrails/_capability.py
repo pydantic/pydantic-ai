@@ -146,7 +146,8 @@ def _find_copies(prompt: UserPromptPart, parts: Sequence[object]) -> list[UserPr
     changed, while a part an outer capability creates for this request gets its own, so neither
     the copy's position nor its text decides. When several parts carry the timestamp, those with
     the prompt's text are taken, all of them, since the guard's verdict on that text applies to
-    each; when none of them has it, the copy cannot be told apart.
+    each; a changed copy beside them is not, as the guard did not screen its text. When none of
+    them has the prompt's text, the copy cannot be told apart.
     """
     candidates = [part for part in parts if isinstance(part, UserPromptPart) and part.timestamp == prompt.timestamp]
     same_text = [part for part in candidates if part.content == prompt.content]
@@ -157,21 +158,11 @@ def _find_copies(prompt: UserPromptPart, parts: Sequence[object]) -> list[UserPr
 
 def _latest_prompt_parts(messages: Sequence[ModelMessage]) -> list[UserPromptPart]:
     """The most recent `UserPromptPart` in `messages`, as a list of at most one."""
-    latest = _latest_prompt_part(messages)
-    return [] if latest is None else [latest]
-
-
-def _latest_prompt_part(messages: Sequence[ModelMessage]) -> UserPromptPart | None:
-    """The most recent `UserPromptPart` in `messages`, if any."""
-    return next(
-        (
-            part
-            for message in reversed(messages)
-            for part in reversed(message.parts)
-            if isinstance(part, UserPromptPart)
-        ),
-        None,
-    )
+    for message in reversed(messages):
+        for part in reversed(message.parts):
+            if isinstance(part, UserPromptPart):
+                return [part]
+    return []
 
 
 def _prompt_text(content: str | Sequence[UserContent]) -> str:
@@ -220,9 +211,10 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     effects or a per-call cost (an LLM classifier) runs twice for that request.
     Only a redaction from that call is written to the history, so the copy's
     request-only text never reaches it; `allow` leaves the original as it was,
-    and `block` blocks the run before anything is rewritten. A request rebuilt with a new prompt part is not
-    tied to the history, so only the part sent to the model is rewritten. A
-    later guard in a chain that blocks ends the chain before any rewrite happens.
+    and `block` blocks the run before anything is rewritten. A request rebuilt
+    with a new prompt part is not tied to the history, so only the part sent to
+    the model is rewritten. A later guard in a chain that blocks ends the chain
+    before any rewrite happens.
 
     `retry` is not valid for an input guardrail, and neither is `replace` on a
     multimodal prompt, including the history's original of a text copy: the

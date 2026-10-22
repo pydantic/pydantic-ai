@@ -697,8 +697,12 @@ class TestInputGuardrailRedaction:
             calls.append(prompt)
             return redact_secrets(prompt) if len(calls) == 1 else GuardrailResult.allow()
 
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
         seen, model = _request_prompts_model()
         agent = Agent(model, capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=guard)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
 
         result = await agent.run(f'my key is {_SECRET}')
 
@@ -706,6 +710,7 @@ class TestInputGuardrailRedaction:
         part = result.all_messages()[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == f'my key is {_SECRET}'
+        assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
 
     async def test_a_block_on_the_history_original_blocks_the_run_before_any_rewrite(self):
         """The original is what later steps replay, so a guard that blocks it ends the run as a first block would."""
@@ -744,8 +749,12 @@ class TestInputGuardrailRedaction:
             await agent.run(f'my key is {_SECRET}')
 
     async def test_every_copy_of_the_prompt_sent_to_the_model_is_redacted(self):
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
         seen, model = _request_prompts_model()
         agent = Agent(model, capabilities=[_RepeatPrompt(), InputGuardrail(guard=redact_secrets)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
 
         result = await agent.run(f'my key is {_SECRET}')
 
@@ -753,6 +762,7 @@ class TestInputGuardrailRedaction:
         part = result.all_messages()[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my key is [redacted:anthropic_key]'
+        assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
 
     async def test_a_redacted_copy_is_not_replayed_unredacted_after_a_tool_call(self):
         """Later steps send the history, which the guard does not screen again, so it must already be clean."""
