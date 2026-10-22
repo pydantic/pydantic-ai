@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol, runtime_checkable
 
@@ -16,6 +16,8 @@ from pydantic_ai_harness.memory._store import (
     MemoryOperation,
     MemoryOperationConflictError,
     MemorySearchResult,
+    decode_metadata,
+    encode_metadata,
     lexical_search,
     validate_store_path,
     validate_store_prefix,
@@ -59,7 +61,11 @@ class PostgresPool(Protocol):
 
 
 class PostgresMemoryStore:
-    """Transactional PostgreSQL memory store with CAS and operation receipts."""
+    """Transactional PostgreSQL memory store with CAS, operation receipts, and write metadata.
+
+    Write metadata is kept in a `write_metadata JSONB` column of the memory table, so an application
+    can query it, for example `WHERE write_metadata->>'updated_by' = 'agent'`.
+    """
 
     def __init__(self, pool: PostgresPool, *, table: str = 'agent_memory') -> None:
         if not _TABLE_RE.fullmatch(table):
@@ -83,12 +89,13 @@ class PostgresMemoryStore:
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._table} ('
                     'path TEXT PRIMARY KEY, content TEXT NOT NULL, '
-                    'version BIGINT NOT NULL DEFAULT 1, last_operation_id TEXT)'
+                    'version BIGINT NOT NULL DEFAULT 1, last_operation_id TEXT, write_metadata JSONB)'
                 )
                 await connection.execute(
                     f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1'
                 )
                 await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS last_operation_id TEXT')
+                await connection.execute(f'ALTER TABLE {self._table} ADD COLUMN IF NOT EXISTS write_metadata JSONB')
                 await connection.execute(
                     f'CREATE TABLE IF NOT EXISTS {self._operations_table} ('
                     'id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, version TEXT, '
@@ -157,7 +164,8 @@ class PostgresMemoryStore:
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
             row = await connection.fetchrow(
-                f'SELECT left(content, $2), version, last_operation_id, length(content) '
+                # As text, so the result does not depend on the driver's JSON codec.
+                f'SELECT left(content, $2), version, last_operation_id, length(content), write_metadata::TEXT '
                 f'FROM {self._table} WHERE path = $1',
                 path,
                 max_chars,
@@ -169,6 +177,7 @@ class PostgresMemoryStore:
             version=str(row[1]),
             operation_id=str(row[2]) if row[2] is not None else None,
             truncated=int(str(row[3])) > max_chars,
+            metadata=decode_metadata(row[4]),
         )
 
     async def get_operation(self, operation: MemoryOperation) -> MemoryMutation | None:
@@ -184,30 +193,48 @@ class PostgresMemoryStore:
         expected_version: str | None,
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
+        """Create or replace `path` if its version equals `expected_version`, recording no metadata."""
+        return await self.write_with_metadata(
+            path, content, expected_version=expected_version, metadata=None, operation=operation
+        )
+
+    async def write_with_metadata(
+        self,
+        path: str,
+        content: str,
+        *,
+        expected_version: str | None,
+        metadata: Mapping[str, str] | None,
+        operation: MemoryOperation | None = None,
+    ) -> MemoryMutation:
         validate_store_path(path)
+        encoded = encode_metadata(metadata)
         await self._ensure_schema()
         async with self._pool.acquire() as connection, connection.transaction():
             if operation is not None and (receipt := await self._reserve_operation(connection, operation)) is not None:
                 return receipt
+            # Bound as text and cast in SQL, so a JSONB codec registered on the caller's pool does not encode it again.
             if expected_version is None:
                 row = await connection.fetchrow(
-                    f'INSERT INTO {self._table} (path, content, version, last_operation_id) '
-                    f"VALUES ($1, $2, nextval('{self._version_sequence}'), $3) "
+                    f'INSERT INTO {self._table} (path, content, version, last_operation_id, write_metadata) '
+                    f"VALUES ($1, $2, nextval('{self._version_sequence}'), $3, $4::TEXT::JSONB) "
                     'ON CONFLICT (path) DO NOTHING RETURNING version',
                     path,
                     content,
                     operation.id if operation else None,
+                    encoded,
                 )
                 existed = False
             else:
                 row = await connection.fetchrow(
                     f"UPDATE {self._table} SET content = $2, version = nextval('{self._version_sequence}'), "
-                    'last_operation_id = $3 '
+                    'last_operation_id = $3, write_metadata = $5::TEXT::JSONB '
                     'WHERE path = $1 AND version::TEXT = $4 RETURNING version',
                     path,
                     content,
                     operation.id if operation else None,
                     expected_version,
+                    encoded,
                 )
                 existed = True
             if row is None:
@@ -275,14 +302,16 @@ class PostgresMemoryStore:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
         await self._ensure_schema()
         async with self._pool.acquire() as connection:
+            # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = await connection.fetch(
                 f'SELECT path, left(content, $2), length(content) FROM {self._table} '
-                'WHERE starts_with(path, $1) ORDER BY path LIMIT $3',
+                "WHERE starts_with(path, $1) AND strpos(substr(path, length($1) + 1), '/') = 0 "
+                'ORDER BY path LIMIT $3',
                 prefix,
                 max_file_chars,
                 max_files + 1,
             )
-        result = lexical_search(
+        result = await lexical_search(
             [(str(row[0]), str(row[1])) for row in rows],
             query,
             limit=limit,

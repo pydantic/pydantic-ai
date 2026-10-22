@@ -39,7 +39,7 @@ result-transformation semantics as [`iter()`][pydantic_ai.agent.AbstractAgent.it
 
 `wrap_run_event_stream` wraps the consumer-facing session iterator. It can observe or transform
 shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and realtime-only
-[`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members (see the
+[`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members (see the
 [event reference](events.md)) without changing history or tool execution. There is no
 `event_stream_handler` parameter on `realtime()`; a handler-style consumer is attached with the
 [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] capability, which works through

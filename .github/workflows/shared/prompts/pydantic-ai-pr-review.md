@@ -57,7 +57,7 @@ the rest briefly in the review body.
 
 ## Targeted checks
 
-Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests:
+Beyond free-form review, run these checks proactively; the first applies to every model-touching PR, the second to every PR that touches tests, the third to every bug fix, the fourth to every PR that touches message history:
 
 - **Profile-flag test pinning.** When the diff adds or modifies a
   `profile.get(...)` read under `pydantic_ai_slim/pydantic_ai/models/`, verify
@@ -74,6 +74,34 @@ Beyond free-form review, run these checks proactively; the first applies to ever
   out real sleeps, timeouts or poll intervals instead of injecting them, or that
   feed one huge input to prove a complexity bound. Calibration is Example 5 in
   `.review-context/review-instructions.md`. Cap at **MEDIUM**.
+- **Fix reach.** When the diff fixes a bug in a code path that several
+  providers, models, or callers go through (a model class, a profile setting, a
+  helper), list the surfaces that path reaches and check that the PR reproduces
+  the defect on each. A recording or probe in which a surface accepts the change
+  does not count: it shows the change is safe there, not that the surface needs
+  it. Ask for placement that reaches only the reproduced surfaces, not for more
+  recordings. Rate it **HIGH** when the PR body or tests show a reached surface
+  already works on `main` without the change; otherwise **MEDIUM**.
+- **Message history and prompt cache.** When the diff enqueues or edits
+  messages, contributes instructions or tools, renders history in a model
+  adapter, wraps content in tags, or converts history to or from a UI protocol,
+  check it against the rules in `agent_docs/message-history-and-caching.md`:
+  no accidental, default-on or per-request rewrite of earlier history by
+  framework or harness code (compaction and explicit user-configured history
+  processors are intentional), no untrusted content in
+  system voice, no framework voice sent as a user string, no unescaped wrapper
+  payload, no framework record found by its text, and the same history always
+  renders to the same bytes. For tags: lowercase `snake_case` names, an
+  existing tag before a new one, an escape that neutralizes every opening and
+  closing spelling of every registered framing tag inside a data frame (only
+  `system` inside a `<system>` body) through `_framing.wrap()`, never a
+  hand-rolled escaper,
+  with tests for the variants and a cross-tag case, attributes limited to identity and
+  outcome, no unframed framework preamble before a frame on a user turn, no
+  "the tag that follows" references, and a live probe for new framing. Code that
+  re-renders history for another model must render framework data parts as
+  labeled untrusted data, never as user turns. Calibration is Example 6 in
+  `.review-context/review-instructions.md`.
 
 ## Review process
 
@@ -85,8 +113,7 @@ Beyond free-form review, run these checks proactively; the first applies to ever
 2. Read `.review-context/pr-details.json` and `pr-size.txt`.
 3. Read `pr-comments.txt`, `related-issues.txt`, and the relevant
    `agents-md.txt` sections.
-4. Skim `review-comments.txt` for prior threads (note the most recent
-   review from this bot — you'll compare verdicts at the end).
+4. Skim `review-comments.txt` for prior threads.
 5. Read repo-root `CLAUDE.md` / `AGENTS.md` for project-wide conventions.
 
 ### Step 2 — Pick a strategy from PR size
@@ -216,11 +243,9 @@ After all comments are posted, call **`mcp__safeoutputs__submit_pull_request_rev
   or restate inline comments — the author already knows what they wrote
   and can read the inline thread.
 
-**Skip if redundant:** if you have **zero new findings** and your verdict
-matches the most recent review from this bot (visible in
-`review-comments.txt`), call `mcp__safeoutputs__noop` with a short reason like
-"No new findings — prior review still applies" instead of submitting a
-redundant review.
+**No inline comments:** submit the review anyway. This workflow runs only on a
+head it has not reviewed yet. No earlier review or comment, from this bot or
+another, covers that head.
 
 **Bot-authored PRs:** GitHub forbids `APPROVE` / `REQUEST_CHANGES` from a
 bot reviewing another bot's PR. If the PR author is a bot, submit a
