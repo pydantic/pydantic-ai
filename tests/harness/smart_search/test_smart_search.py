@@ -597,15 +597,18 @@ def test_toolset_advertises_the_upstream_schema() -> None:
 
 
 @pytest.mark.usefixtures('instrument_all_agents')
-async def test_judge_runs_are_named_after_the_capability(capfire: CaptureLogfire, tmp_path: Path) -> None:
+async def test_judge_runs_are_not_traced(capfire: CaptureLogfire, tmp_path: Path) -> None:
+    """The judge's prompt carries source, so global instrumentation must not export it past the host's settings."""
     (tmp_path / 'a.py').write_text('expired = True\n')
+    judge_model = FakeJev('x')
     agent = Agent(
         _calls_smart_search(),
         name='outer',
-        capabilities=[LocalWorkspace(tmp_path), SmartSearch(model=FakeJev('x'))],
+        capabilities=[LocalWorkspace(tmp_path), SmartSearch(model=judge_model)],
     )
     await agent.run('find it')
-    assert agent_run_names(capfire).count('smart_search') == 1
+    assert judge_model.requests  # the judge ran
+    assert agent_run_names(capfire) == ['outer']
 
 
 @pytest.mark.parametrize(('cache_index', 'chunked'), [(True, 1), (False, 2)])

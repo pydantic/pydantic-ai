@@ -88,14 +88,18 @@ def _state(chunk: Chunk) -> str:
 
 
 def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
-    """The one-shot judge agent for `query`, named after the capability for tracing."""
-    return Agent(
+    """The one-shot judge agent for `query`, named after the capability."""
+    agent = Agent(
         model,
         name='smart_search',
         output_type=Relevance,
         instructions=f'The text is a snippet of source code from a repository. A developer is searching the codebase for: {query}',
         model_settings={'timeout': REQUEST_TIMEOUT_SECONDS},
     )
+    # The judge's prompt carries source snippets, so it must not inherit global instrumentation that could
+    # ignore the host agent's content or opt-out settings.
+    agent.instrument = False
+    return agent
 
 
 async def judge(
