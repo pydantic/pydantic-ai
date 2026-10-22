@@ -8,6 +8,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, G
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
+from datetime import datetime
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
 
@@ -18,6 +19,7 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
+from ._cancel import current_run_clock
 from ._context_size import context_tokens
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from ._warnings import PydanticAIDeprecationWarning
@@ -195,6 +197,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     with a duplicate copy. Combine it with [`usage`][pydantic_ai.tools.RunContext.usage] to compute
     how much budget remains. Treat it as read-only: it is the live object the run enforces against, so
     mutating a field here *would* change what the run enforces on subsequent requests.
+    """
+    deadline: datetime | None = None
+    """The time (timezone-aware, in UTC) by which this run must finish, or `None` if it has no deadline.
+
+    Set from `timeout=` on the agent run methods, such as [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run].
+    A run started from inside another run, like an agent delegated to from a tool, inherits that run's
+    deadline, and its own `timeout=` can only make it earlier. When the deadline passes, the run is
+    cancelled and raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut]. Use
+    [`remaining_time()`][pydantic_ai.tools.RunContext.remaining_time] to budget work against it.
     """
     agent: Agent[RunContextAgentDepsT, Any] | None = field(default=None, repr=False)
     """The agent running this context, or `None` if not set."""
@@ -754,6 +765,31 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
 
+    def tool_name_for_kind(self, kind: _messages.ToolKindLike) -> str | None:
+        """The name of the tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] in the current run step, or `None` if there is none.
+
+        Instructions and tool results can use it to name a tool without hard-coding a name that
+        may have been changed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]).
+
+        It reads the same tools as [`tools`][pydantic_ai.tools.RunContext.tools], so a tool hidden by
+        deferred loading counts, keeping instructions that name it stable when it is revealed, and a
+        tool left out by [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] doesn't.
+        When several tools have the kind, it returns the first in the order of
+        [`tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list
+        them in, so the answer is stable from step to step; iterate `tools` to see them all.
+
+        The step's tools are resolved before its instructions are rendered, so instruction functions,
+        model request hooks and tools all see the current step. Inside `get_tools` or a `prepare_tools`
+        hook they are still being resolved: there it answers from the previous step, or returns `None`
+        on the first. Inside a Temporal activity, where the tool manager isn't attached, it answers from a
+        snapshot taken when the activity was dispatched; anywhere else without a tool manager it returns `None`.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = _messages._tool_kind_id(kind)  # pyright: ignore[reportPrivateUsage]
+        return next((name for name, tool_def in self.tools.items() if tool_def.tool_kind == kind_id), None)
+
     @overload
     async def emit(self, event: CustomEventT, /) -> CustomEventT: ...
 
@@ -872,6 +908,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Safe to call directly from async tools, sync tools running in another
         thread, and capability hooks.
 
+        Content made of parts and enqueued with `priority='asap'` during a tool call (from the tool or
+        a capability hook wrapping the call) goes into the
+        [`ModelRequest`][pydantic_ai.messages.ModelRequest] that carries that call's
+        [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], right after it, when that request is the
+        next one sent. Anything else is added to the history as its own messages, and so is content
+        enqueued after it.
+
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
@@ -885,7 +928,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end). In a realtime session, an active
+                    or a redirect if the agent would otherwise end). From a `before_model_request`
+                    hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
@@ -908,7 +952,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`enqueue` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.enqueue`). This `RunContext` has no pending-message queue to drain.'
             )
-        pending = PendingMessage.from_content(*content, priority=priority)
+        pending = PendingMessage.from_content(
+            *content,
+            priority=priority,
+            _tool_call=None if self.tool_call_id is None else (self.tool_call_id, self.run_step),
+        )
         if pending is None:
             return None
         self.pending_messages.append(pending)
@@ -947,6 +995,16 @@ class RunContext(Generic[RunContextAgentDepsT]):
             )
         cancellation.cancel()
 
+    def remaining_time(self) -> float | None:
+        """Return the seconds left until [`deadline`][pydantic_ai.tools.RunContext.deadline], or `None` if the run has none.
+
+        Negative once the deadline has passed. Inside a durable workflow, the time is read from the
+        engine's replay-safe clock (such as `workflow.now()` on Temporal).
+        """
+        if self.deadline is None:
+            return None
+        return (self.deadline - current_run_clock()()).total_seconds()
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
@@ -979,9 +1037,8 @@ RunContext.__init__ = _run_context_init_with_capability_loaded
 def with_tool_name_path(ctx: RunContext[AgentDepsT], path: ToolNamePath) -> RunContext[AgentDepsT]:
     """A copy of the context with the given tool name path.
 
-    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields:
-    `TemporalRunContext` and `RenderRunContext` keep snapshots such as `available_tool_names`
-    outside them.
+    Not `dataclasses.replace`, which rebuilds the context from its dataclass fields: a custom
+    `TemporalRunContext` subclass keeps the extra keys its payload adds outside them.
     """
     return _utils.replace_no_init(ctx, _tool_name_path=path)
 

@@ -2,7 +2,7 @@
 
 There is no in-process Postgres, so the unit suites run `PostgresMediaStore` and
 `PostgresStepStore` against SQLite after rewriting the few Postgres-only spellings
-the stores use: `$n` parameters, identity columns, and `= ANY($n::bigint[])`.
+the stores use: `$n` parameters, identity columns, and `= ANY($n::bigint[])` or `::text[]`.
 SQLite shares the semantics the stores rely on (`ON CONFLICT ... DO NOTHING`,
 `RETURNING`, partial unique indexes, `EXCLUDED`), so reads, writes, idempotency
 and retention run for real. What only a Postgres server shows (identifier
@@ -25,18 +25,18 @@ import anyio.lowlevel
 from pydantic_ai_harness.media import PostgresConnection
 
 _IDENTITY = 'BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY'
-_ANY_BIGINT_ARRAY = re.compile(r'(\w+) = ANY\(\$(\d+)::bigint\[\]\)')
+_ANY_ARRAY = re.compile(r'(\w+) = ANY\(\$(\d+)::(?:bigint|text)\[\]\)')
 _PARAMETER = re.compile(r'\$(\d+)')
 
 
 def _to_sqlite(query: str) -> str:
     query = query.replace(_IDENTITY, 'INTEGER PRIMARY KEY AUTOINCREMENT')
-    query = _ANY_BIGINT_ARRAY.sub(r'\1 IN (SELECT value FROM json_each(?\2))', query)
+    query = _ANY_ARRAY.sub(r'\1 IN (SELECT value FROM json_each(?\2))', query)
     return _PARAMETER.sub(r'?\1', query)
 
 
 def _to_sqlite_value(value: object) -> object:
-    # The only list the stores bind is a `bigint[]`, which `_to_sqlite` reads with `json_each`.
+    # The only lists the stores bind are arrays, which `_to_sqlite` reads with `json_each`.
     return json.dumps(value) if isinstance(value, list) else value
 
 

@@ -15,8 +15,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.trace import NoOpTracer, Tracer
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
-from pydantic_ai.exceptions import SkipModelRequest, UserError
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Hooks, WrapModelRequestHandler
+from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
@@ -26,7 +26,10 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    TextContent,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -35,7 +38,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import GuardrailResult, InputBlocked, InputGuardrail
+from pydantic_ai_harness import BackgroundTools, GuardrailResult, InputBlocked, InputGuardrail
 from pydantic_ai_harness.guardrails._capability import _extract_prompt  # pyright: ignore[reportPrivateUsage]
 
 READINESS_WAIT_TIMEOUT = 10
@@ -107,6 +110,143 @@ class TestInputGuardrail:
 
         assert result.output == 'ok'
         assert calls == ['hello']
+
+    @pytest.mark.parametrize('metadata', [None, 'tag', [], {'origin': 'caller'}])
+    async def test_singleton_textcontent_user_prompt_keeps_legacy_guardrail_behavior(self, metadata: object):
+        prompt: list[TextContent] = [TextContent('ordinary user content', metadata=metadata)]
+        seen: list[str] = []
+
+        agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda text: seen.append(text) or True)],
+        )
+        await agent.run(prompt)
+
+        assert seen == [str(prompt)]
+
+        replacing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))],
+        )
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await replacing_agent.run(prompt)
+
+    async def test_extracts_singleton_textcontent_from_resumed_prompt(self):
+        guard_calls: list[str] = []
+        model_prompts: list[list[object]] = []
+        model_calls = 0
+        completion = TextContent(
+            'background answer',
+            metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'task-1'},
+        )
+
+        def guard(prompt: str) -> bool:
+            guard_calls.append(prompt)
+            return True
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            model_prompts.append(
+                [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+            )
+            if model_calls == 1:
+                return ModelResponse(parts=[ToolCallPart('queue_completion', '{}', tool_call_id='tc1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[InputGuardrail(guard=guard)])
+
+        @agent.tool
+        def queue_completion(ctx: RunContext[object]) -> str:
+            ctx.enqueue(completion)
+            return 'queued'
+
+        first = await agent.run('initial')
+        assert guard_calls == ['initial']
+
+        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+        assert resumed.output == 'done'
+        assert guard_calls == ['initial', 'background answer']
+        assert model_prompts[1] == ['initial', [completion]]
+
+        await agent.run(None, message_history=first.all_messages())
+        assert guard_calls == ['initial', 'background answer']
+
+    async def test_redacts_background_completion_from_pending_tool_history(self):
+        guard_observations: list[tuple[object, int, str]] = []
+        model_user_prompts: list[object] = []
+        completion = TextContent(
+            'background answer',
+            metadata={
+                'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                'tool_call_id': 'task-1',
+            },
+        )
+
+        def guard(ctx: RunContext[object], prompt: str) -> GuardrailResult:
+            guard_observations.append((ctx.prompt, ctx.run_step, prompt))
+            return GuardrailResult.replace('[redacted]')
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            model_user_prompts.extend(
+                part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)
+            )
+            return ModelResponse(parts=[TextPart('done')])
+
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content=[completion])]),
+            ModelResponse(parts=[ToolCallPart(tool_name='some_tool', args='{}', tool_call_id='tc1')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='some_tool', content='result', tool_call_id='tc1')]),
+        ]
+        agent = Agent(FunctionModel(respond), capabilities=[InputGuardrail(guard=guard)])
+        result = await agent.run(None, message_history=history)
+
+        assert result.output == 'done'
+        assert guard_observations == [(None, 1, 'background answer')]
+        assert model_user_prompts == [
+            [
+                TextContent(
+                    '[redacted]',
+                    metadata={
+                        'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                        'tool_call_id': 'task-1',
+                    },
+                )
+            ]
+        ]
+
+    async def test_background_completion_with_document_uses_multimodal_prompt_rules(self):
+        completion = TextContent(
+            'background answer',
+            metadata={
+                'origin': 'pydantic-ai-harness.background_tools.result.v1',
+                'tool_call_id': 'task-1',
+            },
+        )
+        document = BinaryContent(data=b'background report\n', media_type='text/plain')
+        content: list[TextContent | BinaryContent] = [completion, document]
+        history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=content)])]
+        seen: list[str] = []
+
+        allowing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda prompt: seen.append(prompt) or True)],
+        )
+        result = await allowing_agent.run(None, message_history=history)
+
+        assert result.output == 'ok'
+        assert seen == [str(content)]
+
+        replacing_agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[InputGuardrail(guard=lambda _: GuardrailResult.replace('[redacted]'))],
+        )
+        with pytest.raises(UserError, match='multimodal prompt'):
+            await replacing_agent.run(None, message_history=history)
+
+        prompt = history[-1].parts[0]
+        assert isinstance(prompt, UserPromptPart)
+        assert prompt.content == content
 
     async def test_guard_result_allow(self):
         agent = Agent(
@@ -231,6 +371,57 @@ class TestInputGuardrailRedaction:
         part = list(result.all_messages())[0].parts[0]
         assert isinstance(part, UserPromptPart)
         assert part.content == 'my *** value'
+
+    async def test_replace_background_completion_preserves_metadata(self):
+        guard_calls: list[str] = []
+        model_completions: list[tuple[str, object]] = []
+
+        def guard(prompt: str) -> bool | GuardrailResult:
+            guard_calls.append(prompt)
+            if prompt.startswith('<tool_result'):
+                return GuardrailResult.replace('[redacted]')
+            return True
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            completions = [
+                item
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, list)
+                for item in part.content
+                if isinstance(item, TextContent)
+                and item.metadata.get('origin') == 'pydantic-ai-harness.background_tools.result.v1'
+            ]
+            if completions:
+                model_completions.append((completions[-1].content, completions[-1].metadata))
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('lookup', '{}', tool_call_id='tool-1')])
+
+        agent = Agent(FunctionModel(respond), capabilities=[BackgroundTools(), InputGuardrail(guard=guard)])
+
+        @agent.tool_plain(metadata={'background': True})
+        async def lookup() -> str:
+            return 'answer'
+
+        completion = '<tool_result tool_name="lookup" tool_call_id="tool-1">\nanswer\n</tool_result>'
+        first = await agent.run('go')
+        assert first.output == 'done'
+        assert guard_calls == ['go']
+        assert model_completions == [
+            (
+                completion,
+                {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
+            )
+        ]
+
+        resumed = await agent.run(None, message_history=first.all_messages()[:-1])
+
+        assert resumed.output == 'done'
+        assert guard_calls == ['go', completion]
+        assert model_completions[-1] == (
+            '[redacted]',
+            {'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': 'tool-1'},
+        )
 
     async def test_replace_with_non_str_is_a_usage_error(self):
         agent = Agent(
@@ -424,27 +615,62 @@ class TestInputGuardrailParallel:
             await task
         assert exc_info.value.response.parts[0] == TextPart(content='late trip')
 
-    async def test_handler_raises_while_guard_runs(self):
-        """When the handler raises, `finally` cancels the still-running guard."""
+    @pytest.mark.parametrize(
+        ('verdict', 'raised'),
+        [
+            pytest.param(True, RuntimeError, id='allow'),
+            pytest.param(GuardrailResult.block('late trip'), SkipModelRequest, id='block'),
+        ],
+    )
+    async def test_handler_raises_then_guard_decides(self, verdict: bool | GuardrailResult, raised: type[Exception]):
+        """The handler raises before the guard decides: the error waits for the verdict, and a block wins."""
         run_ctx, req_ctx = _build_ctx_and_req()
-        guard_cancelled = asyncio.Event()
+        handler_task: asyncio.Future[asyncio.Task[Any] | None] = asyncio.get_running_loop().create_future()
+        decided: list[bool] = []
 
         async def failing_handler(_: Any) -> ModelResponse:
+            handler_task.set_result(asyncio.current_task())
             raise RuntimeError('model boom')
 
-        async def slow_guard(_: str) -> bool:
-            try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                guard_cancelled.set()
-                raise
-            return True  # pragma: no cover
+        async def slow_guard(_: str) -> bool | GuardrailResult:
+            # Decide once the handler's task finished raising, giving `wrap_model_request` the first chance to act.
+            task = await handler_task
+            assert task is not None
+            await asyncio.wait({task})
+            decided.append(True)
+            return verdict
 
         ig = InputGuardrail(guard=slow_guard, parallel=True)
-        with pytest.raises(RuntimeError, match='model boom'):
+        with pytest.raises(raised):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=failing_handler)
-        await asyncio.sleep(0)
-        assert guard_cancelled.is_set()
+        assert decided == [True]
+
+    async def test_block_after_a_retried_first_request_blocks_the_run(self):
+        """A `ModelRetry` on the first response, raised before the guard decides, does not skip the verdict."""
+        response_task: asyncio.Future[asyncio.Task[Any] | None] = asyncio.get_running_loop().create_future()
+        hooks = Hooks[None]()
+
+        @hooks.on.after_model_request
+        async def retry_response(
+            ctx: RunContext[None], request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            response_task.set_result(asyncio.current_task())
+            raise ModelRetry('try again')
+
+        async def guard(_: str) -> GuardrailResult:
+            # Decide once the response's task finished raising, giving `wrap_model_request` the first chance to act.
+            task = await response_task
+            assert task is not None
+            await asyncio.wait({task})
+            return GuardrailResult.block('blocked')
+
+        agent = Agent(
+            TestModel(), deps_type=type(None), capabilities=[InputGuardrail[None](guard=guard, parallel=True), hooks]
+        )
+
+        result = await agent.run('go')
+
+        assert result.output == 'blocked'
 
     async def test_skipped_when_prompt_missing(self):
         run_ctx, req_ctx = _build_ctx_and_req(prompt=None)
@@ -490,23 +716,26 @@ class TestInputGuardrailParallel:
         with pytest.raises(UserError, match=r'incompatible with GuardrailResult.replace'):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=handler)
 
-    async def test_no_dangling_tasks_when_handler_raises(self):
-        """`finally` must drain cancelled tasks so they don't outlive the call."""
+    async def test_no_dangling_tasks_when_guard_blocks(self):
+        """`finally` must cancel and drain the handler a block interrupts so it doesn't outlive the call."""
         run_ctx, req_ctx = _build_ctx_and_req()
+        handler_started = asyncio.Event()
 
-        async def failing_handler(_: Any) -> ModelResponse:
-            raise RuntimeError('handler boom')
+        async def slow_handler(_: Any) -> ModelResponse:
+            handler_started.set()
+            await asyncio.Event().wait()
+            return ModelResponse(parts=[TextPart(content='never')])  # pragma: no cover
 
-        async def slow_guard(_: str) -> bool:
-            await asyncio.sleep(10)
-            return True  # pragma: no cover
+        async def guard(_: str) -> GuardrailResult:
+            await handler_started.wait()
+            return GuardrailResult.block('blocked!')
 
         current = asyncio.current_task()
         before = {t for t in asyncio.all_tasks() if t is not current}
 
-        ig = InputGuardrail(guard=slow_guard, parallel=True)
-        with pytest.raises(RuntimeError, match='handler boom'):
-            await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=failing_handler)
+        ig = InputGuardrail(guard=guard, parallel=True)
+        with pytest.raises(SkipModelRequest):
+            await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=slow_handler)
 
         leftover = {t for t in asyncio.all_tasks() if t is not current} - before
         assert leftover == set(), f'guard/handler tasks must be drained, got dangling: {leftover}'

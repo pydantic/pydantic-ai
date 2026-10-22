@@ -1,0 +1,318 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "673"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Look up the population of Zurich, then give me information about it.
+            type: text
+        model: claude-sonnet-4-6
+        stream: true
+        tool_choice:
+          type: any
+        tools:
+        - name: get_population
+          description: Get the population of a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: final_result
+          description: Information about a city.
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-540bd37d83d41029730bb50e10d76ba9-a24139444ecfc304-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011Cg4wcFy31X2KKHhkNu1yi","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":751,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01At8ozqgqSCCLqGdrygarGz","name":"get_population","input":{},"caller":{"type":"direct"}}    }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Zuri"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ch\"}"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":751,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":40}          }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-10-16T00:07:47.527414+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1039"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Look up the population of Zurich, then give me information about it.
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01At8ozqgqSCCLqGdrygarGz
+            type: tool_use
+            name: get_population
+            input:
+              city: Zurich
+        - role: user
+          content:
+          - tool_use_id: toolu_01At8ozqgqSCCLqGdrygarGz
+            type: tool_result
+            content:
+            - text: "421878"
+              type: text
+            is_error: false
+        model: claude-sonnet-4-6
+        output_config:
+          effort: high
+        stream: true
+        thinking:
+          type: adaptive
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_population
+          description: Get the population of a city.
+          input_schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+        - name: final_result
+          description: Information about a city.
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-ca168ba9b5063925e99639a5eb7ed36f-ccdf569ad1d3ffb3-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011Cg4wcLHVNzb6ZLDWkdscd","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":729,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Now"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" I have the population of Zu"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"rich ("}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"421,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"878). I'll use"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" final_result function to provide"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" information about Zurich,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" including its country ("}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Switzerland) and population"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"ErcDCqgBCBIYAipAKlCxijje55Mm1FJfIWZuKqvt8zGI2DT5f55D2ffb0nLn4MgDkr5KnytjQp71sOtNTjir02b2Ml8OsQJEvf0EETIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YpoBEwoRY2xhdWRlLXNvbm5ldC00LTaoAdTVxdYGEgxpxE0QeGsJ8/eQrPEaDI75LNAIZ8bnFbHdXSIwE0uYofEjmw1HIYGUn75QSM4+VhZ9gKYN4JTQpj7X1YaxU1kR7/8CK2ir6R8ttO20KrsBqxUl/ZjZ7waO/h1d1wMwvsP8u9pHdOQHNp2bw9abDfadR66pPvH24vYKsz/f1mWi9HLjEySocDz+wS8K2HnywMMdNODUHqbEKGCQ8EONS2qdmvVloXdjRT2xAWfwUugjzeUTeFz4eQCemElggrL8nQSi6N+u3LcVKNT2dLUidL83TrGOHOmn8llo7dpfMIBseZoF26e7bq78u1pQgX8mtNzEJMngSjta5D7kFlSoO3gfoZfd1+hIQYFo6RgB"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Now"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" let me compile"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the information about Zurich!"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01ULKbJX1vNwi6TLwBxGtSrP","name":"final_result","input":{},"caller":{"type":"direct"}}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":": \"Zuri"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"ch\""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":", \"coun"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"try\": \""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"Switzer"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"land\""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":", \"popu"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"lation\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":": 42187"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"8}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":729,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":156,"output_tokens_details":{"thinking_tokens":51}}      }
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-10-16T00:07:49.731376+00:00

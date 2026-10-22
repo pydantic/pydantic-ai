@@ -145,7 +145,7 @@ async def main():
         #> The capital of France is Paris.
 ```
 
-See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
+The retry policy belongs to the channel and can't change per request, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on xAI. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Image generation
 
@@ -244,7 +244,7 @@ agent = Agent(
 
 Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
 
-Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it always reasons: `thinking=False` is silently ignored and `thinking=True` maps to `'medium'`.
+Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it always reasons: `thinking=False` is silently ignored and `thinking=True` maps to `'medium'`. Grok 4.7 supports the same values but not `'none'`; `thinking=False` is also ignored, while `thinking=True` omits `reasoning_effort` so xAI applies its documented `'high'` default. xAI accepts `'xhigh'`, but Pydantic AI currently maps it to `'high'`; see [issue #9744](https://github.com/pydantic/pydantic-ai/issues/9744) for dedicated support.
 
 ## Agentic turns
 

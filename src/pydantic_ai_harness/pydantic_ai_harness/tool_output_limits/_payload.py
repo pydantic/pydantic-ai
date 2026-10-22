@@ -12,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from enum import Enum
 from typing import TypeGuard
 
-from pydantic_core import to_json
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
 from pydantic_ai_harness._output import truncate_tail
@@ -48,6 +48,19 @@ def is_binary(value: object) -> bool:
     return isinstance(value, (bytes, bytearray, memoryview))
 
 
+def _json(value: object, *, indent: int | None = None, fallback: Callable[[object], object] | None = None) -> bytes:
+    """`to_json`, with every `bytes` leaf in base64 when one of them is not UTF-8.
+
+    `to_json` renders `bytes` as the text they decode to, so binary such as a file read in binary
+    mode or raw command output fails to serialize, and the exception would abort the run from the
+    after-hook. Base64 is how pydantic-ai encodes `bytes` in the tool returns it sends to the model.
+    """
+    try:
+        return to_json(value, indent=indent, fallback=fallback)
+    except PydanticSerializationError:
+        return to_json(value, indent=indent, fallback=fallback, bytes_mode='base64')
+
+
 def to_bytes(value: object) -> bytes:
     """Serialize any tool return value to the bytes that get spilled.
 
@@ -60,7 +73,7 @@ def to_bytes(value: object) -> bytes:
         return value.tobytes()
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
-    return to_json(value, fallback=repr)
+    return _json(value, fallback=repr)
 
 
 def to_text(value: object) -> str:
@@ -73,7 +86,7 @@ def to_text(value: object) -> str:
     """
     if isinstance(value, str):
         return value
-    return to_json(value, fallback=repr).decode('utf-8', errors='replace')
+    return _json(value, fallback=repr).decode('utf-8', errors='replace')
 
 
 # A serializer callable for structured (non-string, non-binary) tool returns:
@@ -92,7 +105,7 @@ def indented_json(value: object) -> str:
     A spilled payload rendered this way can be paged and `pattern`-filtered by line
     through `read_tool_result`; compact JSON puts the whole value on one line.
     """
-    return to_json(value, indent=2).decode('utf-8', errors='replace').translate(_LINE_SEPARATOR_ESCAPES)
+    return _json(value, indent=2).decode('utf-8', errors='replace').translate(_LINE_SEPARATOR_ESCAPES)
 
 
 def json_lines(value: object) -> str:
@@ -104,7 +117,7 @@ def json_lines(value: object) -> str:
     `indented_json`.
     """
     if _is_text_sequence(value):
-        rendered = '\n'.join(to_json(item).decode('utf-8', errors='replace') for item in value)
+        rendered = '\n'.join(_json(item).decode('utf-8', errors='replace') for item in value)
         return rendered.translate(_LINE_SEPARATOR_ESCAPES)
     return indented_json(value)
 

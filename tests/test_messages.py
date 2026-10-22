@@ -6,7 +6,7 @@ import subprocess
 import sys
 import warnings
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -43,7 +43,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     PartDeltaEvent,
     RequestUsage,
-    RetryPromptPart,
+    RunUsage,
     SpeechPart,
     SpeechPartDelta,
     TextContent,
@@ -84,7 +84,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -668,8 +668,10 @@ def test_pre_usage_refactor_messages_deserializable():
         {
             'input_tokens': 13,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 76,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -714,8 +716,10 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
         {
             'input_tokens': 5,
             'cache_write_tokens': 0,
+            'cache_write_1h_tokens': 0,
             'cache_read_tokens': 0,
             'output_tokens': 0,
+            'output_reasoning_tokens': 0,
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
@@ -737,6 +741,33 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert isinstance(loaded, ModelResponse)
     assert loaded.usage == usage
     assert loaded.usage.__dict__['future_tokens'] == 42
+
+
+def test_usage_reasoning_and_one_hour_cache_fields_load_from_older_payloads():
+    """Usage stored before `output_reasoning_tokens` and `cache_write_1h_tokens` were declared loads with them.
+
+    genai-prices already set both as attributes, so older payloads have them as extra keys when they were
+    non-zero and leave them out otherwise. Either way they now read as typed fields, and an absent count
+    equals an explicit zero.
+    """
+    with_counts, without_counts = ModelMessagesTypeAdapter.validate_python(
+        [
+            {
+                'parts': [],
+                'usage': {'output_tokens': 8, 'output_reasoning_tokens': 3, 'cache_write_1h_tokens': 4},
+                'kind': 'response',
+            },
+            {'parts': [], 'usage': {'output_tokens': 8}, 'kind': 'response'},
+        ]
+    )
+    assert isinstance(with_counts, ModelResponse)
+    assert isinstance(without_counts, ModelResponse)
+    assert (with_counts.usage.output_reasoning_tokens, with_counts.usage.cache_write_1h_tokens) == (3, 4)
+    assert (without_counts.usage.output_reasoning_tokens, without_counts.usage.cache_write_1h_tokens) == (0, 0)
+    assert getattr(without_counts.usage, 'cache_write_1h_tokens', 0) == 0
+
+    assert RunUsage(input_tokens=16) == RunUsage(input_tokens=16, output_reasoning_tokens=0)
+    assert {'output_reasoning_tokens', 'cache_write_1h_tokens'} <= {f.name for f in fields(RequestUsage)}
 
 
 async def test_legacy_vendor_message_history_replays_through_agent():
@@ -866,8 +897,10 @@ def test_file_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -887,6 +920,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'workspace_ref': None,
             }
@@ -2680,10 +2714,15 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-def test_args_as_json_str_valid_json_verbatim():
-    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
-    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
-    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+def test_args_as_json_str_valid_json_canonical():
+    """args_as_json_str should render valid object JSON compactly, the same as the equivalent dict args.
+
+    Key order is preserved and non-ASCII text stays unescaped, so only insignificant whitespace (and
+    number spelling) changes.
+    """
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": [2, 3.50], "c": "Z\\u00fcrich ☕"}')
+    assert part.args_as_json_str() == snapshot('{"b":1,"a":[2,3.5],"c":"Zürich ☕"}')
+    assert part.args_as_json_str() == ToolCallPart(tool_name='test_tool', args=part.args_as_dict()).args_as_json_str()
 
 
 def test_args_as_json_str_dict_args():
@@ -2767,7 +2806,7 @@ class TestInstructionParts:
 
 def test_retry_prompt_strips_input_from_top_level_errors():
     """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
         ],
@@ -2779,7 +2818,7 @@ def test_retry_prompt_strips_input_from_top_level_errors():
 
 def test_retry_prompt_keeps_input_for_nested_errors():
     """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
         ],
@@ -2791,7 +2830,7 @@ def test_retry_prompt_keeps_input_for_nested_errors():
 
 def test_retry_prompt_mixed_top_level_and_nested_errors():
     """When both top-level and nested errors exist, only top-level input should be stripped."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
             {
@@ -2811,7 +2850,7 @@ def test_retry_prompt_mixed_top_level_and_nested_errors():
 
 def test_retry_prompt_strips_input_from_top_level_type_errors():
     """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'int_parsing',
@@ -2828,7 +2867,7 @@ def test_retry_prompt_strips_input_from_top_level_type_errors():
 
 def test_retry_prompt_tool_call_keeps_input_at_top_level():
     """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
@@ -2841,7 +2880,7 @@ def test_retry_prompt_tool_call_keeps_input_at_top_level():
 
 def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {
@@ -2860,7 +2899,7 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
 def test_retry_prompt_otel_message_parts_include_content():
     """Retry prompt parts honor `include_content` like every other message part, in both the
     tool-call and non-tool branches."""
-    non_tool = RetryPromptPart(
+    non_tool = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'string_type',
@@ -2870,7 +2909,7 @@ def test_retry_prompt_otel_message_parts_include_content():
             },
         ],
     )
-    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+    tool = legacy_retry_prompt_part(tool_name='my_tool', tool_call_id='call_1', content='Try again')
 
     with_content = InstrumentationSettings(include_content=True)
     assert non_tool.otel_message_parts(with_content) == snapshot(
@@ -3128,8 +3167,10 @@ def test_speech_part_serialization_roundtrip():
                 'usage': {
                     'input_tokens': 0,
                     'cache_write_tokens': 0,
+                    'cache_write_1h_tokens': 0,
                     'cache_read_tokens': 0,
                     'output_tokens': 0,
+                    'output_reasoning_tokens': 0,
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
@@ -3149,6 +3190,7 @@ def test_speech_part_serialization_roundtrip():
                 'conversation_id': None,
                 'metadata': None,
                 'workspace_ref': None,
+                'history_digest': None,
                 'failed_attempts': None,
                 'state': 'complete',
             },

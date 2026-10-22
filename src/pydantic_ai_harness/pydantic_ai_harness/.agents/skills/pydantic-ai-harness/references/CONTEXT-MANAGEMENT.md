@@ -112,6 +112,9 @@ hence `max_tokens=1` / `max_messages=1`. `tiers` must be non-empty and exactly o
 `ClearToolResults(max_messages=None, max_tokens=None, keep_pairs=3, placeholder='[tool result cleared]', exclude_tools=frozenset(), clear_tool_inputs=False, min_clear_tokens=None)`:
 blanks old tool results, keeping the newest `keep_pairs`. `min_clear_tokens` skips clears too
 small to be worth a cache bust. Core `search_tools` / `load_capability` returns are never cleared.
+`max_messages` counts from the last cleared result, so clears come in batches about
+`(max_messages - 2 * keep_pairs) / 2` tool steps apart; at or below `2 * keep_pairs` it clears on
+every request.
 
 ### `DeduplicateFileReads`
 
@@ -176,7 +179,8 @@ agent = Agent(
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
-never edits history; it appends an URGENT then CRITICAL user-turn warning as limits approach. At
+never edits history; it enqueues an URGENT then CRITICAL warning as a request-scoped
+`SystemPromptPart(scope='request')` as limits approach: seen for that request only, kept in history. At
 least one limit is required; `warn_on` may only name configured kinds (`'iterations'`,
 `'context_window'`, `'total_tokens'`).
 
