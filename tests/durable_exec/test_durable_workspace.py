@@ -48,8 +48,11 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     FileEntry,
+    KeyPress,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
+    UnsupportedComputerActionError,
+    Wait,
     Workspace,
     WorkspaceBackend,
     WorkspaceError,
@@ -61,7 +64,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 
-from ..workspace_fakes import FakeWorkspace, InMemoryProvider, WorkspaceCapability
+from ..workspace_fakes import FAKE_SCREENSHOT, FakeWorkspace, InMemoryProvider, WorkspaceCapability
 
 
 class _Backend(CallableOperationBackend[dict[str, Any]]):
@@ -441,6 +444,9 @@ async def test_result_workspace_calls_directly_once_the_container_has_ended() ->
     await workspace.remove('after.bin')
     assert await workspace.exists('after.bin') is False
     assert await workspace.realpath('sub/../after.txt') == '/workspace/after.txt'
+    for display_call in (workspace.display_size(), workspace.screenshot(), workspace.act(KeyPress(keys=('a',)))):
+        with pytest.raises(UserError, match='has no display to control'):
+            await display_call
     assert _workspace_units(durability) == ['ensure']
 
     # A wrapper that never ran `ensure` asks the wrapped workspace for its working directory too.
@@ -575,6 +581,12 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
         await workspace.read_bytes('b.bin')
     with pytest.raises(TypeError, match='shell'):
         await workspace.run('ls', shell=False)
+    assert await workspace.display_size() == (1280, 800)
+    assert await workspace.screenshot() == FAKE_SCREENSHOT
+    await workspace.act(KeyPress(keys=('ctrl', 's')))
+    with pytest.raises(UnsupportedComputerActionError, match="cannot perform 'wait'"):
+        await workspace.act(Wait())
+    assert provider.actions == [KeyPress(keys=('ctrl', 's'))]
     assert _workspace_units(durability) == snapshot(
         [
             'ensure',
@@ -592,6 +604,10 @@ async def test_every_method_runs_as_a_unit_against_a_provider_environment() -> N
             'stat',
             'read_bytes',
             'run',
+            'display_size',
+            'screenshot',
+            'act',
+            'act',
         ]
     )
     assert provider.log == ['create:env-1']
@@ -610,6 +626,11 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
     assert pickle.loads(pickle.dumps(call)) == call
     result = WorkspaceCallResult(data=raw, entries=[FileEntry(name='a', path='/a', is_dir=False, size=1)])
     assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, result)) == result
+    act = WorkspaceCall(method='act', action=KeyPress(keys=('ctrl', 's')))
+    assert JSON_CODEC.load(WorkspaceCall, JSON_CODEC.dump(WorkspaceCall, act)) == act
+    assert pickle.loads(pickle.dumps(act)) == act
+    size = WorkspaceCallResult(size=(1280, 800))
+    assert JSON_CODEC.load(WorkspaceCallResult, JSON_CODEC.dump(WorkspaceCallResult, size)) == size
 
 
 @pytest.mark.parametrize(
@@ -618,6 +639,7 @@ def test_non_utf8_bytes_round_trip_through_json_and_pickle() -> None:
         WorkspaceTimeoutError('slow', stdout='partial', stderr='err'),
         WorkspaceUnavailableError('gone'),
         WorkspaceReadOnlyError('read-only'),
+        UnsupportedComputerActionError('no such action'),
         WorkspaceError('broken'),
         FileNotFoundError('/missing'),
         NotADirectoryError('/file'),

@@ -248,7 +248,8 @@ agent = Agent('{{ anthropic:medium }}', capabilities=[LocalWorkspace('.', read_o
 ```
 
 A refused change raises [`WorkspaceReadOnlyError`][pydantic_ai.workspaces.WorkspaceReadOnlyError].
-Commands are refused too, because a command could change files. A capability can check
+Commands are refused too, because a command could change files. On a workspace with a display,
+screenshots are allowed and mouse and keyboard actions are refused. A capability can check
 [`ctx.workspace.read_only`][pydantic_ai.workspaces.Workspace.read_only] to leave its write tools out.
 
 For a single run, wrap its workspace in `ReadOnlyWorkspace` and pass it as `workspace=`, as the
@@ -520,6 +521,38 @@ A backend is the object that talks to one environment; `Workspace` wraps it to g
 and `ctx.workspace.run` raises `UserError`. Shell-derived reads require regular files (not FIFOs or devices). They transfer large files and directory listings in bounded chunks, but shell-derived file operations are slower than native provider file APIs. Local and shell-derived file operations refuse to remove the workspace root or an ancestor, and local writes do not recreate a removed workspace directory. `LocalWorkspace` continues only in a ref naming its configured directory exactly as written, so a ref spelled through a symlink is declined.
 With both, they must reach the same environment. A filesystem-only backend whose storage can hold
 symlinks should also implement `SupportsRealpath`; see [Resolving symlinks](#resolving-symlinks).
+
+### Controlling a display
+
+A backend whose environment has a graphical display implements
+[`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]: `display_size`, `screenshot`
+(PNG bytes), and `act`, which performs one [`ComputerAction`][pydantic_ai.workspaces.ComputerAction]
+such as a click or a key press. Tools reach them as `ctx.workspace.screenshot()` and
+`ctx.workspace.act(...)`; under durable execution, calls from workflow code run as workspace
+operations, like file calls. A Linux environment that runs an X server can delegate to
+[`X11Computer`][pydantic_ai.workspaces.X11Computer], which drives it with `xdotool` and `scrot` through
+the backend's commands:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.workspaces import ComputerAction, SupportsComputerUse, X11Computer
+
+
+class MyDesktopSandbox(MySandbox, SupportsComputerUse):
+    async def display_size(self) -> tuple[int, int]:
+        return await X11Computer(self).display_size()
+
+    async def screenshot(self) -> bytes:
+        return await X11Computer(self).screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        await X11Computer(self).act(action)
+```
+
+Starting the X server is the environment's job, for example an image whose entrypoint runs `Xvfb :1`.
+New action kinds may be added to `ComputerAction`, so `act` must raise
+[`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for a kind it
+doesn't know; the conformance suite checks this. Pydantic AI never controls a display on its own: only a
+backend that implements `SupportsComputerUse` has one, so the local backend never drives your screen.
 
 ### Resolving symlinks
 

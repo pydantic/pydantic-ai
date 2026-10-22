@@ -8,16 +8,34 @@ Requires pytest and the anyio pytest plugin.
 from __future__ import annotations
 
 import posixpath
+import struct
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 
 import anyio
 import pytest
 
+from .computer import (
+    Click,
+    ComputerAction,
+    Drag,
+    HoldKey,
+    KeyPress,
+    MouseDown,
+    MouseUp,
+    MoveMouse,
+    Screenshot,
+    Scroll,
+    TypeText,
+    Wait,
+)
 from .protocol import (
     SupportsCommands,
+    SupportsComputerUse,
     SupportsRealpath,
+    UnsupportedComputerActionError,
     WorkspaceBackend,
     WorkspaceRef,
     WorkspaceTimeoutError,
@@ -32,6 +50,19 @@ def _commands(backend: WorkspaceBackend) -> SupportsCommands:
     if not isinstance(backend, SupportsCommands):
         pytest.skip('backend does not implement SupportsCommands')
     return backend
+
+
+def _computer(backend: WorkspaceBackend) -> SupportsComputerUse:
+    if not isinstance(backend, SupportsComputerUse):
+        pytest.skip('backend does not implement SupportsComputerUse')
+    return backend
+
+
+@dataclass(frozen=True)
+class _UnknownAction:
+    """An action kind no backend knows, standing in for one added to `ComputerAction` after the backend was written."""
+
+    kind: str = 'conformance_unknown_action'
 
 
 @asynccontextmanager
@@ -545,3 +576,44 @@ class WorkspaceBackendSuite:
         await destroy_environment(backend)
         with pytest.raises(WorkspaceUnavailableError):
             await attach_backend(backend.ref).working_dir()
+
+    async def test_screenshot_is_a_png_of_the_display_size(self, backend: WorkspaceBackend) -> None:
+        computer = _computer(backend)
+        width, height = await computer.display_size()
+        assert width > 0 and height > 0
+        png = await computer.screenshot()
+        # The PNG signature, then the IHDR chunk, whose first fields are the image's width and height.
+        assert png[:8] == b'\x89PNG\r\n\x1a\n'
+        assert png[12:16] == b'IHDR'
+        assert struct.unpack('>II', png[16:24]) == (width, height)
+
+    async def test_every_action_is_performed_or_refused_as_unsupported(self, backend: WorkspaceBackend) -> None:
+        """A backend may lack an action kind, but must refuse it with `UnsupportedComputerActionError`."""
+        computer = _computer(backend)
+        width, height = await computer.display_size()
+        x, y = width // 2, height // 2
+        actions: list[ComputerAction] = [
+            MoveMouse(x=x, y=y),
+            Click(x=x, y=y),
+            Click(count=2),
+            Click(button='right', keys=('shift',)),
+            KeyPress(keys=('escape',)),
+            Scroll(x=x, y=y, dy=1),
+            Scroll(dx=-1),
+            Drag(path=((x, y), (x + 10, y + 10))),
+            MouseDown(),
+            MouseUp(),
+            TypeText(text='a'),
+            KeyPress(keys=('backspace',), repeat=1),
+            HoldKey(keys=('shift',), seconds=0.1),
+            Wait(seconds=0),
+            Screenshot(),
+        ]
+        for action in actions:
+            with suppress(UnsupportedComputerActionError):
+                await computer.act(action)
+
+    async def test_an_unknown_action_kind_is_refused(self, backend: WorkspaceBackend) -> None:
+        computer = _computer(backend)
+        with pytest.raises(UnsupportedComputerActionError):
+            await computer.act(_UnknownAction())  # pyright: ignore[reportArgumentType]

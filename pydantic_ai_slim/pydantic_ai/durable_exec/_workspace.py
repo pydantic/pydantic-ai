@@ -29,7 +29,9 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
+    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -57,7 +59,19 @@ WORKSPACE_OPERATION_ID = CapabilityOperationId('workspace', operation='call')
 _BYTES_CONFIG = ConfigDict(ser_json_bytes='base64', val_json_bytes='base64')
 
 WorkspaceMethod: TypeAlias = Literal[
-    'ensure', 'run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'realpath'
+    'ensure',
+    'run',
+    'read_bytes',
+    'write_bytes',
+    'stat',
+    'list_dir',
+    'make_dir',
+    'remove',
+    'exists',
+    'realpath',
+    'display_size',
+    'screenshot',
+    'act',
 ]
 
 
@@ -90,6 +104,7 @@ class WorkspaceCallResult:
     flag: bool = False
     entries: list[FileEntry] = field(default_factory=list[FileEntry])
     command: CommandResult | None = None
+    size: tuple[int, int] | None = None
     ref: WorkspaceRef | None = None
     error: WorkspaceCallError | None = None
 
@@ -105,6 +120,7 @@ class WorkspaceCall:
     shell: bool = False
     env: dict[str, str] | None = None
     timeout: float | None = None
+    action: ComputerAction | None = None
 
     async def execute(self, workspace: Workspace) -> WorkspaceCallResult:
         match self.method:
@@ -142,6 +158,14 @@ class WorkspaceCall:
                 return WorkspaceCallResult(flag=await workspace.exists(self.path))
             case 'realpath':
                 return WorkspaceCallResult(text=await workspace.realpath(self.path))
+            case 'display_size':
+                return WorkspaceCallResult(size=await workspace.display_size())
+            case 'screenshot':
+                return WorkspaceCallResult(data=await workspace.screenshot())
+            case 'act':
+                assert self.action is not None
+                await workspace.act(self.action)
+                return WorkspaceCallResult()
         assert_never(self.method)
 
 
@@ -164,6 +188,7 @@ _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceUnavailableError,
     WorkspaceReadOnlyError,
     WorkspaceOutputLimitError,
+    UnsupportedComputerActionError,
     WorkspaceError,
     FileNotFoundError,
     NotADirectoryError,
@@ -345,6 +370,23 @@ class DurableWorkspace(WrapperWorkspace):
         if not self._in_container():
             return await self.wrapped.realpath(path)
         return (await self._call(WorkspaceCall(method='realpath', path=path))).text
+
+    async def display_size(self) -> tuple[int, int]:
+        if not self._in_container():
+            return await self.wrapped.display_size()
+        size = (await self._call(WorkspaceCall(method='display_size'))).size
+        assert size is not None
+        return size
+
+    async def screenshot(self) -> bytes:
+        if not self._in_container():
+            return await self.wrapped.screenshot()
+        return (await self._call(WorkspaceCall(method='screenshot'))).data
+
+    async def act(self, action: ComputerAction) -> None:
+        if not self._in_container():
+            return await self.wrapped.act(action)
+        await self._call(WorkspaceCall(method='act', action=action))
 
     async def _call(self, call: WorkspaceCall) -> WorkspaceCallResult:
         await self._ensure()

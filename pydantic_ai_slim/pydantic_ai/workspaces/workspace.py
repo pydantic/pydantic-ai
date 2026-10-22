@@ -14,10 +14,12 @@ from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
 
+from .computer import ComputerAction
 from .protocol import (
     CommandResult,
     FileEntry,
     SupportsCommands,
+    SupportsComputerUse,
     SupportsFilesystem,
     SupportsRealpath,
     WorkspaceBackend,
@@ -524,6 +526,28 @@ class Workspace(WorkspaceBackend):
         if isinstance(backend, SupportsCommands):
             return await _ShellFilesystem(backend).realpath(path)
         return posixpath.normpath(path)
+
+    @property
+    def _computer(self) -> SupportsComputerUse:
+        backend = self._backend
+        if isinstance(backend, SupportsComputerUse):
+            return backend
+        raise UserError(
+            'This workspace has no display to control. Attach a backend that implements `SupportsComputerUse`, '
+            'such as a sandbox started with a desktop.'
+        )
+
+    async def display_size(self) -> tuple[int, int]:
+        """The display's `(width, height)` in pixels. Raises `UserError` if the workspace has no display."""
+        return await self._computer.display_size()
+
+    async def screenshot(self) -> bytes:
+        """Capture the whole display as PNG bytes. Raises `UserError` if the workspace has no display."""
+        return await self._computer.screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        """Perform a mouse or keyboard action on the display. Raises `UserError` if the workspace has no display."""
+        await self._computer.act(action)
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""

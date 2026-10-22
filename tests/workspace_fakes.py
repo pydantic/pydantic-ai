@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import posixpath
+import struct
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
@@ -10,16 +11,23 @@ from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.workspaces import (
     CommandResult,
+    ComputerAction,
     FileEntry,
     ReadOnlyWorkspace,
     SupportsCommands,
+    SupportsComputerUse,
     SupportsFilesystem,
+    UnsupportedComputerActionError,
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
+
+FAKE_DISPLAY_SIZE = (1280, 800)
+FAKE_SCREENSHOT = b'\x89PNG\r\n\x1a\n' + struct.pack('>I', 13) + b'IHDR' + struct.pack('>II', *FAKE_DISPLAY_SIZE)
+"""The start of a PNG of the fake display: its signature and the header chunk that carries its size."""
 
 
 def _add_parent_directories(directories: set[str], path: str) -> None:
@@ -335,11 +343,13 @@ class InMemoryProvider:
         self.environments: dict[str, dict[str, bytes]] = {}
         self.directories: dict[str, set[str]] = {}
         self.log: list[str] = []
+        self.actions: list[ComputerAction] = []
 
     def reset(self) -> None:
         self.environments.clear()
         self.directories.clear()
         self.log.clear()
+        self.actions.clear()
 
     def backend(self, ref: WorkspaceRef | None) -> ProviderBackend:
         return ProviderBackend(self, ref)
@@ -348,7 +358,7 @@ class InMemoryProvider:
         return ProviderWorkspaces(self, read_only=read_only)
 
 
-class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsComputerUse):
     def __init__(self, provider: InMemoryProvider, ref: WorkspaceRef | None) -> None:
         self._provider = provider
         self._ref = ref
@@ -436,6 +446,20 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         # The environment has no symlinks, so resolving a path only normalizes it.
         await self._files()
         return posixpath.normpath(path)
+
+    async def display_size(self) -> tuple[int, int]:
+        await self._files()
+        return FAKE_DISPLAY_SIZE
+
+    async def screenshot(self) -> bytes:
+        await self._files()
+        return FAKE_SCREENSHOT
+
+    async def act(self, action: ComputerAction) -> None:
+        await self._files()
+        if action.kind not in ('click', 'key_press', 'type_text', 'screenshot'):
+            raise UnsupportedComputerActionError(f'the fake display cannot perform {action.kind!r}')
+        self._provider.actions.append(action)
 
 
 class ProviderWorkspaces(AbstractCapability[Any]):

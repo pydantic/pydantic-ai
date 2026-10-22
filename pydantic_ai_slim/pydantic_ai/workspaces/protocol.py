@@ -3,7 +3,8 @@
 A backend implements [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] plus
 [`SupportsCommands`][pydantic_ai.workspaces.SupportsCommands],
 [`SupportsFilesystem`][pydantic_ai.workspaces.SupportsFilesystem], or both, and optionally
-[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath]. Every backend must:
+[`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] and
+[`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse]. Every backend must:
 
 - run commands and file operations against one filesystem, when it supports both;
 - report the real exit code: a non-zero exit is a result, never an exception;
@@ -32,6 +33,8 @@ from typing import Protocol, TypeAlias, runtime_checkable
 
 from pydantic_ai.messages import WorkspaceRef
 
+from .computer import ComputerAction
+
 # These protocols are frozen once released: conformance is structural, so adding a member
 # would silently break every existing backend. New operations go on concrete types or on new
 # optional `Supports*` protocols. New fields on `CommandResult` and `FileEntry` must carry
@@ -48,8 +51,10 @@ __all__ = (
     'WorkspaceTimeoutError',
     'WorkspaceUnavailableError',
     'SupportsCommands',
+    'SupportsComputerUse',
     'SupportsFilesystem',
     'SupportsRealpath',
+    'UnsupportedComputerActionError',
 )
 
 
@@ -94,6 +99,10 @@ class WorkspaceReadOnlyError(WorkspaceError, PermissionError):
 
     Raised by [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace] and wrappers like it.
     """
+
+
+class UnsupportedComputerActionError(WorkspaceError):
+    """A [`SupportsComputerUse`][pydantic_ai.workspaces.SupportsComputerUse] backend can't perform this kind of action."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -214,6 +223,33 @@ class SupportsRealpath(Protocol):
         Relative link targets start in the link's directory; `..` after a link climbs from its
         target. Keep missing components as written. A loop must not hang; a returned path through a loop
         must stay inside the directory holding it (or raise `OSError`). Return an absolute, normalized path.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsComputerUse(Protocol):
+    """Optional control of a graphical display: screenshots, mouse, and keyboard.
+
+    Without it, the `Workspace` display methods raise `UserError`. A Linux environment with an X server can
+    implement it by delegating to [`X11Computer`][pydantic_ai.workspaces.X11Computer].
+    """
+
+    async def display_size(self) -> tuple[int, int]:
+        """The display's `(width, height)` in pixels, the coordinate space of every action."""
+        ...
+
+    async def screenshot(self) -> bytes:
+        """Capture the whole display as PNG bytes, at the size `display_size` reports."""
+        ...
+
+    async def act(self, action: ComputerAction) -> None:
+        """Perform one action on the display.
+
+        Raise [`UnsupportedComputerActionError`][pydantic_ai.workspaces.UnsupportedComputerActionError] for an
+        action kind the backend doesn't know: new kinds can be added to
+        [`ComputerAction`][pydantic_ai.workspaces.ComputerAction] without changing this protocol.
+        A [`Screenshot`][pydantic_ai.workspaces.Screenshot] action does nothing; callers take the screenshot.
         """
         ...
 

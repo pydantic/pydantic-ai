@@ -12,7 +12,9 @@ import anyio.to_thread
 import pytest
 
 from pydantic_ai.workspaces import (
+    ComputerAction,
     LocalWorkspaceBackend,
+    SupportsComputerUse,
     WorkspaceBackend,
     WorkspaceRef,
     local as local_module,
@@ -23,6 +25,7 @@ from .workspace_fakes import (
     FakeWorkspace,
     FilesystemOnlyWorkspaceBackend,
     InMemoryProvider,
+    ProviderBackend,
     RunOnlyWorkspaceBackend,
 )
 
@@ -125,6 +128,23 @@ class TestRunOnlyWorkspaceBackend(WorkspaceBackendSuite):
         return _local_destroy_environment()
 
 
+class _ProviderFilesAndDisplay(FilesystemOnlyWorkspaceBackend, SupportsComputerUse):
+    """The provider's files and display, without its stub `run`."""
+
+    def __init__(self, inner: ProviderBackend) -> None:
+        super().__init__(inner)
+        self._display = inner
+
+    async def display_size(self) -> tuple[int, int]:
+        return await self._display.display_size()
+
+    async def screenshot(self) -> bytes:
+        return await self._display.screenshot()
+
+    async def act(self, action: ComputerAction) -> None:
+        await self._display.act(action)
+
+
 class TestProviderBackend(WorkspaceBackendSuite):
     @pytest.fixture
     def enforces_parent_file_errors(self) -> bool:
@@ -140,7 +160,7 @@ class TestProviderBackend(WorkspaceBackendSuite):
 
     @pytest.fixture
     def backend(self, provider: InMemoryProvider) -> WorkspaceBackend:
-        return FilesystemOnlyWorkspaceBackend(provider.backend(None))
+        return _ProviderFilesAndDisplay(provider.backend(None))
 
     @pytest.fixture
     def fresh_backend(self, provider: InMemoryProvider) -> Callable[[], WorkspaceBackend]:
