@@ -286,5 +286,5 @@ def _dedupe_activities(config: WorkerConfig) -> WorkerConfig:
     # An agent can be listed on several workflows, or also registered via `AgentPlugin`, contributing the same
     # activity callables more than once; Temporal rejects duplicate names, so keep each callable once.
     if 'activities' in config:
-        config['activities'] = list(dict.fromkeys(config['activities']))
+        config['activities'] = list(dict.fromkeys(config['activities']))  # type: ignore[reportUnknownArgumentType]
     return config
