@@ -321,7 +321,8 @@ Gotchas:
 - Steps match by name and order, not inputs: in-flight tasks keep stored results across a deploy.
 - A running step extends the worker's claim, so steps may outlast `claim_timeout`. A
   `claim_timeout=0` worker's claims never expire and nothing checks them mid-step, so a cancelled
-  task's steps run until one is checkpointed.
+  task's steps run to their end until one tries to checkpoint its result, which raises the
+  cancellation.
 - Inside a task an `MCPToolset` keeps one session for the run: the first step that needs the server
   connects, and a failed connection fails that step, so the task's retry connects again.
 - Function, MCP, or dynamic toolsets passed with `run(toolsets=...)` inside a task raise `UserError`;

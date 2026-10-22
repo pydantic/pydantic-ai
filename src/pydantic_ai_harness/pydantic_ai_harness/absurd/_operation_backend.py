@@ -99,7 +99,8 @@ async def _run_holding_claim(task_ctx: AsyncTaskContext, body: Callable[[], Awai
     Without this, a model request or tool call longer than `claim_timeout` lets another worker claim
     the task and run the same step again while this one is still in it. If extending the claim
     fails, the run no longer owns the task (it was cancelled, or failed and retried elsewhere), so
-    the body is cancelled and the SDK's error propagates.
+    the body is cancelled and the SDK's error propagates. A claim without expiry (`claim_timeout <= 0`)
+    can't be extended, so the body then runs without heartbeats.
     """
     claim_timeout = _claim_timeout(task_ctx)
     if claim_timeout <= 0:
