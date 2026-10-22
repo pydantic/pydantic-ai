@@ -54,8 +54,9 @@ Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, the drop cut o
 the session closed any cut reply as interrupted and kept the earlier turns, so ask again or resend
 the cut turn rather than starting over. On Gemini, a drop before the first resumption handle starts
 a fresh session instead: the session's history keeps the earlier turns, but the model no longer has
-them, so restate any context the next turn depends on. If true but a current utterance vanished, that in-flight media was outside the restored
-completed-turn history. See [state restoration](lifecycle.md#state-restoration).
+them, so restate any context the next turn depends on. If true but a current utterance vanished,
+that in-flight media was outside the restored completed-turn history. See
+[state restoration](lifecycle.md#state-restoration).
 
 ## Gemini reaches its session limit
 
