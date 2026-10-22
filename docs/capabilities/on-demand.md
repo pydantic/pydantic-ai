@@ -36,9 +36,14 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability may have tools; they stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
 ```
+
+The catalog is tagged so that when it changes between runs of a conversation, for example because a capability was added, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the cached prompt.
 
 The model does not receive the refund instructions or the `refund_status` tool definition yet, so it has no reason to call the tool. Depending on the active model, Pydantic AI may also send provider/tool-search plumbing to preserve the hidden state; that plumbing does not expose the refund tool definition until the capability is loaded. The exchange unfolds across model requests within a single `agent.run_sync` call:
 
@@ -192,7 +197,7 @@ In addition to `@capability.tool` and `@capability.tool_plain`, you can pass exi
 For anything beyond instructions, function tools, toolsets, and descriptions — model settings, hooks, native tools, wrapper toolsets, or custom per-run logic — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. When subclassing, override [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] if the catalog entry needs to vary by run.
 
 !!! note "Setting `id` for durable execution"
-    A toolset contributed by a capability — via `Capability(tools=[...])` or an [`MCP`](mcp.md) server running locally — inherits its `id` from the capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id]. [Durable execution](../durable_execution/overview.md) identifies each leaf toolset by its `id`, so pass `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')` when combining a capability with Temporal, DBOS, or Prefect. Temporal requires an `id` for every leaf toolset and DBOS for every MCP server — both raise at construction without one. (`MCP` also derives one from the server URL when no `id` is given.) A URL-derived `id` can collide when two different servers share a host and final path segment (`https://a.com/api` and `https://a.com/v2/api` both derive `a.com-api`); DBOS raises at construction and Temporal when the worker starts, so pass an explicit `id` to disambiguate them.
+    A toolset contributed by a capability — via `Capability(tools=[...])` or an [`MCP`](mcp.md) server running locally — inherits its `id` from the capability's [`id`][pydantic_ai.capabilities.AbstractCapability.id]. [Durable execution](../durable_execution/overview.md) identifies each leaf toolset by its `id`, so pass `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')` when combining a capability with Temporal, DBOS, or Prefect. Temporal requires an `id` for every leaf toolset and DBOS for every MCP server — both raise at construction without one. (`MCP` also derives one from the server URL's hostname when no `id` is given.) Two servers on the same host (`https://a.com/api` and `https://a.com/v2/api` both derive `a.com`) are rejected when the agent is constructed, so pass an explicit `id` to each.
 
 ## Beyond instructions: tools, settings, hooks, native tools {#beyond-instructions}
 

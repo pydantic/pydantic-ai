@@ -29,8 +29,10 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelMessage,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -39,7 +41,8 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     RunContext,
     SystemPromptPart,
     TextContent,
@@ -98,6 +101,7 @@ from ..conftest import (
     RequestCapture,
     TestEnv,
     iter_message_parts,
+    legacy_retry_prompt_part,
     message,
     raise_if_exception,
     try_import,
@@ -822,7 +826,8 @@ def test_anthropic_model_resolves_profile_for_bedrock_model_ids(model_name: str,
 @pytest.mark.parametrize(
     ('client', 'model_name', 'supports_json_schema_output'),
     [
-        pytest.param('bedrock', 'us.anthropic.claude-opus-4-7', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock', 'us.anthropic.claude-fable-5', False, id='bedrock-withheld-geo'),
+        pytest.param('bedrock', 'us.anthropic.claude-haiku-5-5', True, id='bedrock-served-geo'),
         pytest.param('bedrock-mantle', 'anthropic.claude-sonnet-5', True, id='bedrock-mantle'),
         pytest.param('claude-api', 'claude-sonnet-5', True, id='direct'),
     ],
@@ -850,7 +855,7 @@ def test_anthropic_structured_output_follows_legacy_bedrock_support(
     'model_name,expected',
     [
         pytest.param(
-            'global.anthropic.claude-sonnet-5',
+            'global.anthropic.claude-fable-5',
             snapshot(
                 {
                     'output_config': None,
@@ -861,7 +866,7 @@ def test_anthropic_structured_output_follows_legacy_bedrock_support(
             id='withheld',
         ),
         pytest.param(
-            'global.anthropic.claude-sonnet-4-6',
+            'global.anthropic.claude-haiku-5-5',
             snapshot(
                 {
                     'output_config': {
@@ -888,10 +893,10 @@ async def test_anthropic_legacy_bedrock_structured_output_request(
 ):
     """On `AsyncAnthropicBedrock`, a model Bedrock withholds structured output from gets Tool Output and no `strict`.
 
-    Bedrock answers `output_config.format` on Claude Sonnet 5 with a 400:
-    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Sonnet 4.6, which Bedrock serves structured output
-    for, keeps Native Output and `strict`. A mock transport stands in for a cassette because the recording
-    account has no access to the models Bedrock withholds structured output from.
+    Bedrock answers `output_config.format` on the models it withholds structured output from with a 400:
+    https://github.com/pydantic/pydantic-ai/issues/9878. Claude Haiku 5.5, which Bedrock serves structured output
+    for, keeps Native Output and `strict`: https://github.com/pydantic/pydantic-ai/issues/10697. A mock transport
+    stands in for a cassette because the recording account has no access to Claude Fable 5.
     """
     bodies: list[dict[str, JsonValue]] = []
 
@@ -915,7 +920,7 @@ async def test_anthropic_legacy_bedrock_structured_output_request(
         def add(a: int, b: int) -> int:
             raise NotImplementedError
 
-        # Claude Sonnet 5 thinks by default; Sonnet 4.6 needs the setting to reach the same output mode choice.
+        # Both models think by default; the setting keeps the output mode choice independent of that.
         with pytest.raises(ModelHTTPError):
             await agent.run('1+1', model_settings={'thinking': True})
 
@@ -2704,11 +2709,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=UTC),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     )
                 ],
                 instructions='this is the system prompt',
@@ -3464,9 +3471,12 @@ def test_model_error_reported_in_stream(
     m = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     with pytest.raises(expected) as exc_info:
         Agent(m).run_sync('hello')
-    assert type(exc_info.value) is expected
+    assert isinstance(exc_info.value, expected)
     if isinstance(exc_info.value, ModelHTTPError):
         assert exc_info.value.status_code == 529
+        assert isinstance(exc_info.value, ModelOverloadedError)
+    else:
+        assert type(exc_info.value) is ModelAPIError
 
 
 @pytest.mark.parametrize(
@@ -3565,7 +3575,8 @@ async def test_stream_transport_error_mid_stream(allow_model_requests: None) -> 
             async with agent.run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelConnectionError
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.message == 'connection reset'
     assert isinstance(exc_info.value.__cause__, httpx2.ReadError)
 
@@ -4178,7 +4189,7 @@ async def test_anthropic_model_empty_thinking_signature_sent_as_text(allow_model
                 'content': [
                     {
                         'text': """\
-<assistant_thinking provider="anthropic">
+<assistant_thinking>
 I was interrupted mid-thought
 </assistant_thinking>\
 """,
@@ -13654,7 +13665,7 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='ready', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(content='Retry the final output.'),
+                    RetryFeedbackPart(content='Retry the final output.', retry=RetryInfo(cause='model_retry')),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     UserPromptPart(content='Continue.'),
                 ]
@@ -13666,7 +13677,9 @@ def test_anthropic_synthesized_reveal_does_not_cross_unrelated_parts() -> None:
     assert [[type(part) for part in message.parts] for message in messages] == [
         [ToolReturnPart],
         [ToolSearchCallPart],
-        [ToolSearchReturnPart, RetryPromptPart],
+        # The feedback projects to the `<system>`-tagged `UserPromptPart` this profile gives a
+        # mid-conversation system prompt; what this test pins is where it lands, not its voice.
+        [ToolSearchReturnPart, UserPromptPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart, UserPromptPart],
     ]
@@ -13683,7 +13696,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
                 parts=[
                     ToolReturnPart(tool_name='reveal', content='x', tool_call_id='reveal'),
                     ToolAvailabilityDeltaPart(tools_added=['delete_map']),
-                    RetryPromptPart(tool_name='list_maps', content='retry', tool_call_id='list_maps'),
+                    ToolReturnPart(tool_name='list_maps', content='retry', tool_call_id='list_maps', outcome='retried'),
                     ToolAvailabilityDeltaPart(tools_added=['archive_map']),
                     ToolReturnPart(tool_name='status', content='ready', tool_call_id='status'),
                     UserPromptPart(content='continue'),
@@ -13694,7 +13707,7 @@ def test_anthropic_synthesized_reveals_follow_parallel_results() -> None:
     )
 
     assert [[type(part) for part in message.parts] for message in messages] == [
-        [ToolReturnPart, RetryPromptPart, ToolReturnPart],
+        [ToolReturnPart, ToolReturnPart, ToolReturnPart],
         [ToolSearchCallPart],
         [ToolSearchReturnPart],
         [ToolSearchCallPart],
@@ -13794,8 +13807,11 @@ async def test_anthropic_explicit_tool_search_keeps_search_surface(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:
-- refunds: Refund policy tools.\
+- refunds: Refund policy tools.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13875,8 +13891,11 @@ async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
             {
                 'type': 'text',
                 'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
             }
         ]
@@ -13949,17 +13968,18 @@ async def test_anthropic_deferred_capability_without_tool_search_across_models(
             ('lookup_refund_policy', True, ''),
         ]
     )
-    assert request_capture.body()['system'] == snapshot(
-        [
-            {
-                'type': 'text',
-                'text': """\
+    assert request_capture.body()['system'] == [
+        {
+            'type': 'text',
+            'text': """\
+<context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy tools. Load this capability before looking up refund policy.\
+- refunds: Refund policy tools. Load this capability before looking up refund policy.
+</context>
+A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """,
-            }
-        ]
-    )
+        }
+    ]
 
     request_bodies = [json.loads(request.body) for request in vcr.requests]
     assert len(request_bodies) >= 2
@@ -15015,7 +15035,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
         ),
         ModelRequest(
             parts=[
-                RetryPromptPart(
+                legacy_retry_prompt_part(
                     tool_name='search_knowledge',
                     tool_call_id='toolu_123',
                     content='Invalid JSON: expected `,` or `}` at line 1 column 99',
@@ -15048,7 +15068,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    legacy_retry_prompt_part(
                         content='Invalid JSON: expected `,` or `}` at line 1 column 99',
                         tool_name='search_knowledge',
                         tool_call_id='toolu_123',
@@ -15109,11 +15129,7 @@ async def test_anthropic_malformed_tool_args_no_crash(allow_model_requests: None
                     {
                         'tool_use_id': 'toolu_123',
                         'type': 'tool_result',
-                        'content': """\
-Invalid JSON: expected `,` or `}` at line 1 column 99
-
-Fix the errors and try again.\
-""",
+                        'content': [{'text': 'Invalid JSON: expected `,` or `}` at line 1 column 99', 'type': 'text'}],
                         'is_error': True,
                     },
                     {'text': 'Please fix the tool call and try again.', 'type': 'text'},
@@ -16250,9 +16266,9 @@ I'm here to help! How can I assist you today?\
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
