@@ -169,8 +169,9 @@ class ToolCallRefused:
 class Interrupted:
     """The caller interrupted the response being spoken, having heard `played_ms` of it.
 
-    `cuts` are the output items the session truncated on the provider, by item id, each with how much of its
-    audio was heard: a response that already ended is recorded as cut off there too.
+    `cuts` are the output items the barge-in cut off, by item id, each with how much of its audio was heard
+    (truncated on the provider too when the model supports output truncation): a response that already ended is
+    recorded as cut off there too.
     """
 
     played_ms: int | None

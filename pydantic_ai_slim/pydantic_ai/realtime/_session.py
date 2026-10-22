@@ -1887,24 +1887,22 @@ class RealtimeSession:
         # they arrive, so the stream carries nothing the barge-in already cut off.
         self._flush_tap(tap)
         self._interrupted_audio_part_index = self._audio_part_index
-        if not self._profile.get('supports_output_truncation', False):
-            # Best effort on a model without output truncation (xAI): the unheard audio is still
-            # flushed and the response cancelled; only the provider-side transcript sync is
-            # unavailable.
-            if cancel:
-                await self._send_frame(CancelResponse())
-            self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
-            return True
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
         played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
-        # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         truncations = self._truncations_at(playhead)
-        try:
-            await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
-        except RealtimeError:
-            # As in `interrupt(played_ms=...)`: the truncations may have reached the provider before the link failed.
-            self._apply_core(self._playback_interruption(played_ms, truncations))
-            raise
+        # Truncate before cancelling, under one hold of the send lock, for the same reasons as above. Without
+        # output truncation (xAI) only the cancel goes out, but history still records where playback stopped,
+        # including on a reply that finished generating before the user spoke over it.
+        supports_truncation = self._profile.get('supports_output_truncation', False)
+        frames = [*(truncations if supports_truncation else ()), *([CancelResponse()] if cancel else [])]
+        if frames:
+            try:
+                await self._send_frame(*frames)
+            except RealtimeError:
+                # As in `interrupt(played_ms=...)`: the frames may have reached the provider before the link failed,
+                # and either way the listener heard only this much.
+                self._apply_core(self._playback_interruption(played_ms, truncations))
+                raise
         self._apply_core(self._playback_interruption(played_ms, truncations))
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
