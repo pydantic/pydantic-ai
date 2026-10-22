@@ -14,8 +14,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from ._codec import IDENTITY_CODEC, JSON_CODEC, DurabilityCodec
 
 if TYPE_CHECKING:
-    from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-    from pydantic_ai.toolsets._dynamic import DynamicToolset
+    from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
 
     from ._capability_operation import CapabilityMethodDeclaration, CapabilityOperationParams
     from ._workspace import WorkspaceCallParams

@@ -11,8 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, InstructionPart, ModelMessage, ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, FunctionToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._compat import (

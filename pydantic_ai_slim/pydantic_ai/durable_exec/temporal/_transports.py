@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.output import OutputDataT
     from pydantic_ai.tools import AgentDepsT
-    from pydantic_ai.toolsets._dynamic import DynamicToolset
+    from pydantic_ai.toolsets import DynamicToolset
 
     from ._durability import TemporalDurability
 
