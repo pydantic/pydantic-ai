@@ -65,6 +65,18 @@
       "fingerprint": "3f251f144a349a9576dead528de462aa8ca0be783ce575a1b0d7018bb4b663c1",
       "reason": "Harness 0.x: `Reminder.tag` defaults to `None`, since a reminder is already a system prompt and needs no `<system-reminder>` wrapper. Leaving it unset warns through `warn_default_changed`, and `tag='system-reminder'` restores the old wrapping.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "11d8adb6d31f2d914b698012c944e1ed71d6165dce4b628f78c8fc4faf4b705d",
+      "reason": "Harness 0.x: a dynamic reminder may now also return a `GeneratedReminder`, which `LLMReminder` returns so `SystemReminders` quotes model-generated text as data instead of sending it in system voice. Every callable that returned `str | None` still matches.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "fd37097ab972abecf06e1850aa2501c42a2fb08e2d9a5ae04eedf24c07981fa8",
+      "reason": "Harness 0.x: a dynamic reminder may now also return a `GeneratedReminder`, which `LLMReminder` returns so `SystemReminders` quotes model-generated text as data instead of sending it in system voice. Every callable that returned `str | None` still matches.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
     }
   ]
 }
