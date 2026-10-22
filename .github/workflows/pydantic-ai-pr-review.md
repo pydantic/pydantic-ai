@@ -78,8 +78,8 @@ concurrency:
   # reviewed or as not a request.
   #
   # A label other than `final-review` and a review that is not an approval are
-  # never requests: each gets a group of its own, so it cannot replace a pending
-  # request for the same head.
+  # never requests: each gets a group of its own, so it does not queue behind a
+  # review of the same head before it skips.
   group: >-
     ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.event.pull_request.head.ref || github.ref }}-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}${{ ((github.event_name == 'pull_request' && github.event.label.name != 'final-review') || (github.event_name == 'pull_request_review' && github.event.review.state != 'approved')) && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: false
