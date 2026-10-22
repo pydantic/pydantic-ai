@@ -242,11 +242,19 @@ def _fallback_message() -> list[BetaMessageIterationUsage | BetaFallbackMessageI
     return [_iteration(100, 10), fallback]
 
 
+def _cached_last_message() -> list[BetaMessageIterationUsage]:
+    cached = BetaMessageIterationUsage(
+        type='message', input_tokens=40, output_tokens=10, cache_read_input_tokens=200, cache_creation_input_tokens=50
+    )
+    return [_iteration(100, 10), cached]
+
+
 @pytest.mark.parametrize(
     ('iterations', 'context_input_tokens'),
     [
         pytest.param(_trailing_compaction, 400, id='trailing-compaction'),
         pytest.param(_fallback_message, 300, id='fallback-message'),
+        pytest.param(_cached_last_message, 40 + 200 + 50, id='cached-last-message'),
     ],
 )
 async def test_context_is_last_message_or_fallback_message_pass(
@@ -255,8 +263,9 @@ async def test_context_is_last_message_or_fallback_message_pass(
     """The context is the last `message` or `fallback_message` pass; a `compaction` entry isn't, even the last one.
 
     A `compaction` entry measures the compaction, not the context it leaves, and `fallback_message` replaces `message`
-    as the last entry of a turn a fallback model served. Not a VCR test: a server-side model fallback can't be
-    triggered on demand, and a response that ends with a compaction needs a history past the compaction threshold.
+    as the last entry of a turn a fallback model served. The pass's cache reads and writes count toward its context.
+    Not a VCR test: a server-side model fallback can't be triggered on demand, a response that ends with a compaction
+    needs a history past the compaction threshold, and the recorded turns read and write no cache.
     """
     message = completion_message(
         [BetaTextBlock(text='done', type='text')],
