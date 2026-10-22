@@ -34,9 +34,11 @@ def _bedrock_api_key() -> str | None:
     under the `bedrock` extra.
     """
     pytest.importorskip('botocore')
-    if os.environ.get('AWS_ACCESS_KEY_ID'):
-        return None
-    return os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token')
+    return (
+        None
+        if os.environ.get('AWS_ACCESS_KEY_ID')
+        else os.environ.get('AWS_BEARER_TOKEN_BEDROCK', 'test-bedrock-token')
+    )
 
 
 @pytest.fixture
