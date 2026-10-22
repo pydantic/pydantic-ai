@@ -2228,7 +2228,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _map_web_fetch_tool(
         tool: WebFetchTool, supports_dynamic_filtering: bool, include_citations: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        enable_citations = include_citations if tool.enable_citations is None else tool.enable_citations
+        enable_citations = tool.enable_citations or include_citations
         citations = BetaCitationsConfigParamParam(enabled=True) if enable_citations else None
         if supports_dynamic_filtering:
             return (

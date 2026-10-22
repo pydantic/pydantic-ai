@@ -600,8 +600,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock (TXT and PDF documents, including those returned by tools, with Anthropic models)
     * xAI (inline citations)
 
-    Providers that always return citations ignore this setting. A
-    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] whose `enable_citations` is set uses that value instead.
+    Providers that always return citations ignore this setting.
     """
 
     cache: CacheSetting

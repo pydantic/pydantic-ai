@@ -1792,11 +1792,7 @@ def test_model_json_schema_with_capabilities():
                             'default': None,
                             'title': 'Blocked Domains',
                         },
-                        'enable_citations': {
-                            'anyOf': [{'type': 'boolean'}, {'type': 'null'}],
-                            'default': None,
-                            'title': 'Enable Citations',
-                        },
+                        'enable_citations': {'default': False, 'title': 'Enable Citations', 'type': 'boolean'},
                         'max_content_tokens': {
                             'anyOf': [{'type': 'integer'}, {'type': 'null'}],
                             'default': None,
