@@ -965,34 +965,11 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 ## Third-Party Toolsets
 
-Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem.
+Third-party toolsets can also be wrapped as [capabilities](capabilities/overview.md), which bundle tools with hooks, instructions, and model settings. See [Extensibility](extensibility.md) for the full ecosystem. For skills, planning, file system and shell access, sandboxed code execution, and more, see the [capability index](capabilities/overview.md#available-capabilities), which covers Pydantic AI and [Pydantic AI Harness](harness/index.md).
 
 ### MCP Servers
 
 Pydantic AI provides [`MCPToolset`][pydantic_ai.mcp.MCPToolset] for connecting to and calling tools on local and remote MCP servers, with the [`MCP` capability](capabilities/mcp.md) as the recommended higher-level entry point. See the [MCP overview](./mcp/overview.md) and [MCP client](./mcp/client.md) documentation for details.
-
-### Agent Skills
-
-[Agent Skills](https://agentskills.io) are loaded as [on-demand capabilities](capabilities/on-demand.md) rather than as toolsets, so each skill can stay collapsed to a catalog entry until the model needs it. See [Agent Skills](capabilities/third-party.md#agent-skills) on the third-party capabilities page.
-
-### Task Management
-
-Toolsets for task planning and progress tracking help agents organize complex work and provide visibility into agent progress:
-
-* [`pydantic-ai-todo`](https://github.com/vstorm-co/pydantic-ai-todo) - `TodoToolset` with `read_todos` and `write_todos` tools. Included in the third-party [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) [deep agent](multi-agent-applications.md#deep-agents) framework.
-
-### File Operations
-
-Toolsets for file operations help agents read, write, and edit files:
-
-* [`pydantic-ai-filesystem-sandbox`](https://github.com/zby/pydantic-ai-filesystem-sandbox) - `FileSystemToolset` with a sandbox and LLM-friendly errors
-* [`pydantic-deep`](https://github.com/vstorm-co/pydantic-deepagents) — Deep agent framework that includes a `FilesystemToolset` with multiple backends (in-memory, real filesystem, Docker sandbox).
-
-### Code Execution
-
-Toolsets for sandboxed code execution help agents run code in a sandboxed environment:
-
-* [`mcp-run-python`](https://github.com/pydantic/mcp-run-python) - MCP server by the Pydantic team that runs Python code in a sandboxed environment. Can be used as `MCPToolset(StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`.
 
 ### LangChain Tools {#langchain-tools}
 
