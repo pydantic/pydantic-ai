@@ -4024,6 +4024,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # continuing would silently drop the change: resend everything instead.
                 if self._history_changed(m, messages[:index]):
                     return None, messages, True
+                # A computer call's safety checks are acknowledged from the call, so it has to be in the request.
+                if any(
+                    isinstance(p, ToolCallPart) and (p.provider_details or {}).get('safety_checks') for p in m.parts
+                ):
+                    return None, messages, True
                 previous_response_id = m.provider_response_id
                 break
             else:
@@ -6965,8 +6970,8 @@ def _map_computer_call_output(
 
     The API needs a screenshot in every output, so a result without one (it failed, was denied, or had its screenshot
     left out of this request) sends a blank image instead. The call's safety checks are acknowledged when it ran:
-    `ComputerUse(require_approval=True)` is how a user reviews a call before it does. A call that is only in the stored
-    response (`previous_response_id`) has no checks here to acknowledge.
+    `ComputerUse(require_approval=True)` is how a user reviews a call before it does. A call with checks is always in
+    the request: `previous_response_id` doesn't continue past one.
     """
     screenshot = next((file.data_uri for file in part.files if isinstance(file, BinaryImage)), _BLANK_SCREENSHOT)
     output: responses.response_input_param.ComputerCallOutput = {
