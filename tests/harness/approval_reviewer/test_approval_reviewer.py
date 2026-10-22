@@ -612,8 +612,8 @@ class TestConversationContext:
         await agent.run('a very long instruction that will not fit in the window')
         assert clamped[0].split('\n\n')[0] == '<conversation>\nwith {"x":1}\n</conversation>'
 
-    async def test_blocks_are_embedded_as_written_except_closing_tags(self) -> None:
-        """The reviewer reads the characters a person would; only a forged closing tag is escaped."""
+    async def test_blocks_are_embedded_as_written_except_framework_tags(self) -> None:
+        """The reviewer reads the characters a person would; only the `<` of a framework tag is escaped."""
         prompts: list[str] = []
         ran: list[str] = []
         command = 'cat a > b && echo "héllo </tool_call>"'
