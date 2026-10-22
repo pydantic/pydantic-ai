@@ -59,6 +59,8 @@ class _RelayedPart:
     """The part object itself, held so its identity can't be reused by another object meanwhile."""
     snapshot: InstructionPart
     """A copy of the part as the child contributed it, so a part edited in place no longer counts as relayed."""
+    derived_key: bool = False
+    """Whether the framework chose the part's key; see `InstructionContribution.derived_key`."""
 
 
 @dataclass
@@ -251,7 +253,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             # container built or edited is its own text even when it carries a child's id, so it can't
             # speak under a key it doesn't own.
             if (relay := relays.parts.get(id(part))) is not None and relay.part is part and part == relay.snapshot:
-                contributions.append(InstructionContribution(relay.source, relay.source_id, (part,)))
+                contributions.append(
+                    InstructionContribution(relay.source, relay.source_id, (part,), derived_key=relay.derived_key)
+                )
             else:
                 contributions.append(make_contribution(self, part))
         return contributions
@@ -269,7 +273,16 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         # from the ones it writes.
         if (relays := _RELAYS.get()) is not None and relays.covers(self):
             relays.parts.update(
-                (id(part), _RelayedPart(contribution.source, contribution.source_id, part, replace(part)))
+                (
+                    id(part),
+                    _RelayedPart(
+                        contribution.source,
+                        contribution.source_id,
+                        part,
+                        replace(part),
+                        derived_key=contribution.derived_key,
+                    ),
+                )
                 for contribution in contributions
                 for part in contribution.parts
             )

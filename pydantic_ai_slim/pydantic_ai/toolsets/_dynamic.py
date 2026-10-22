@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, Self, TypeAlias
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, Self, TypeAlias
 
 from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..messages import InstructionPart
 from ..tools import ToolDefinition
 from .abstract import AbstractToolset, ToolsetTool
+
+if TYPE_CHECKING:
+    from ._instruction_collection import InstructionContribution
 
 ToolsetFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
@@ -139,6 +143,15 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self.id is None and toolset is not None and toolset._framework_appended_instruction_ids():
             return (toolset,)
         return ()
+
+    async def _collect_instruction_contributions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> list[InstructionContribution[AgentDepsT]]:
+        contributions = await super()._collect_instruction_contributions(ctx)
+        if self._instruction_children():
+            # A key passed along from the built toolset is the framework's choice, not an `id` given here.
+            contributions = [replace(contribution, derived_key=True) for contribution in contributions]
+        return contributions
 
     def _authors_own_instructions(self) -> bool:
         return not self._instruction_children() or type(self).get_instructions is not DynamicToolset.get_instructions

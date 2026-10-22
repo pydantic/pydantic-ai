@@ -19,6 +19,13 @@ class InstructionContribution(Generic[AgentDepsT]):
     source: AbstractToolset[AgentDepsT]
     source_id: ToolsetInstructionSource | None
     parts: tuple[InstructionPart, ...]
+    derived_key: bool = False
+    """Whether the framework chose the key rather than an `id` the author set on the contributing toolset.
+
+    An `MCPToolset` without an `id` keys its server instructions by its URL's hostname, and an id-less
+    `DynamicToolset` passes its built `MCPToolset`'s key along. Two such contributions that land on one
+    key fall back to unkeyed, rewriting instructions instead of colliding.
+    """
 
 
 def make_contribution(
@@ -44,7 +51,12 @@ def make_contribution(
             resolved_part = replace(part, id=InstructionId(source_id, name=part.name))
     elif part.id is not None:
         resolved_part = replace(part, id=None)
-    return InstructionContribution(source=source, source_id=source_id, parts=(resolved_part,))
+    return InstructionContribution(
+        source=source,
+        source_id=source_id,
+        parts=(resolved_part,),
+        derived_key=source_id is not None and source.id is None,
+    )
 
 
 def framework_appended_instruction_ids(toolset: AbstractToolset[AgentDepsT]) -> set[InstructionId]:
@@ -81,27 +93,37 @@ async def collect_toolset_instructions(
 def flatten_instruction_contributions(
     contributions: list[InstructionContribution[AgentDepsT]],
 ) -> list[InstructionPart]:
-    """Flatten collected contributions, rejecting two sources that would claim one key.
+    """Flatten collected contributions, rejecting two sources that would claim one key by their `id`s.
+
+    A contribution whose key the framework derived, such as an id-less `MCPToolset`'s server host,
+    doesn't make that a collision: when another source shares its key, its parts go out unkeyed and
+    rewriting, as they did before keys were derived, so only explicitly chosen `id`s can collide.
 
     Separate from the collection itself so a toolset that has already gathered its children can
     apply the rule without re-entering the walk that produced them.
     """
-    owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
+    explicit_owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
+    sources_by_key: dict[ToolsetInstructionSource, set[int]] = {}
+    for contribution in contributions:
+        if (source_id := contribution.source_id) is None:
+            continue
+        sources_by_key.setdefault(source_id, set()).add(id(contribution.source))
+        if contribution.derived_key:
+            continue
+        if explicit_owners.setdefault(source_id, contribution.source) is not contribution.source:
+            raise UserError(
+                f'Two toolsets have the same `id` {source_id.id!r} and both contribute '
+                f'instructions, so {str(source_id)!r} would address parts from each. '
+                'Toolset `id`s must be unique among all toolsets registered with the same agent.'
+            )
     parts: list[InstructionPart] = []
     for contribution in contributions:
-        if contribution.source_id is not None:
-            source_id = contribution.source_id
-            if (owner := owners.setdefault(source_id, contribution.source)) is not contribution.source:
-                if owner.id is None or contribution.source.id is None:
-                    raise UserError(
-                        f'Two toolsets contribute instructions keyed {str(source_id)!r}, at least one of them '
-                        'without an `id`, such as two `MCPToolset`s for servers on one host, which key their '
-                        "instructions by the server's hostname. Pass a distinct `id` to each."
-                    )
-                raise UserError(
-                    f'Two toolsets have the same `id` {source_id.id!r} and both contribute '
-                    f'instructions, so {str(source_id)!r} would address parts from each. '
-                    'Toolset `id`s must be unique among all toolsets registered with the same agent.'
-                )
-        parts.extend(contribution.parts)
+        if (
+            contribution.derived_key
+            and contribution.source_id is not None
+            and len(sources_by_key[contribution.source_id]) > 1
+        ):
+            parts.extend(replace(part, id=None, on_change='rewrite') for part in contribution.parts)
+        else:
+            parts.extend(contribution.parts)
     return parts

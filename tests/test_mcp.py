@@ -1057,7 +1057,11 @@ A later <context> element with the same id replaces the earlier one and stays in
             * 2
         )
 
-    def test_two_toolsets_without_ids_on_one_host_need_ids(self):
+    def test_toolsets_sharing_a_derived_key_fall_back_to_unkeyed_instructions(self):
+        """Two id-less toolsets on one host share their derived key, so neither appends, and neither collides.
+
+        Only `id`s an author chose collide, as they always have.
+        """
         part = InstructionPart(content='Guidance.', on_change='append')
         first = make_contribution(MCPToolset('https://mcp.example.com/a'), part)
         second = make_contribution(MCPToolset('https://mcp.example.com/b'), part)
@@ -1066,11 +1070,58 @@ A later <context> element with the same id replaces the earlier one and stays in
         assert make_contribution(MCPToolset('http://[::1]:8000/mcp'), part).parts[0].id == InstructionId(
             ToolsetInstructionSource('--1')
         )
-        with pytest.raises(
-            UserError,
-            match=re.escape("instructions keyed 'toolset:mcp.example.com', at least one of them without an `id`"),
-        ):
-            flatten_instruction_contributions([first, second])
+        unkeyed = InstructionPart(content='Guidance.', on_change='rewrite')
+        assert flatten_instruction_contributions([first, second]) == [unkeyed, unkeyed]
+        # An explicit `id` on that key keeps it; only the derived one falls back.
+        explicit = make_contribution(MCPToolset('https://mcp.example.com/c', id='mcp.example.com'), part)
+        assert flatten_instruction_contributions([explicit, first]) == [explicit.parts[0], unkeyed]
+        with pytest.raises(UserError, match=re.escape("Two toolsets have the same `id` 'docs'")):
+            flatten_instruction_contributions(
+                [
+                    make_contribution(MCPToolset('https://a.example.com/mcp', id='docs'), part),
+                    make_contribution(MCPToolset('https://b.example.com/mcp', id='docs'), part),
+                ]
+            )
+
+    async def test_id_less_dynamic_toolsets_on_one_host_keep_working(self):
+        """Two id-less `DynamicToolset`s that build `MCPToolset`s on one host run as they did before keys were derived."""
+        server: FastMCP[None] = FastMCP('remote_server', instructions='Remote guidance.')
+        prefixes: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prefixes.append(info.instructions)
+            return ModelResponse(parts=[TextPart('done')])
+
+        app = server.http_app(stateless_http=True, json_response=True)
+        client: httpx.AsyncClient | httpx2.AsyncClient
+        if MCP_SDK_V2:
+            client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))
+        else:
+            client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+
+        def build() -> DynamicToolset[None]:
+            return DynamicToolset[None](
+                lambda _ctx: MCPToolset('http://testserver/mcp', http_client=client, include_instructions=True),
+                per_run_step=False,
+            )
+
+        agent = Agent(FunctionModel(model_fn), deps_type=type(None), toolsets=[build(), build()])
+        try:
+            async with app.router.lifespan_context(app):
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter('always')
+                    result = await agent.run('Continue.')
+        finally:
+            await client.aclose()
+
+        assert [str(warning.message) for warning in caught if 'on_change' in str(warning.message)] == []
+        assert prefixes == ['Remote guidance.\n\nRemote guidance.']
+        assert not any(
+            isinstance(part, InstructionDeltaPart)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
 
     @pytest.mark.parametrize('composition', ['direct', 'dynamic-with-id'])
     async def test_server_instructions_in_a_deferred_capability_do_not_warn(
