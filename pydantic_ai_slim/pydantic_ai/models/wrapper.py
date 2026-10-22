@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import sys
 import warnings
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 import anyio
 
@@ -35,8 +35,35 @@ if TYPE_CHECKING:
 
 __all__ = ['WrapperModel']
 
-_borrowed_model: ContextVar[Model | None] = ContextVar('_borrowed_model', default=None)
-"""A model whose lifecycle its owner manages, which a wrapper entered around one request leaves alone."""
+_T = TypeVar('_T')
+
+
+@dataclass
+class _Borrowed:
+    """A model whose lifecycle its owner manages, which a wrapper being entered or exited around a request leaves alone.
+
+    Only while `active`: a task the wrapper starts meanwhile copies the context, and must enter the model as usual.
+    """
+
+    model: Model
+    active: bool = True
+
+
+_borrowed: ContextVar[_Borrowed | None] = ContextVar('_borrowed', default=None)
+
+
+def _is_borrowed(model: Model) -> bool:
+    return (borrowed := _borrowed.get()) is not None and borrowed.active and borrowed.model is model
+
+
+async def _leaving_borrowed_alone(borrowed: Model, call: Awaitable[_T]) -> _T:
+    marker = _Borrowed(borrowed)
+    token = _borrowed.set(marker)
+    try:
+        return await call
+    finally:
+        marker.active = False
+        _borrowed.reset(token)
 
 
 @asynccontextmanager
@@ -45,35 +72,19 @@ async def serving_wrapper_scope(wrapper: Model, borrowed: Model) -> AsyncGenerat
 
     `borrowed` isn't entered or exited with it: its owner, like `async with agent:`, manages its lifecycle, and exiting
     it here could close an HTTP client another request is using. The exit is shielded from cancellation, so it
-    finishes, and its return value is discarded, so it can't suppress the request's error.
+    finishes, and its return value is discarded, so it can't suppress the request's error. The cancel scope encloses
+    the whole of it, so a cancel scope or task group the wrapper opens when entered is closed inside the same one.
     """
-    token = _borrowed_model.set(borrowed)
-    try:
-        entered = await wrapper.__aenter__()
-    finally:
-        _borrowed_model.reset(token)
-    try:
-        yield entered
-    except BaseException:
-        await _exit_serving_wrapper(wrapper, borrowed, *sys.exc_info())
-        raise
-    else:
-        await _exit_serving_wrapper(wrapper, borrowed, None, None, None)
-
-
-async def _exit_serving_wrapper(
-    wrapper: Model,
-    borrowed: Model,
-    exc_type: type[BaseException] | None,
-    exc_val: BaseException | None,
-    exc_tb: TracebackType | None,
-) -> None:
-    token = _borrowed_model.set(borrowed)
-    try:
-        with anyio.CancelScope(shield=True):
-            await wrapper.__aexit__(exc_type, exc_val, exc_tb)
-    finally:
-        _borrowed_model.reset(token)
+    with anyio.CancelScope() as scope:
+        entered = await _leaving_borrowed_alone(borrowed, wrapper.__aenter__())
+        try:
+            yield entered
+        except BaseException:
+            scope.shield = True
+            await _leaving_borrowed_alone(borrowed, wrapper.__aexit__(*sys.exc_info()))
+            raise
+        scope.shield = True
+        await _leaving_borrowed_alone(borrowed, wrapper.__aexit__(None, None, None))
 
 
 @dataclass(init=False)
@@ -91,7 +102,7 @@ class WrapperModel(Model):
         self.wrapped = infer_model(wrapped)
 
     async def __aenter__(self) -> Self:
-        if self.wrapped is not _borrowed_model.get():
+        if not _is_borrowed(self.wrapped):
             await self.wrapped.__aenter__()
         return self
 
@@ -101,7 +112,7 @@ class WrapperModel(Model):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> bool | None:
-        if self.wrapped is _borrowed_model.get():
+        if _is_borrowed(self.wrapped):
             return None
         return await self.wrapped.__aexit__(exc_type, exc_val, exc_tb)
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 import anyio
 import anyio.lowlevel
@@ -118,7 +119,7 @@ class _ScopedModel(WrapperModel):
         self.events = events
         self.entered = False
 
-    async def __aenter__(self) -> _ScopedModel:
+    async def __aenter__(self) -> Self:
         self.events.append('enter')
         self.entered = True
         return await super().__aenter__()
@@ -282,5 +283,116 @@ async def test_a_suspended_stream_the_consumer_failed_on_is_cancelled_through_th
                     async with node.stream(run.ctx) as stream:
                         async for _ in stream:  # pragma: no branch
                             raise RuntimeError('Consumer failed')
+    assert ('cancel', True) in events
+    assert len(model.cancelled) == 1
+
+
+class _TaskGroupModel(_ScopedModel):
+    """Holds a task group open from `__aenter__` to `__aexit__`, like a wrapper running background work."""
+
+    async def __aenter__(self) -> Self:
+        self.task_group = anyio.create_task_group()
+        await self.task_group.__aenter__()
+        return await super().__aenter__()
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        await super().__aexit__(*args)
+        return await self.task_group.__aexit__(*args)
+
+
+@dataclass
+class _ScopedTaskGroup(AbstractCapability[Any]):
+    events: list[object]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _TaskGroupModel(model, self.events)
+
+
+async def test_a_wrapper_can_hold_a_task_group_open_around_its_request() -> None:
+    events: list[object] = []
+    agent = Agent(TestModel(), capabilities=[_ScopedTaskGroup(events)])
+    assert (await agent.run('Hello')).output == 'success (no tool calls)'
+    assert events == ['enter', ('request', True), 'exit']
+
+
+class _SpawningModel(_ScopedModel):
+    """Starts a task when entered, which later uses the model it wraps on its own."""
+
+    def __init__(self, wrapped: Model, events: list[object]) -> None:
+        super().__init__(wrapped, events)
+        self.go = asyncio.Event()
+
+    async def __aenter__(self) -> Self:
+        self.task = asyncio.create_task(self._later())
+        return await super().__aenter__()
+
+    async def _later(self) -> None:
+        await self.go.wait()
+        async with WrapperModel(self.wrapped):
+            pass
+
+
+@dataclass
+class _ScopedSpawning(AbstractCapability[Any]):
+    events: list[object]
+    wrappers: list[_SpawningModel]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        wrapper = _SpawningModel(model, self.events)
+        self.wrappers.append(wrapper)
+        return wrapper
+
+
+async def test_a_task_the_wrapper_started_enters_the_wrapped_model_as_usual() -> None:
+    """Leaving the borrowed model alone only applies while the wrapper itself is being entered or exited."""
+    events: list[object] = []
+    wrappers: list[_SpawningModel] = []
+    agent = Agent(_RecordingLifecycle(events), capabilities=[_ScopedSpawning(events, wrappers)])
+    await agent.run('Hello')
+    [wrapper] = wrappers
+    wrapper.go.set()
+    await wrapper.task
+    assert events == ['enter', ('request', True), 'exit', 'base enter', 'base exit']
+
+
+class _SlowEnterCancel(_RecordingCancel):
+    async def __aenter__(self) -> Self:
+        await anyio.lowlevel.checkpoint()
+        return await super().__aenter__()
+
+
+@dataclass
+class _ScopedSlowEnterCancel(AbstractCapability[Any]):
+    events: list[object]
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        return _SlowEnterCancel(model, self.events)
+
+
+async def test_a_suspended_stream_cancelled_while_consumed_is_cancelled_through_the_wrapper() -> None:
+    events: list[object] = []
+    model = ScriptedContinuationModel(
+        segments=[
+            StreamSegment(
+                texts=['partial'], state='suspended', provider_response_id='job', input_tokens=1, output_tokens=1
+            )
+        ]
+    )
+    agent = Agent(model, capabilities=[_ScopedSlowEnterCancel(events)])
+    streaming = anyio.Event()
+
+    async def consume() -> None:
+        async with agent.iter('Hello') as run:
+            async for node in run:  # pragma: no branch
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for _ in stream:  # pragma: no branch
+                            streaming.set()
+                            await anyio.sleep_forever()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+        await streaming.wait()
+        tg.cancel_scope.cancel()
     assert ('cancel', True) in events
     assert len(model.cancelled) == 1

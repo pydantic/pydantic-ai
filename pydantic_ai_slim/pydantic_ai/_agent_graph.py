@@ -1769,17 +1769,21 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
                         partial = agent_stream_holder[0].response
-                        # Entered again, as cancelling a suspended response goes through the model that sent it.
-                        async with _serving_scope(wrap_request_context):
-                            await self._commit_interrupted_response(
-                                ctx,
-                                wrap_request_context.model,
-                                partial,
-                                # The handler recorded the response it billed, unless `wrap_model_request`
-                                # had already stopped it before the consumer did.
-                                _interrupted_response or _interrupted_stream_response(stream_error, partial),
-                                (_handler_request_context or wrap_request_context).messages,
-                            )
+                        # A capability's wrapper is entered again, as cancelling a suspended response goes through the
+                        # model that sent it, and shielded, as graph teardown may be under cancellation, so entering
+                        # it doesn't stop the job being cancelled and the response committed.
+                        serving_wrapper = wrap_request_context._serving_wrapper  # pyright: ignore[reportPrivateUsage]
+                        with anyio.CancelScope(shield=serving_wrapper is not None):
+                            async with _serving_scope(wrap_request_context):
+                                await self._commit_interrupted_response(
+                                    ctx,
+                                    wrap_request_context.model,
+                                    partial,
+                                    # The handler recorded the response it billed, unless `wrap_model_request`
+                                    # had already stopped it before the consumer did.
+                                    _interrupted_response or _interrupted_stream_response(stream_error, partial),
+                                    (_handler_request_context or wrap_request_context).messages,
+                                )
                 else:
                     try:
                         try:
