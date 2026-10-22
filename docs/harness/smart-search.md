@@ -1,17 +1,17 @@
 ---
-title: Smart File Search
+title: Smart Search
 description: "Give a Pydantic AI agent code search by behavior: describe it in plain English and get ranked source excerpts, judged by any model, such as a decision model over the System One API or TypeSafe's Jev."
 ---
 
-# Smart File Search
+# Smart Search
 
-`SmartFileSearch` gives an agent code search by behavior: the model describes the behavior it is looking for in plain
+`SmartSearch` gives an agent code search by behavior: the model describes the behavior it is looking for in plain
 English ("where do we reject expired sessions?") and gets back ranked source excerpts with file and line
 ranges, without first having to guess the symbol names a text search needs. Relevance is decided by a judge
 model you choose: any Pydantic AI model works, and a [decision model](../models/decision.md), served over the
 [System One API](../models/system-one.md) or as TypeSafe's Jev, is the recommended kind.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_file_search/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_search/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -24,17 +24,17 @@ only finds what you can already name.
 
 ## Usage
 
-Pass the judge as `model`, which is required (see [Choosing the judge](#choosing-the-judge)). `SmartFileSearch` searches the run's
+Pass the judge as `model`, which is required (see [Choosing the judge](#choosing-the-judge)). `SmartSearch` searches the run's
 [workspace](../workspace.md), so attach one next to it:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai_harness import SmartFileSearch
+from pydantic_ai_harness import SmartSearch
 
 agent = Agent(
     '{{ openai:large }}',
-    capabilities=[LocalWorkspace('.'), SmartFileSearch(model='system-one:clm-latest')],
+    capabilities=[LocalWorkspace('.'), SmartSearch(model='system-one:clm-latest')],
 )
 
 result = agent.run_sync('Where do we retry failed webhook deliveries?')
@@ -54,13 +54,13 @@ without a workspace fails at its start.
 | `threshold` | `0.5` | Relevance (the product of the two judgments, 0 to 1) a snippet needs to be returned. Tuned for Jev; see [Choosing the judge](#choosing-the-judge). |
 | `concurrency` | `8` | Snippets judged at once. |
 | `cache_index` | `False` | Keep each searched directory's index in memory between searches; see [Large codebases](#large-codebases). |
-| `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_file_search` before exploratory text search, `''` for none. |
+| `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_search` before exploratory text search, `''` for none. |
 
 ## Tool
 
 | Tool | Purpose |
 |---|---|
-| `smart_file_search` | Find code by what it does: `query` in plain English, optionally scoped by `directory` and a ripgrep `glob`, returning up to `limit` matches after judging up to `candidates` snippets. |
+| `smart_search` | Find code by what it does: `query` in plain English, optionally scoped by `directory` and a ripgrep `glob`, returning up to `limit` matches after judging up to `candidates` snippets. |
 
 A search runs in four steps:
 
@@ -77,7 +77,7 @@ A search runs in four steps:
    product of the two, and those at or above `threshold` are returned, best first, each with a focused
    excerpt of at most 12 lines.
 
-The result is a `SmartFileSearchResult`: the matches, how many passed but were cut by `limit`, coverage figures
+The result is a `SmartSearchResult`: the matches, how many passed but were cut by `limit`, coverage figures
 (files seen and skipped, snippets built and judged, and whether the shortlist was complete) and warnings, so
 the model can tell an empty result from a complete search that found nothing. Matches in test files are labeled
 `kind='test'` rather than demoted.
@@ -94,13 +94,13 @@ reads, chunks and indexes its directory from scratch.
 Set `cache_index=True` to keep each searched directory's index between searches, for the life of the agent:
 
 ```python
-from pydantic_ai_harness import SmartFileSearch
+from pydantic_ai_harness import SmartSearch
 
-capability = SmartFileSearch(model='system-one:clm-latest', cache_index=True)
+capability = SmartSearch(model='system-one:clm-latest', cache_index=True)
 ```
 
 Later searches of the same directory still read every file, to catch changes by content hash on any
-workspace, but only chunk and index the files that changed. Parallel `smart_file_search` calls on one directory
+workspace, but only chunk and index the files that changed. Parallel `smart_search` calls on one directory
 take turns, so its index is built once rather than by each call. On the Pydantic AI repository (4,500 files,
 2 million lines, 126,000 snippets), the first search spent about 9 seconds building the index and later ones
 under a second refreshing it, against 10 to 14 seconds for every search without the cache. Up to four
@@ -153,16 +153,16 @@ request is left to spend, the search fails and the model is told to use regular 
 
 ## Telemetry
 
-Each search opens a `smart file search` span under its tool call, on the run's tracer. The span has these
+Each search opens a `smart search` span under its tool call, on the run's tracer. The span has these
 attributes:
 
-- `smart_file_search.judge_model`: the judge model.
-- `smart_file_search.files`, `.skipped_files`, `.snippets` and `.evaluated`: the coverage figures.
-- `smart_file_search.indexed_files`: how many files the search chunked and indexed. With `cache_index`, only
+- `smart_search.judge_model`: the judge model.
+- `smart_search.files`, `.skipped_files`, `.snippets` and `.evaluated`: the coverage figures.
+- `smart_search.indexed_files`: how many files the search chunked and indexed. With `cache_index`, only
   new and changed files are, so this shows how much the cache saved.
-- `smart_file_search.selection_complete`: whether the coverage was complete.
-- `smart_file_search.matches` and `.omitted_matches`: how many matches were returned and cut.
-- `smart_file_search.query`: the query, only when the run includes content in traces.
+- `smart_search.selection_complete`: whether the coverage was complete.
+- `smart_search.matches` and `.omitted_matches`: how many matches were returned and cut.
+- `smart_search.query`: the query, only when the run includes content in traces.
 
 A failed search records no exception on this span; the enclosing tool span reports it, redacted by the run's
 `include_content`. The judge runs themselves are not instrumented. Their prompts carry source snippets, so global
@@ -171,32 +171,32 @@ usage is still added to the run's.
 
 ## Agent spec (YAML/JSON)
 
-`SmartFileSearch` works with Pydantic AI's [agent spec](../agent-spec.md):
+`SmartSearch` works with Pydantic AI's [agent spec](../agent-spec.md):
 
 ```yaml
 # agent.yaml
 model: {{ openai:large }}
 capabilities:
-  - SmartFileSearch:
+  - SmartSearch:
       model: system-one:clm-latest
       threshold: 0.6
 ```
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import SmartFileSearch
+from pydantic_ai_harness import SmartSearch
 
-agent = Agent.from_file('agent.yaml', custom_capability_types=[SmartFileSearch])
+agent = Agent.from_file('agent.yaml', custom_capability_types=[SmartSearch])
 ```
 
 Attach the workspace when running the agent, with `agent.run(..., workspace=...)`.
 
 ## API reference
 
-::: pydantic_ai_harness.smart_file_search.SmartFileSearch
+::: pydantic_ai_harness.smart_search.SmartSearch
 
-::: pydantic_ai_harness.smart_file_search.SmartFileSearchResult
+::: pydantic_ai_harness.smart_search.SmartSearchResult
 
-::: pydantic_ai_harness.smart_file_search.SmartFileSearchMatch
+::: pydantic_ai_harness.smart_search.SmartSearchMatch
 
-::: pydantic_ai_harness.smart_file_search.SmartFileSearchCoverage
+::: pydantic_ai_harness.smart_search.SmartSearchCoverage

@@ -1,4 +1,4 @@
-"""The `SmartFileSearch` capability: plain-English code search judged by a pluggable model."""
+"""The `SmartSearch` capability: plain-English code search judged by a pluggable model."""
 
 from __future__ import annotations
 
@@ -7,19 +7,19 @@ from dataclasses import KW_ONLY, dataclass, field
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.smart_file_search._toolset import (
+from pydantic_ai_harness.smart_search._toolset import (
     DEFAULT_CONCURRENCY,
     DEFAULT_THRESHOLD,
-    SmartFileSearchToolset,
+    SmartSearchToolset,
     validate_settings,
 )
 
 
 @dataclass
-class SmartFileSearch(AbstractCapability[AgentDepsT]):
+class SmartSearch(AbstractCapability[AgentDepsT]):
     """Plain-English code search: find code by what it does, described in plain English.
 
-    Adds a `smart_file_search` tool. A search lists the files under a directory in the
+    Adds a `smart_search` tool. A search lists the files under a directory in the
     run's workspace with `rg`, cuts them into snippets (overlapping line windows, or the
     functions, methods and long blocks of a Python file), shortlists the snippets with
     local BM25, and has a judge model score each shortlisted snippet's relevance.
@@ -39,11 +39,11 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import LocalWorkspace
 
-    from pydantic_ai_harness import SmartFileSearch
+    from pydantic_ai_harness import SmartSearch
 
     agent = Agent(
         'openai:gpt-6-astra',
-        capabilities=[LocalWorkspace('.'), SmartFileSearch('system-one:clm-latest')],
+        capabilities=[LocalWorkspace('.'), SmartSearch('system-one:clm-latest')],
     )
     ```
 
@@ -87,28 +87,28 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     """Custom discovery guidance for the system prompt, added whenever the tool is offered.
 
     Leave as `None` for the default, which tells the model to reach for
-    `smart_file_search` before exploratory text search, or set `''` to contribute no
+    `smart_search` before exploratory text search, or set `''` to contribute no
     instructions at all.
     """
 
-    _toolset: SmartFileSearchToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    _toolset: SmartSearchToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         validate_settings(self.threshold, self.concurrency)
 
-    def get_toolset(self) -> SmartFileSearchToolset[AgentDepsT]:
-        """Provide the stable `smart_file_search` toolset, shared with every per-run copy.
+    def get_toolset(self) -> SmartSearchToolset[AgentDepsT]:
+        """Provide the stable `smart_search` toolset, shared with every per-run copy.
 
         A run whose capabilities differ from the agent's (an instrumented one, or one given extra
         `capabilities`) asks for the toolset again; a new one would start with an empty `cache_index`.
         """
         if self._toolset is None:
-            self._toolset = SmartFileSearchToolset[AgentDepsT](
+            self._toolset = SmartSearchToolset[AgentDepsT](
                 model=self.model,
                 threshold=self.threshold,
                 concurrency=self.concurrency,
                 cache_index=self.cache_index,
                 guidance=self.guidance,
-                id=self.id or 'smart_file_search',
+                id=self.id or 'smart_search',
             )
         return self._toolset
