@@ -132,5 +132,6 @@ Check these when working in specific areas:
 - **[Documentation](documentation.md)**: When writing or reviewing documentation, comments, docstrings, examples, or other user-facing text
 - **[API Design & Interfaces](api-design.md)**: When designing or modifying public APIs, parameters, or class interfaces
 - **[Async & Concurrency](concurrency.md)**: When spawning tasks, using task groups or cancel scopes, creating locks/events/streams, writing async context managers or generators, crossing a thread or event-loop boundary, or testing any of it
+- **[Message History & Prompt Caching](message-history-and-caching.md)**: When enqueuing, editing, or rendering messages, contributing instructions or tools, wrapping content in tags, or converting history to or from a UI protocol
 - **[Pydantic AI Slim Architecture](pydantic-ai-slim.md)**: When changing agents, tools, output, message history, providers, profiles, capabilities, toolsets, UI adapters, or durable execution
 <!-- /braindump -->

@@ -29,6 +29,9 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
 from pydantic_ai_harness._workspace import METADATA_DIR, is_unattached, metadata_dir, secondary_workspace
 
+SPILL_DIR = 'tool-output'
+"""The directory under `.pydantic-ai-harness` in the working directory that `WorkspaceStore` writes to."""
+
 
 @runtime_checkable
 class OverflowStore(Protocol):
@@ -76,9 +79,9 @@ class WorkspaceStore:
 
     The handle is the file's absolute workspace path. Files live under
     `.pydantic-ai-harness/tool-output` in the workspace's working directory, which holds a
-    `.gitignore` so they stay out of version control, and the model can open them with
-    `read_tool_result` or with `FileSystem`'s `read_file`, since they are inside the working
-    directory.
+    `.gitignore` so they stay out of version control. The model reads them with
+    `read_tool_result`, or, as they are inside the working directory, with `FileSystem`'s
+    `read_file`, which replaces `read_tool_result` when it is on the agent.
 
     Files are not pruned: they go away with the sandbox, or when the directory is deleted for a
     local workspace. Set `workspace` to keep them in a workspace other than the run's.
@@ -114,14 +117,14 @@ class WorkspaceStore:
         `workspace` is the run's; the store's own `workspace`, when set, is used instead.
         """
         workspace = self._target(workspace)
-        path = posixpath.join(await metadata_dir(workspace, 'tool-output'), *_segments(key))
+        path = posixpath.join(await metadata_dir(workspace, SPILL_DIR), *_segments(key))
         await workspace.write_bytes(await _confine(workspace, path, key), data)
         return path
 
     async def read(self, workspace: Workspace, handle: str) -> bytes:
         """Read a payload back; a handle outside the store directory raises `PermissionError`."""
         workspace = self._target(workspace)
-        directory = await metadata_dir(workspace, 'tool-output')
+        directory = await metadata_dir(workspace, SPILL_DIR)
         path = posixpath.normpath(posixpath.join(directory, handle))
         if not path.startswith(directory.rstrip('/') + '/'):
             raise PermissionError(f'Handle {handle!r} is outside the store directory.')
@@ -147,7 +150,7 @@ async def _confine(workspace: Workspace, path: str, name: str) -> str:
     directory itself (or of `.pydantic-ai-harness`) is refused too, not only one inside it.
     """
     real_working_dir = await workspace.realpath(await workspace.working_dir())
-    real_directory = posixpath.join(real_working_dir, METADATA_DIR, 'tool-output')
+    real_directory = posixpath.join(real_working_dir, METADATA_DIR, SPILL_DIR)
     real_path = await workspace.realpath(path)
     if not real_path.startswith(real_directory + '/'):
         raise PermissionError(f'Handle {name!r} is outside the store directory.')
