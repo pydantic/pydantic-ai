@@ -94,7 +94,7 @@ from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
     'openai-responses:gpt-5.2',
-    capabilities=[OpenAICompaction(context_window_used_threshold=0.8)],
+    capabilities=[OpenAICompaction(context_window_threshold=0.8)],
 )
 ```
 

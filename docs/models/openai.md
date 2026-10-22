@@ -478,13 +478,13 @@ from pydantic_ai.models.openai import OpenAICompaction
 
 agent = Agent(
     'openai-responses:{{ openai:medium.name }}',
-    capabilities=[OpenAICompaction(context_window_used_threshold=0.8)],
+    capabilities=[OpenAICompaction(context_window_threshold=0.8)],
 )
 ```
 
-`context_window_used_threshold` compacts when the latest response's [`context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reaches the given fraction. It leaves history unchanged when usage is unknown, including before the first response. Because newly added content can make the next request larger than that estimate, leave enough headroom below `1.0`.
+`context_window_threshold` compacts when the latest response's [`context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reaches the given fraction. It leaves history unchanged when usage is unknown, including before the first response. Because newly added content can make the next request larger than that estimate, leave enough headroom below `1.0`. Combined with `message_count_threshold`, compaction runs when either threshold is reached.
 
-The mode is inferred from which parameters you pass: supplying `context_window_used_threshold`, `message_count_threshold`, or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
+The mode is inferred from which parameters you pass: supplying `context_window_threshold`, `message_count_threshold`, or `trigger` implies stateless mode, otherwise stateful mode is used. You can also pass `stateless=True` or `stateless=False` explicitly. Mixing parameters from different modes raises [`UserError`][pydantic_ai.exceptions.UserError].
 
 !!! tip
     Stateful compaction pairs especially well with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) or [`openai_conversation_id`](#using-durable-conversations). Both rely on OpenAI's server-side conversation state, so OpenAI can use a previously compacted context as the starting point for the next turn without you having to resend it.

@@ -4975,7 +4975,7 @@ class TestCompaction:
                 ModelRequest(parts=[UserPromptPart(content='1')]),
                 ModelResponse(parts=[TextPart(content='r1')]),
                 ModelRequest(parts=[UserPromptPart(content='2')]),
-            ],
+            ]
         )
 
     def test_openai_compaction_should_compact_no_config(self):
@@ -4988,14 +4988,25 @@ class TestCompaction:
         assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
 
     def test_openai_compaction_should_compact_at_context_window_threshold(self):
-        """The stateless threshold uses the latest response's context-window utilization."""
+        """The threshold reads the latest response's usage, and either configured threshold triggers compaction."""
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
-        cap = OpenAICompaction(context_window_used_threshold=0.8)
-        assert cap._should_compact([], 0.8)  # pyright: ignore[reportPrivateUsage]
-        assert not cap._should_compact([], 0.79)  # pyright: ignore[reportPrivateUsage]
-        assert not cap._should_compact([])  # pyright: ignore[reportPrivateUsage]
+        def history(context_tokens: int) -> list[ModelMessage]:
+            return [
+                ModelRequest(parts=[UserPromptPart(content='1')]),
+                ModelResponse(parts=[TextPart(content='r1')], usage=RequestUsage(input_tokens=context_tokens)),
+                ModelRequest(parts=[UserPromptPart(content='2')]),
+            ]
+
+        cap = OpenAICompaction(context_window_threshold=0.8)
+        assert cap._should_compact(history(80), context_window=100)  # pyright: ignore[reportPrivateUsage]
+        assert not cap._should_compact(history(79), context_window=100)  # pyright: ignore[reportPrivateUsage]
+        assert not cap._should_compact(history(80), context_window=None)  # pyright: ignore[reportPrivateUsage]
+
+        both = OpenAICompaction(context_window_threshold=0.8, message_count_threshold=2)
+        assert both._should_compact(history(10), context_window=None)  # pyright: ignore[reportPrivateUsage]
+        assert not both._should_compact(history(10)[:2], context_window=None)  # pyright: ignore[reportPrivateUsage]
 
     @pytest.mark.parametrize('threshold', [0, -0.1, 1.1])
     def test_openai_compaction_rejects_invalid_context_window_threshold(self, threshold: float):
@@ -5003,7 +5014,7 @@ class TestCompaction:
         from pydantic_ai.models.openai import OpenAICompaction
 
         with pytest.raises(UserError, match='greater than 0 and at most 1'):
-            OpenAICompaction(context_window_used_threshold=threshold)
+            OpenAICompaction(context_window_threshold=threshold)
 
     def test_openai_compaction_mode_inference(self):
         """`stateless` is inferred from which mode-specific fields are passed."""
@@ -5012,7 +5023,7 @@ class TestCompaction:
 
         assert OpenAICompaction().stateless is False
         assert OpenAICompaction(token_threshold=1000).stateless is False
-        assert OpenAICompaction(context_window_used_threshold=0.8).stateless is True
+        assert OpenAICompaction(context_window_threshold=0.8).stateless is True
         assert OpenAICompaction(message_count_threshold=5).stateless is True
         assert OpenAICompaction(trigger=lambda _msgs: True).stateless is True
 
@@ -5073,7 +5084,7 @@ class TestCompaction:
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
-        with pytest.raises(UserError, match='requires `context_window_used_threshold`'):
+        with pytest.raises(UserError, match='requires `context_window_threshold`'):
             OpenAICompaction(stateless=True)
 
     def test_openai_compaction_serialization_name(self):

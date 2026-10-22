@@ -15294,16 +15294,16 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     agent = Agent(
         model=model,
         instructions='You are a helpful math assistant. Give short answers.',
-        # The cassette reports 38 then 60 tokens, so only the third run compacts.
-        capabilities=[OpenAICompaction(context_window_used_threshold=0.5)],
+        capabilities=[OpenAICompaction(context_window_threshold=0.5)],
     )
 
-    message_history: list[Any] = []
-    result = await agent.run('What is 2+2?', message_history=message_history)
-    message_history = result.all_messages()
-    result = await agent.run('And 3+3?', message_history=message_history)
-    message_history = result.all_messages()
-    result = await agent.run('And 5+5?', message_history=message_history)
+    # The first two responses fill 38% and 60% of the 100-token window, so only the third run compacts.
+    result = await agent.run('What is 2+2?')
+    assert result.response.usage.total_tokens == 38
+    result = await agent.run('And 3+3?', message_history=result.all_messages())
+    assert result.response.usage.total_tokens == 60
+    assert not any(isinstance(part, CompactionPart) for msg in result.all_messages() for part in msg.parts)
+    result = await agent.run('And 5+5?', message_history=result.all_messages())
 
     # Verify the result is reasonable
     assert '10' in result.output
