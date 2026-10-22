@@ -115,9 +115,8 @@ jobs:
           --agent-artifact agent
   monitor:
     needs: triage
-    # Only outcomes that need the incident list queue here, so two runs cannot open one incident twice. A job
-    # skipped by `if:` takes no queue slot; a workflow-level group queues every completion and overflows at
-    # 100 pending runs. Scheduled recovery shares the group because it can open the same provider incident.
+    # Only the incident work `triage` hands over, plus recovery, waits in this group, so two runs cannot open
+    # one incident twice. Keep the group on this job; `.github/workflows/AGENTS.md` explains why.
     if: >-
       !cancelled() &&
       github.repository == 'pydantic/pydantic-ai' &&

@@ -2793,7 +2793,7 @@ def test_triage_without_github_output_still_reports_deferral(
 def test_triage_cannot_reach_recovery() -> None:
     """Triage requires a completed source run, so it never runs the recovery path that closes incidents."""
     with pytest.raises(SystemExit) as exc_info:
-        health.main(['triage', '--recover-issue', '7'])
+        health.main(['triage', '--run-attempt', '1', '--health-artifact', 'provider-health.json'])
     assert exc_info.value.code == 2
 
 

@@ -1159,8 +1159,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Triage must exclude fork and Dependabot `pull_request` completions.',
             )
         )
-    # A workflow-level group queues every completion, including the many with nothing to reconcile, and
-    # GitHub cancels new runs once 100 are pending. A job skipped by `if:` takes no queue slot.
+    # Only the incident work `triage` hands over may queue; `.github/workflows/AGENTS.md` explains the overflow.
     concurrency = _as_mapping(monitor_job.get('concurrency'))
     if (
         'concurrency' in monitor
@@ -1193,23 +1192,42 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 if step:
                     job_steps.append(step)
     triage_command = 'python3 .github/scripts/agent_provider_health.py triage'
+    monitor_command = 'python3 .github/scripts/agent_provider_health.py monitor'
+    # Triage classifies a completion for the monitor, so both must read the same artifacts the same way.
+    triage_index = next((i for i, step in enumerate(triage_steps) if step.get('id') == 'triage'), len(triage_steps))
+    reconcile_index = next(
+        (
+            i
+            for i, step in enumerate(steps)
+            if "github.event_name == 'workflow_run'" in str(step.get('if', ''))
+            and str(step.get('run', '')).strip().startswith(monitor_command)
+        ),
+        len(steps),
+    )
+    triage_step: Mapping[str, object] = triage_steps[triage_index] if triage_index < len(triage_steps) else {}
+    reconcile_step: Mapping[str, object] = steps[reconcile_index] if reconcile_index < len(steps) else {}
+    triage_reads_monitor_inputs = (
+        str(triage_step.get('run', '')).strip().startswith(triage_command)
+        and triage_steps[:triage_index] == steps[:reconcile_index]
+        and triage_step.get('if') == reconcile_step.get('if')
+        and triage_step.get('env') == reconcile_step.get('env')
+        and str(triage_step.get('run', '')).replace(triage_command, monitor_command, 1)
+        == str(reconcile_step.get('run', ''))
+    )
     if (
         monitor_job.get('needs') != 'triage'
         or ' '.join(str(monitor_job.get('if', '')).split())
         != "!cancelled() && github.repository == 'pydantic/pydantic-ai' && "
         "(github.event_name != 'workflow_run' || needs.triage.outputs.reconcile == 'true')"
         or _as_mapping(triage_job.get('outputs')).get('reconcile') != '${{ steps.triage.outputs.reconcile }}'
-        or not any(
-            step.get('id') == 'triage' and str(step.get('run', '')).strip().startswith(triage_command)
-            for step in triage_steps
-        )
+        or not triage_reads_monitor_inputs
     ):
         violations.append(
             Violation(
                 str(monitor_path),
                 'provider-health-monitor-triage',
-                'The monitor job must reconcile a completion only when `triage` hands it over, '
-                'and must still run scheduled and manual recovery.',
+                'The monitor job must reconcile a completion only when `triage`, reading the same artifacts '
+                'with the same steps, hands it over, and must still run scheduled and manual recovery.',
             )
         )
     untrusted_checkout = False
@@ -1266,9 +1284,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
             continue
         is_stub = run.splitlines() == ['mkdir -p agent', ': > agent/agent-stdio.log']
         is_controller = (
-            run.startswith(('python3 .github/scripts/agent_provider_health.py monitor', triage_command))
-            and '\n' not in run
-            and not re.search(r';|&&|\|\|', run)
+            run.startswith((monitor_command, triage_command)) and '\n' not in run and not re.search(r';|&&|\|\|', run)
         )
         if not is_stub and not is_controller:
             artifact_execution = True
@@ -1294,7 +1310,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
     source_attempt_mismatch = False
     for job_steps, command in (
         (triage_steps, triage_command),
-        (steps, 'python3 .github/scripts/agent_provider_health.py monitor'),
+        (steps, monitor_command),
     ):
         source_reconcile_steps = [
             step

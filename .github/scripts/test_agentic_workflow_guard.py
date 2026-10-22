@@ -1748,6 +1748,10 @@ jobs:
         with:
           name: agent
           run-id: ${{ github.event.workflow_run.id }}
+      - if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
+        run: |
+          mkdir -p agent
+          : > agent/agent-stdio.log
       - if: github.event_name == 'workflow_run'
         id: triage
         env:
@@ -1755,8 +1759,10 @@ jobs:
           RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: >-
           python3 .github/scripts/agent_provider_health.py triage
+          --repository "$GITHUB_REPOSITORY"
           --run-id "$RUN_ID"
           --run-attempt "$RUN_ATTEMPT"
+          --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
           --agent-artifact agent
   monitor:
@@ -1969,10 +1975,33 @@ def test_provider_health_monitor_serializes_only_triaged_incident_work(tmp_path:
         'provider-health-monitor-concurrency',
         'provider-health-monitor-queue',
     ]
+    _write(
+        monitor,
+        trusted_config.replace(
+            'permissions: {}\n',
+            'permissions: {}\n\nconcurrency:\n  group: agent-provider-health-reconciliation\n'
+            '  cancel-in-progress: false\n  queue: max\n',
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-concurrency'
+    ]
+    _write(monitor, trusted_config.replace('  triage:\n', '  triage:\n    concurrency: provider-health-triage\n', 1))
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-concurrency'
+    ]
 
     triage_handoff = "needs.triage.outputs.reconcile == 'true'"
     assert triage_handoff in trusted_config
     _write(monitor, trusted_config.replace(triage_handoff, 'true', 1))
+    assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
+        'provider-health-monitor-triage'
+    ]
+    # Triage that reads a different agent artifact than the monitor misclassifies typed failures as unclassified.
+    head, prefixed_pattern, tail = trusted_config.rpartition("pattern: '*-agent'")
+    assert head.count(prefixed_pattern) == 1
+    _write(monitor, head + "pattern: 'agent-*'" + tail)
     assert [violation.check for violation in check_provider_health_monitor(workflows)] == [
         'provider-health-monitor-triage'
     ]
