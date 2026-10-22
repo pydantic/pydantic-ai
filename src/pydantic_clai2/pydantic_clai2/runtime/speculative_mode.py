@@ -408,6 +408,12 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
             counters.wasted += 1
 
 
+def _delegates(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
+    """Whether `tool_def` is the delegate tool of a `SubAgents`, rather than one of its task-control tools."""
+    owner = ctx.capabilities.get(tool_def.capability_id or '')
+    return isinstance(owner, SubAgents) and owner.tool_name == tool_def.name
+
+
 @dataclass
 class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     """Report tools called from inside `run_code` so they render like direct calls.
@@ -446,8 +452,7 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         if not speculative:
             event_type = (
                 DelegationCallStartedEvent
-                if DelegationTasks.current() is not None
-                and isinstance(ctx.capabilities.get(tool_def.capability_id or ''), SubAgents)
+                if DelegationTasks.current() is not None and _delegates(ctx, tool_def)
                 else SandboxCallStartedEvent
             )
             await ctx.emit(event_type(tool_call_id=call.tool_call_id, call=call))

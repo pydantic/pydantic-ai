@@ -14,6 +14,7 @@ from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext
 from pydantic_ai.messages import (
+    FunctionToolCallEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -34,6 +35,7 @@ from pydantic_ai_harness.subagents import (
     DelegationTaskEvent,
     SubAgent,
     SubAgents,
+    TaskQuestionEvent,
 )
 from pydantic_clai2._app import create_stock_agent
 from pydantic_clai2.runtime._session import Session
@@ -286,6 +288,8 @@ async def test_presentation_classifies_capability_owned_tool() -> None:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('renamed_delegate', {'agent_name': 'worker', 'task': 'go'})])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('list_tasks', {})])
         return ModelResponse(parts=[TextPart('done')])
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
@@ -309,12 +313,17 @@ async def test_presentation_classifies_capability_owned_tool() -> None:
         FunctionModel(function=respond, stream_function=stream),
         deps_type=object,
         capabilities=[
-            SubAgents(agents=[SubAgent(child)], tool_name='renamed_delegate', agent_folders=None),
+            SubAgents(agents=[SubAgent(child)], tool_name='renamed_delegate', agent_folders=None, task_control=True),
             TaskPresentation(),
         ],
     )
     await parent.run('go', event_stream_handler=receive)
-    assert any(isinstance(event, DelegationToolCallEvent) for event in events)
+    calls = [event for event in events if isinstance(event, FunctionToolCallEvent)]
+    # The delegate tool shows as the task's rows, and a task-control tool of the same capability as a tool.
+    assert [(event.part.tool_name, isinstance(event, DelegationToolCallEvent)) for event in calls] == [
+        ('renamed_delegate', True),
+        ('list_tasks', False),
+    ]
 
 
 async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -378,6 +387,13 @@ async def test_promote_all_foreground_siblings() -> None:
         assert 'not a result' in await pending
 
 
+def test_question_row() -> None:
+    event = TaskQuestionEvent(task_id='a' * 32, agent_name='self', question_id='q', question='Which\nflavour?')
+    row = task_row(event)
+    assert row is not None
+    assert row.plain == '? general-purpose [aaaaaaaa] asks: Which flavour?'
+
+
 @pytest.mark.parametrize('success', [True, False])
 def test_terminal_row_outcomes(success: bool) -> None:
     event = DelegationEndEvent(
@@ -397,7 +413,6 @@ def test_terminal_row_outcomes(success: bool) -> None:
 
 
 async def test_presentation_keeps_ordinary_tool_events() -> None:
-    from pydantic_ai.messages import FunctionToolCallEvent
     from pydantic_ai.models.test import TestModel
 
     def ordinary() -> str:
@@ -743,3 +758,102 @@ async def test_consumed_background_report_does_not_start_another_turn(
         assert await shell.run() == 'eof'
     assert reads == 2
     assert shell.session.messages == []
+
+
+async def test_a_background_task_question_wakes_the_idle_parent_which_answers_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import re
+
+    import anyio
+    from prompt_toolkit.application import create_app_session
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from pydantic_ai.messages import SystemPromptPart, ToolReturnPart
+    from pydantic_clai2.config.project_settings import ProjectSettings
+    from pydantic_clai2.config.settings_store import SettingsStore
+    from pydantic_clai2.runtime.session_runtime import create_shell
+    from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+
+    release, idle, continued = (asyncio.Event() for _ in range(3))
+    output = io.StringIO()
+    reads = 0
+    original_read = LivePrompt.read
+
+    async def read(live: LivePrompt) -> str:
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            idle.set()
+        return await original_read(live)
+
+    monkeypatch.setattr(LivePrompt, 'read', read)
+
+    def system_texts(request: ModelMessage) -> list[str]:
+        """What the request says, including queued system messages, which reach the model as user content."""
+        assert isinstance(request, ModelRequest)
+        return [
+            part.content
+            for part in request.parts
+            if isinstance(part, (SystemPromptPart, UserPromptPart)) and isinstance(part.content, str)
+        ]
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        first, last = messages[0], messages[-1]
+        assert isinstance(first, ModelRequest) and isinstance(last, ModelRequest)
+        prompt = next(part.content for part in first.parts if isinstance(part, UserPromptPart))
+        if prompt == 'child':
+            if len(messages) == 1:
+                await release.wait()
+                yield {0: DeltaToolCall(name='ask_parent', json_args='{"question":"Which flavour?"}')}
+            else:
+                answer = next(part.content for part in last.parts if isinstance(part, ToolReturnPart))
+                yield f'Chose {answer}'
+        elif any('Automated subagent task report' in text for text in system_texts(last)):
+            yield 'Report read.'
+            continued.set()
+        elif question := next((text for text in system_texts(last) if 'Automated subagent question' in text), None):
+            match = re.search(r'Task ([0-9a-f]{32})', question)
+            assert match is not None
+            arguments = f'{{"task_id":"{match[1]}","answer":"cheddar"}}'
+            yield {0: DeltaToolCall(name='answer_task', json_args=arguments)}
+        elif len(messages) == 1:
+            arguments = '{"agent_name":"self","task":"child","background":true}'
+            yield {0: DeltaToolCall(name='delegate_task', json_args=arguments)}
+        else:
+            yield 'Waiting.'
+
+    shell = create_shell(
+        create_stock_agent(FunctionModel(stream_function=stream)),
+        deps=None,
+        plugins=[Coder(repo_context=False, task_control=True)],
+        usage_limits=None,
+        console=Console(file=output, force_terminal=True, width=100, height=24),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+    )
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(10):
+        async with anyio.create_task_group() as group:
+            group.start_soon(shell.run)
+            pipe.send_text('launch\r')
+            await idle.wait()
+            release.set()
+            await continued.wait()
+            assert shell.editor is not None
+            shell.editor.submit('/exit')
+    (record,) = shell.tasks.owner.records.values()
+    assert (record.outcome, record.output) == ('ok', 'Chose cheddar')
+    assert 'asks: Which flavour?' in output.getvalue()
+    prompts = [
+        part.content
+        for message in shell.session.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert prompts == ['launch']

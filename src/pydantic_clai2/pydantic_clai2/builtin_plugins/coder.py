@@ -343,6 +343,8 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             repo_context=settings.repo_context,
             sub_agents=settings.sub_agents,
             agent_folders=settings.folders(home=Path.home()) or None,
+            # The model manages its delegations: background tasks, steering, questions, and cancellation.
+            task_control=settings.sub_agents,
         )
         if self._skills is None or self._skill_workspace is None:
             return (coder,)

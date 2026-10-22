@@ -123,6 +123,15 @@ class TestCoder:
         tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
         assert tools == ['read_file', 'write_file', 'edit_file', 'list_files', 'grep', 'shell']
 
+    async def test_task_control_adds_the_task_tools(self, tmp_path: Path) -> None:
+        model = TestModel(call_tools=[])
+        await Agent(model, capabilities=[LocalWorkspace(tmp_path), Coder(task_control=True)]).run('Inspect tools')
+        assert model.last_model_request_parameters is not None
+        tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
+        assert tools[-5:] == ['delegate_task', 'list_tasks', 'message_task', 'answer_task', 'cancel_task']
+        with pytest.raises(ValueError, match='`task_control=True` requires `sub_agents=True`'):
+            Coder(sub_agents=False, task_control=True)
+
     async def test_the_delegate_carries_capabilities_bound_next_to_coder(self, tmp_path: Path) -> None:
         """The delegate is the agent `Coder` is bound to, so a host hook sees the commands it runs."""
         log = _ToolLog()

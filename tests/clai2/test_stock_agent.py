@@ -4,6 +4,7 @@ The agent is driven by `FunctionModel` and `TestModel`: what is under test is ho
 agent, not what a provider returns.
 """
 
+import re
 from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -175,7 +176,8 @@ async def test_capabilities_reach_delegated_tasks(tmp_path: Path) -> None:
         workspace=tmp_path, model=FunctionModel(stream_function=stream), capabilities=[host]
     ) as agent:
         result = await agent.run('parent')
-    assert result.output == 'child done'
+    # Task control names the task, so the model can steer or resume it.
+    assert re.fullmatch(r'Task [0-9a-f]{32} \(ok\):\nchild done', result.output)
     assert 'lookup' in tools['parent']
     assert 'lookup' in tools['child']
 

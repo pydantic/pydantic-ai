@@ -36,6 +36,7 @@ from pydantic_ai_harness.subagents import (
     DelegationTasks,
     SubAgent,
     SubAgents,
+    TaskQuestionEvent,
 )
 from pydantic_clai2.plugins import TaskEvent, TaskInfo
 from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
@@ -91,6 +92,13 @@ def task_row(event: AgentStreamEvent) -> Text | None:
         row = Text('● ', style=theme.color(theme.MUTED), no_wrap=True, overflow='ellipsis')
         row.append(name, style=theme.color(theme.ACCENT))
         row.append(f' [{(event.task_id or "")[:8]}] {prompt}', style=theme.color(theme.MUTED))
+        return row
+    if isinstance(event, TaskQuestionEvent):
+        name = _display_name(event.agent_name)
+        question = ' '.join(terminal_text(event.question).split())
+        row = Text('? ', style=theme.color(theme.WARNING), no_wrap=True, overflow='ellipsis')
+        row.append(name, style=theme.color(theme.ACCENT))
+        row.append(f' [{event.task_id[:8]}] asks: {question}', style=theme.color(theme.MUTED))
         return row
     if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
@@ -281,20 +289,26 @@ class Tasks:
         # It runs for every event of the child's stream, so build nothing that no plugin reads.
         if self.fire is not None and self.listening():
             await self.fire(TaskEvent(task=self.info(record), event=event))
-        if (
-            record.status == 'finished'
-            and record.background
-            and record.parent_id is None
-            and not record.delivered
-            and self.wake is not None
-        ):
+        if record.parent_id is None and self.wake is not None and self._for_main_run(record):
             self.wake()
-        if not isinstance(event, (DelegationStartEvent, DelegationEndEvent)):
+        if not isinstance(event, (DelegationStartEvent, DelegationEndEvent, TaskQuestionEvent)):
             return
         if self.sink is not None:
             await self.sink(event)
         elif (row := task_row(event)) is not None:
             self.console.print(row)
+
+    def waiting(self, conversation_id: str) -> bool:
+        """Whether the main run of `conversation_id` has a task report to read, or a task question to answer."""
+        return bool(
+            self.owner.reports(conversation_id=conversation_id) or self.owner.questions(conversation_id=conversation_id)
+        )
+
+    def _for_main_run(self, record: DelegationTask) -> bool:
+        """Whether `record`, a task of a main run, has a report or a question that run has not received."""
+        if record.status == 'finished':
+            return record.background and not record.delivered
+        return any(asking is record for asking in self.owner.questions(conversation_id=record.conversation_id))
 
     def focused(self) -> Status | None:
         """The newest subagent the main run is waiting on, whose figures the status row shows until it settles.
@@ -475,7 +489,8 @@ class TaskPresentation(AbstractCapability[object]):
                 if isinstance(event, FunctionToolCallEvent) and event.args_valid is not False:
                     definition = ctx.tools.get(event.part.tool_name)
                     owner = ctx.capabilities.get(definition.capability_id or '') if definition is not None else None
-                    if isinstance(owner, SubAgents):
+                    # The delegate tool shows as the task's rows; the task-control tools show as tools.
+                    if isinstance(owner, SubAgents) and owner.tool_name == event.part.tool_name:
                         event = DelegationToolCallEvent(event.part, args_valid=event.args_valid)
                 yield event
         finally:

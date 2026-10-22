@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai_harness.subagents import DelegationStartEvent
+from pydantic_ai_harness.subagents import DelegationStartEvent, SubAgentMessage, TaskBackgroundedEvent
 from pydantic_clai2.builtin_plugins.web.protocol import (
     EventTranslator,
     Item,
@@ -77,6 +77,10 @@ class Workers:
             self._publish(TaskChanged(task=entry))
         if task.status == 'finished':
             self._live.pop(task.id, None)
+            return
+        # A task-control event is about the task, not its run, and can come before the run starts,
+        # such as `background=True` announced before the task's first step: the run's own events start it.
+        if task.id not in self._live and isinstance(event.event, (SubAgentMessage, TaskBackgroundedEvent)):
             return
         live = self._live.get(task.id) or self._start(task, event)
         if event.event is not None:

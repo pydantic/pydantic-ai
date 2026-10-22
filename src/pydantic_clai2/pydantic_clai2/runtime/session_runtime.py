@@ -953,7 +953,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     if isinstance(self.agent, StockAgent):
                         self.session.delegations = owner
                     # Reports a task left while no CLAI ran are known once the owner opened.
-                    if self.editor is not None and owner.reports(conversation_id=self.session.summary.id):
+                    if self.editor is not None and self.tasks.waiting(self.session.summary.id):
                         self.editor.wake()
                     reason = await self._read_loop()
                     return reason
@@ -1002,7 +1002,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             while self._inbox.texts:
                 editor.submit(self._inbox.texts.popleft())
-            if self.tasks.owner.reports(conversation_id=self.session.summary.id):
+            if self.tasks.waiting(self.session.summary.id):
                 editor.wake()
         if self._reading is not None:
             self._reading.cancel()
@@ -1144,7 +1144,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 await self._rewind()
                 continue
             except PromptWakeup:
-                if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
+                if not self.tasks.waiting(self.session.summary.id):
                     continue
                 with self._handling_input():
                     async with self.forks.busy():
