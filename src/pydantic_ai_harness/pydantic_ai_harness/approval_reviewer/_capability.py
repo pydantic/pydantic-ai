@@ -32,7 +32,7 @@ from .._judge import (
     JudgeAnswer,
     SerializableToolSelector,
     claim_offset_limits,
-    claimed_request,
+    claim_request,
     reported_confidence,
     tool_call_prompt,
 )
@@ -76,8 +76,8 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
     all leave the call for the person, through the next deferred-call handler or the run's
     [`DeferredToolRequests`](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) output.
 
-    The reviewer only approves. It never denies a call, and calls that need no approval are not
-    sent to it. Pair it with
+    The reviewer can only take a question off the person's plate. It never denies a call, never
+    runs one itself, and does nothing for calls that do not need approval. Pair it with
     [`ToolCallJudge`][pydantic_ai_harness.tool_call_judge.ToolCallJudge] when calls should also
     be blocked.
 
@@ -106,7 +106,7 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
     reviewer = ApprovalReviewer(
         'anthropic:claude-haiku-5-5',
         tools=['run_shell'],
-        question='Could this command delete or overwrite data, reach the network, or expose secrets?',
+        question='Could this destroy data, spend money, or leak secrets?',
     )
     agent = Agent(
         'anthropic:claude-fable-5-1',
@@ -254,8 +254,11 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
             answer: JudgeAnswer | None = None
             confidence: float | None = None
             try:
-                with claimed_request(ctx):
+                claim_request(ctx)
+                try:
                     answer, confidence = await self._ask(ctx, prompt)
+                finally:
+                    ctx.usage.requests -= 1
             except Exception as error:
                 if span.is_recording():
                     span.set_attribute('approval_reviewer.model_result', 'error')

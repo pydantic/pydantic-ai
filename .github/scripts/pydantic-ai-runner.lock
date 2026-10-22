@@ -21,6 +21,7 @@ listentome = false
 logfire = false
 logfire-api = false
 pillow = "2026-10-16T22:19:00Z"
+prefect = "2026-10-21T03:46:00Z"
 pydantic = false
 pydantic-ai-harness = false
 pydantic-core = false
@@ -1273,7 +1274,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'zai'", specifier = ">=3.26.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.9.0" },
     { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
     { name = "pydantic", specifier = ">=2.12" },
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "../../pydantic_evals" },

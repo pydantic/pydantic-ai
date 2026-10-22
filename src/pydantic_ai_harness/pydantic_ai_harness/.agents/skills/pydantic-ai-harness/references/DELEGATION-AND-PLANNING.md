@@ -286,8 +286,9 @@ Gotchas:
 - A `Model` instance, a non-default `output_type`, or `max_uses` on OpenRouter select local execution.
 - Local path: the advisor sees only the consultation prompt (plus completed history with
   `forward_history=True`), never the executor's deps or tools. Its usage counts toward parent limits.
-- One `Advisor` per agent (tool name `advisor`). For durable runs use `mode='native'`; local
-  execution is unsupported there.
+- An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
+  other instance's value, two list `output_type`s combining, and any other option the later one's.
+  For durable runs use `mode='native'`; local execution is unsupported there.
 
 ## BackgroundTools
 
