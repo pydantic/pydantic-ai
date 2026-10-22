@@ -14,10 +14,13 @@ from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
 from ..exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelUnavailableError,
     UnexpectedModelBehavior,
@@ -150,6 +153,10 @@ _GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, _model_errors.HTTPErrorCategory] 
     grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
     grpc.StatusCode.UNAVAILABLE: ModelUnavailableError,
     grpc.StatusCode.INTERNAL: ModelServerError,
+    grpc.StatusCode.INVALID_ARGUMENT: ModelRequestRejectedError,
+    grpc.StatusCode.UNAUTHENTICATED: ModelAuthenticationError,
+    grpc.StatusCode.PERMISSION_DENIED: ModelAuthenticationError,
+    grpc.StatusCode.NOT_FOUND: ModelNotFoundError,
 }
 """Error categories for gRPC status codes.
 

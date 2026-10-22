@@ -55,6 +55,9 @@ __all__ = (
     'TransportPhase',
     'ModelTimeoutError',
     'ModelContextWindowExceededError',
+    'ModelRequestRejectedError',
+    'ModelAuthenticationError',
+    'ModelNotFoundError',
     'ModelRequestTimeout',
     'ContentFilterError',
     'IncompleteToolCall',
@@ -544,8 +547,11 @@ class ModelAPIError(AgentRunError):
     [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]),
     [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
     [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (and its
-    [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]. When the error
+    [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]),
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], or
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (and its
+    [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError]). When the error
     came with an HTTP status code, the raised exception is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]; see
     [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category].
@@ -746,6 +752,44 @@ class ModelContextWindowExceededError(ModelAPIError):
     """
 
 
+class ModelRequestRejectedError(ModelAPIError):
+    """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
+
+    For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
+    subclasses [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] and
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] say why, where the provider does.
+
+    A rejection with a category of its own is raised as that category instead, even when it came with one of these
+    statuses: a context window overflow (often a 400) is a
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], and exhausted
+    credits (Anthropic sends a 400) a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError].
+
+    Another model or provider may still accept the request, so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on it by default.
+    """
+
+
+class ModelAuthenticationError(ModelRequestRejectedError):
+    """Raised when the provider rejected the request's credentials, or doesn't allow them to make it.
+
+    For example an HTTP 401 or 403, a gRPC `UNAUTHENTICATED` or `PERMISSION_DENIED`, or Bedrock's
+    `AccessDeniedException`, `UnrecognizedClientException` or `ExpiredTokenException`. Check the API key or
+    credentials, and that they have access to the model. A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+    """
+
+
+class ModelNotFoundError(ModelRequestRejectedError):
+    """Raised when the provider couldn't find the model, deployment or other resource the request names.
+
+    For example an HTTP 404, a gRPC `NOT_FOUND`, Bedrock's `ResourceNotFoundException`, or OpenAI's
+    `model_not_found` (which the Responses API sends as a 400). When the provider says the model name is unknown,
+    [`suggested_model_id`][pydantic_ai.exceptions.ModelHTTPError.suggested_model_id] may suggest a close known one.
+    A 404 can also mean that the provider's base URL is wrong. A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+    """
+
+
 class ModelRequestTimeout(ModelAPIError):
     """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout].
 
@@ -866,6 +910,7 @@ class ModelHTTPError(ModelAPIError):
             | ModelUnavailableError
             | ModelServerError
             | ModelContextWindowExceededError
+            | ModelRequestRejectedError
         ]
         | None,
         *,
@@ -899,8 +944,11 @@ class ModelHTTPError(ModelAPIError):
                 [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError],
                 [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError],
                 [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError],
-                [`ModelServerError`][pydantic_ai.exceptions.ModelServerError], or
-                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
+                [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
+                [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
+                [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], or
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError].
             status_code: The HTTP status code.
             model_name: The name of the model.
             body: The body of the error response.
@@ -996,6 +1044,18 @@ class _HTTPModelContextWindowExceededError(_CategorizedHTTPError, ModelContextWi
     pass
 
 
+class _HTTPModelRequestRejectedError(_CategorizedHTTPError, ModelRequestRejectedError):
+    pass
+
+
+class _HTTPModelAuthenticationError(_CategorizedHTTPError, ModelAuthenticationError):
+    pass
+
+
+class _HTTPModelNotFoundError(_CategorizedHTTPError, ModelNotFoundError):
+    pass
+
+
 _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] = {
     ModelRateLimitError: _HTTPModelRateLimitError,
     ModelQuotaExceededError: _HTTPModelQuotaExceededError,
@@ -1003,6 +1063,9 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
     ModelOverloadedError: _HTTPModelOverloadedError,
     ModelServerError: _HTTPModelServerError,
     ModelContextWindowExceededError: _HTTPModelContextWindowExceededError,
+    ModelRequestRejectedError: _HTTPModelRequestRejectedError,
+    ModelAuthenticationError: _HTTPModelAuthenticationError,
+    ModelNotFoundError: _HTTPModelNotFoundError,
 }
 
 

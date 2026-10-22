@@ -441,7 +441,8 @@ def _map_api_error(
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         status = e.status if isinstance(e.status, str) else None
-        category = _model_errors.google_status_category(status, e.message)
+        reason = _model_errors.google_error_reason(details)  # pyright: ignore[reportUnknownArgumentType]
+        category = _model_errors.google_status_category(status, e.message, reason)
         # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
         response_status = getattr(e.response, 'status_code', None)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         return ModelHTTPError.for_category(

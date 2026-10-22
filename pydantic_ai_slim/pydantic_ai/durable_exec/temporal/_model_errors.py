@@ -29,6 +29,7 @@ from ...exceptions import (
     ModelHTTPError,
     ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
     ModelServerError,
     ModelUnavailableError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
@@ -144,6 +145,7 @@ _ERROR_CATEGORIES = (
     ModelServerError,
     ModelConnectionError,
     ModelContextWindowExceededError,
+    ModelRequestRejectedError,
 )
 
 

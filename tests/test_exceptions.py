@@ -24,6 +24,7 @@ from pydantic_ai.exceptions import (
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
@@ -229,6 +230,21 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'hint': 'Check the provider account setting',
             },
         ),
+        (
+            lambda: ModelHTTPError.for_category(
+                ModelNotFoundError,
+                status_code=404,
+                model_name='gpt-5x',
+                provider_error_code='model_not_found',
+                suggested_model_id='openai:gpt-5',
+            ),
+            {
+                'status_code': 404,
+                'model_name': 'gpt-5x',
+                'provider_error_code': 'model_not_found',
+                'suggested_model_id': 'openai:gpt-5',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -256,6 +272,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelContextWindowExceededError',
         'ModelHTTPError-with-hint',
         'ModelHTTPError-with-model-suggestion-and-hint',
+        'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
     ],
 )
