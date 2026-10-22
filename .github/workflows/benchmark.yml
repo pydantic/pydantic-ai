@@ -120,4 +120,7 @@ jobs:
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5.2.1
         with:
           mode: simulation
-          run: uv run pytest tests/benchmarks --codspeed
+          # Simulation runs some benchmarks for minutes, past `faulthandler_timeout`. The stack dump it triggers reads
+          # the running thread's frames without the GIL, and under Valgrind that read is slow enough to hit a freed
+          # frame and segfault the process.
+          run: uv run pytest tests/benchmarks --codspeed -o faulthandler_timeout=0

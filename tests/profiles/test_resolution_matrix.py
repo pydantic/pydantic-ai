@@ -149,6 +149,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     # OpenAIModelProfile subclass defaults
     'openai_chat_thinking_field': None,
     'openai_chat_send_back_thinking_parts': 'auto',
+    'openai_chat_thinking_requires_field_on_tool_calls': False,
     'openai_supports_strict_tool_definition': True,
     'openai_unsupported_model_settings': (),
     'openai_system_prompt_role': None,
@@ -809,6 +810,7 @@ def test_deepseek_provider_deepseek_chat():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_requires_field_on_tool_calls': True,
             'openai_responses_supports_interleaved_function_calls': False,
             'openai_responses_supports_json_schema_output': True,
         }
@@ -829,6 +831,7 @@ def test_deepseek_provider_deepseek_reasoner():
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_thinking_field': 'reasoning_content',
             'openai_chat_send_back_thinking_parts': 'field',
+            'openai_chat_thinking_requires_field_on_tool_calls': True,
             'openai_responses_supports_interleaved_function_calls': False,
             'supports_forced_tool_choice': False,
             'thinking_enabled_by_default': True,
@@ -1185,6 +1188,45 @@ def test_bedrock_writer_palmyra():
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_tool_result_colocatable_content': frozenset(),
             'bedrock_supports_tool_result_status': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+@pytest.mark.parametrize('region', ['us', 'global'])
+def test_bedrock_xai_grok(region: str):
+    """xAI Grok via Bedrock: upstream `grok_model_profile` + the `xai` thinking variant.
+
+    The upstream `supports_json_schema_output` / `supports_json_object_output` are turned off because
+    Converse has no structured output for Grok 4.6, and stay off on Grok 4.7 until it's verified there;
+    prompt caching stays at the default (`False`) because explicit `cachePoint` blocks are rejected.
+    """
+    profiles = {
+        version: _normalize(BedrockProvider.model_profile(f'{region}.xai.grok-{version}')) for version in ('4.6', '4.7')
+    }
+    assert profiles == snapshot(
+        {
+            '4.6': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
+            },
+            '4.7': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'grok_default_effort_omitted': True,
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
+            },
         }
     )
 

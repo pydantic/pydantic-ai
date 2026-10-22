@@ -8,9 +8,14 @@ from pydantic_ai.exceptions import CallDeferred
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent, AskUserRequestedEvent
-from pydantic_ai_harness.ask_user._types import Answerer, AskUserRequest, AskUserResponse, Questions, check_response
-
-TOOL_NAME = 'ask_user_question'
+from pydantic_ai_harness.ask_user._types import (
+    TOOL_NAME,
+    Answerer,
+    AskUserRequest,
+    AskUserResponse,
+    Questions,
+    check_response,
+)
 
 DECLINED = 'The user declined to answer. Continue without the answer, or ask differently if it is essential.'
 """The tool result when the answerer reports a cancelled response."""
