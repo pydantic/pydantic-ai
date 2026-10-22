@@ -145,20 +145,23 @@ _RECOVERABLE_ERRORS = (PermissionError, FileNotFoundError, NotADirectoryError, I
 # retrying cannot fix `ENOSPC` or `EROFS`.
 #
 # Keyed by `OSError.errno`, which the stdlib types as `int | None`.
-_NOT_A_REGULAR_FILE_REASON = 'The path is not a regular file (a FIFO, socket, or device); use a regular file.'
-
 _RECOVERABLE_ERRNOS: dict[int | None, str] = {
     errno.ENAMETOOLONG: 'The path name is too long.',
     errno.ELOOP: 'The path resolves through a symlink loop.',
     errno.EILSEQ: 'The path name contains a byte sequence the filesystem cannot represent.',
-    # Opening a socket fails with `ENXIO` on Linux and `EOPNOTSUPP` on macOS, before core's own check.
-    errno.ENXIO: _NOT_A_REGULAR_FILE_REASON,
-    errno.EOPNOTSUPP: _NOT_A_REGULAR_FILE_REASON,
 }
 _WINDOWS_ERROR_INVALID_NAME = 123
 
 _NOT_A_REGULAR_FILE = 'not a regular file'
 """How core workspace backends begin the bare `OSError` they raise for a FIFO, socket, or device."""
+
+_NOT_A_REGULAR_FILE_REASON = 'The path is not a regular file (a FIFO, socket, or device); use a regular file.'
+
+_SOCKET_OPEN_ERRNOS = frozenset({errno.ENXIO, errno.EOPNOTSUPP})
+"""How opening a socket to read it fails before core checks the file type: `ENXIO` on Linux, `EOPNOTSUPP` on macOS.
+
+Only reads of the target catch these: elsewhere the same errno can mean an unsupported operation.
+"""
 
 _OUTSIDE_WORKSPACE = '<outside-workspace>'
 """Shown instead of an absolute path that is not inside the workspace root."""
@@ -292,8 +295,8 @@ _HIDDEN_ALTERNATIVE = re.compile(r'[{,]\.')
 
 
 def _explicit_hidden(pattern: str) -> bool:
-    """Whether the caller explicitly names a dot-prefixed glob component, or a brace alternative of one."""
-    return any(part.startswith('.') or _HIDDEN_ALTERNATIVE.search(part) for part in pattern.split('/'))
+    """Whether the caller explicitly names a dot-prefixed glob component."""
+    return any(part.startswith('.') for part in pattern.split('/'))
 
 
 def _ripgrep_hidden(glob: str | None) -> list[str]:
@@ -1123,6 +1126,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raw = await scope.workspace.read_bytes(resolved)
         except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
             return f'Path not found: {path}'
+        except OSError as e:
+            if e.errno in _SOCKET_OPEN_ERRNOS:
+                raise ModelRetry(_NOT_A_REGULAR_FILE_REASON) from e
+            raise
         content_hash = _bytes_hash(raw)
         media_type = _sniff_media_type(raw)
         if media_type is not None or _is_binary(raw):
@@ -1658,6 +1665,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         fnmatch_only = bool(include_glob and '/' in include_glob and not _RG_ONLY_GLOB.search(include_glob))
         command_glob = include_glob.removeprefix(prefix + '/') if include_glob and prefix != '.' else include_glob
         targets = [target]
+        hidden_flag = _ripgrep_hidden(include_glob)
         if (
             include_glob
             and fnmatch_only
@@ -1704,7 +1712,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                         str(_MAX_MATCH_COLUMNS),
                         '--max-columns-preview',
                         *(['--glob', command_glob] if command_glob and not fnmatch_only else []),
-                        *_ripgrep_hidden(include_glob),
+                        *hidden_flag,
                         '--regexp',
                         pattern,
                         '--',
@@ -1713,7 +1721,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                     cwd=cwd,
                     limit=self._max_search_results,
                     accept=lambda record: (
-                        self._match_line(scope, cwd, record, include_hidden=include_hidden)
+                        self._match_line(scope, cwd, record, include_hidden=include_hidden or bool(hidden_flag))
                         if (not fnmatch_only or selected(record)) and permitted(record)
                         else None
                     ),
@@ -1885,12 +1893,13 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             raise NotADirectoryError(f'Path {path!r} is not a directory.')
         prepare, permitted = self._batch_authorizer(scope, resolved)
         include_hidden = bool(glob and _explicit_hidden(glob))
+        hidden_flag = _ripgrep_hidden(glob)
         arguments = [
             '--files',
             '--sort',
             'path',
             *(['--glob', glob] if glob is not None else []),
-            *_ripgrep_hidden(glob),
+            *hidden_flag,
         ]
         try:
             if scope.lacks_ripgrep:
@@ -1902,7 +1911,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 limit=self._max_find_results,
                 listing=True,
                 accept=lambda record: (
-                    self._ripgrep_entry(scope, resolved, record, include_hidden=include_hidden)
+                    self._ripgrep_entry(scope, resolved, record, include_hidden=include_hidden or bool(hidden_flag))
                     if permitted(record)
                     else None
                 ),
@@ -2050,7 +2059,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         ]
         if glob is not None:
             arguments.extend(['--glob', glob])
-        arguments.extend(_ripgrep_hidden(glob))
+        hidden_flag = _ripgrep_hidden(glob)
+        arguments.extend(hidden_flag)
         if file_type is not None:
             arguments.extend(['--type', file_type])
         if ignore_case:
@@ -2067,7 +2077,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 cwd=cwd,
                 limit=self._max_search_results,
                 accept=lambda record: (
-                    self._match_line(scope, cwd, record, include_hidden=include_hidden) if permitted(record) else None
+                    self._match_line(scope, cwd, record, include_hidden=include_hidden or bool(hidden_flag))
+                    if permitted(record)
+                    else None
                 ),
                 prepare=prepare,
             )
@@ -2297,6 +2309,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 raw = await scope.workspace.read_bytes(resolved)
             except (FileNotFoundError, NotADirectoryError, IsADirectoryError):
                 return f'Path not found: {path}'
+            except OSError as e:
+                if e.errno in _SOCKET_OPEN_ERRNOS:
+                    raise ModelRetry(_NOT_A_REGULAR_FILE_REASON) from e
+                raise
             is_bin = _is_binary(raw)
             parts.append(f'binary: {is_bin}')
             if not is_bin:
