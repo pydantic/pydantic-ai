@@ -506,8 +506,8 @@ Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
-whatever you have set now. Cloudflare suggestions are limited to the supported
-Clef and Clef Flash decision models. The left side shows model names and marks the current
+whatever you have set now. Cloudflare suggestions use a representative verified set of native
+chat and Clef decision models; embedding and image IDs are excluded. The left side shows model names and marks the current
 model; token counts stay in the details. The right side shows the provider, context window,
 prices, and any settings you have saved for that model. Type to filter. Enter
 saves it in your model list and makes it the model for the next prompt. `Ctrl+S` opens that model's settings:

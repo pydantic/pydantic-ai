@@ -1,0 +1,174 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "452"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        stream: false
+        messages:
+        - role: user
+          content: Use lookup_order to find the shipping status of order A123. Report the result.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: lookup_order
+            description: Look up an order's shipping status.
+            parameters:
+              additionalProperties: false
+              properties:
+                order_id:
+                  type: string
+              required:
+              - order_id
+              type: object
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: id-1792685139625
+        object: chat.completion
+        created: 1792685139
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: null
+            tool_calls:
+            - id: call_1792685139625
+              type: function
+              function:
+                name: lookup_order
+                arguments: "{\"order_id\":\"A123\"}"
+            refusal: null
+          logprobs: null
+          finish_reason: tool_calls
+        usage:
+          prompt_tokens: 637
+          completion_tokens: 10
+          total_tokens: 647
+          prompt_tokens_details:
+            cached_tokens: 0
+          neurons: 16.40818214416504
+  recorded_at: 2026-10-22T16:05:39.632584+00:00
+- request:
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "697"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        stream: false
+        messages:
+        - role: user
+          content: Use lookup_order to find the shipping status of order A123. Report the result.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_1792685139625
+            type: function
+            function:
+              name: lookup_order
+              arguments: "{\"order_id\":\"A123\"}"
+        - role: tool
+          tool_call_id: call_1792685139625
+          content: dispatched
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: lookup_order
+            description: Look up an order's shipping status.
+            parameters:
+              additionalProperties: false
+              properties:
+                order_id:
+                  type: string
+              required:
+              - order_id
+              type: object
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: id-1792685140429
+        object: chat.completion
+        created: 1792685140
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        choices:
+        - finish_reason: stop
+          index: 0
+          logprobs: null
+          message:
+            annotations: null
+            audio: null
+            content: The order A123 has been dispatched.
+            function_call: null
+            reasoning: null
+            refusal: null
+            role: assistant
+          routed_experts: null
+          stop_reason: null
+          token_ids: null
+        usage:
+          prompt_tokens: 661
+          completion_tokens: 9
+          total_tokens: 670
+          prompt_tokens_details:
+            cached_tokens: 0
+          neurons: 16.920000076293945
+  recorded_at: 2026-10-22T16:05:40.437040+00:00

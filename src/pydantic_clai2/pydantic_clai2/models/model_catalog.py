@@ -7,6 +7,7 @@ function returning `CatalogModel`s and merge it in `catalog()`.
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from importlib import import_module
 from importlib.metadata import metadata
 
 from genai_prices.data_snapshot import get_snapshot
@@ -58,6 +59,11 @@ def check_installed(name: str) -> None:
     provider = provider_of(name)
     try:
         infer_provider_class(provider)
+        if provider == 'cloudflare' and name.partition(':')[2] not in (
+            '@cf/cloudflare/clef',
+            '@cf/cloudflare/clef-flash',
+        ):
+            import_module('pydantic_ai.models.cloudflare')
     except ValueError:
         return  # Not a core provider, like CLAI's own `vllm:`; the turn resolves or reports it.
     except ImportError as exc:
@@ -83,7 +89,7 @@ def genai_prices_models() -> list[CatalogModel]:
             if model.deprecated or ':' in model.id:
                 continue
             name = f'{provider.id}:{model.id}'
-            # Only known Clef models use the native Cloudflare decision endpoint.
+            # Pricing rows do not identify tasks; only offer verified Agent model IDs here.
             if provider.id == 'cloudflare' and name not in known_names:
                 continue
             found.append(

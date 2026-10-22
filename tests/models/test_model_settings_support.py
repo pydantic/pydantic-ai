@@ -66,7 +66,7 @@ from pydantic_ai import UnsupportedSettingWarning, models
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
-from pydantic_ai.models.cloudflare import CloudflareClefModel
+from pydantic_ai.models.cloudflare_clef import CloudflareClefModel
 from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.providers.cloudflare import CloudflareProvider
 from pydantic_ai.providers.system_one import SystemOneProvider
@@ -78,6 +78,7 @@ from ..conftest import try_import
 with try_import() as openai_available:
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.models.cerebras import CerebrasModel
+    from pydantic_ai.models.cloudflare import CloudflareChatModel
     from pydantic_ai.models.crusoe import CrusoeModel
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.ollama import OllamaModel
@@ -690,6 +691,13 @@ def _cloudflare(client: httpx2.AsyncClient) -> Model:
     )
 
 
+def _cloudflare_chat(client: httpx2.AsyncClient) -> Model:
+    return CloudflareChatModel(
+        '@cf/meta/llama-4-scout-17b-16e-instruct',
+        provider=CloudflareProvider(api_key=PROBE_KEY, account_id='probe-account', http_client=client),
+    )
+
+
 def _openai_decisions(client: httpx2.AsyncClient) -> Model:
     return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -757,6 +765,12 @@ CASES = [
     ),
     Case('SystemOneModel', ('System One',), decision_probe(_system_one), (), DECISION_HOLDS_WITHOUT_SENDING),
     Case('CloudflareClefModel', ('Cloudflare Clef',), decision_probe(_cloudflare), (), DECISION_HOLDS_WITHOUT_SENDING),
+    Case(
+        'CloudflareChatModel',
+        ('Cloudflare Chat Completions',),
+        http_probe(_cloudflare_chat),
+        _needs(openai_available, 'openai'),
+    ),
     Case(
         'OpenAIDecisionsModel',
         ('OpenAI Decisions',),
@@ -1082,6 +1096,7 @@ RETRY_CASES = [
     ),
     RetryCase('SystemOneModel', ('System One',), _system_one, (1, 1, 1), decision=True),
     RetryCase('CloudflareClefModel', ('Cloudflare Clef',), _cloudflare, (1, 1, 1), decision=True),
+    RetryCase('CloudflareChatModel', ('Cloudflare Chat Completions',), _cloudflare_chat, (3, 1, 2), marks=_OPENAI),
 ]
 """Every model reached over a mockable HTTP client.
 

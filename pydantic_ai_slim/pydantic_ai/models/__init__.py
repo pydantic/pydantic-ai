@@ -2329,11 +2329,16 @@ def infer_model(  # noqa: C901
         return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'cloudflare':
         from ..providers.cloudflare import CloudflareProvider
-        from .cloudflare import CloudflareClefModel
 
         if not isinstance(provider, CloudflareProvider):
-            raise UserError('Cloudflare Clef models require a `CloudflareProvider`.')
-        return CloudflareClefModel(model_name, provider=provider)
+            raise UserError('Cloudflare models require a `CloudflareProvider`.')
+        if model_name in ('@cf/cloudflare/clef', '@cf/cloudflare/clef-flash'):
+            from .cloudflare_clef import CloudflareClefModel
+
+            return CloudflareClefModel(model_name, provider=provider)
+        from .cloudflare import CloudflareChatModel
+
+        return CloudflareChatModel(model_name, provider=provider)
     elif model_kind == 'openai-decisions':
         from ..providers.openai_decisions import OpenAIDecisionsProvider
         from .openai_decisions import OpenAIDecisionsModel

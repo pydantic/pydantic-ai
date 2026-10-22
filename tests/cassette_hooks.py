@@ -116,6 +116,7 @@ SKIPPED_ENDPOINTS = {
 
 _AWS_ACCOUNT_ID_IN_ARN = re.compile(r'(arn(?:%3A|:)aws(?:%3A|:)bedrock(?:%3A|:)[^:%]*(?:%3A|:))\d{12}((?:%3A|:))')
 _SCRUBBED_AWS_ACCOUNT_ID = r'\g<1>123456789012\2'
+_CLOUDFLARE_ACCOUNT_ID_IN_PATH = re.compile(r'/accounts/[^/]+/')
 _BEDROCK_HOST = re.compile(r'bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com')
 _VERTEX_HOST = re.compile(r'[a-z0-9-]+-aiplatform\.googleapis\.com')
 _VERTEX_LOCATION = re.compile(r'/locations/[a-z0-9-]+/')
@@ -130,6 +131,13 @@ def scrub_aws_account_id(uri: str) -> str:
     return _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, uri)
 
 
+def scrub_cloudflare_account_id(uri: str) -> str:
+    parsed = urllib.parse.urlparse(uri)
+    if parsed.hostname == 'api.cloudflare.com':
+        return _CLOUDFLARE_ACCOUNT_ID_IN_PATH.sub('/accounts/ACCOUNT/', uri)
+    return uri
+
+
 def normalize_uri(uri: str) -> str:
     """Erase the region, project and account a cassette was recorded against before matching.
 
@@ -137,6 +145,7 @@ def normalize_uri(uri: str) -> str:
     Vertex AI cassettes against their GCP project; neither is what the test asserts on.
     """
     uri = scrub_aws_account_id(uri)
+    uri = scrub_cloudflare_account_id(uri)
     uri = _BEDROCK_HOST.sub('bedrock-runtime.REGION.amazonaws.com', uri)
     uri = _VERTEX_HOST.sub('aiplatform.googleapis.com', uri)
     uri = _VERTEX_LOCATION.sub('/locations/REGION/', uri)
@@ -260,6 +269,7 @@ def before_record_request(request: RawRequest) -> RawRequest:
     if (parsed.hostname, parsed.path) in SKIPPED_ENDPOINTS:
         raise SkipRecording
     request.uri = scrub_aws_account_id(request.uri)
+    request.uri = scrub_cloudflare_account_id(request.uri)
     request.headers = filter_headers(request.headers)
     request.body = scrub_body(request.body, request.headers)
     return request

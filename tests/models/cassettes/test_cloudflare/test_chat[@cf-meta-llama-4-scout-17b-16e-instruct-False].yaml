@@ -1,0 +1,71 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "174"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        stream: false
+        messages:
+        - role: system
+          content: Reply with one short greeting.
+        - role: user
+          content: Hello
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: id-1792685133801
+        object: chat.completion
+        created: 1792685133
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        choices:
+        - finish_reason: stop
+          index: 0
+          logprobs: null
+          message:
+            annotations: null
+            audio: null
+            content: Hi
+            function_call: null
+            reasoning: null
+            refusal: null
+            role: assistant
+          routed_experts: null
+          stop_reason: null
+          token_ids: null
+        usage:
+          prompt_tokens: 22
+          completion_tokens: 2
+          total_tokens: 24
+          prompt_tokens_details:
+            cached_tokens: 0
+          neurons: 0.6945455074310303
+  recorded_at: 2026-10-22T16:05:33.809574+00:00

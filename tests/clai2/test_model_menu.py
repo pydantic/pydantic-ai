@@ -65,6 +65,7 @@ def test_catalog_only_suggests_supported_cloudflare_models(monkeypatch: pytest.M
     cloudflare_ids = (
         '@cf/cloudflare/clef',
         '@cf/cloudflare/clef-flash',
+        '@cf/meta/llama-4-scout-17b-16e-instruct',
         '@cf/cloudflare/clef-omni',
         '@cf/meta/llama-3.1-8b-instruct-fp8',
         '@cf/baai/bge-base-en-v1.5',
@@ -76,13 +77,18 @@ def test_catalog_only_suggests_supported_cloudflare_models(monkeypatch: pytest.M
     monkeypatch.setattr(
         'pydantic_clai2.models.model_catalog.get_snapshot', lambda: replace(snapshot, providers=providers)
     )
-    supported = {'cloudflare:@cf/cloudflare/clef', 'cloudflare:@cf/cloudflare/clef-flash'}
+    supported = {
+        'cloudflare:@cf/cloudflare/clef',
+        'cloudflare:@cf/cloudflare/clef-flash',
+        'cloudflare:@cf/meta/llama-4-scout-17b-16e-instruct',
+    }
     priced = genai_prices_models()
     assert {model.name for model in priced if model.provider == 'cloudflare'} == supported
     assert 'openai:catalog-only' in {model.name for model in priced}
-    assert {model.name for model in catalog() if model.provider == 'cloudflare'} == supported
+    suggested = supported | {'cloudflare:@cf/qwen/qwen3-30b-a3b-fp8', 'cloudflare:@cf/openai/gpt-oss-20b'}
+    assert {model.name for model in catalog() if model.provider == 'cloudflare'} == suggested
     custom = 'cloudflare:custom-model'
-    assert {model.name for model in catalog(include=[custom]) if model.provider == 'cloudflare'} == supported | {custom}
+    assert {model.name for model in catalog(include=[custom]) if model.provider == 'cloudflare'} == suggested | {custom}
 
 
 def test_settings_form_validates_and_converts() -> None:

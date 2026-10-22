@@ -1,0 +1,59 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "213"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        stream: true
+        messages:
+        - role: system
+          content: Reply with one short greeting.
+        - role: user
+          content: Hello
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"id-1792685134078","created":1792685134,"model":"@cf/meta/llama-4-scout-17b-16e-instruct","object":"chat.completion.chunk","choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":null,"index":0,"logprobs":null}],"usage":{"prompt_tokens":22,"completion_tokens":0,"total_tokens":22,"prompt_tokens_details":{"cached_tokens":0},"neurons":0.5400000214576721}}
+
+        data: {"id":"id-1792685134078","created":1792685134,"model":"@cf/meta/llama-4-scout-17b-16e-instruct","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}],"usage":{"prompt_tokens":0,"completion_tokens":1,"total_tokens":1,"prompt_tokens_details":{"cached_tokens":0},"neurons":0.07727272808551788}}
+
+        data: {"id":"id-1792685134078","created":1792685134,"model":"@cf/meta/llama-4-scout-17b-16e-instruct","object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":null,"index":0,"logprobs":null,"stop_reason":null,"token_ids":null}],"usage":{"prompt_tokens":0,"completion_tokens":1,"total_tokens":1,"prompt_tokens_details":{"cached_tokens":0},"neurons":0.07727272808551788}}
+
+        data: {"id":"id-1792685134078","object":"chat.completion.chunk","created":1792685134,"model":"@cf/meta/llama-4-scout-17b-16e-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":0},"neurons":0}}
+
+        data: {"id":"id-1792685134078","object":"chat.completion.chunk","created":1792685134,"model":"@cf/meta/llama-4-scout-17b-16e-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":22,"completion_tokens":2,"total_tokens":24,"prompt_tokens_details":{"cached_tokens":0},"neurons":0.6945454776287079}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-22T16:05:34.147344+00:00

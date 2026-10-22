@@ -7,7 +7,7 @@ import pytest
 from typing_extensions import TypedDict
 
 from pydantic_ai.models import KnownModelName, known_model_names
-from pydantic_ai.models.cloudflare import CloudflareClefModelName
+from pydantic_ai.models.cloudflare_clef import CloudflareClefModelName
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
 from ..conftest import try_import
@@ -16,6 +16,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
     from pydantic_ai.models.bedrock import BedrockModelName
     from pydantic_ai.models.bedrock_mantle import BedrockMantleModelName
+    from pydantic_ai.models.cloudflare import CloudflareChatModelName
     from pydantic_ai.models.cohere import CohereModelName
     from pydantic_ai.models.crusoe import CrusoeModelName
     from pydantic_ai.models.google import GoogleModelName
@@ -33,6 +34,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.moonshotai import MoonshotAIModelName
 
 if not imports_successful():  # pragma: lax no cover
+    CloudflareChatModelName = str
     # Define placeholders so the module can be loaded for test collection
     AnthropicModelName = BedrockModelName = BedrockMantleModelName = CohereModelName = GoogleModelName = None
     GroqModelName = HuggingFaceModelName = MistralModelName = OpenAIModelName = None
@@ -63,7 +65,7 @@ _PROVIDER_TO_MODEL_NAMES = {
     'bedrock': BedrockModelName,
     'bedrock-mantle': BedrockMantleModelName,
     'cohere': CohereModelName,
-    'cloudflare': CloudflareClefModelName,
+    'cloudflare': CloudflareChatModelName | CloudflareClefModelName,
     'crusoe': CrusoeModelName,
     'deepseek': DeepSeekModelName,
     'google': GoogleModelName,

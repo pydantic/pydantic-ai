@@ -165,6 +165,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * Anthropic
     * Google
@@ -195,6 +196,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * Anthropic
     * Google
@@ -226,6 +228,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * Anthropic
     * Google
@@ -275,6 +278,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -329,6 +333,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -355,6 +360,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI (some models, not o1)
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -421,6 +427,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Google
     * Groq
@@ -443,6 +450,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Google
     * Groq
@@ -465,6 +473,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Google
     * Groq
@@ -487,6 +496,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Groq
     * HuggingFace
@@ -504,6 +514,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI Chat Completions
     * Anthropic
     * Google
@@ -529,6 +540,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex
@@ -644,6 +656,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI Codex
     * Anthropic
@@ -668,6 +681,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
+    * Cloudflare Chat Completions
     * OpenAI
     * OpenAI ChatGPT
     * OpenAI Codex

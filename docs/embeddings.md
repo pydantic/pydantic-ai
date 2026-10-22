@@ -155,6 +155,13 @@ Use [Pydantic Evals](evals.md) to track retrieval quality across a dataset of re
 
 ## Providers
 
+### Cloudflare Workers AI
+
+Use [`CloudflareEmbeddingModel`][pydantic_ai.embeddings.cloudflare.CloudflareEmbeddingModel]
+or the `cloudflare:` prefix through `Embedder`. The adapter uses Cloudflare's OpenAI-compatible
+embedding endpoint. See [Cloudflare](models/cloudflare.md#embeddings) for account authentication,
+model selection and optional catalog discovery.
+
 ### OpenAI
 
 [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers).

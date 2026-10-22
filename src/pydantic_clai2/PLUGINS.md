@@ -3783,7 +3783,8 @@ with a provider, so no real model is called `add` or `settings`. `/model add`
 and `/model settings` remain as deprecated spellings.
 The list persists across sessions. The currently configured model is retained
 when upgrading; `/set model NAME` also saves the model in this list.
-Cloudflare suggestions include only the supported Clef and Clef Flash decision models.
+Cloudflare suggestions include a representative verified set of native chat and Clef decision models;
+embedding and image IDs are excluded.
 
 ### Terminal themes
 

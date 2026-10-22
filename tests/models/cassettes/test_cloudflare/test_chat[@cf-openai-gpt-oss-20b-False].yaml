@@ -1,0 +1,71 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "157"
+      content-type:
+      - application/json
+      host:
+      - api.cloudflare.com
+    body:
+      type: json
+      content:
+        model: "@cf/openai/gpt-oss-20b"
+        stream: false
+        messages:
+        - role: system
+          content: Reply with one short greeting.
+        - role: user
+          content: Hello
+  response:
+    status: 200
+    headers:
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: id-1792685137750
+        object: chat.completion
+        created: 1792685137
+        model: "@cf/openai/gpt-oss-20b"
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: Hi!
+            refusal: null
+            annotations: null
+            audio: null
+            function_call: null
+            tool_calls: []
+            reasoning_content: "The user says: \"Hello\". The system message says: \"Reply with one short greeting.\" So we need to reply with a short greeting. Probably \"Hi!\" or \"Hello!\" etc. Let's do \"Hi!\""
+          logprobs: null
+          finish_reason: stop
+          stop_reason: null
+          token_ids: null
+        usage:
+          prompt_tokens: 80
+          completion_tokens: 56
+          total_tokens: 136
+          prompt_tokens_details:
+            cached_tokens: 0
+          neurons: 2.9818152
+  recorded_at: 2026-10-22T16:05:37.767177+00:00

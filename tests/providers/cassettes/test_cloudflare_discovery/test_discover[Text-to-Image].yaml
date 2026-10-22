@@ -1,0 +1,327 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/models/search?task=Text-to-Image&include_deprecated=false&per_page=100&page=1
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.cloudflare.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      cdn-cache-control:
+      - public, max-age=3600, stale-while-revalidate=600
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      ratelimit:
+      - "\"default\";r=1199;t=1"
+      ratelimit-policy:
+      - "\"default\";q=1200;w=300"
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    body:
+      type: json
+      content:
+        success: true
+        result:
+        - id: e580c765-810c-4da3-936c-a2808892f14c
+          source: 1
+          name: "@cf/black-forest-labs/flux-2-klein-9b"
+          description: >-
+            FLUX.2 [klein] 9B is a 9 billion parameter model that can generate images from
+            text descriptions and supports multi-reference editing capabilities.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2026-01-14 12:55:54.294
+          tags: []
+          properties:
+          - property_id: partner
+            value: "true"
+          - property_id: terms
+            value: https://bfl.ai/legal/terms-of-service
+        - id: a9abaef0-3031-47ad-8790-d311d8684c6c
+          source: 1
+          name: "@cf/runwayml/stable-diffusion-v1-5-inpainting"
+          description: >-
+            Stable Diffusion Inpainting is a latent text-to-image diffusion model capable
+            of generating photo-realistic images given any text input, with the extra
+            capability of inpainting the pictures by using a mask.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2024-02-27 17:23:57.528
+          tags: []
+          properties:
+          - property_id: beta
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per step
+              price: 0
+              currency: USD
+          - property_id: info
+            value: https://huggingface.co/runwayml/stable-diffusion-inpainting
+          - property_id: terms
+            value: https://github.com/runwayml/stable-diffusion/blob/main/LICENSE
+        - id: 9e087485-23dc-47fa-997d-f5bfafc0c7cc
+          source: 1
+          name: "@cf/black-forest-labs/flux-1-schnell"
+          description: >-
+            FLUX.1 [schnell] is a 12 billion parameter rectified flow transformer capable
+            of generating images from text descriptions.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2024-08-29 16:37:39.541
+          tags: []
+          properties:
+          - property_id: terms
+            value: https://bfl.ai/legal/terms-of-service
+        - id: 7f797b20-3eb0-44fd-b571-6cbbaa3c423b
+          source: 1
+          name: "@cf/bytedance/stable-diffusion-xl-lightning"
+          description: >-
+            SDXL-Lightning is a lightning-fast text-to-image generation model. It can
+            generate high-quality 1024px images in a few steps.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2024-02-27 17:41:29.578
+          tags: []
+          properties:
+          - property_id: beta
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per step
+              price: 0
+              currency: USD
+          - property_id: info
+            value: https://huggingface.co/ByteDance/SDXL-Lightning
+        - id: 7912c0ab-542e-44b9-b9ee-3113d226a8b5
+          source: 1
+          name: "@cf/lykon/dreamshaper-8-lcm"
+          description: >-
+            Stable Diffusion model that has been fine-tuned to be better at photorealism
+            without sacrificing range.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2024-02-27 17:40:38.881
+          tags: []
+          properties:
+          - property_id: info
+            value: https://huggingface.co/Lykon/DreamShaper
+        - id: 724608fa-983e-495d-b95c-340d6b7e78be
+          source: 1
+          name: "@cf/leonardo/phoenix-1.0"
+          description: >-
+            Phoenix 1.0 is a model by Leonardo.Ai that generates images with exceptional
+            prompt adherence and coherent text.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2025-08-25 18:12:18.073
+          tags: []
+          properties:
+          - property_id: price
+            value:
+            - unit: per 512 by 512 tile
+              price: 0.00583
+              currency: USD
+            - unit: per step
+              price: 0.00011
+              currency: USD
+          - property_id: partner
+            value: "true"
+          - property_id: terms
+            value: https://leonardo.ai/terms-of-service/
+        - id: 6d52253a-b731-4a03-b203-cde2d4fae871
+          source: 1
+          name: "@cf/stabilityai/stable-diffusion-xl-base-1.0"
+          description: >-
+            Diffusion-based text-to-image generative model by Stability AI. Generates and
+            modify images based on text prompts.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2023-11-10 10:54:43.694
+          tags: []
+          properties:
+          - property_id: beta
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per step
+              price: 0
+              currency: USD
+          - property_id: info
+            value: https://stability.ai/stable-diffusion
+          - property_id: terms
+            value: >-
+              https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md
+        - id: 5cdffa8e-1b1e-48e8-85f1-ab9b943cdd32
+          source: 1
+          name: "@cf/black-forest-labs/flux-2-klein-4b"
+          description: >-
+            FLUX.2 [klein] is an ultra-fast, distilled image model. It unifies image
+            generation and editing in a single model, delivering state-of-the-art quality enabling
+            interactive workflows, real-time previews, and latency-critical applications.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2026-01-14 12:54:55.024
+          tags: []
+          properties:
+          - property_id: partner
+            value: "true"
+          - property_id: terms
+            value: https://bfl.ai/legal/terms-of-service
+        - id: 3ae8936e-593e-4fb2-85ee-95dd8a057588
+          source: 1
+          name: "@cf/black-forest-labs/flux-2-dev"
+          description: >-
+            FLUX.2 [dev] is an image model from Black Forest Labs where you can generate
+            highly realistic and detailed images, with multi-reference support.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2025-11-24 15:44:06.050
+          tags: []
+          properties:
+          - property_id: partner
+            value: "true"
+          - property_id: terms
+            value: https://bfl.ai/legal/terms-of-service
+        - id: 0e372c11-8720-46c9-a02d-666188a22dae
+          source: 1
+          name: "@cf/leonardo/lucid-origin"
+          description: |
+            Lucid Origin from Leonardo.AI is their most adaptable and prompt-responsive model to date. Whether you're generating images with sharp graphic design, stunning full-HD renders, or highly specific creative direction, it adheres closely to your prompts, renders text with accuracy, and supports a wide array of visual styles and aesthetics - from stylized concept art to crisp product mockups.
+          task:
+            id: 3d6e1f35-341b-4915-a6c8-9a7142a9033a
+            name: Text-to-Image
+            description: >-
+              Generates images from input text. These models can be used to generate and
+              modify images based on text prompts.
+          created_at: 2025-08-25 19:21:28.770
+          tags: []
+          properties:
+          - property_id: price
+            value:
+            - unit: per 512 by 512 tile
+              price: 0.007
+              currency: USD
+            - unit: per step
+              price: 0.000132
+              currency: USD
+          - property_id: partner
+            value: "true"
+          - property_id: terms
+            value: https://leonardo.ai/terms-of-service/
+        errors: []
+        messages: []
+        result_info:
+          count: 10
+          page: 1
+          per_page: 100
+          total_count: 326
+  recorded_at: 2026-10-22T16:14:02.278662+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/models/search?task=Text-to-Image&include_deprecated=false&per_page=100&page=2
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.cloudflare.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      cdn-cache-control:
+      - public, max-age=3600, stale-while-revalidate=600
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      ratelimit:
+      - "\"default\";r=1199;t=1"
+      ratelimit-policy:
+      - "\"default\";q=1200;w=300"
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    body:
+      type: json
+      content:
+        success: true
+        result: []
+        errors: []
+        messages: []
+        result_info:
+          count: 0
+          page: 2
+          per_page: 100
+          total_count: 326
+  recorded_at: 2026-10-22T16:14:03.369804+00:00

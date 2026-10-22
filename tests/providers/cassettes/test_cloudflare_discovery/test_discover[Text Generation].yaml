@@ -1,0 +1,1423 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/models/search?task=Text+Generation&include_deprecated=false&per_page=100&page=1
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.cloudflare.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      cdn-cache-control:
+      - public, max-age=3600, stale-while-revalidate=600
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      ratelimit:
+      - "\"default\";r=1199;t=1"
+      ratelimit-policy:
+      - "\"default\";q=1200;w=300"
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    body:
+      type: json
+      content:
+        success: true
+        result:
+        - id: f9f2250b-1048-4a52-9910-d0bf976616a1
+          source: 1
+          name: "@cf/openai/gpt-oss-120b"
+          description: >-
+            OpenAI's open-weight models designed for powerful reasoning, agentic tasks, and
+            versatile developer use cases - gpt-oss-120b is for production, general purpose,
+            high reasoning use-cases.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-08-05 10:27:29.131
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: context_window
+            value: "128000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.35
+              currency: USD
+            - unit: per M output tokens
+              price: 0.75
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - high
+              - medium
+              - low
+              default_effort: medium
+              mandatory: true
+              default_enabled: true
+        - id: e8e8abe4-a372-4c13-815f-4688ba655c8e
+          source: 1
+          name: "@cf/google/gemma-2b-it-lora"
+          description: >-
+            This is a Gemma-2B base model that Cloudflare dedicates for inference with LoRA
+            adapters. Gemma is a family of lightweight, state-of-the-art open models from
+            Google, built from the same research and technology used to create the Gemini
+            models.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-04-02 00:19:34.669
+          tags: []
+          properties:
+          - property_id: beta
+            value: "true"
+          - property_id: context_window
+            value: "8192"
+          - property_id: lora
+            value: "true"
+        - id: d9dc8363-66f4-4bb0-8641-464ee7bfc131
+          source: 1
+          name: "@cf/meta/llama-3.2-3b-instruct"
+          description: >-
+            The Llama 3.2 instruction-tuned text only models are optimized for multilingual
+            dialogue use cases, including agentic retrieval and summarization tasks.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-09-25 20:05:43.986
+          tags: []
+          properties:
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0509
+              currency: USD
+            - unit: per M output tokens
+              price: 0.335
+              currency: USD
+          - property_id: context_window
+            value: "80000"
+          - property_id: lora
+            value: "true"
+          - property_id: terms
+            value: https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE
+        - id: cc80437b-9a8d-4f1a-9c77-9aaf0d226922
+          source: 1
+          name: "@cf/meta/llama-guard-3-8b"
+          description: >-
+            Llama Guard 3 is a Llama-3.1-8B pretrained model, fine-tuned for content safety
+            classification. Similar to previous versions, it can be used to classify content
+            in both LLM inputs (prompt classification) and in LLM responses (response
+            classification). It acts as an LLM - it generates text in its output that indicates
+            whether a given prompt or response is safe or unsafe, and if unsafe, it also lists
+            the content categories violated.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-01-22 23:26:23.495
+          tags:
+          - moderation
+          - safety
+          - content-filtering
+          - guardrails
+          properties:
+          - property_id: context_window
+            value: "131072"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.484
+              currency: USD
+            - unit: per M output tokens
+              price: 0.03
+              currency: USD
+          - property_id: lora
+            value: "true"
+        - id: c58c317b-0c15-4bda-abb6-93e275f282d9
+          source: 1
+          name: "@cf/mistral/mistral-7b-instruct-v0.2-lora"
+          description: >-
+            The Mistral-7B-Instruct-v0.2 Large Language Model (LLM) is an instruct
+            fine-tuned version of the Mistral-7B-v0.2.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-04-01 22:14:40.529
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "15000"
+          - property_id: lora
+            value: "true"
+        - id: c29c7295-ff20-4b9b-bdcc-25136c19b21d
+          source: 1
+          name: "@cf/moonshotai/kimi-k2.7-code"
+          description: >-
+            Kimi K2.7 is a frontier-scale open-source 1T parameter model with a 262.1k
+            context window, multi-turn tool calling, vision inputs, and structured outputs for
+            agentic workloads.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-06-12 11:45:20.582
+          tags: []
+          properties:
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "262144"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              mandatory: true
+              default_enabled: true
+          - property_id: terms
+            value: https://huggingface.co/moonshotai/Kimi-K2.7-Code/blob/main/LICENSE
+          - property_id: vision
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.95
+              currency: USD
+            - unit: per M output tokens
+              price: 4
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.19
+              currency: USD
+        - id: c05fea67-c5a9-49ca-a7ab-446a0d62cb7a
+          source: 1
+          name: "@cf/zai-org/glm-5.3"
+          description: >-
+            GLM-5.3 is Z.ai's flagship agentic coding model, pairing a 1M-token context
+            window with reasoning, function calling, and structured outputs to power multi-step,
+            tool-driven development workflows.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-08-14 12:07:32.346
+          tags: []
+          properties:
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "1048576"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - max
+              - high
+              - low
+              default_effort: max
+              normalizes_to:
+                none: max
+                minimal: max
+                medium: max
+                xhigh: max
+                "null": max
+              mandatory: true
+              default_enabled: true
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 1.4
+              currency: USD
+            - unit: per M output tokens
+              price: 4.4
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.26
+              currency: USD
+        - id: bf419b23-844f-4a2c-8111-89dbd63152eb
+          source: 1
+          name: "@cf/utter-project/eurollm-9b-it"
+          description: "EuroLLM-9B is a 9B parameter model trained on 4 trillion tokens divided across the considered languages and several data sources: Web data, parallel data (en-xx and xx-en), and high-quality datasets. For access, please fill out this form: https://forms.gle/kgvmkr6ucHN3xNuH6"
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-09-30 14:09:31.518
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "32000"
+          - property_id: function_calling
+            value: "true"
+          - property_id: languages
+            value: >-
+              Bulgarian,Croatian,Czech,Danish,Dutch,English,Estonian,Finnish,French,German,Greek,Hungarian,Irish,Italian,Latvian,Lithuanian,Maltese,Polish,Portuguese,Romanian,Slovak,Slovenian,Spanish,Swedish,Arabic,Catalan,Chinese,Galician,Hindi,Japanese,Korean,Norwegian,Russian,Turkish,Ukrainian
+        - id: ad01ab83-baf8-4e7b-8fed-a0a219d4eb45
+          source: 1
+          name: "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b"
+          description: >-
+            DeepSeek-R1-Distill-Qwen-32B is a model distilled from DeepSeek-R1 based on
+            Qwen2.5. It outperforms OpenAI-o1-mini across various benchmarks, achieving new
+            state-of-the-art results for dense models.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-01-22 19:48:55.776
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "80000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.497
+              currency: USD
+            - unit: per M output tokens
+              price: 4.881
+              currency: USD
+          - property_id: reasoning
+            value: "true"
+          - property_id: terms
+            value: https://github.com/deepseek-ai/DeepSeek-R1/blob/main/LICENSE
+        - id: 9b9c87c6-d4b7-494c-b177-87feab5904db
+          source: 1
+          name: "@cf/meta/llama-3.1-8b-instruct-fp8"
+          description: Llama 3.1 8B quantized to FP8 precision
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-07-25 17:28:43.328
+          tags: []
+          properties:
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.152
+              currency: USD
+            - unit: per M output tokens
+              price: 0.287
+              currency: USD
+          - property_id: context_window
+            value: "32000"
+          - property_id: terms
+            value: https://github.com/meta-llama/llama-models/blob/main/models/llama3_1/LICENSE
+        - id: 95666467-f984-4211-b48a-7c246dd4adb7
+          source: 1
+          name: "@cf/zai-org/glm-5.3-flash"
+          description: >-
+            The first natively multimodal model in the GLM-5 series. With 320B total
+            parameters and just 18B active parameters, it outperforms GLM-5.2 across benchmarks and
+            real-world workloads at one-tenth the price, while approaching Claude Opus 4.8
+            on coding and agentic benchmarks.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-08-26 14:21:42.917
+          tags: []
+          properties:
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "1048576"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - max
+              - high
+              - low
+              default_effort: max
+              normalizes_to:
+                none: max
+                minimal: max
+                medium: max
+                xhigh: max
+                "null": max
+              mandatory: true
+              default_enabled: true
+          - property_id: terms
+            value: https://huggingface.co/zai-org/GLM-5.3-Flash/blob/main/LICENSE
+          - property_id: vision
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.15
+              currency: USD
+            - unit: per M output tokens
+              price: 0.5
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.03
+              currency: USD
+        - id: 906a57fd-b018-4d6c-a43e-a296d4cc5839
+          source: 1
+          name: "@cf/meta/llama-3.2-1b-instruct"
+          description: >-
+            The Llama 3.2 instruction-tuned text only models are optimized for multilingual
+            dialogue use cases, including agentic retrieval and summarization tasks.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-09-25 21:36:32.050
+          tags: []
+          properties:
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.027
+              currency: USD
+            - unit: per M output tokens
+              price: 0.201
+              currency: USD
+          - property_id: context_window
+            value: "60000"
+          - property_id: terms
+            value: https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE
+        - id: 8a5d00bd-de28-4a28-b37a-ce46d01ebaeb
+          source: 1
+          name: "@cf/moonshotai/kimi-k2.6"
+          description: >-
+            Kimi K2.6 is a frontier-scale open-source 1T parameter model with a 262.1k
+            context window, multi-turn tool calling, vision inputs, and structured outputs for
+            agentic workloads.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-04-20 01:40:35.001
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "262144"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - high
+              - none
+              default_effort: high
+              normalizes_to:
+                low: high
+                medium: high
+                max: high
+                "null": high
+              mandatory: false
+              default_enabled: true
+          - property_id: terms
+            value: https://huggingface.co/moonshotai/Kimi-K2.6/blob/main/LICENSE
+          - property_id: vision
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.95
+              currency: USD
+            - unit: per M output tokens
+              price: 4
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.16
+              currency: USD
+        - id: 87f39d62-116c-4b26-b2cd-562a9ba01f2f
+          source: 1
+          name: "@cf/cloudflare/clef"
+          description: >-
+            Clef is a 27B multimodal decision model that turns a state and a schema of
+            typed questions into decisions. It reads the state as text, JSON, images, or video,
+            and returns a probability for every allowed option of every question.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-09-29 14:05:24.552
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "65536"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.24
+              currency: USD
+          - property_id: info
+            value: https://huggingface.co/Cloudflare/clef
+          - property_id: terms
+            value: https://huggingface.co/Cloudflare/clef/blob/main/LICENSE
+          - property_id: vision
+            value: "true"
+        - id: 86b3e51a-4b05-43fa-a403-0f27821919d2
+          source: 1
+          name: "@cf/zai-org/glm-4.7-flash"
+          description: >-
+            GLM-4.7-Flash is a fast and efficient multilingual text generation model with a
+            131,072 token context window. Optimized for dialogue, instruction-following, and
+            multi-turn tool calling across 100+ languages.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-01-28 16:04:39.346
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "131072"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0605
+              currency: USD
+            - unit: per M output tokens
+              price: 0.4
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              mandatory: false
+              default_enabled: true
+        - id: 7ed8d8e8-6040-4680-843a-aef402d6b013
+          source: 1
+          name: "@cf/meta-llama/llama-2-7b-chat-hf-lora"
+          description: >-
+            This is a Llama2 base model that Cloudflare dedicated for inference with LoRA
+            adapters. Llama 2 is a collection of pretrained and fine-tuned generative text
+            models ranging in scale from 7 billion to 70 billion parameters. This is the
+            repository for the 7B fine-tuned model, optimized for dialogue use cases and converted
+            for the Hugging Face Transformers format.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-04-02 00:17:18.579
+          tags: []
+          properties:
+          - property_id: beta
+            value: "true"
+          - property_id: context_window
+            value: "8192"
+          - property_id: lora
+            value: "true"
+        - id: 7a143886-c9bb-4a1c-be95-377b1973bc3b
+          source: 1
+          name: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+          description: Llama 3.3 70B quantized to fp8 precision, optimized to be faster.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-12-06 17:09:18.338
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: context_window
+            value: "24000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.293
+              currency: USD
+            - unit: per M output tokens
+              price: 2.253
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+          - property_id: terms
+            value: https://github.com/meta-llama/llama-models/blob/main/models/llama3_3/LICENSE
+        - id: 7952d0cc-cb00-4e10-be02-667565c2ee0f
+          source: 1
+          name: "@cf/ibm-granite/granite-4.0-h-micro"
+          description: >-
+            Granite 4.0 instruct models deliver strong performance across benchmarks,
+            achieving industry-leading results in key agentic tasks like instruction following and
+            function calling. These efficiencies make the models well-suited for a wide
+            range of use cases like retrieval-augmented generation (RAG), multi-agent workflows,
+            and edge deployments.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-10-07 18:46:29.436
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "131000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.017
+              currency: USD
+            - unit: per M output tokens
+              price: 0.112
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+        - id: 7276b330-b4ae-4662-81d1-3a8bea8368f8
+          source: 1
+          name: "@cf/deepseek-ai/deepseek-v4-flash-0731"
+          description: >-
+            DeepSeek-V4-Flash-0731 is the official release of DeepSeek-V4-Flash,
+            superseding the preview version, with substantially enhanced agentic capabilities.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-07-31 14:10:43.440
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "1048576"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - max
+              - high
+              - low
+              - none
+              default_effort: high
+              default_enabled: true
+              mandatory: false
+              normalizes_to:
+                "null": high
+                minimal: low
+                medium: high
+                xhigh: high
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.44
+              currency: USD
+            - unit: per M output tokens
+              price: 1.32
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.014
+              currency: USD
+        - id: 6b0b79c1-25e6-4498-bb62-5161df39f0ef
+          source: 1
+          name: "@cf/cloudflare/clairic"
+          description: >-
+            Clairic is a System One-style model that can extract, compute, estimate, and
+            forecast values from inputs. It is strongly typed and outputs confidence scores and
+            probabilities against its outputs. This model is in early research preview from
+            the Cloudflare Workers AI team.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-10-14 05:34:04.680
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "65536"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.1
+              currency: USD
+          - property_id: vision
+            value: "true"
+        - id: 56482a5b-020e-488d-9c56-11a3ed40719c
+          source: 1
+          name: "@cf/swiss-ai/apertus-v1.5-8b"
+          description: "Apertus 1.5 is an 8B parameter language model designed to advance the state of multilingual, multimodal, fully open, and transparent AI. The models support a wide range of languages, handle contexts of up to 262,144 tokens, and it uses only fully open training data whilst delivering performance comparable to other models of similar size. For access, please fill out this form: https://forms.gle/kgvmkr6ucHN3xNuH6"
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-09-30 14:20:40.668
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "262144"
+          - property_id: function_calling
+            value: "true"
+          - property_id: vision
+            value: "true"
+        - id: 543fea3d-dcff-4c3b-af79-b83f601aa1cb
+          source: 1
+          name: "@cf/cloudflare/clef-omni"
+          description: >-
+            Clef-omni is a multimodal decision model built on a 30B-parameter
+            mixture-of-experts (3B active) backbone. It turns a state and a schema of typed questions into
+            decisions, reads the state as text, JSON, images, audio, or video, and returns a
+            probability for every allowed option of every question.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-10-09 01:37:45.295
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "65536"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.15
+              currency: USD
+          - property_id: vision
+            value: "true"
+        - id: 51b71d5b-8bc0-4489-a107-95e542b69914
+          source: 1
+          name: "@cf/qwen/qwen2.5-coder-32b-instruct"
+          description: "Qwen2.5-Coder is the latest series of Code-Specific Qwen large language models (formerly known as CodeQwen). As of now, Qwen2.5-Coder has covered six mainstream model sizes, 0.5, 1.5, 3, 7, 14, 32 billion parameters, to meet the needs of different developers. Qwen2.5-Coder brings the following improvements upon CodeQwen1.5:"
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-02-27 00:31:43.829
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "32768"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.66
+              currency: USD
+            - unit: per M output tokens
+              price: 1
+              currency: USD
+          - property_id: lora
+            value: "true"
+        - id: 4edc7dfe-de78-4156-890c-85b79227694e
+          source: 1
+          name: "@cf/zai-org/glm-5.2"
+          description: Z.ai's flagship agentic coding model
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-06-15 09:51:05.921
+          tags: []
+          properties:
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "262144"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - max
+              - high
+              - none
+              default_effort: max
+              default_enabled: true
+              mandatory: false
+              normalizes_to:
+                "null": max
+                low: high
+                medium: high
+                xhigh: max
+                minimal: none
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 1.4
+              currency: USD
+            - unit: per M output tokens
+              price: 4.4
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.26
+              currency: USD
+        - id: 43dbadb4-2b0a-47e9-8479-34a49b971f1e
+          source: 1
+          name: "@cf/nvidia/nemotron-3-120b-a12b"
+          description: >-
+            NVIDIA Nemotron 3 Super is a hybrid MoE model with leading accuracy for
+            multi-agent applications and specialized agentic AI systems.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-02-24 23:22:47.215
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "256000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.5
+              currency: USD
+            - unit: per M output tokens
+              price: 1.5
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: terms
+            value: >-
+              https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/
+        - id: 41ca173f-72d5-4420-8915-49e835d2676e
+          source: 1
+          name: "@cf/aisingapore/gemma-sea-lion-v4-27b-it"
+          description: >-
+            SEA-LION stands for Southeast Asian Languages In One Network, which is a
+            collection of Large Language Models (LLMs) which have been pretrained and
+            instruct-tuned for the Southeast Asia (SEA) region.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-09-23 19:27:30.468
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "128000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.351
+              currency: USD
+            - unit: per M output tokens
+              price: 0.555
+              currency: USD
+        - id: 4090e54c-eee4-4221-b410-10c1c0f92f17
+          source: 1
+          name: "@cf/qwen/qwen3-30b-a3b-fp8"
+          description: >-
+            Qwen3 is the latest generation of large language models in Qwen series,
+            offering a comprehensive suite of dense and mixture-of-experts (MoE) models. Built upon
+            extensive training, Qwen3 delivers groundbreaking advancements in reasoning,
+            instruction-following, agent capabilities, and multilingual support.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-04-30 21:36:10.009
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: context_window
+            value: "32768"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0509
+              currency: USD
+            - unit: per M output tokens
+              price: 0.335
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+        - id: 337170b7-bd2f-4631-9a57-688b579cf6d3
+          source: 1
+          name: "@cf/google/gemma-7b-it-lora"
+          description: "  This is a Gemma-7B base model that Cloudflare dedicates for inference with LoRA adapters. Gemma is a family of lightweight, state-of-the-art open models from Google, built from the same research and technology used to create the Gemini models."
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-04-02 00:20:19.633
+          tags: []
+          properties:
+          - property_id: beta
+            value: "true"
+          - property_id: context_window
+            value: "3500"
+          - property_id: lora
+            value: "true"
+        - id: 328adb49-4a7d-43e3-a2d5-802ae8100fe7
+          source: 1
+          name: "@cf/google/gemma-4-26b-a4b-it"
+          description: >-
+            Gemma 4 is Google's most intelligent family of open models, built from Gemini 3
+            research to maximize intelligence-per-parameter.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-04-02 15:05:22.642
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: context_window
+            value: "256000"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              mandatory: false
+              default_enabled: true
+          - property_id: terms
+            value: https://ai.google.dev/gemma/docs/gemma_4_license
+          - property_id: vision
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.1
+              currency: USD
+            - unit: per M output tokens
+              price: 0.3
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.05
+              currency: USD
+        - id: 31690291-ebdc-4f98-bcfc-a44844e215b7
+          source: 1
+          name: "@cf/mistralai/mistral-small-3.1-24b-instruct"
+          description: >-
+            Building upon Mistral Small 3 (2501), Mistral Small 3.1 (2503) adds
+            state-of-the-art vision understanding and enhances long context capabilities up to 128k
+            tokens without compromising text performance. With 24 billion parameters, this model
+            achieves top-tier capabilities in both text and vision tasks.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-03-18 03:28:37.890
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "128000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.351
+              currency: USD
+            - unit: per M output tokens
+              price: 0.555
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+          - property_id: vision
+            value: "true"
+        - id: 2d50837b-2dc7-4994-a690-a38e25c16d74
+          source: 1
+          name: "@cf/deepseek-ai/deepseek-v4-pro-0813"
+          description: >-
+            DeepSeek V4 Pro is a high-capability reasoning model from DeepSeek with a one
+            million token context window, built for long-horizon agentic workflows and
+            complex, multi-step problem-solving
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-08-13 17:15:08.489
+          tags: []
+          properties:
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "1048576"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - max
+              - high
+              - low
+              - none
+              default_effort: high
+              default_enabled: true
+              mandatory: false
+              normalizes_to:
+                "null": high
+                minimal: low
+                medium: high
+                xhigh: high
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 1.32
+              currency: USD
+            - unit: per M output tokens
+              price: 3.96
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.044
+              currency: USD
+        - id: 2cbc033b-ded8-4e02-bbb2-47cf05d5cfe5
+          source: 1
+          name: "@cf/meta/llama-3.2-11b-vision-instruct"
+          description: " The Llama 3.2-Vision instruction-tuned models are optimized for visual recognition, image reasoning, captioning, and answering general questions about an image."
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2024-09-25 05:36:04.547
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "128000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.0485
+              currency: USD
+            - unit: per M output tokens
+              price: 0.676
+              currency: USD
+          - property_id: lora
+            value: "true"
+          - property_id: terms
+            value: https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE
+          - property_id: vision
+            value: "true"
+        - id: 2b2b6dfb-2cd0-433f-802c-533d40508d9b
+          source: 1
+          name: "@cf/daily-co/phonellm-mini-alpha-2"
+          description: >-
+            PhoneLLM is an open model tuned for voice agents. The model is based on
+            Nemotron Nano 30B base capabilities and excels at typical voice agent tasks with
+            thinking disabled.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-10-13 09:36:59.162
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "262140"
+          - property_id: function_calling
+            value: "true"
+        - id: 22338608-b54d-4f04-884e-ab06f3dbbf3e
+          source: 1
+          name: "@cf/qwen/qwen3.8-27b"
+          description: >-
+            Qwen 3.8 27B is a 27-billion-parameter instruction-tuned language model from
+            Alibaba's Qwen family, designed for vision, efficient general-purpose text
+            generation and agentic workloads.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-08-17 07:13:11.641
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: context_window
+            value: "262144"
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - xhigh
+              - medium
+              - low
+              default_effort: xhigh
+              normalizes_to:
+                "null": xhigh
+              mandatory: false
+              default_enabled: true
+              supports_max_tokens: false
+          - property_id: vision
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.45
+              currency: USD
+            - unit: per M output tokens
+              price: 3.2
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.05
+              currency: USD
+        - id: 215ee9cf-aaa0-48bd-a084-00da8da2fbeb
+          source: 1
+          name: "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+          description: >-
+            We introduce DeepSeek-V4.1-Flash, a multimodal Mixture-of-Experts (MoE) model
+            with 552B backbone parameters and support for contexts of up to one million
+            tokens. The model natively processes images and text, and generates text
+            autoregressively.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-10-17 03:51:20.275
+          tags: []
+          properties:
+          - property_id: require_workers_paid
+            value: "true"
+          - property_id: context_window
+            value: "1048576"
+          - property_id: function_calling
+            value: "true"
+          - property_id: hugging_face_id
+            value: deepseek-ai/DeepSeek-V4.1-Flash-1017
+          - property_id: openrouter_slug
+            value: deepseek/deepseek-v4.1-flash-1017
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - max
+              - high
+              - low
+              - none
+              default_effort: high
+              default_enabled: true
+              mandatory: false
+              normalizes_to:
+                "null": high
+                auto: high
+                minimal: none
+                medium: high
+                xhigh: max
+          - property_id: terms
+            value: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/main/LICENSE
+          - property_id: vision
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.3
+              currency: USD
+            - unit: per M output tokens
+              price: 1.2
+              currency: USD
+            - unit: per M cached input tokens
+              price: 0.006
+              currency: USD
+        - id: 188a4e1e-253e-46d0-9616-0bf8c149763f
+          source: 1
+          name: "@cf/openai/gpt-oss-20b"
+          description: >-
+            OpenAI's open-weight models designed for powerful reasoning, agentic tasks, and
+            versatile developer use cases - gpt-oss-20b is for lower latency, and local or
+            specialized use-cases.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-08-05 10:49:53.265
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: context_window
+            value: "128000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.2
+              currency: USD
+            - unit: per M output tokens
+              price: 0.3
+              currency: USD
+          - property_id: function_calling
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+          - property_id: reasoning_effort
+            value:
+              supported_efforts:
+              - high
+              - medium
+              - low
+              default_effort: medium
+              mandatory: true
+              default_enabled: true
+        - id: 06455e78-19f7-487b-93cd-c05a3dd07813
+          source: 1
+          name: "@cf/meta/llama-4-scout-17b-16e-instruct"
+          description: >-
+            Meta's Llama 4 Scout is a 17 billion parameter model with 16 experts that is
+            natively multimodal. These models leverage a mixture-of-experts architecture to
+            offer industry-leading performance in text and image understanding.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-04-05 20:25:56.137
+          tags: []
+          properties:
+          - property_id: async_queue
+            value: "true"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.27
+              currency: USD
+            - unit: per M output tokens
+              price: 0.85
+              currency: USD
+          - property_id: context_window
+            value: "131000"
+          - property_id: function_calling
+            value: "true"
+          - property_id: terms
+            value: https://github.com/meta-llama/llama-models/blob/main/models/llama4/LICENSE
+          - property_id: vision
+            value: "true"
+        - id: 059de3ad-d350-4cb6-8b31-e4f34847d10a
+          source: 1
+          name: "@cf/cloudflare/clef-flash"
+          description: >-
+            Clef-flash is a fast 9B multimodal decision model that turns a state and a
+            schema of typed questions into decisions. It reads the state as text, JSON, images,
+            or video, and returns a probability for every allowed option of every question.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2026-09-29 09:25:44.258
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "24576"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.038
+              currency: USD
+          - property_id: info
+            value: https://huggingface.co/Cloudflare/clef-flash
+          - property_id: terms
+            value: https://huggingface.co/Cloudflare/clef-flash/blob/main/LICENSE
+          - property_id: vision
+            value: "true"
+        - id: 02c16efa-29f5-4304-8e6c-3d188889f875
+          source: 1
+          name: "@cf/qwen/qwq-32b"
+          description: >-
+            QwQ is the reasoning model of the Qwen series. Compared with conventional
+            instruction-tuned models, QwQ, which is capable of thinking and reasoning, can achieve
+            significantly enhanced performance in downstream tasks, especially hard
+            problems. QwQ-32B is the medium-sized reasoning model, which is capable of achieving
+            competitive performance against state-of-the-art reasoning models, e.g., DeepSeek-R1,
+            o1-mini.
+          task:
+            id: c329a1f9-323d-4e91-b2aa-582dd4188d34
+            name: Text Generation
+            description: >-
+              Family of generative text models, such as large language models (LLM), that can
+              be adapted for a variety of natural language tasks.
+          created_at: 2025-03-05 21:52:40.974
+          tags: []
+          properties:
+          - property_id: context_window
+            value: "24000"
+          - property_id: price
+            value:
+            - unit: per M input tokens
+              price: 0.66
+              currency: USD
+            - unit: per M output tokens
+              price: 1
+              currency: USD
+          - property_id: lora
+            value: "true"
+          - property_id: reasoning
+            value: "true"
+        errors: []
+        messages: []
+        result_info:
+          count: 39
+          page: 1
+          per_page: 100
+          total_count: 326
+  recorded_at: 2026-10-22T16:13:58.596413+00:00
+- request:
+    method: GET
+    uri: >-
+      https://api.cloudflare.com/client/v4/accounts/ACCOUNT/ai/models/search?task=Text+Generation&include_deprecated=false&per_page=100&page=2
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      host:
+      - api.cloudflare.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      api-version:
+      - 2026-10-01.epoch
+      cache-control:
+      - no-store
+      cdn-cache-control:
+      - public, max-age=3600, stale-while-revalidate=600
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      ratelimit:
+      - "\"default\";r=1199;t=1"
+      ratelimit-policy:
+      - "\"default\";q=1200;w=300"
+      transfer-encoding:
+      - chunked
+      vary:
+      - accept-encoding
+    body:
+      type: json
+      content:
+        success: true
+        result: []
+        errors: []
+        messages: []
+        result_info:
+          count: 0
+          page: 2
+          per_page: 100
+          total_count: 326
+  recorded_at: 2026-10-22T16:13:59.416709+00:00

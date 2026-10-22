@@ -2,7 +2,7 @@ import httpx2
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models.cloudflare import CloudflareClefModel
+from pydantic_ai.models.cloudflare_clef import CloudflareClefModel
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.providers.cloudflare import CloudflareProvider
 
