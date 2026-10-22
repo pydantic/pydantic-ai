@@ -41,7 +41,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -84,7 +83,7 @@ def _tool_calling_model(*calls: ToolCallPart, counter: dict[str, int] | None = N
 
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         tally['calls'] += 1
-        if any(isinstance(p, ToolReturnPart | RetryPromptPart) for m in messages for p in m.parts):
+        if any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
             return ModelResponse(parts=[TextPart(content='done')])
         return ModelResponse(parts=list(calls))
 
