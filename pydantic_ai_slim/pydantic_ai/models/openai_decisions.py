@@ -156,8 +156,9 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
         Args:
             model_name: The name of the OpenAI model to use, such as `gpt-6-luna`.
-            provider: The provider to use for the API's URL and key: `'openai'` or an
-                [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], as for the other OpenAI models.
+            provider: The provider to use for the API's URL and key: an
+                [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], as for the other OpenAI models, or
+                `'openai'` or `'openai-decisions'` (the default), which both create one.
             profile: The model profile to use. Defaults to a decision model's profile for the model name.
             settings: Model-specific settings used as defaults for this model.
         """
