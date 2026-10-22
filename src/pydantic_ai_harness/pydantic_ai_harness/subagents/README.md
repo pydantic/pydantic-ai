@@ -197,7 +197,7 @@ Nested model streaming from the child run is not an event concern; pass an `even
 
 `SubAgents` emits no OpenTelemetry spans for plain delegation: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result.
 
-Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` and, for a task, `sub_agents.task_id`:
+Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` (for a vetoed created agent, only as content) and, for a task, `sub_agents.task_id`:
 
 | Span | When | Attributes |
 | --- | --- | --- |
@@ -208,7 +208,7 @@ Task control records its own decisions, which core's spans don't show, as zero-d
 | `sub_agents task not accepted` | no worker picked a remote task up within `accept_timeout` | `sub_agents.accept_timeout` |
 | `sub_agents remote task stopped` | a remote task ended without its worker's report, and its worker was told to stop it | |
 
-A veto reason, question, or answer, and the name the model chose for a created agent, are attached only when the run's instrumentation includes content. While a top-level run waits for its background tasks, a `sub_agents wait for tasks` span covers the wait, with `sub_agents.running_tasks`.
+A veto reason, question, or answer, and the name a vetoed `create_agent` call asked for, are attached only when the run's instrumentation includes content. While a top-level run waits for its background tasks, a `sub_agents wait for tasks` span covers the wait, with `sub_agents.running_tasks`.
 
 ## Task control
 

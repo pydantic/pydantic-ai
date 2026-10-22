@@ -284,7 +284,7 @@ class TestSubAgentsTaskControl:
             {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'auto'},
         ) in (decisions(exporter))
 
-    async def test_a_listener_failing_on_auto_backgrounding_fails_the_delegation(self) -> None:
+    async def test_a_listener_failing_on_auto_backgrounding_aborts_the_run(self) -> None:
         gate = Gate()
         slow = Agent(scripted(call('pause'), text('unreachable')), tools=[gate.pause])
         recorder = Recorder()
@@ -293,6 +293,7 @@ class TestSubAgentsTaskControl:
         class Failing(AbstractCapability[Any]):
             @on_event(TaskBackgroundedEvent)
             async def backgrounded(self, ctx: RunContext[Any], event: TaskBackgroundedEvent) -> None:
+                await gate.entered.wait()
                 raise RuntimeError('listener broke')
 
         parent = Agent(
