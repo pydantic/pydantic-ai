@@ -289,8 +289,8 @@ Gotchas:
   deps or tools. Its usage counts toward parent limits. A failed consultation still counts toward
   `max_uses`.
 - An agent has one advisor (tool name `advisor`): two `Advisor`s merge, a `None` option taking the
-  other instance's value and any other option the later one's. For durable runs use
-  `mode='native'`; local execution is unsupported there.
+  other instance's value, two list `output_type`s combining, and any other option the later one's.
+  For durable runs use `mode='native'`; local execution is unsupported there.
 
 ## BackgroundTools
 
