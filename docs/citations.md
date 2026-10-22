@@ -145,7 +145,7 @@ data back with the text, so the model still knows which of its earlier statement
 
 | Provider | Citations sent back | Only when |
 | --- | --- | --- |
-| Anthropic | Web search citations, and citations of plain-text documents | Documents need `citations=True` |
+| Anthropic | Web search citations, and citations of plain-text documents and fetched pages | Documents and fetched pages need `citations=True` |
 | Amazon Bedrock | Citations of plain-text documents | `citations=True`, on Anthropic models |
 | OpenAI Responses | URL and file citations | Item IDs are sent; see [`openai_send_reasoning_ids`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_send_reasoning_ids] |
 

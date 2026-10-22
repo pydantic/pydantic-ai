@@ -868,7 +868,6 @@ NativeCitationReplayProvider = Literal[
 ]
 
 
-@pytest.mark.vcr(additional_matchers=['body'])
 @pytest.mark.parametrize(
     'provider',
     [

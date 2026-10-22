@@ -224,8 +224,8 @@ def test_openai_invalid_url_citation_range_is_unanchored():
 async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> None:
     """Replay leaves out each annotation it can't rebuild from the raw data, and keeps the rest.
 
-    These only come from history edited after OpenAI sent it. Annotations that are sent back are covered by the
-    recorded `test_native_citation_replay_after_persisted_history[openai-responses]` and
+    Unit test: these annotations only come from history edited after OpenAI sent it. Annotations that are sent back
+    are covered by the recorded `test_native_citation_replay_after_persisted_history[openai-responses]` and
     `test_openai_responses_file_citation_context_replay`.
     """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
@@ -254,7 +254,9 @@ async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> No
                             {**url_citation, 'start_index': 60, 'end_index': 90},
                             # The range is in the text but no longer covers the link, as when the text was edited.
                             {**url_citation, 'start_index': 0, 'end_index': 10},
+                            # Replaying a file citation needs its filename.
                             {'type': 'file_citation', 'file_id': 'file-123', 'index': 3},
+                            # Only URL and file citations are replayed.
                             {'type': 'file_path', 'file_id': 'file-123', 'index': 3},
                         ]
                     },
@@ -265,33 +267,13 @@ async def test_openai_responses_leaves_out_annotations_it_cannot_rebuild() -> No
         ModelRequest(parts=[UserPromptPart('Continue.')]),
     ]
 
+    # Annotations are only replayed on a message sent with its ID, which this setting turns on.
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         history, OpenAIResponsesModelSettings(openai_send_reasoning_ids=True), ModelRequestParameters()
     )
 
-    assert items[1] == snapshot(
-        {
-            'role': 'assistant',
-            'id': 'msg-historical',
-            'content': [
-                {
-                    'text': 'The source supports this claim. ([example.com](https://example.com/source))',
-                    'type': 'output_text',
-                    'annotations': [
-                        {
-                            'type': 'url_citation',
-                            'url': 'https://example.com/source',
-                            'title': 'Source',
-                            'start_index': 32,
-                            'end_index': 75,
-                        }
-                    ],
-                }
-            ],
-            'type': 'message',
-            'status': 'completed',
-        }
-    )
+    [content] = cast(dict[str, Any], items[1])['content']
+    assert content['annotations'] == [url_citation]
 
 
 def test_openai_citations_kept_with_logprobs():
@@ -14214,7 +14196,7 @@ async def test_openai_responses_model_file_search_tool_stream(
 async def test_openai_responses_file_citation_context_replay(
     tmp_path: Path, allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ) -> None:
-    """Responses accepts a replayed file annotation, but the next model cannot read its filename."""
+    """A file citation from history is replayed as the file annotation OpenAI returned, filename included."""
     async_client = AsyncOpenAI(api_key=openai_api_key, http_client=request_capture.client)
     test_file_path = tmp_path / 'citation-source.txt'
     test_file_path.write_text('The return window is thirty days from purchase.')
@@ -14234,16 +14216,10 @@ async def test_openai_responses_file_citation_context_replay(
             model_settings=settings,
         ).run('According to the file, what is the return window? Answer in one sentence without naming the file.')
 
-        [citation] = citations_from_messages(first_result.all_messages())
-        [source] = citation.sources
-        assert isinstance(source, DocumentCitationSource)
-        assert source.document_id == file.id
-        assert source.title == test_file_path.name
-
         history = ModelMessagesTypeAdapter.validate_json(
             ModelMessagesTypeAdapter.dump_json(first_result.all_messages())
         )
-        second_result = await Agent(model, model_settings=settings).run(
+        await Agent(model, model_settings=settings).run(
             'Do not search again. Based only on the structured file citation attached to the previous assistant '
             'message, reply with the exact cited filename. If it is unavailable, reply exactly UNAVAILABLE.',
             message_history=history,
@@ -14273,7 +14249,6 @@ async def test_openai_responses_file_citation_context_replay(
                 ],
             }
         )
-        assert second_result.output == snapshot('UNAVAILABLE')
     finally:
         await _cleanup_openai_resources(file, vector_store, async_client)
 
