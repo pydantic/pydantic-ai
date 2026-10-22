@@ -59,7 +59,8 @@ Important distinctions:
 Install `pydantic-ai-slim[openai-responses-websocket]` before using `OpenAIResponsesModel.connect()`.
 Pass the yielded model to `Agent(...)`, `run(model=...)`, or a model-selection capability.
 Keep the connection open for every run that borrows it.
-Parallel requests can share one connection; each runs on its own `stream_id` lane.
+On OpenAI's API, parallel requests share one connection, each on its own `stream_id` lane; other endpoints run them one at a time.
+The connection doesn't reconnect and OpenAI closes it after 60 minutes, so open a new one before then in a long-lived process.
 Retain complete message history when switching to HTTP or another socket. Cached response IDs can be connection-local.
 Do not use a connected model in a durable workflow or flow; open it inside an activity instead.
 Use [OpenAI Responses WebSockets](https://pydantic.dev/docs/ai/models/openai/#responses-websockets) for configuration and ownership details.
