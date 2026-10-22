@@ -1006,6 +1006,19 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
 }
 
 
+def _parse_retry_after_ms(headers: Mapping[str, str]) -> float | None:
+    """Seconds to wait before retrying, from the `retry-after-ms` header (keys lowercased), as OpenAI and Anthropic send it."""
+    if (raw_ms := headers.get('retry-after-ms')) is None:
+        return None
+    try:
+        milliseconds = float(raw_ms)
+    except ValueError:
+        return None
+    if 0 <= milliseconds < float('inf'):
+        return milliseconds / 1000
+    return None
+
+
 def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     """Seconds to wait before retrying, from the `retry-after-ms` or `Retry-After` header (keys lowercased).
 
@@ -1014,14 +1027,8 @@ def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
     """
     if headers is None:
         return None
-    if (raw_ms := headers.get('retry-after-ms')) is not None:
-        try:
-            milliseconds = float(raw_ms)
-        except ValueError:
-            pass
-        else:
-            if 0 <= milliseconds < float('inf'):
-                return milliseconds / 1000
+    if (seconds_from_ms := _parse_retry_after_ms(headers)) is not None:
+        return seconds_from_ms
     raw = headers.get('retry-after')
     if raw is None:
         return None

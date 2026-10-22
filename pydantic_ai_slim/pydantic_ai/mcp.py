@@ -8,8 +8,8 @@ import re
 import ssl
 import warnings
 from abc import ABC
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -121,6 +121,8 @@ def _load_call_tool_task() -> _CallToolTask | None:
 __all__ = (
     'MCPToolset',
     'MCPToolsetClient',
+    'MCPAuthFunc',
+    'MCPHeadersFunc',
     'load_mcp_toolsets',
     'MCPError',
     'Resource',
@@ -731,6 +733,36 @@ For multi-server JSON config files, use [`load_mcp_toolsets`][pydantic_ai.mcp.lo
 instead — it expands env vars and constructs one `MCPToolset` per server entry."""
 
 
+MCPAuthFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], HTTPAuth | str | None | Awaitable[HTTPAuth | str | None]]
+"""A sync/async function that takes the run context and returns the `auth` to connect with for that run.
+
+Pass one as `MCPToolset(auth=...)` to authenticate each agent run as its own user, for example with
+a token from the run's [`deps`][pydantic_ai.tools.RunContext.deps]. See
+[`MCPToolset`'s `auth` argument][pydantic_ai.mcp.MCPToolset.__init__]."""
+
+
+MCPHeadersFunc: TypeAlias = Callable[[RunContext[AgentDepsT]], dict[str, str] | None | Awaitable[dict[str, str] | None]]
+"""A sync/async function that takes the run context and returns the HTTP `headers` to connect with for that run.
+
+See [`MCPToolset`'s `headers` argument][pydantic_ai.mcp.MCPToolset.__init__]."""
+
+
+class _ClientOptions(TypedDict):
+    """The `MCPToolset.__init__` arguments that configure a default FastMCP `Client`, kept to build more of them."""
+
+    sampling_handler: SamplingHandler[Any, Any] | None
+    elicitation_handler: ElicitationHandler[Any, Any] | None
+    log_handler: LogHandler | None
+    progress_handler: ProgressHandler | None
+    message_handler: MessageHandlerT | None
+    client_info: mcp_types.Implementation | None
+    init_timeout: float | None
+    read_timeout: float | None
+    roots: RootsList | RootsHandler[Any] | None
+    verify: ssl.SSLContext | bool | str | None
+    http_client: AsyncHTTPClient | None
+
+
 _UNSET: Any = object()
 """Sentinel for `MCPToolset.__init__` to distinguish "not passed" from "passed `None`/default value"
 when validating that no kwargs were passed alongside a pre-built `fastmcp.Client`. Using a sentinel
@@ -885,6 +917,14 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _call_tool_task: _CallToolTask | None
     _server_initiated_handlers: list[str]
     _telemetry_url_derived_id: str | None
+    # Defaulted at class level so a subclass that doesn't call `MCPToolset.__init__` (like a test double
+    # with canned results) is an ordinary toolset rather than missing them.
+    _client_source: MCPToolsetClient | None = None
+    _client_options: _ClientOptions | None = None
+    _auth_func: MCPAuthFunc[AgentDepsT] | None = None
+    _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
+    _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
+    _static_headers: dict[str, str] | None = None
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -921,9 +961,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         read_timeout: float | None = _UNSET,
         roots: RootsList | RootsHandler[Any] | None = None,
         # HTTP-specific (only used when constructing a default transport from a URL)
-        auth: HTTPAuth | Literal['oauth'] | str | None = None,
+        auth: HTTPAuth | Literal['oauth'] | str | MCPAuthFunc[AgentDepsT] | None = None,
         verify: ssl.SSLContext | bool | str | None = None,
-        headers: dict[str, str] | None = None,
+        headers: dict[str, str] | MCPHeadersFunc[AgentDepsT] | None = None,
         http_client: AsyncHTTPClient | None = None,
     ):
         """Build a new `MCPToolset`.
@@ -980,9 +1020,19 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 when the installed fastmcp is 3), the literal string `'oauth'` to enable FastMCP's
                 OAuth flow, or a bearer-token string. When `http_client` is provided, authentication
                 is applied to requests made through that client.
+
+                Pass a function of the [run context][pydantic_ai.tools.RunContext] instead (see
+                [`MCPAuthFunc`][pydantic_ai.mcp.MCPAuthFunc]) to authenticate each agent run as its
+                own user: every run then gets its own copy of the toolset (via
+                [`for_run`][pydantic_ai.toolsets.AbstractToolset.for_run]) that opens its own MCP
+                session with the `auth` the function returned. Such a toolset can only connect to
+                the server as part of an agent run, or through the copy `for_run` returns.
             verify: SSL verification mode for HTTP transports — an `ssl.SSLContext`, a CA bundle
                 path string, or a bool.
-            headers: Extra HTTP headers for HTTP transports. Mutually exclusive with `http_client`.
+            headers: Extra HTTP headers for HTTP transports, or a function of the run context
+                returning them (see [`MCPHeadersFunc`][pydantic_ai.mcp.MCPHeadersFunc]), which gives
+                each agent run its own MCP session like a function passed as `auth`. Mutually
+                exclusive with `http_client`.
             http_client: A pre-configured `httpx2.AsyncClient` (a legacy `httpx.AsyncClient` when
                 the installed fastmcp is 3) to use for HTTP transports — useful for self-signed
                 certificates or custom connection pooling. Mutually exclusive with `headers`.
@@ -992,8 +1042,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             ValueError: If a pre-built `fastmcp.Client` is passed alongside any of the kwargs that
                 would otherwise build a default Client (sampling, elicitation, headers, etc.), or
-                if `sampling_model` and `sampling_handler` are both passed, or if `headers` and
-                `http_client` are both passed.
+                if `sampling_model` and `sampling_handler` are both passed, if `headers` and
+                `http_client` are both passed, or if `auth` or `headers` is a function and `client`
+                isn't a URL.
         """
         # FastMCP 4 folds registered client extensions into a session when it connects. Import the
         # optional task package here, rather than at module import time, so only an MCPToolset opts
@@ -1005,6 +1056,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         # Only options passed here are recorded: handlers configured on a pre-built `fastmcp.Client`
         # are stored in a private attribute with no public accessor, so that path stays silent.
         self._server_initiated_handlers = []
+        # Assigned before the client is built: `_build_client` reads it to install the sampling handler.
+        self.sampling_model = sampling_model
         if isinstance(client, FastMCPClient):
             forwarded_values: dict[str, Any] = {
                 'sampling_handler': sampling_handler,
@@ -1035,6 +1088,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 )
             self.client = client
             self._user_message_handler = None
+            self._client_source = None
+            self._client_options = None
+            self._auth_func = None
+            self._headers_func = None
+            self._static_auth = None
+            self._static_headers = None
         else:
             if sampling_handler is not None and sampling_model is not None:
                 raise ValueError('Pass either `sampling_model` or `sampling_handler`, not both.')
@@ -1043,40 +1102,47 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     '`headers` and `http_client` are mutually exclusive — set headers on the `http_client` instead.'
                 )
 
+            # A function of the run context can't be resolved until a run starts: the toolset then
+            # only acts as a template that `for_run` copies with the resolved value.
+            if callable(auth):
+                self._auth_func, static_auth = auth, None
+            else:
+                self._auth_func, static_auth = None, auth
+            if callable(headers):
+                self._headers_func, static_headers = headers, None
+            else:
+                self._headers_func, static_headers = None, headers
+            if (self._auth_func is not None or self._headers_func is not None) and not _is_url(client):
+                raise ValueError(
+                    'A function for `auth` or `headers` only applies to HTTP transports built from a URL string.'
+                )
+
             # Resolve sentinels to actual defaults now that the conflict check has run.
             if init_timeout is _UNSET:
                 init_timeout = 5
             if read_timeout is _UNSET:
                 read_timeout = 5 * 60
 
-            transport = _build_transport(
-                client,
-                headers=headers,
-                http_client=http_client,
-                auth=auth,
-                verify=verify,
-                read_timeout=read_timeout,
-            )
-            resolved_sampling_handler = sampling_handler
-            if resolved_sampling_handler is None and sampling_model is not None:
-                resolved_sampling_handler = _build_sampling_handler(sampling_model)
-
-            wrapped_message_handler = _build_message_handler(self, message_handler)
-
-            self.client = FastMCPClient[Any](
-                transport=transport,
-                sampling_handler=resolved_sampling_handler,
+            self._client_source = client
+            self._client_options = _ClientOptions(
+                sampling_handler=sampling_handler,
                 elicitation_handler=elicitation_handler,
                 log_handler=log_handler,
                 progress_handler=progress_handler,
-                message_handler=wrapped_message_handler,
+                message_handler=message_handler,
                 client_info=client_info,
                 init_timeout=init_timeout,
-                timeout=read_timeout,
+                read_timeout=read_timeout,
                 roots=roots,
+                verify=verify,
+                http_client=http_client,
             )
+            # Kept so a per-run copy also connects with whichever of the two isn't a function.
+            self._static_auth = static_auth
+            self._static_headers = static_headers
+            self.client = self._build_client(auth=static_auth, headers=static_headers)
             self._user_message_handler = message_handler
-            if resolved_sampling_handler is not None:
+            if sampling_handler is not None or sampling_model is not None:
                 self._server_initiated_handlers.append('sampling_model' if sampling_model else 'sampling_handler')
             if elicitation_handler is not None:
                 self._server_initiated_handlers.append('elicitation_handler')
@@ -1091,7 +1157,6 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.cache_prompts = cache_prompts
         self.include_instructions = include_instructions
         self.include_return_schema = include_return_schema
-        self.sampling_model = sampling_model
         self.log_level = log_level
 
         self._server_info = None
@@ -1179,6 +1244,84 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             handlers.append('sampling_model')
         self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
 
+    def _build_client(
+        self, *, auth: HTTPAuth | Literal['oauth'] | str | None, headers: dict[str, str] | None
+    ) -> FastMCPClient[Any]:
+        """Build a default FastMCP `Client` from the arguments this toolset was constructed with."""
+        assert self._client_source is not None and self._client_options is not None
+        options = self._client_options
+        transport = _build_transport(
+            self._client_source,
+            headers=headers,
+            http_client=options['http_client'],
+            auth=auth,
+            verify=options['verify'],
+            read_timeout=options['read_timeout'],
+        )
+        sampling_handler = options['sampling_handler']
+        if self.sampling_model is not None:
+            # `set_sampling_model` replaces the handler passed to `__init__`, if there was one.
+            sampling_handler = _build_sampling_handler(self.sampling_model)
+        return FastMCPClient[Any](
+            transport=transport,
+            sampling_handler=sampling_handler,
+            elicitation_handler=options['elicitation_handler'],
+            log_handler=options['log_handler'],
+            progress_handler=options['progress_handler'],
+            message_handler=_build_message_handler(self, options['message_handler']),
+            client_info=options['client_info'],
+            init_timeout=options['init_timeout'],
+            timeout=options['read_timeout'],
+            roots=options['roots'],
+        )
+
+    @property
+    def _resolves_per_run(self) -> bool:
+        """Whether `auth` or `headers` is a function of the run context, so each run connects with its own copy."""
+        return self._auth_func is not None or self._headers_func is not None
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
+        """Return the toolset to use for this agent run.
+
+        When `auth` or `headers` is a function of the run context, this calls it and returns a copy
+        of the toolset that connects with what it returned, so each run opens its own MCP session as
+        its own user. Otherwise the toolset is shared across runs and this returns `self`.
+        """
+        if not self._resolves_per_run:
+            return self
+        auth = self._static_auth
+        if self._auth_func is not None:
+            auth = await _utils.await_maybe(self._auth_func(ctx))
+            if auth == 'oauth':
+                # FastMCP's OAuth flow signs in through a browser, which a per-user run can't do.
+                raise exceptions.UserError(
+                    f'The `auth` function of {self.label} returned `"oauth"`, which is only supported as a fixed `auth`.'
+                )
+        headers = self._static_headers
+        if self._headers_func is not None:
+            headers = await _utils.await_maybe(self._headers_func(ctx))
+        # A shallow copy keeps a subclass's type and every setting, including ones changed since
+        # `__init__`; only the client and the per-session state are the run's own.
+        run_toolset = copy.copy(self)
+        # The copy binds a lock of its own on first use instead of sharing the template's.
+        vars(run_toolset).pop('_enter_lock', None)
+        run_toolset._auth_func = None
+        run_toolset._headers_func = None
+        run_toolset._server_initiated_handlers = list(self._server_initiated_handlers)
+        run_toolset.client = run_toolset._build_client(auth=auth, headers=headers)
+        return run_toolset
+
+    @asynccontextmanager
+    async def _connected(self) -> AsyncGenerator[None]:
+        """Enter the toolset around a direct request to the server, refusing one that only resolves per run."""
+        if self._resolves_per_run:
+            raise exceptions.UserError(
+                f'{self.label} gets its `auth` or `headers` from the run context, so it can only connect to '
+                'the server as part of an agent run, or through the copy `await toolset.for_run(ctx)` returns.'
+            )
+        async with self:
+            yield
+
     @property
     def _initialized(self) -> bool:
         # Keyed on capabilities, not `_server_info`: a modern session may omit the optional
@@ -1195,6 +1338,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self._cached_prompts = None
 
     async def __aenter__(self) -> Self:
+        if self._resolves_per_run:
+            # There's nothing to connect with until a run resolves `auth`/`headers`: each run enters
+            # its own copy instead, so entering this one (e.g. via `async with agent:`) is a no-op.
+            return self
         async with self._enter_lock:
             if self._running_count == 0:
                 # Build the exit stack inside an `async with` so any failure after
@@ -1284,6 +1431,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
+        if self._resolves_per_run:
+            return None
         async with self._enter_lock:
             if self._running_count == 0:
                 raise ValueError(f'`{self.__class__.__name__}.__aexit__` called more times than `__aenter__`')
@@ -1318,7 +1467,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
-        async with self:
+        async with self._connected():
             tools = await self.client.list_tools()
             if self.cache_tools:
                 self._cached_tools = tools
@@ -1443,7 +1592,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self, name: str, args: dict[str, Any], *, metadata: dict[str, Any] | None, use_task: bool
     ) -> CallToolResult:
         """Call a tool and return its successful result, raising per `tool_error_behavior` otherwise."""
-        async with self:
+        async with self._connected():
             try:
                 if use_task:
                     result = await self._call_tool_as_task(name, args, metadata)
@@ -1578,7 +1727,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if self.cache_prompts and self._cached_prompts is not None:
             return self._cached_prompts
-        async with self:
+        async with self._connected():
             if not self.capabilities.prompts:
                 return []
             try:
@@ -1601,7 +1750,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server doesn't advertise the `prompts` capability, or if it returns
                 an error response.
         """
-        async with self:
+        async with self._connected():
             if not self.capabilities.prompts:
                 raise MCPError(
                     message=f'Server does not advertise the `prompts` capability; cannot get prompt {name!r}.',
@@ -1633,7 +1782,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if self.cache_resources and self._cached_resources is not None:
             return self._cached_resources
-        async with self:
+        async with self._connected():
             if not self.capabilities.resources:
                 return []
             try:
@@ -1653,7 +1802,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        async with self:
+        async with self._connected():
             if not self.capabilities.resources:
                 return []
             try:
@@ -1687,7 +1836,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
-        async with self:
+        async with self._connected():
             try:
                 contents = await self.client.read_resource(AnyUrl(resource_uri))
             except McpError as e:
@@ -1727,7 +1876,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             arguments = {}
         elif not _utils.is_str_dict(arguments):
             raise MCPError(message='Tool arguments must be an object', code=mcp_types.INVALID_PARAMS)
-        async with self:
+        async with self._connected():
             try:
                 tool = next((t for t in await self.list_tools() if t.name == name), None)
                 if tool is None or not _is_visible_to(tool, 'app'):
@@ -1755,7 +1904,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             MCPError: If the server returns an error.
         """
-        async with self:
+        async with self._connected():
             try:
                 result = await self.client.read_resource_mcp(uri)
             except McpError as e:
@@ -1795,6 +1944,10 @@ def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandle
     return handler
 
 
+def _is_url(client: MCPToolsetClient) -> bool:
+    return isinstance(client, AnyUrl) or (isinstance(client, str) and client.startswith(('http://', 'https://')))
+
+
 def _build_transport(
     client: MCPToolsetClient,
     *,
@@ -1812,8 +1965,7 @@ def _build_transport(
     `Client` infer the transport.
     """
     needs_explicit_http = headers is not None or http_client is not None or auth is not None or verify is not None
-    is_url = isinstance(client, AnyUrl) or (isinstance(client, str) and client.startswith(('http://', 'https://')))
-    if needs_explicit_http and not is_url:
+    if needs_explicit_http and not _is_url(client):
         raise ValueError(
             '`headers`, `http_client`, `auth`, and `verify` only apply to HTTP transports built '
             'from a URL string. Pass them on your transport / `fastmcp.Client` directly instead.'
