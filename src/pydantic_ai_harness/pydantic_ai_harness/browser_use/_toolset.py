@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 import anyio
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -674,7 +674,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         """The tool result for a finished run: text, schema JSON, or a failure report."""
         result = history.final_result()
         if result is None:
-            step_errors = [error for error in history.errors() if error]
+            step_errors = [self._redact(error) for error in history.errors() if error]
             detail = '; '.join(step_errors) if step_errors else 'no further details'
             return f'The browser agent stopped without producing a result ({detail}).'
         answer = self._render_answer(result, history)
@@ -687,9 +687,9 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         return answer
 
     def _render_answer(self, result: str, history: BrowserAgentHistory) -> str:
-        """The answer itself: schema JSON when one is configured, otherwise the agent's own text."""
+        """The answer itself, redacted: schema JSON when one is configured, otherwise the agent's own text."""
         if self._output_schema is None:
-            return result
+            return self._redact(result)
         try:
             structured = history.structured_output
         except ValidationError as error:
@@ -711,7 +711,14 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # A `None` here is unreachable with browser-use's own history, which parses whenever there
         # is a final result and a schema -- both already true. Only a custom factory's history can
         # land here, and its prose is a better answer than an invented failure.
-        return structured.model_dump_json() if structured is not None else result
+        if structured is None:
+            return self._redact(result)
+        if self._secret_pattern is None:
+            return structured.model_dump_json()
+        # Redacted value by value rather than as text, so the result stays valid JSON.
+        return json.dumps(
+            self._redact_json(structured.model_dump(mode='json')), ensure_ascii=False, separators=(',', ':')
+        )
 
     async def browse_web(self, ctx: RunContext[AgentDepsT], task: str) -> str:
         """Have an autonomous browser agent carry out a web task and return its result.
@@ -733,7 +740,19 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         else:
             await self._retry_pending_cleanup()
             history = await self._run_in_shared_session(task, llm)
-        return self._redact(self._render_result(history))
+        return self._render_result(history)
+
+    def _redact_json(self, value: JsonValue) -> JsonValue:
+        """`value` with every secret in its strings replaced; any other leaf holding one becomes a redacted string."""
+        if isinstance(value, dict):
+            return {self._redact(key): self._redact_json(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._redact_json(item) for item in value]
+        if isinstance(value, str):
+            return self._redact(value)
+        text = json.dumps(value)
+        redacted = self._redact(text)
+        return value if redacted == text else redacted
 
     def _redact(self, text: str) -> str:
         """Replace each configured secret value in tool output with its placeholder.

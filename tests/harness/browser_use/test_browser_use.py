@@ -107,6 +107,12 @@ class _Facts(BaseModel):
     price_usd: int
 
 
+class _Pins(BaseModel):
+    owner: str
+    pins: list[int]
+    active: bool
+
+
 class _Typed(BaseModel):
     """Action parameters browser-use fills secret placeholders into."""
 
@@ -1302,6 +1308,22 @@ class TestSensitiveDataSafety:
             'The browser agent stopped without producing a result '
             '(typed <secret>x_password</secret> into a field that rejected it).'
         )
+
+    async def test_a_secret_in_a_non_string_schema_field_keeps_the_json_valid(
+        self, kill_calls: list[BrowserSession]
+    ) -> None:
+        """A secret that is a number in the schema output becomes a placeholder string, not broken JSON."""
+        pins = _Pins(owner='me', pins=[1234, 5678], active=True)
+        history = _FakeHistory(result=pins.model_dump_json(), success=True, structured=pins)
+        capability = BrowserUse[None](
+            output_schema=_Pins,
+            sensitive_data={'https://safe.example': {'x_pin': '1234'}},
+            browser_agent=_FakeFactory(_FakeBrowserAgent(history)),
+        )
+
+        result = await capability.get_toolset().browse_web(_ctx(), 'task')
+
+        assert json.loads(result) == {'owner': 'me', 'pins': ['<secret>x_pin</secret>', 5678], 'active': True}
 
     async def test_secret_values_are_redacted_from_schema_json(self, kill_calls: list[BrowserSession]) -> None:
         """JSON escapes a `"` in the value, so the escaped form is redacted too."""
