@@ -26,9 +26,24 @@ class LocalStackError(RuntimeError):
     """Raised when the LocalStack container cannot be started or becomes ready."""
 
 
+_BIND_ALL_LOOPBACK = {'0.0.0.0': '127.0.0.1', '::': '::1'}
+"""Bind-all publish addresses, which are not connectable, mapped to the loopback address that reaches them."""
+
+
 def _url_host(host: str) -> str:
     """Bracket an IPv6 literal so it can be used in a URL or a Docker port mapping."""
     return f'[{host}]' if ':' in host else host
+
+
+def _connect_host(host_address: str) -> str:
+    """Return the URL host that reaches a container published on `host_address`."""
+    return _url_host(_BIND_ALL_LOOPBACK.get(host_address, host_address))
+
+
+def validate_host_address(host_address: str) -> None:
+    """Reject a publish address that the URL and the Docker port mapping cannot both carry."""
+    if '%' in host_address:
+        raise ValueError(f'`host_address` {host_address!r} is a scoped IPv6 address, which is not supported.')
 
 
 def managed_endpoint_url(host_address: str, host_port: int) -> str:
@@ -37,10 +52,11 @@ def managed_endpoint_url(host_address: str, host_port: int) -> str:
     For the default loopback publish addresses (`127.0.0.1` and the bind-all
     `0.0.0.0`, both reachable at `127.0.0.1`), uses LocalStack's
     `localhost.localstack.cloud` domain, which resolves to `127.0.0.1` and
-    supports the subdomain-style hosts some AWS SDKs need. Any other address is
-    used literally, since `localhost.localstack.cloud` does not resolve there.
+    supports the subdomain-style hosts some AWS SDKs need. The IPv6 bind-all
+    `::` is reached at `::1`. Any other address is used literally, since
+    `localhost.localstack.cloud` does not resolve there.
     """
-    host = 'localhost.localstack.cloud' if host_address in ('127.0.0.1', '0.0.0.0') else _url_host(host_address)
+    host = 'localhost.localstack.cloud' if host_address in ('127.0.0.1', '0.0.0.0') else _connect_host(host_address)
     return f'http://{host}:{host_port}'
 
 
@@ -50,7 +66,11 @@ def endpoint_port(endpoint_url: str) -> int:
         port = urlsplit(endpoint_url).port
     except ValueError as e:
         raise ValueError(f'`endpoint_url` {endpoint_url!r} has an invalid port: {e}') from e
-    return port or _EDGE_PORT
+    if port is None:
+        return _EDGE_PORT
+    if port == 0:
+        raise ValueError(f'`endpoint_url` {endpoint_url!r} has an invalid port: 0')
+    return port
 
 
 class LocalStackContainer:
@@ -82,6 +102,7 @@ class LocalStackContainer:
         startup_timeout: float = 120.0,
         poll_interval: float = 1.0,
     ) -> None:
+        validate_host_address(host_address)
         self._image = image
         self._host_port = host_port
         self._host_address = host_address
@@ -102,16 +123,16 @@ class LocalStackContainer:
         For the default loopback publish addresses (`127.0.0.1` and the
         bind-all `0.0.0.0`, both reachable at `127.0.0.1`), uses LocalStack's
         `localhost.localstack.cloud` domain, which resolves to `127.0.0.1` and
-        supports the subdomain-style hosts some AWS SDKs need. For any other
-        `host_address`, uses that address literally (bracketed when it is an
-        IPv6 literal), since `localhost.localstack.cloud` does not resolve there.
+        supports the subdomain-style hosts some AWS SDKs need. The IPv6 bind-all
+        `::` is reached at `::1`. For any other `host_address`, uses that address
+        literally (bracketed when it is an IPv6 literal), since
+        `localhost.localstack.cloud` does not resolve there.
         """
         return managed_endpoint_url(self._host_address, self._host_port)
 
     @property
     def _readiness_url(self) -> str:
-        host = '127.0.0.1' if self._host_address == '0.0.0.0' else _url_host(self._host_address)
-        return f'http://{host}:{self._host_port}{_HEALTH_PATH}'
+        return f'http://{_connect_host(self._host_address)}:{self._host_port}{_HEALTH_PATH}'
 
     @property
     def container_id(self) -> str | None:
