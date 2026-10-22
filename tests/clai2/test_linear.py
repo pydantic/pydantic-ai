@@ -159,7 +159,10 @@ def token(loader: PluginLoader[None]) -> str | None:
     """What the next run connects with."""
     capability = only(loader)
     assert callable(capability.auth)
-    return capability.auth(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    token = capability.auth(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    # clai2 resolves keys synchronously, though an `auth` function may also be async.
+    assert token is None or isinstance(token, str)
+    return token
 
 
 async def run(commands: Commands, text: str) -> str:

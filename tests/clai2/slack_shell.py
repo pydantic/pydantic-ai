@@ -12,6 +12,7 @@ from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.slack import Slack
@@ -54,7 +55,7 @@ class Shell:
         await self.plugins.fire(TurnStart(text='hi'))
         auth = self.slack().auth
         assert callable(auth)
-        return auth(CONTEXT)
+        return await await_maybe(auth(CONTEXT))
 
     def saved(self) -> dict[str, JsonValue]:
         [declaration] = self.store.plugins()

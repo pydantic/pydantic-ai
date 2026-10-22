@@ -62,7 +62,10 @@ def is_workspace(capability: object) -> TypeIs[GoogleWorkspace[None]]:
 
 def run_token(capability: GoogleWorkspace[None]) -> str | None:
     assert callable(capability.auth)
-    return capability.auth(context())
+    token = capability.auth(context())
+    # clai2 resolves keys synchronously, though an `auth` function may also be async.
+    assert token is None or isinstance(token, str)
+    return token
 
 
 async def configure(
