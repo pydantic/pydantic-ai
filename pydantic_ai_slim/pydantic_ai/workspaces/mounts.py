@@ -87,11 +87,12 @@ class SupportsMounts(Protocol):
         """
         ...
 
-    async def ensure_mounts(self, mounts: Sequence[Mount], working_dir: str) -> datetime | None:
+    async def ensure_mounts(self, mounts: Sequence[Mount]) -> datetime | None:
         """Mount `mounts` (the backend's whole set), repairing lost ones and removing others.
 
         Called before the workspace's first operation, with an empty set when nothing is to be mounted, so mounts an
-        earlier run left can go. Mount paths are relative to `working_dir`. Return when to call again, such as before the keys a mount
+        earlier run left can go. Mount paths are relative to the backend's working directory, which it needn't look up
+        when there is nothing to do. Return when to call again, such as before the keys a mount
         uses expire, or `None`. Raise [`MountError`][pydantic_ai.workspaces.MountError] when a mount can't be
         provided.
         """
