@@ -193,13 +193,17 @@ Of the shared settings:
   rest: the agent keeps every tool of the run attached, and the conversation leaves the others out.
   A choice that forces a tool call (`'required'`, or a list of tool names) raises, as on the other
   providers.
-- `turn_detection` cannot be configured: ElevenLabs' server-side turn model is always on, so any
-  value other than `True` raises. There is no [push-to-talk](turns.md#push-to-talk).
-- `input_transcription_model=None` raises: ASR drives the agent pipeline and cannot be disabled.
+- `turn_detection=False` raises: ElevenLabs' server-side turn model is always on, so there is no
+  [push-to-talk](turns.md#push-to-talk). The [`TurnDetection`][pydantic_ai.realtime.TurnDetection] knobs
+  are ignored; tune turn-taking on the agent's `conversation_config.turn` instead.
+- `input_transcription_model` is ignored: ASR drives the agent pipeline, so input is always transcribed,
+  even with `None`.
 - `reconnect` raises: a dropped connection ends the session, and a reconnect policy would silently start a
   conversation that remembers nothing.
 - `max_tokens`, `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation
-  surface and are ignored, matching the [shared settings contract](overview.md#shared-settings).
+  surface and are ignored, matching the [shared settings contract](overview.md#shared-settings);
+  `parallel_tool_calls=False` warns with an
+  [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning].
 
 ### Audio formats
 
@@ -274,10 +278,10 @@ parameter's description only when the local schema declares one.
 | Audio format | Full feature support | Mono PCM16; rates are fixed per agent (16 kHz default) and validated at connect, see [Audio formats](#audio-formats) |
 | Text output | Limited parameter support | `output_modality='text'` maps to the text-only override, which needs its toggle on the agent |
 | Image input | Unsupported | [`send()`][pydantic_ai.realtime.RealtimeSession.send] rejects images with a `UserError` |
-| Manual turns | Unsupported | ElevenLabs' server-side turn model owns turn-taking; `turn_detection` must stay `True` |
+| Manual turns | Unsupported | ElevenLabs' server-side turn model owns turn-taking; `turn_detection=False` raises |
 | Explicit interruption/truncation | Unsupported | ElevenLabs [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent`; `interrupt()` raises |
 | Session seeding | Unsupported | The conversation WebSocket has no history-seeding channel |
-| Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model=None` raises |
+| Input transcription | Full feature support | Always on: per-utterance final transcripts from the agent's ASR; `input_transcription_model` is ignored |
 | Native tools | Unsupported | None can be configured from the session; configure [local fallbacks](tools.md#native-tools) for web capabilities. The agent's own MCP tool calls are recorded as `NativeToolCallPart`s named `mcp_server:<server id>` |
 | Async tool calls | Unsupported | The agent waits for each tool result (see [concurrent tool execution](tools.md#concurrent-tool-execution)) |
 | Usage | Limited parameter support | Context tokens only, with `context_usage` in the agent's `client_events`; no cost (see [Usage and cost](#usage-and-cost)) |
@@ -443,7 +447,9 @@ the [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeMo
 a `UserError`, as ElevenLabs only supports semantic VAD. ElevenLabs accepts and then ignores the other
 OpenAI fields, so Pydantic AI doesn't send them: `openai_voice` (use `elevenlabs_voice`),
 `openai_input_noise_reduction`, `openai_output_speed`, `openai_truncation`, and `openai_prune_tool_items`.
-Of the shared settings, `parallel_tool_calls` and `thinking` are ignored the same way.
+Of the shared settings, `parallel_tool_calls` and `thinking` are ignored the same way, and
+`parallel_tool_calls=False` warns with an
+[`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], as on a standard model.
 
 [Input transcription](audio.md#input-transcription) is always on: each spoken turn's transcript arrives whole
 once the turn is committed, usually after the reply has started. It takes no model, so

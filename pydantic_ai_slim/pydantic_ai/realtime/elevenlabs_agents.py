@@ -221,11 +221,13 @@ class ElevenLabsAgentsRealtimeModelSettings(RealtimeModelSettings, total=False):
     Of the shared settings, `output_modality='text'` maps to the `conversation.text_only` override, and
     a `tool_choice` of `'none'` or an allow-list to the `agent.prompt.tool_ids` override, which narrows
     the agent's attached tools for the conversation (a choice that forces a tool call raises). `max_tokens`,
-    `parallel_tool_calls`, `async_tool_calls`, and `thinking` have no per-conversation surface on the
-    agent WebSocket and are silently ignored, per the shared settings contract. `turn_detection` cannot be configured
-    (ElevenLabs' server-side turn model is always on), `input_transcription_model=None` cannot be
-    honored (ASR cannot be disabled per-conversation), and `reconnect` is unsupported (ElevenLabs'
-    experimental, text-only resume isn't used), so each of those raises rather than silently under-delivering.
+    `parallel_tool_calls`, `async_tool_calls`, `thinking`, the [`TurnDetection`][pydantic_ai.realtime.TurnDetection]
+    knobs, and `input_transcription_model` have no per-conversation surface on the agent WebSocket and are ignored,
+    as on a standard model: `parallel_tool_calls=False` warns with an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], and input is always
+    transcribed, since ASR drives the agent pipeline. `turn_detection=False` (ElevenLabs' server-side turn model
+    is always on) and `reconnect` (ElevenLabs' experimental, text-only resume isn't used) raise rather than
+    silently under-delivering.
     """
 
     elevenlabs_agents_voice_id: str
@@ -987,6 +989,7 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
     agent_id: str
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls'})
     _provider: ElevenLabsProvider = field(init=False, repr=False)
     _warned_context_usage: bool = field(default=False, init=False, repr=False)
     """Whether a session has warned that the agent sends no `context_usage` reports (once per model)."""
@@ -1297,16 +1300,13 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
                 'would silently reconnect into a conversation that remembers nothing. Remove the `reconnect` '
                 'policy and open a new session instead.'
             )
-        if 'turn_detection' in settings and settings['turn_detection'] is not True:
+        # `TurnDetection` knobs and `input_transcription_model=None` are ignored, as on a standard model: the
+        # agent's turn model tunes itself (configure it on the agent's `conversation_config.turn`), and ASR
+        # drives the agent pipeline, so input is always transcribed.
+        if settings.get('turn_detection') is False:
             raise UserError(
                 "ElevenLabs Agents own turn-taking server-side (the agent's turn model is always on), so "
-                '`turn_detection` cannot be disabled or configured per conversation. Remove the setting, or '
-                "configure turn-taking on the agent's `conversation_config.turn` instead."
-            )
-        if 'input_transcription_model' in settings and settings['input_transcription_model'] is None:
-            raise UserError(
-                'ElevenLabs Agents cannot disable input transcription per conversation (ASR drives the '
-                'agent pipeline), so `input_transcription_model=None` cannot be honored. Remove the setting.'
+                '`turn_detection` cannot be disabled per conversation. Remove the setting.'
             )
 
     @staticmethod

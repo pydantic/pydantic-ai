@@ -68,9 +68,9 @@ from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
-from .._unsupported_settings import GUARANTEE_SETTINGS, SUPPRESSED_WARNINGS
+from .._unsupported_settings import warn_unsupported_settings
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UnsupportedSettingWarning, UserError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -1197,21 +1197,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Warn about each set setting that changes what the request guarantees and that this model ignores."""
         if not model_settings:
             return
-        unsupported = self._unsupported_settings()
-        suppressed = SUPPRESSED_WARNINGS.get()
-        for name, hint in GUARANTEE_SETTINGS.items():
-            if name not in model_settings or name not in unsupported or name in suppressed:
-                continue
-            # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
-            if name == 'parallel_tool_calls' and (
-                model_settings.get('parallel_tool_calls') is not False or not model_request_parameters.function_tools
-            ):
-                continue
-            warnings.warn(
-                f'The `{name}` setting is not supported by model {self.model_id!r} and will be ignored.{hint}',
-                UnsupportedSettingWarning,
-                stacklevel=2,
-            )
+        warn_unsupported_settings(
+            self.model_id,
+            model_settings,
+            self._unsupported_settings(),
+            has_function_tools=bool(model_request_parameters.function_tools),
+        )
 
     def prepare_messages(
         self,

@@ -63,10 +63,13 @@ class TurnDetection(TypedDict, total=False):
 class RealtimeModelSettings(TypedDict, total=False):
     """Settings to configure a realtime model session.
 
-    Defines the common settings vocabulary used across realtime model providers. Whether a provider
-    silently ignores a setting it can't apply or raises [`UserError`][pydantic_ai.exceptions.UserError]
-    before connecting depends on the provider and the setting (a forced `tool_choice` raises on all but
-    Gemini): see each field's docs and the [provider pages](../realtime/overview.md#provider-support).
+    Defines the common settings vocabulary used across realtime model providers. A provider treats a
+    setting it can't apply as a [standard model](../agent.md#model-run-settings) does: tuning knobs like
+    `max_tokens` are ignored silently, so the same settings work across providers;
+    `parallel_tool_calls=False` emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning];
+    and a `tool_choice` that forces a tool call raises [`UserError`][pydantic_ai.exceptions.UserError] before
+    connecting. A few settings a provider can't honor raise too: see each field's docs and the
+    [provider pages](../realtime/overview.md#provider-support).
     Providers with additional generation parameters extend it, e.g.
     [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
@@ -74,7 +77,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     max_tokens: int
     """The maximum number of tokens to generate per response before stopping.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and Eleven Realtime. xAI accepts it but ignores it.
+    Supported by: OpenAI, Azure OpenAI, Gemini, and Eleven Realtime. xAI accepts it but ignores it, and
+    OpenAI GPT-Live and ElevenLabs Agents ignore it too.
     """
 
     parallel_tool_calls: bool
@@ -83,7 +87,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     Supported by: OpenAI, Azure OpenAI, Azure AI Voice Live (where `True` leaves the model's default,
     since some models can't call tools in parallel), and OpenAI GPT-Live, where it applies to the
     delegated backend unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it
-    but ignores it, and so does Eleven Realtime.
+    but ignores it, and Gemini, Eleven Realtime, and ElevenLabs Agents ignore it too: on those, `False` with
+    function tools emits an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning], as
+    on a standard model.
     """
 
     async_tool_calls: bool | None
@@ -113,16 +119,14 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     It is applied once, when the session is created, and holds for every response. `'none'` and
     function-tool allow-lists are enforced on every provider by restricting the tools advertised to the
-    model. OpenAI, OpenAI GPT-Live, Azure OpenAI, xAI, Eleven Realtime, and ElevenLabs Agents raise
-    [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a choice that forces a tool
-    call (`'required'` or a list of tool names): applied to every response, including the one after a
-    tool result, it would never let the model answer. Use `ToolOrOutput` to restrict the tools instead.
-    Gemini has no declarative tool-choice configuration, so `'required'` is ignored and allow-lists
-    restrict availability without requiring a tool call. ElevenLabs Agents restricts a hosted agent's attached
-    tools through its toggle-gated `tool_ids` conversation override.
+    model. Every provider raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting for a
+    choice that forces a tool call (`'required'` or a list of tool names): applied to every response,
+    including the one after a tool result, it would never let the model answer, and Gemini can't express
+    it at all. Use `ToolOrOutput` to restrict the tools instead. ElevenLabs Agents restricts a hosted
+    agent's attached tools through its toggle-gated `tool_ids` conversation override.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), xAI,
-    Eleven Realtime, ElevenLabs Agents (`'none'` and function-tool allow-lists only), and OpenAI GPT-Live.
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, Eleven Realtime, ElevenLabs Agents, and OpenAI GPT-Live,
+    for `'auto'`, `'none'`, and `ToolOrOutput` restrictions.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
@@ -132,15 +136,14 @@ class RealtimeModelSettings(TypedDict, total=False):
     specific id (e.g. `'gpt-live-transcribe'`) to pin one, or `None` to disable transcription (see
     `audio_retention` to retain the raw audio instead).
 
-    `None` turns transcription off on every provider that can disable it; ElevenLabs Agents cannot (ASR
-    drives its agent pipeline) and rejects `None` with a [`UserError`][pydantic_ai.exceptions.UserError].
-    Eleven Realtime always transcribes too, with no model to choose: `None` leaves transcription on, and a
-    pinned id raises a `UserError`.
+    `None` turns transcription off on every provider that can disable it. OpenAI GPT-Live, Eleven Realtime,
+    and ElevenLabs Agents always transcribe, so on them `None` leaves transcription on.
     A *pinned* id applies only to the providers that
-    transcribe with a separate model — Gemini transcribes natively, with no model to point at, and
-    ignores it (`google_input_transcription` configures Gemini's own transcription).
+    transcribe with a separate model. Gemini transcribes natively, with no model to point at, and
+    ignores it (`google_input_transcription` configures Gemini's own transcription); OpenAI GPT-Live and
+    Eleven Realtime raise a [`UserError`][pydantic_ai.exceptions.UserError] for one.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), xAI, and Eleven Realtime (`'auto'` only).
+    Supported by: OpenAI, Azure OpenAI, Gemini (`None` only), and xAI.
     """
 
     output_modality: Literal['audio', 'text']
@@ -192,6 +195,9 @@ class RealtimeModelSettings(TypedDict, total=False):
     For finer, provider-specific control use the provider-prefixed setting documented on each provider's
     settings type (`openai_turn_detection`, `xai_turn_detection`, `google_vad`); when present it fully
     overrides this field.
+
+    OpenAI GPT-Live and ElevenLabs Agents own turn-taking server-side: they ignore the `TurnDetection`
+    knobs, and raise [`UserError`][pydantic_ai.exceptions.UserError] for `False`, as Gemini does.
     """
 
     handshake_timeout: float

@@ -2005,6 +2005,7 @@ class OpenAILiveModel(RealtimeModel):
     model: OpenAILiveModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
+    unsupported_settings = frozenset({'max_tokens'})
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
     def __init__(
@@ -2168,14 +2169,21 @@ class OpenAILiveModel(RealtimeModel):
         return input_rate
 
     def _reject_unsupported(self, settings: OpenAILiveModelSettings) -> None:
-        """Refuse settings Live cannot honor, rather than silently ignoring a stated requirement."""
-        for setting, feature in (
-            ('turn_detection', 'turn detection: Live owns turn-taking and exposes no VAD configuration'),
-            ('max_tokens', 'a token limit on the spoken conversation'),
-            ('input_transcription_model', 'choosing a transcription model'),
-        ):
-            if settings.get(setting) is not None:
-                raise UserError(f'OpenAI GPT-Live does not support {feature}, so `{setting}` cannot be set.')
+        """Refuse settings whose requirement Live cannot honor, rather than silently ignoring it.
+
+        Settings Live merely can't tune are ignored, as on a standard model: `max_tokens`, the
+        `TurnDetection` knobs, and `input_transcription_model=None` (Live always transcribes).
+        """
+        if settings.get('turn_detection') is False:
+            raise UserError(
+                'OpenAI GPT-Live does not support manual turn-taking: Live owns turn detection, so '
+                '`turn_detection=False` cannot be set.'
+            )
+        if settings.get('input_transcription_model', 'auto') not in ('auto', None):
+            raise UserError(
+                'OpenAI GPT-Live does not support choosing a transcription model, so `input_transcription_model` '
+                "can only be `'auto'`."
+            )
 
     def _live_url(self) -> str:
         return realtime_websocket_url(self._provider.base_url, path=_LIVE_WEBSOCKET_PATH)

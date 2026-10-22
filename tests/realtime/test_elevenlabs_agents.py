@@ -390,21 +390,22 @@ async def test_turn_detection_config_raises() -> None:
             pass  # pragma: no cover
 
 
-async def test_turn_detection_true_is_accepted() -> None:
+@pytest.mark.parametrize(
+    'settings',
+    [
+        ElevenLabsAgentsRealtimeModelSettings(turn_detection=True),
+        ElevenLabsAgentsRealtimeModelSettings(turn_detection={'sensitivity': 'high'}),
+        ElevenLabsAgentsRealtimeModelSettings(input_transcription_model=None),
+    ],
+    ids=['turn_detection=True', 'turn_detection_knobs', 'transcription=None'],
+)
+async def test_settings_the_agent_cannot_tune_are_ignored(settings: ElevenLabsAgentsRealtimeModelSettings) -> None:
+    """As on a standard model, a knob the agent WebSocket has no surface for is ignored rather than refused."""
     ws = FakeWebSocket([HANDSHAKE_FRAME])
     model = _model(RestRecorder(agent_json()))
     with patched_connect(ws):
-        async with _connect(model, model_settings=ElevenLabsAgentsRealtimeModelSettings(turn_detection=True)):
+        async with _connect(model, model_settings=settings):
             pass
-
-
-async def test_disabling_input_transcription_raises() -> None:
-    model = _model(RestRecorder(agent_json()))
-    with pytest.raises(UserError, match='cannot disable input transcription'):
-        async with _connect(
-            model, model_settings=ElevenLabsAgentsRealtimeModelSettings(input_transcription_model=None)
-        ):
-            pass  # pragma: no cover
 
 
 # --- REST preflight: override permissions --------------------------------------------------------

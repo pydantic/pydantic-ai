@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import gc
 import io
+import warnings
 import wave
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -33,6 +34,7 @@ from pydantic_ai.exceptions import (
     RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -7920,6 +7922,57 @@ async def test_agent_realtime_session_allows_text_output_by_default() -> None:
 def _profile_without_text_output() -> RealtimeModelProfile:
     """A profile that never mentions `supports_text_output`, to pin the `True` default."""
     return RealtimeModelProfile(supports_session_seeding=True)
+
+
+class _SequentialToolCallsIgnoringModel(FakeRealtimeModel):
+    unsupported_settings = frozenset({'max_tokens', 'parallel_tool_calls'})
+
+
+async def test_agent_realtime_session_warns_when_parallel_tool_calls_false_is_ignored() -> None:
+    """As on a standard model, `parallel_tool_calls=False` is a guarantee, so a model that ignores it says so."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def lookup() -> str:  # pragma: no cover
+        return 'found'
+
+    model = _SequentialToolCallsIgnoringModel(
+        FakeRealtimeConnection([ResponseDone()]), settings=RealtimeModelSettings(parallel_tool_calls=False)
+    )
+    with pytest.warns(UnsupportedSettingWarning) as record:
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(max_tokens=10)).session():
+            pass
+    # Once per session, wherever the setting was set, and silent about the tuning knob.
+    assert [str(warning.message) for warning in record] == snapshot(
+        ["The `parallel_tool_calls` setting is not supported by model 'fake:fake-realtime' and will be ignored."]
+    )
+
+
+@pytest.mark.parametrize(
+    'settings,has_tools,declared',
+    [
+        (RealtimeModelSettings(parallel_tool_calls=True), True, True),
+        (RealtimeModelSettings(parallel_tool_calls=False), False, True),
+        (RealtimeModelSettings(parallel_tool_calls=False), True, False),
+    ],
+    ids=['true', 'no-function-tools', 'supported'],
+)
+async def test_agent_realtime_session_is_silent_when_parallel_tool_calls_holds(
+    settings: RealtimeModelSettings, has_tools: bool, declared: bool
+) -> None:
+    agent: Agent[None, str] = Agent()
+    if has_tools:
+
+        @agent.tool_plain
+        def lookup() -> str:  # pragma: no cover
+            return 'found'
+
+    model_class = _SequentialToolCallsIgnoringModel if declared else FakeRealtimeModel
+    model = model_class(FakeRealtimeConnection([ResponseDone()]))
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        async with agent.realtime(model, model_settings=settings).session():
+            pass
 
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:

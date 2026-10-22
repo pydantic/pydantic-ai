@@ -353,8 +353,10 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
 why these are session-start settings rather than things to change mid-call. (The Live API can append
 to the instructions and reconfigure the delegation backend mid-session; Pydantic AI does not expose
-either yet.) Live exposes no turn-detection, truncation, or token-limit controls, and the shared
-settings that name them [raise rather than being ignored](#what-raises). `tool_choice` reaches the
+either yet.) Live exposes no turn-detection, truncation, or token-limit controls: it ignores `max_tokens`
+and the [`TurnDetection`][pydantic_ai.realtime.TurnDetection] knobs, as a standard model ignores a tuning
+knob it doesn't support, and [raises](#what-raises) for push-to-talk and a pinned transcription model,
+which it can't provide. `tool_choice` reaches the
 backend when it can't loop: `'auto'`, `'none'`, and [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]
 to limit the tools, applied by trimming the tools the backend is given. `'required'` and lists of
 tool names raise, because the backend applies the choice to every response of a delegation,
@@ -501,8 +503,8 @@ the provider-agnostic workflows.
 Live refuses a stated requirement it cannot meet rather than accepting and ignoring it. These raise
 [`UserError`][pydantic_ai.exceptions.UserError]:
 
-- Before the session connects: `turn_detection`, `max_tokens`, `input_transcription_model`,
-  `output_modality='text'` (the profile reports `supports_text_output=False`; see
+- Before the session connects: `turn_detection=False`, an `input_transcription_model` other than
+  `'auto'` or `None` (Live always transcribes, with its own model), `output_modality='text'` (the profile reports `supports_text_output=False`; see
   [Shared settings](overview.md#shared-settings)), a `tool_choice` of `'required'` or a list of
   tool names, and a [`profile=`](overview.md#provider-support) whose `audio_input_sample_rate` and
   `audio_output_sample_rate` keys differ or aren't 16000 or 24000.

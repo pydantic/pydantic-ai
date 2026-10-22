@@ -2,10 +2,12 @@
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Generator, Iterable
+import warnings
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from .exceptions import UnsupportedSettingWarning
 from .settings import ModelSettingName
 
 GUARANTEE_SETTINGS: dict[ModelSettingName, str] = {
@@ -42,3 +44,32 @@ def suppress_warnings(settings: Iterable[ModelSettingName] = GUARANTEE_SETTINGS)
         yield
     finally:
         SUPPRESSED_WARNINGS.reset(token)
+
+
+def warn_unsupported_settings(
+    model_id: str,
+    settings: Mapping[str, object],
+    unsupported: Iterable[str],
+    *,
+    has_function_tools: bool,
+    stacklevel: int = 3,
+) -> None:
+    """Warn about each set setting in `GUARANTEE_SETTINGS` that the model `model_id` ignores (`unsupported`).
+
+    Shared by `Model.prepare_request` and the realtime session, so both follow the same rule.
+    """
+    unsupported = frozenset(unsupported)
+    suppressed = SUPPRESSED_WARNINGS.get()
+    for name, hint in GUARANTEE_SETTINGS.items():
+        if name not in settings or name not in unsupported or name in suppressed:
+            continue
+        # Only `False` is a guarantee, and only a request with function tools can make parallel calls.
+        if name == 'parallel_tool_calls' and (
+            settings.get('parallel_tool_calls') is not False or not has_function_tools
+        ):
+            continue
+        warnings.warn(
+            f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}',
+            UnsupportedSettingWarning,
+            stacklevel=stacklevel,
+        )

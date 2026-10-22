@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, Protocol
 
 from typing_extensions import TypeAliasType
 
@@ -19,6 +19,7 @@ from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..models._abstract import AbstractModel
 from ..native_tools import AbstractNativeTool
+from ..settings import ModelSettingName
 from ..tools import ToolDefinition
 from .codec import RealtimeConnection
 from .profiles import (
@@ -220,6 +221,17 @@ class RealtimeModel(AbstractModel):
 
     settings: RealtimeModelSettings | None = None
     """Model settings used as defaults for realtime sessions."""
+
+    unsupported_settings: ClassVar[frozenset[ModelSettingName]] = frozenset()
+    """The shared [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] fields this model class ignores.
+
+    Works like [`Model.unsupported_settings`][pydantic_ai.models.Model.unsupported_settings]: when a session sets one
+    that changes what it guarantees (`parallel_tool_calls=False` with function tools), opening it emits an
+    [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning]; the tuning knobs among them,
+    like `max_tokens`, are ignored silently. Empty by default, so a model class that declares nothing never warns.
+    `tool_choice` and `thinking` aren't listed here: a forced `tool_choice` raises on every realtime model, and
+    `thinking` is resolved through the profile.
+    """
 
     _profile: RealtimeModelProfileSpec | None = None
     """The user's `profile=` override, applied as the last layer of [`profile`][pydantic_ai.realtime.RealtimeModel.profile].
