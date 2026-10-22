@@ -270,7 +270,8 @@ class Memory(AbstractCapability[AgentDepsT]):
         store, scope = self.resolve_scope(ctx)
         scope_hash = hashlib.sha256(scope.encode()).hexdigest()[:16]
         # Compaction replaces what came before its boundary, so a snapshot there is no longer seen by the model.
-        latest = _latest_snapshot(post_compaction_window(ctx.messages), scope_hash)
+        metadata = _snapshot_metadata(scope_hash, self.id)
+        latest = _latest_snapshot(post_compaction_window(ctx.messages), metadata)
         # A run without a prompt of its own (resuming after a deferred tool approval) is sent tool results:
         # the snapshot already in history stays current until the next prompt.
         if latest is not None and not _has_user_prompt(ctx.messages[-1]):
@@ -312,7 +313,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                 rendered = None
             appended = rendered if rendered is not None and rendered != latest else None
             if appended is not None:
-                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=_snapshot_metadata(scope_hash))]))
+                ctx.enqueue(UserPromptPart([TextContent(appended, metadata=metadata)]))
             if span.is_recording():
                 span.set_attributes(
                     {
@@ -430,14 +431,13 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
 
-def _latest_snapshot(messages: list[ModelMessage], scope_hash: str) -> str | None:
+def _latest_snapshot(messages: list[ModelMessage], metadata: dict[str, str]) -> str | None:
     """The text of the latest snapshot for this scope in history, or `None` when there is none.
 
     Snapshots are recognized by the metadata `Memory` sets on them, never by their text. Versions before
     snapshots were kept in history marked them with a plain string, which still identifies them.
     """
-    current = _snapshot_metadata(scope_hash)
-    legacy = (f'{_MEMORY_ORIGIN}:{scope_hash}', _MEMORY_ORIGIN)
+    legacy = (f'{_MEMORY_ORIGIN}:{metadata["scope"]}', _MEMORY_ORIGIN)
     for message in reversed(messages):
         if not isinstance(message, ModelRequest):
             continue
@@ -445,13 +445,18 @@ def _latest_snapshot(messages: list[ModelMessage], scope_hash: str) -> str | Non
             if not isinstance(part, UserPromptPart) or isinstance(part.content, str):
                 continue
             for item in reversed(part.content):
-                if isinstance(item, TextContent) and (item.metadata == current or item.metadata in legacy):
+                if isinstance(item, TextContent) and (item.metadata == metadata or item.metadata in legacy):
                     return item.content
     return None
 
 
-def _snapshot_metadata(scope_hash: str) -> dict[str, str]:
-    return {'origin': _MEMORY_ORIGIN, 'scope': scope_hash}
+def _snapshot_metadata(scope_hash: str, memory_id: str | None) -> dict[str, str]:
+    """Identifies a snapshot by the scope it shows and the capability that wrote it.
+
+    Two `Memory` capabilities can share a scope, and render it differently (another `heading` or store), so
+    each one compares only against its own snapshots.
+    """
+    return {'origin': _MEMORY_ORIGIN, 'scope': scope_hash, 'id': memory_id or ''}
 
 
 def _has_user_prompt(message: ModelMessage) -> bool:

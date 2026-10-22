@@ -1379,9 +1379,25 @@ class TestInjection:
                 return ModelResponse(parts=[ToolCallPart('external_update', {}, tool_call_id='external')])
             return ModelResponse(parts=[TextPart('done')])
 
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
         agent = Agent(FunctionModel(model), capabilities=[Memory(store=store)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
         agent.tool_plain(external_update)
+
+        def injections() -> list[tuple[object, object]]:
+            spans = [span for span in exporter.get_finished_spans() if span.name == 'memory.inject']
+            exporter.clear()
+            return [
+                (span.attributes['memory.appended'], span.attributes['memory.injected_chars'])
+                for span in spans
+                if span.attributes is not None
+            ]
+
         first = await agent.run('go')
+        # Only the run's first request looks at memory, and it appends the snapshot.
+        assert injections() == [(True, len(_memory_contexts(first.all_messages())[0]))]
 
         # Every request of the run sends the same snapshot: a change mid-run waits for the next prompt.
         assert len(captured) == 3
@@ -1401,12 +1417,32 @@ class TestInjection:
         # The run's history ends with the new prompt, its snapshot and the response; earlier requests are unchanged.
         assert _memory_request_indexes(history) == [0, len(history) - 2]
         assert _user_text(history[-3:-2]) == 'new run'
+        assert injections() == [(True, len(captured[0][1]))]
 
         captured.clear()
         third = await agent.run('unchanged', message_history=history)
         assert len(captured) == 1
         assert len(captured[0]) == 2
         assert _memory_contexts(third.all_messages()) == _memory_contexts(history)
+        assert injections() == [(False, 0)]
+
+    async def test_memories_sharing_a_scope_each_append_only_when_their_own_snapshot_changes(self) -> None:
+        store = InMemoryStore()
+        await _seed(store, 'main/MEMORY.md', '- a fact')
+        agent = Agent(
+            TestModel(call_tools=[]),
+            capabilities=[
+                Memory(store=store, heading='Personal notes'),
+                Memory(store=store, heading='Team notes', id='team_memory').prefix_tools('team'),
+            ],
+        )
+
+        history = (await agent.run('first')).all_messages()
+        assert len(_memory_contexts(history)) == 2
+        for prompt in ('second', 'third'):
+            history = (await agent.run(prompt, message_history=history)).all_messages()
+            # Neither memory changed, so neither appends, though their latest snapshots render differently.
+            assert len(_memory_contexts(history)) == 2
 
     async def test_snapshot_metadata_names_its_origin_and_scope(self) -> None:
         store = InMemoryStore()
@@ -1424,7 +1460,11 @@ class TestInjection:
             if isinstance(content, TextContent)
         ]
         assert metadata == [
-            {'origin': 'pydantic-ai-harness.memory.v1', 'scope': hashlib.sha256(b'team').hexdigest()[:16]}
+            {
+                'origin': 'pydantic-ai-harness.memory.v1',
+                'scope': hashlib.sha256(b'team').hexdigest()[:16],
+                'id': 'memory',
+            }
         ]
 
     async def test_emptied_memory_appends_an_empty_snapshot(self) -> None:

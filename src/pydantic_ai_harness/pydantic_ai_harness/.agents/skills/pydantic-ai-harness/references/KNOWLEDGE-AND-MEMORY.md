@@ -24,7 +24,7 @@ history (after the latest compaction boundary). History stays append-only: earli
 a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 never after tool results. Snapshots carry `TextContent.metadata`
-`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`; list compaction before `Memory`.
+`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent

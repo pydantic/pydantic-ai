@@ -60,7 +60,7 @@ A snapshot is never added after tool results, where a model could read it as a n
 
 Snapshots are part of the conversation history and reach UI clients: UI adapters stream each new one as it is added and include it in the history they send. Keep that in mind when memory holds anything the user of the UI should not see.
 
-Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ...}`, never by their text. A history that loses that metadata on the way through a UI client, as a Vercel AI round trip does, gets a fresh snapshot on every run, and its earlier snapshots then look like user messages to `SummarizingCompaction`, which keeps them with `keep_user_messages`. Keep the history on the server when that matters. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
+Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}` (the hashed scope and the capability's `id`), never by their text. A history that loses that metadata on the way through a UI client, as a Vercel AI round trip does, gets a fresh snapshot on every run, and its earlier snapshots then look like user messages to `SummarizingCompaction`, which keeps them with `keep_user_messages`. Keep the history on the server when that matters. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
 
 When combining it with compaction, list compaction before `Memory`: if compaction drops the latest snapshot, `Memory` then sees that and records the current memory again on the run's first request.
 
