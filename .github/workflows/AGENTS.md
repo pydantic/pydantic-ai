@@ -241,6 +241,17 @@ in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow fr
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
+A provider incident blocks every Z.AI workflow. Open one only on provider-wide evidence:
+exhausted or unverifiable quota, rejected credentials, or a 429 whose Z.AI code reports an
+account or plan limit (runner kind `plan_limit`). Keep these outcomes local to their run:
+
+- A `1302` or `1305` 429, or a 429 without a Z.AI code, that outlasts the runner's retry
+  window (runner kind `rate_limit`). A healthy quota check cannot show spare concurrency,
+  so such an incident has no recovery signal.
+- A gate that ran without `ZAI_API_KEY` (diagnostic `missing_api_key`). GitHub withholds
+  secrets from some events, such as reviews on fork pull requests. The scheduled check
+  always receives the key, so it reports a key that is actually missing.
+
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
 with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize
 `TOKENS_LIMIT` and `CREDIT_LIMIT` rows. Both quota windows must be valid:
@@ -260,17 +271,17 @@ Unknown quota results may include one of these fixed diagnostic categories:
 also include a numeric HTTP status. These values contain no provider response text,
 request headers, URL, credential, or exception message. Version 1 artifacts without
 diagnostic fields remain valid. Diagnostics explain the unknown result; they do not
-change gate or recovery policy.
+change gate or recovery policy. Only `missing_api_key` changes incident creation.
 
 For manual provider recovery, run **Agent Provider Health** with `workflow_dispatch`
 and enter the incident's number as `recover_issue`. The controller finds that one
 open, marked incident whose provider key matches the currently configured provider.
 It never closes another incident in the same run. A fresh health check must pass
 before the controller closes the named incident. The hourly scheduled run closes Z.ai
-rate-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
+plan-limit, quota-exhaustion, and unknown-quota incidents after a fresh healthy check,
 once the recorded reset time has passed or, when none was recorded, once the incident
-is an hour old. Keep the hour: a healthy quota check does not show spare concurrency,
-and closes within minutes of opening were followed by a new incident within minutes.
+is an hour old. Keep the hour: closes within minutes of opening were followed by a new
+incident within minutes.
 Credential and configuration incidents need operator attention rather than automatic recovery.
 
 For a workflow-scoped incident, dispatch the affected workflow from the repository's

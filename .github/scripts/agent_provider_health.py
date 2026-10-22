@@ -55,7 +55,7 @@ QuotaDiagnostic = Literal[
     'invalid_reset_time',
     'missing_windows',
 ]
-FailureKind = Literal['authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other']
+FailureKind = Literal['authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other']
 
 
 @dataclass(frozen=True)
@@ -691,7 +691,7 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('authentication', 'rate_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
+    if kind not in ('authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -794,7 +794,7 @@ def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
         return 'workflow', result.workflow, 'execution'
     if failure.kind == 'authentication' or failure.http_status in (401, 403):
         return 'provider', 'zai', failure.kind
-    if failure.kind == 'rate_limit':
+    if failure.kind == 'plan_limit':
         return 'provider', 'zai', failure.kind
     if result.trigger_event == 'schedule' and failure.kind not in ('timeout', 'time_limit'):
         return 'workflow', result.workflow, failure.kind
@@ -887,6 +887,11 @@ def _monitor_workflow_outcome(
             if health.quota.status == 'healthy':
                 print(f'Activation was blocked by existing state: {health.reason}')
                 return 0
+            if health.quota.diagnostic == 'missing_api_key':
+                # GitHub withholds repository secrets from some events, such as reviews on fork pull requests.
+                # The scheduled check always receives the key, so it reports a key that is actually missing.
+                print('Activation had no Z.ai key for this event; the scheduled check owns provider health')
+                return 0
             kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
             marker = IncidentMarker('provider', 'zai', kind, str(args.run_id), health.quota.reset_at)
             result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
@@ -913,7 +918,12 @@ def _monitor_workflow_outcome(
             print('No trusted failed job or step identifies a host stage; leaving workflow outcome unclassified')
             return 0
         result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
-    if result.failure is not None and (result.failure.kind == 'timeout' or result.failure.http_status == 529):
+    # The runner reports a Z.ai account or plan limit as `plan_limit`, and a request-rate 429 that outlasts its
+    # retry window as `rate_limit`. Runners on older branches report every 429 as `rate_limit`; the next run's
+    # quota check still blocks on an exhausted plan.
+    if result.failure is not None and (
+        result.failure.kind in ('timeout', 'rate_limit') or result.failure.http_status == 529
+    ):
         print('Transient request failure remains local to this attempt')
         return 0
     if args.conclusion in ('cancelled', 'timed_out') and failed_stage == 'inference':
@@ -952,6 +962,7 @@ def _failure_reason(failure: Failure | None) -> str:
     reasons: dict[FailureKind, str] = {
         'authentication': 'Z.ai rejected the configured credentials',
         'rate_limit': 'Z.ai rate limits stopped the run',
+        'plan_limit': 'Z.ai refused the run under an account or plan limit',
         'request_limit': 'The agent reached its per-run request limit',
         'time_limit': 'The agent reached its per-run time limit',
         'timeout': 'A provider request timed out',
@@ -1183,7 +1194,7 @@ def _recover_issue(
                 f'{_quota_diagnostic_suffix(quota)}'
             )
         return False
-    if marker.kind in ('rate_limit', 'quota_exhausted') and marker.reset_at is not None:
+    if marker.kind in ('rate_limit', 'plan_limit', 'quota_exhausted') and marker.reset_at is not None:
         reset_at = dt.datetime.fromisoformat(marker.reset_at.replace('Z', '+00:00'))
         if now < reset_at:
             if not automatic:
@@ -1280,7 +1291,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             continue
         if marker.key != 'zai':
             continue
-        if marker.kind not in ('rate_limit', 'quota_exhausted', 'quota_unknown'):
+        if marker.kind not in ('rate_limit', 'plan_limit', 'quota_exhausted', 'quota_unknown'):
             continue
         _recover_issue(client, issue, marker, quota, now, dry_run=args.dry_run, automatic=True)
     return 0
