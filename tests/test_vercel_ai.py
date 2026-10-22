@@ -1993,8 +1993,8 @@ def test_dump_and_load_citations():
 
 
 def test_load_invalid_citations():
-    """Provider metadata is client-controlled, so a citation that doesn't validate is dropped, and the text and the
-    other citations still load.
+    """Provider metadata is client-controlled, so a citation that doesn't validate, or `provider_details` that isn't a
+    dict, is dropped, and the text and the other citations still load.
 
     Unit test: no recorded answer holds an invalid citation, since only a client can send one.
     """
@@ -2017,6 +2017,7 @@ def test_load_invalid_citations():
                     },
                 ),
                 TextUIPart(text='Bye', provider_metadata={'pydantic_ai': {'citations': 'not a list'}}),
+                TextUIPart(text='Again', provider_metadata={'pydantic_ai': {'provider_details': 'not a dict'}}),
             ],
         )
     ]
@@ -2029,6 +2030,7 @@ def test_load_invalid_citations():
                 citations=[Citation(sources=[WebCitationSource(url='https://example.com')])],
             ),
             TextPart(content='Bye'),
+            TextPart(content='Again'),
         ]
     )
 
@@ -2184,8 +2186,8 @@ async def test_merged_text_parts_round_trip(parts: list[TextPart], expected_raw_
     Our citations' anchors and OpenAI's raw positions are moved onto the merged text, so each still selects the text
     it did before; other providers' raw citations point into the cited document and are joined unchanged.
 
-    Unit test: merging is the adapter's own transformation, and
-    `test_anthropic_document_citation_replay_after_vercel_round_trip` records it end to end.
+    Unit test: merging is the adapter's own transformation, and no recorded response has merged text parts with both
+    providers' citation shapes.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='What is Pydantic AI?')]),

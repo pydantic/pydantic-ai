@@ -231,11 +231,13 @@ def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
 
 def load_text_part(text: str, provider_meta: dict[str, Any]) -> TextPart:
     """Load the text part a UI text part holds, from its text and provider metadata."""
+    # The client sends the metadata, and requests read `provider_details` as a dict.
+    provider_details = provider_meta.get('provider_details')
     return TextPart(
         content=text,
         id=provider_meta.get('id'),
         provider_name=provider_meta.get('provider_name'),
-        provider_details=provider_meta.get('provider_details'),
+        provider_details=cast(dict[str, Any], provider_details) if isinstance(provider_details, dict) else None,
         citations=load_citations(provider_meta.get('citations'), text),
     )
 
