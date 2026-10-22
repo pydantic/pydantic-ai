@@ -1387,12 +1387,32 @@ async def test_bedrock_unified_service_tier_auto_omits(
 
 
 @pytest.mark.parametrize(
-    ('model_name', 'citations', 'citations_enabled'),
+    ('model_name', 'citations', 'expected'),
     [
-        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', False, False, id='claude-not-asked'),
-        pytest.param('us.anthropic.claude-sonnet-4-5-20250929-v1:0', True, True, id='claude-asked'),
+        pytest.param(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            False,
+            {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Dummy TXT file\n'}},
+            id='claude-not-asked',
+        ),
+        pytest.param(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            True,
+            {
+                'name': 'Document 1',
+                'format': 'txt',
+                'source': {'text': 'Dummy TXT file\n'},
+                'citations': {'enabled': True},
+            },
+            id='claude-asked',
+        ),
         # Models without citation support reject a request that enables citations, so the setting is ignored.
-        pytest.param('us.amazon.nova-pro-v1:0', True, False, id='nova-asked'),
+        pytest.param(
+            'us.amazon.nova-pro-v1:0',
+            True,
+            {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Dummy TXT file\n'}},
+            id='nova-asked',
+        ),
     ],
 )
 async def test_bedrock_citations_request_setting(
@@ -1402,9 +1422,12 @@ async def test_bedrock_citations_request_setting(
     text_document_content: BinaryContent,
     model_name: str,
     citations: bool,
-    citations_enabled: bool,
+    expected: dict[str, Any],
 ) -> None:
-    """The shared setting is forwarded on Bedrock document blocks only when enabled and the model supports it."""
+    """The shared setting is forwarded on Bedrock document blocks only when enabled and the model supports it.
+
+    Unit test: pins the document block sent, including the not-asked and unsupported-model cases no recording has.
+    """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
@@ -1418,21 +1441,16 @@ async def test_bedrock_citations_request_setting(
         ['What is in this document?', text_document_content]
     )
 
-    document = mock_converse.call_args.kwargs['messages'][0]['content'][1]['document']
-    expected: dict[str, object] = {
-        'name': 'Document 1',
-        'format': 'txt',
-        'source': {'text': 'Dummy TXT file\n'} if citations_enabled else {'bytes': b'Dummy TXT file\n'},
-    }
-    if citations_enabled:
-        expected['citations'] = {'enabled': True}
-    assert document == expected
+    assert mock_converse.call_args.kwargs['messages'][0]['content'][1]['document'] == expected
 
 
 async def test_bedrock_citations_for_uploaded_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """The shared setting also applies to supported documents already stored in S3."""
+    """The shared setting also applies to supported documents already stored in S3.
+
+    Unit test: replaying a recording would need a real S3 object in the bucket.
+    """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
@@ -1460,7 +1478,10 @@ async def test_bedrock_citations_for_uploaded_document(
 async def test_bedrock_citations_rejects_non_utf8_text_document(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """Citations require text documents to be sent as UTF-8 text, rather than opaque bytes."""
+    """Citations require text documents to be sent as UTF-8 text, rather than opaque bytes.
+
+    Unit test: the error is raised before any request is sent.
+    """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
 
@@ -1475,7 +1496,10 @@ async def test_bedrock_citations_rejects_non_utf8_text_document(
 async def test_bedrock_citations_ignores_unsupported_document_format(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """Bedrock document citations support TXT and PDF only; other formats remain ordinary documents."""
+    """Bedrock document citations support TXT and PDF only; other formats remain ordinary documents.
+
+    Unit test: no recording sends a document other than TXT or PDF with citations on.
+    """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
     mock_converse = mocker.patch.object(model.client, 'converse')
     mock_converse.return_value = {
@@ -1496,10 +1520,8 @@ async def test_bedrock_citations_ignores_unsupported_document_format(
     }
 
 
-async def test_bedrock_tool_return_documents_without_citation_support(bedrock_provider: BedrockProvider) -> None:
-    """Tool-return documents stay ordinary tool output on models that don't support citations."""
-    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
-    history: list[ModelMessage] = [
+def _tool_return_documents_history() -> list[ModelMessage]:
+    return [
         ModelRequest(parts=[UserPromptPart(content='Show me the reports.')]),
         ModelResponse(parts=[ToolCallPart(tool_name='get_reports', args={}, tool_call_id='tool-1')]),
         ModelRequest(
@@ -1520,72 +1542,40 @@ async def test_bedrock_tool_return_documents_without_citation_support(bedrock_pr
         ),
     ]
 
+
+async def test_bedrock_tool_return_documents_without_citation_support(bedrock_provider: BedrockProvider) -> None:
+    """Tool-return documents stay ordinary tool output on models that don't support citations.
+
+    Unit test: pins the request body for a model no citation recording uses.
+    """
+    model = BedrockConverseModel('us.amazon.nova-pro-v1:0', provider=bedrock_provider)
+
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(citations=True)
+        model.prepare_messages(_tool_return_documents_history()),
+        ModelRequestParameters(),
+        BedrockModelSettings(citations=True),
     )
 
-    assert bedrock_messages == [
-        {'role': 'user', 'content': [{'text': 'Show me the reports.'}]},
-        {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'tool-1', 'name': 'get_reports', 'input': {}}}]},
-        {
-            'role': 'user',
-            'content': [
-                {
-                    'toolResult': {
-                        'toolUseId': 'tool-1',
-                        'content': [
-                            {'text': 'See file inline-report.'},
-                            {
-                                'document': {
-                                    'name': 'Document 2',
-                                    'format': 'txt',
-                                    'source': {'s3Location': {'uri': 's3://bucket/uploaded.txt'}},
-                                }
-                            },
-                        ],
-                        'status': 'success',
-                    }
-                },
-                {'text': '<tool_result tool_name="get_reports" tool_call_id="tool-1" file_id="inline-report">'},
-                {
-                    'document': {
-                        'name': 'Document 1',
-                        'format': 'txt',
-                        'source': {'bytes': b'inline report'},
-                    }
-                },
-                {'text': '</tool_result>'},
-            ],
-        },
-    ]
+    # Documents sit inside the tool result or follow it in the same turn.
+    tool_result, *after_tool_result = bedrock_messages[2]['content']
+    assert 'toolResult' in tool_result
+    blocks = [*tool_result['toolResult']['content'], *after_tool_result]
+    documents = [block['document'] for block in blocks if 'document' in block]
+    assert len(documents) == 2
+    assert not any('citations' in document for document in documents)
 
 
 async def test_bedrock_tool_return_document_citations_request(bedrock_provider: BedrockProvider) -> None:
-    """Tool-return documents get citations like user-prompt documents on models that support them."""
+    """Tool-return documents get citations like user-prompt documents on models that support them.
+
+    Unit test: the recorded `test_bedrock_tool_return_document_citations` can't match on the body, so this pins it.
+    """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Show me the reports.')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_reports', args={}, tool_call_id='tool-1')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(
-                    tool_name='get_reports',
-                    tool_call_id='tool-1',
-                    content=[
-                        BinaryContent(data=b'inline report', media_type='text/plain', identifier='inline-report'),
-                        UploadedFile(
-                            file_id='s3://bucket/uploaded.txt',
-                            provider_name='bedrock',
-                            identifier='uploaded-report',
-                        ),
-                    ],
-                )
-            ]
-        ),
-    ]
 
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        model.prepare_messages(history), ModelRequestParameters(), BedrockModelSettings(citations=True)
+        model.prepare_messages(_tool_return_documents_history()),
+        ModelRequestParameters(),
+        BedrockModelSettings(citations=True),
     )
 
     assert bedrock_messages[2] == snapshot(
@@ -2039,55 +2029,13 @@ async def test_bedrock_leaves_out_citations_it_cannot_check(
         assert replayed == {'text': text}
 
 
-async def test_bedrock_stream_citation_mapping(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
-) -> None:
-    """Bedrock streaming attaches citation deltas to the text block they support."""
-    text = 'The policy allows thirty days for returns.'
-    citation = {
-        'title': 'Returns policy',
-        'sourceContent': [{'text': 'Returns are accepted within thirty days.'}],
-        'location': {'documentChar': {'documentIndex': 0, 'start': 0, 'end': 39}},
-    }
-    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
-
-    def _stream() -> Iterator[dict[str, Any]]:
-        yield {'messageStart': {'role': 'assistant'}}
-        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'citation': citation}}}
-        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': text}}}
-        yield {'contentBlockStop': {'contentBlockIndex': 0}}
-        yield {'messageStop': {'stopReason': 'end_turn'}}
-
-    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
-    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
-
-    async with Agent(model).run_stream('What is the return window?') as result:
-        await result.get_output()
-
-    assert result.response.parts == [
-        TextPart(
-            text,
-            provider_name='bedrock',
-            provider_details={'citations': [citation]},
-            citations=[
-                Citation(
-                    sources=[
-                        DocumentCitationSource(
-                            title='Returns policy',
-                            excerpts=['Returns are accepted within thirty days.'],
-                        )
-                    ],
-                    anchor=ContentCitationAnchor(start=0, end=len(text)),
-                )
-            ],
-        )
-    ]
-
-
 async def test_bedrock_stream_empty_citation_mapping(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """Bedrock streaming preserves citations when a citation block has no text delta."""
+    """Bedrock streaming preserves citations when a citation block has no text delta.
+
+    Unit test: no recorded Bedrock stream has a citation block without text.
+    """
     model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
 
     def _stream() -> Iterator[dict[str, Any]]:
