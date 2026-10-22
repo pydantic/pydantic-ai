@@ -124,7 +124,8 @@ drop live data). With no trigger it runs on every request.
 ### `SlidingWindowCompaction`
 
 `SlidingWindowCompaction(max_messages=None, max_tokens=None, keep_messages=40, keep_tokens=None, preserve_first_user_message=True, receipts=False)`:
-drops the oldest whole messages.
+drops the oldest whole messages. `keep_messages=0` still keeps the newest message, the request being
+answered.
 
 ### `SummarizingCompaction`
 
@@ -134,8 +135,10 @@ example a decision model) needs `model=` set or the first compaction raises `Use
 Useful keyword options: `model_settings`, `summarization_capabilities` (outer capabilities do not
 run on the summary call), `incremental=True` (update the previous summary rather than
 re-summarize), `keep_user_messages=False`, `tool_return_max_chars=500`, `summary_prompt` (must
-contain `{messages}` and no other replacement field), `instructions`, `bridge_prefix=False`, `receipts=False`,
+contain `{messages}` and no other replacement field; any other prompt emits a `HarnessDeprecationWarning`
+and will raise `ValueError` in a future release), `instructions`, `bridge_prefix=False`, `receipts=False`,
 `event_stream_handler` (pass `drain_summary_events` for endpoints that reject non-streaming).
+`keep_messages=0` still keeps the newest message, the request being answered, alongside the summary.
 Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
 the default `id='summarizing_compaction'` under durable execution.
 

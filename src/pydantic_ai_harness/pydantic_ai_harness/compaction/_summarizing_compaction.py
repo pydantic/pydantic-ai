@@ -499,9 +499,10 @@ def _is_valid_summary_prompt(prompt: str) -> bool:
     """Whether `prompt` renders with only a `{messages}` replacement field, and has one."""
     try:
         fields = {name for _, name, _, _ in Formatter().parse(prompt) if name is not None}
-        # A trial render catches what parsing alone accepts, such as an unknown conversion.
-        prompt.format(messages='')
-    except (AttributeError, IndexError, KeyError, ValueError):
+        # A trial render with a non-empty transcript catches what parsing alone accepts, such as an
+        # unknown conversion or a nested format spec.
+        prompt.format(messages='transcript')
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
         return False
     return fields == {'messages'}
 

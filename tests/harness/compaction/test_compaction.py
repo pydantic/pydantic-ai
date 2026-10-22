@@ -444,6 +444,17 @@ class TestIsSafeCutoff:
         ]
         assert _is_safe_cutoff(msgs, 2) is False
 
+    def test_safe_before_a_legacy_retry_prompt_without_a_tool_name(self):
+        # TODO(v3): remove along with `RetryPromptPart`
+        # Without a tool name it asks for a new final output, so it does not answer the call.
+        msgs: list[ModelMessage] = [
+            _user('a'),
+            _tool_call('fn', 'tc1'),
+            ModelRequest(parts=[legacy_retry_prompt_part('try again')]),
+            _user('b'),
+        ]
+        assert _is_safe_cutoff(msgs, 2) is True
+
 
 # ---------------------------------------------------------------------------
 # find_safe_cutoff
@@ -1065,13 +1076,15 @@ class TestCompaction:
             'Return {"summary": ...} for {messages}',
             '{messages!z}',
             '{messages} }',
+            '{messages:{messages}}',
+            None,
         ],
     )
-    def test_validation_summary_prompt_fields(self, summary_prompt: str):
+    def test_validation_summary_prompt_fields(self, summary_prompt: str | None):
         with pytest.warns(
             HarnessDeprecationWarning, match=r'`summary_prompt` must contain a `\{messages\}` placeholder'
         ) as warned:
-            SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)
+            SummarizingCompaction(model='test', max_messages=10, summary_prompt=summary_prompt)  # pyright: ignore[reportArgumentType]
         assert warned[0].filename == __file__
 
     def test_focusing_an_invalid_summary_prompt_does_not_warn_again(self):
