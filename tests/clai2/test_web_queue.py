@@ -277,12 +277,12 @@ async def test_the_former_inbox_still_reads_input_in_order() -> None:
     inbox.put('first')
     inbox.put('second')
     assert [await inbox.get(), await inbox.get()] == ['first', 'second']
+    received: list[str] = []
+
+    async def read() -> None:
+        received.append(await inbox.get())
+
     async with anyio.create_task_group() as tg:
-        received: list[str] = []
-
-        async def read() -> None:
-            received.append(await inbox.get())
-
         tg.start_soon(read)
         await anyio.sleep(0)
         inbox.put('later')
