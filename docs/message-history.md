@@ -1064,7 +1064,7 @@ message_history = [
 
 #### Keep Only Recent Messages
 
-You can use the `history_processor` to only keep the recent messages:
+You can use a history processor to only keep the recent messages:
 
 ```python {title="keep_recent_messages.py"}
 from pydantic_ai import Agent, ModelMessage
