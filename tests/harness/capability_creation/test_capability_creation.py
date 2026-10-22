@@ -406,6 +406,14 @@ class UsesModels(AbstractCapability):
             load_capability_instance(_write(tmp_path, 'm', 'raise RuntimeError("boom")\n'))
         with pytest.raises(CapabilityValidationError, match='no `AbstractCapability` subclass'):
             load_capability_instance(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
+        constructor_raises = (
+            'from pydantic_ai.capabilities import AbstractCapability\n\n'
+            'class Broken(AbstractCapability):\n'
+            '    def __init__(self):\n'
+            '        raise RuntimeError("boom")\n'
+        )
+        with pytest.raises(CapabilityValidationError, match='RuntimeError: boom'):
+            load_capability_instance(_write(tmp_path, 'o', constructor_raises))
         assert set(sys.modules) - before == set()
 
     def test_failed_reload_keeps_the_earlier_module(self, tmp_path: Path) -> None:
@@ -485,34 +493,6 @@ class UsesModels(AbstractCapability):
         with pytest.raises(CapabilityValidationError):
             validate_capability_file(_write(tmp_path, 'n', NO_SUBCLASS_CODE))
         assert set(sys.modules) - before == set()
-
-    @pytest.mark.parametrize(
-        'broken_code',
-        [
-            'raise RuntimeError("boom")\n',
-            'from pydantic_ai.capabilities import AbstractCapability\n\n'
-            'class Broken(AbstractCapability):\n'
-            '    def __init__(self):\n'
-            '        raise RuntimeError("boom")\n',
-        ],
-        ids=['module-body', 'constructor'],
-    )
-    def test_failed_load_restores_module_registration(self, tmp_path: Path, broken_code: str) -> None:
-        path = _write(tmp_path, 'm', VALID_CODE)
-        load_capability_instance(path)
-        [name] = [
-            name for name, module in sys.modules.items() if getattr(module, '__file__', None) == str(path.resolve())
-        ]
-        loaded = sys.modules[name]
-        path.write_text(broken_code, encoding='utf-8')
-        with pytest.raises(CapabilityValidationError, match='boom'):
-            load_capability_instance(path)
-        assert sys.modules[name] is loaded
-
-        broken = _write(tmp_path, 'never_loaded', broken_code)
-        with pytest.raises(CapabilityValidationError, match='boom'):
-            load_capability_instance(broken)
-        assert str(broken.resolve()) not in {getattr(module, '__file__', None) for module in sys.modules.values()}
 
     def test_concurrent_loads_of_one_file_run_one_at_a_time(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -828,8 +808,11 @@ class TestCapabilityStore:
         finally:
             _gate(gate, 'release').set()
             loader.join(timeout=_READY_TIMEOUT)
-        statuses = {record.name: record.status for record in store.list_all()}
-        assert statuses == ({'x': 'disabled'} if update == 'disable' else {'x': 'active', 'y': 'active'})
+        records = [(record.name, record.status, record.last_error) for record in store.list_all()]
+        if update == 'disable':
+            assert records == [('x', 'disabled', None)]
+        else:
+            assert records == [('x', 'active', 'ValueError: broken'), ('y', 'active', None)]
 
     def test_load_manifest_missing_returns_empty(self, tmp_path: Path) -> None:
         assert CapabilityStore(tmp_path / 'absent').list_all() == []
