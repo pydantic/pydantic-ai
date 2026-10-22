@@ -1444,7 +1444,7 @@ class TestSensitiveDataSafety:
         )
 
     async def test_secret_with_a_lone_surrogate_is_redacted(self, kill_calls: list[BrowserSession]) -> None:
-        """`os.environ` decodes invalid UTF-8 as lone surrogates, which have no URL encoding."""
+        """`os.environ` decodes invalid UTF-8 as lone surrogates, which strict URL encoding cannot encode."""
         history = _FakeHistory(step_errors=['typed hunter\udcff2'])
         capability = BrowserUse[None](
             sensitive_data={'https://safe.example': {'x_password': 'hunter\udcff2'}},
