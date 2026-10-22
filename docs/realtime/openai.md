@@ -255,9 +255,12 @@ Live caps the context it takes at 500 tokens. A typed turn of any length still g
 but one too long for that context (about 496 tokens, with the words that say the user typed it) goes
 without telling Live what was typed, so Live may leave a terse answer to it unsaid. Context sent with
 `respond=False` over the cap raises [`UserError`][pydantic_ai.exceptions.UserError] before anything is
-sent, so it is not recorded in history; split it, or give long material to the backend as a tool
-result instead.
-[`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle. The
+sent, so it is not recorded in history; split it, send it as a typed turn, which the backend takes at any
+length, or give long material to the backend as a tool result instead.
+[`enqueue()`](tools.md#enqueuing-prompts) delivers text the same way once the model is idle, except that
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s on their own aren't the user's words: Live
+hears them as context as they are, and the backend gets them as a developer message, so the model doesn't
+later tell the caller they said it. The
 [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] it produces marks when the text
 was sent, not when the model took it in. Live speaks to text in the reply it is giving, if it is giving one, rather
 than in a reply of its own: text sent while the model is speaking is answered by that reply once it says anything more,

@@ -121,6 +121,7 @@ from ._openai_protocol import (
 from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
+    SystemPromptText,
     inject_trace_context,
     reconnect_with_backoff,
     resolve_advertised_tools,
@@ -234,7 +235,7 @@ _VOICE_FLOOR = 64
 #: tool call's quiet wait would arrive as a spoken part with nothing in it.
 _MAX_FORWARDED_PAUSE_MS = 500
 
-#: The most tokens Live accepts in one `session.thinking.append` (or `session.commentary.append`).
+#: The most tokens Live accepts in one `session.thinking.append`.
 _CONTEXT_TOKEN_LIMIT = 500
 #: The tokenizer Live counts that limit in. Checked live: 500 `o200k_base` tokens are accepted, 501 refused.
 _CONTEXT_ENCODING = 'o200k_base'
@@ -918,7 +919,11 @@ class OpenAILiveConnection(RealtimeConnection):
             # was asked as silent context: without it, it often leaves a terse answer unsaid, not knowing the
             # question (checked live: a bare "20" was spoken in none of six runs without it, and all six with it).
             # The backend takes text of any length, so text too long for that context goes without it.
-            thinking = _TYPED_TEXT_PREFIX + content
+            # System-prompt text is the operator's, not the user's: Live hears it as it is (`<system>`-tagged), and
+            # the backend as a developer message. Framed as typed, Live took it for something the caller had said
+            # (checked live: asked to list what they had said, 5 of 5 runs included it, and none of 5 this way).
+            operator = isinstance(content, SystemPromptText)
+            thinking = content if operator else _TYPED_TEXT_PREFIX + content
             tells_live = await _context_tokens_over_cap(thinking) is None
             # Live opens the delegation that answers it under this id (`session.delegation.created`).
             event_id = f'pydantic_ai.text.{input_index}'
@@ -931,7 +936,11 @@ class OpenAILiveConnection(RealtimeConnection):
                 await self._send_event(
                     {
                         'type': 'response.item.create',
-                        'item': {'type': 'message', 'role': 'user', 'content': [_text_part(content)]},
+                        'item': {
+                            'type': 'message',
+                            'role': 'developer' if operator else 'user',
+                            'content': [_text_part(content)],
+                        },
                     }
                 )
                 await self._send_event({'type': 'response.create', 'event_id': event_id})
@@ -1896,8 +1905,9 @@ async def _check_context_length(text: str) -> None:
     """
     if (tokens := await _context_tokens_over_cap(text)) is not None:
         raise UserError(
-            f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens of text per `send()`, and this is '
-            f'{tokens}. Send it in shorter pieces, or give longer material to the agent as a tool result.'
+            f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens of context per `send(..., respond=False)`, '
+            f'and this is {tokens}. Send it in shorter pieces, send it as a typed turn for the backend, or give longer '
+            'material to the agent as a tool result.'
         )
 
 

@@ -12,6 +12,7 @@ import asyncio
 import base64
 import itertools
 import json
+import re
 import warnings
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -2287,13 +2288,61 @@ async def test_context_text_over_the_cap_is_refused_before_sending() -> None:
     ws = _FakeWebSocket([started])
     with _patched_connect(ws):
         async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
-            with pytest.raises(UserError, match='at most 500 tokens of text per `send\\(\\)`, and this is 501'):
+            with pytest.raises(
+                UserError,
+                match=re.escape('at most 500 tokens of context per `send(..., respond=False)`, and this is 501'),
+            ):
                 await session.send(_text_of(501), respond=False)
             assert session.all_messages() == []
             # 500 is within the cap, and goes out.
             await session.send(_text_of(500), respond=False)
 
     assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.thinking.append', 'session.close']
+
+
+async def test_enqueued_system_prompt_is_the_operators_not_the_users() -> None:
+    """`enqueue(SystemPromptPart(...))` still runs the backend, but isn't framed as something the user typed.
+
+    Framed that way, Live later told the caller they had said it (checked live). Live hears it as context as it
+    is, `<system>`-tagged, and the backend as a developer message.
+    """
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _FakeWebSocket([started])
+    with _patched_connect(ws):
+        async with Agent().realtime(OpenAILiveModel('gpt-live-1', provider='openai')).session() as session:
+            session.enqueue(SystemPromptPart(content='The caller was verified as Jamie. Greet them by name.'))
+            with anyio.fail_after(5):
+                while not any(json.loads(frame)['type'] == 'response.create' for frame in ws.sent):
+                    await anyio.sleep(0.01)
+            messages = session.all_messages()
+
+    assert [json.loads(frame) for frame in ws.sent[1:-1]] == snapshot(
+        [
+            {
+                'type': 'session.thinking.append',
+                'delegation_id': None,
+                'content': '<system>The caller was verified as Jamie. Greet them by name.</system>',
+            },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'developer',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': '<system>The caller was verified as Jamie. Greet them by name.</system>',
+                        }
+                    ],
+                },
+            },
+            {'type': 'response.create', 'event_id': 'pydantic_ai.text.0'},
+        ]
+    )
+    # History records the text the session delivered, as for any enqueued system prompt.
+    assert [
+        type(part.content) for message in messages for part in message.parts if isinstance(part, UserPromptPart)
+    ] == [str]
 
 
 async def test_typed_turn_too_long_to_tell_live_still_runs_the_backend() -> None:
