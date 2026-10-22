@@ -31,8 +31,8 @@ a change out to a share of traffic and roll it back from the UI.
 At the start of each run, `ManagedPrompt` resolves the variable `prompt__<name>` in the run's
 [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] hook and uses its value as the instructions
 for that run. The [`ResolvedVariable`](https://logfire.pydantic.dev/docs/reference/advanced/managed-variables/)
-stays open as a context manager for the whole run, so the selected label and version are set as baggage and every
-span in the run records which prompt version produced it.
+stays open as a context manager for the whole run, so the selected label (and the version, on Logfire 4.34 and
+later) is set as baggage, and every span in the run records which prompt produced it.
 
 ## Usage
 

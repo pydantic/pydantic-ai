@@ -34,8 +34,8 @@ a change out to a share of traffic and roll it back from the UI.
 ### How it works
 
 At the start of each run, `ManagedPrompt` resolves the variable `prompt__<name>` and uses its value as the
-instructions for that run. While the run is active, the selected label and version are set as baggage, so
-every span in the run records which prompt version produced it.
+instructions for that run. While the run is active, the selected label (and the version, on Logfire 4.34 and
+later) is set as baggage, so every span in the run records which prompt produced it.
 
 ### Usage
 

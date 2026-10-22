@@ -94,7 +94,8 @@ class ManagedPrompt(AbstractCapability[AgentDepsT]):
     The prompt is resolved once per run, in the run's
     [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] hook. The
     [`ResolvedVariable`][logfire.variables.ResolvedVariable] stays open as a context manager for
-    the whole run, so the selected label and version are attached as baggage to every span of the run.
+    the whole run, so the selected label (and the version, on Logfire 4.34 and later) is attached as
+    baggage to every span of the run.
 
     The resolved value lands in the system instructions, so a new value starts new conversations on
     their own cached prompt prefix; a conversation already under way gets the change appended
