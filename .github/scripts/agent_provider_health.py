@@ -686,10 +686,11 @@ def _same_scope_incident(marker: IncidentMarker, issues: list[Issue]) -> Issue |
 
 
 def _open_incidents_until(client: GitHubClient, found: Callable[[list[Issue]], bool]) -> list[Issue]:
-    """Return the union of open-incident reads, re-reading until `found` holds or a read returns any incident.
+    """Return the union of open-incident reads.
 
-    A degraded GitHub read returns HTTP 200 with no readable incident, so one read with no matching incident
-    shows that none is open only when it returned some other incident.
+    Re-read until `found` holds, a read returns any incident, or the reads run out. A degraded GitHub read
+    returns HTTP 200 with no readable incident, so one read with no matching incident shows that none is open
+    only when it returned some other incident.
     """
     issues: dict[int, Issue] = {}
     for read in range(_INCIDENT_READS):
