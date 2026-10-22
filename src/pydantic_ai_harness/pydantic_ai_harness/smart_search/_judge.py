@@ -68,6 +68,8 @@ def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
         model,
         name='smart_search',
         output_type=Relevance,
+        # A judgment is one request: a retry would spend a request the search did not claim.
+        retries=0,
         instructions=f'The text is a snippet of source code from a repository. A developer is searching the codebase for: {query}',
         # Agent settings override the model's own, so only bound a judge whose settings the user could not set.
         model_settings={'timeout': REQUEST_TIMEOUT_SECONDS} if isinstance(model, str) else None,

@@ -145,6 +145,20 @@ class TestSmartSearch:
         assert any('`request_limit` left room for no more' in w for w in part.content.warnings)
         assert result.output == 'done'
 
+    async def test_a_judgment_is_exactly_one_request(self, tmp_path: Path) -> None:
+        (tmp_path / 'a.py').write_text('expired = True\n')
+        judge_requests: list[ModelMessage] = []
+
+        def malformed(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            judge_requests.append(messages[-1])
+            return ModelResponse(parts=[TextPart('relevant, I think')])  # no `Relevance`: not retried
+
+        agent = search_agent(tmp_path, FunctionModel(malformed))
+        result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=3))
+        [part] = tool_returns(result.all_messages())
+        assert 'UnexpectedModelBehavior' in str(part.content)
+        assert len(judge_requests) == 1 and result.output == 'done'
+
     async def test_no_request_room_fails_the_search(self, tmp_path: Path) -> None:
         (tmp_path / 'a.py').write_text('expired = True\n')
         judge_model = FakeJev('expired')
