@@ -2441,7 +2441,7 @@ def test_scheduled_recovery_closes_null_reset_incident_after_cool_down(
         return health.Quota('healthy')
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == [1]
@@ -2465,7 +2465,7 @@ def test_scheduled_recovery_keeps_aged_null_reset_incident_while_unhealthy(
         return quota
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_unhealthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == []
@@ -2489,7 +2489,7 @@ def test_scheduled_recovery_leaves_credential_and_scoped_incidents_open(monkeypa
         return health.Quota('healthy')
 
     monkeypatch.setattr(health, '_fetch_zai_quota', fetch_healthy)
-    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.timezone.utc))
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 15, 12, tzinfo=dt.UTC))
 
     assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == []

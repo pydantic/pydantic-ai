@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
-out_root="/tmp/gh-aw/agent"
+out_root="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}/.github/.issue-context"
 issues_root="${out_root}/issues"
 all_dir="${issues_root}/all"
 batches_dir="${issues_root}/batches"
