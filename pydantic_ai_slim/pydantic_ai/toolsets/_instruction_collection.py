@@ -48,9 +48,25 @@ def make_contribution(
 
 
 def framework_appended_instruction_ids(toolset: AbstractToolset[AgentDepsT]) -> set[InstructionId]:
-    """The ids of blocks under `toolset` that append by the framework's choice rather than their author's."""
+    """The ids of blocks under `toolset` that append by the framework's choice rather than their author's.
+
+    Keyed the way collection keys them: a toolset that passes its instruction children along leaves
+    their keys as they are, and one that speaks for what's below it without passing it along, such as
+    a `DynamicToolset` with an `id`, keys everything its leaves contribute under its own.
+    """
     ids: set[InstructionId] = set()
-    toolset.apply(lambda leaf: ids.update(leaf._framework_appended_instruction_ids()))  # pyright: ignore[reportPrivateUsage]
+
+    def visit(node: AbstractToolset[AgentDepsT]) -> None:
+        if children := node._instruction_children():  # pyright: ignore[reportPrivateUsage]
+            for child in children:
+                visit(child)
+            return
+        leaf_ids: set[InstructionId] = set()
+        node.apply(lambda leaf: leaf_ids.update(leaf._framework_appended_instruction_ids()))  # pyright: ignore[reportPrivateUsage]
+        if (source := node._instruction_source()) is not None:  # pyright: ignore[reportPrivateUsage]
+            ids.update(InstructionId(source, name=leaf_id.name) for leaf_id in leaf_ids)
+
+    visit(toolset)
     return ids
 
 

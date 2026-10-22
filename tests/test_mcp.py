@@ -1072,8 +1072,15 @@ A later <context> element with the same id replaces the earlier one and stays in
         ):
             flatten_instruction_contributions([first, second])
 
-    async def test_server_instructions_in_a_deferred_capability_do_not_warn(self, fastmcp_server: FastMCP[None]):
-        """Appending is the framework's choice for server instructions, so where it isn't supported they rewrite quietly."""
+    @pytest.mark.parametrize('composition', ['direct', 'dynamic-with-id'])
+    async def test_server_instructions_in_a_deferred_capability_do_not_warn(
+        self, fastmcp_server: FastMCP[None], composition: str
+    ):
+        """Appending is the framework's choice for server instructions, so where it isn't supported they rewrite quietly.
+
+        That holds when a `DynamicToolset` with an `id` builds the `MCPToolset` and keys its instructions
+        under its own id instead of the server's.
+        """
         calls = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1086,7 +1093,13 @@ A later <context> element with the same id replaces the earlier one and stays in
         capability = Capability[None](
             id='docs',
             defer_loading=True,
-            toolsets=[MCPToolset(fastmcp_server, id='docs_server', include_instructions=True)],
+            toolsets=[
+                DynamicToolset[None](
+                    lambda _ctx: MCPToolset(fastmcp_server, id='docs_server', include_instructions=True), id='outer'
+                )
+                if composition == 'dynamic-with-id'
+                else MCPToolset(fastmcp_server, id='docs_server', include_instructions=True)
+            ],
         )
         agent = Agent(FunctionModel(model_fn), deps_type=type(None), capabilities=[capability])
         with warnings.catch_warnings(record=True) as caught:
