@@ -23,7 +23,12 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
 from pydantic_ai_harness._output import truncate_tail
-from pydantic_ai_harness.localstack._container import LocalStackContainer, endpoint_port, validate_host_address
+from pydantic_ai_harness.localstack._container import (
+    LocalStackContainer,
+    endpoint_port,
+    managed_endpoint_url,
+    validate_host_address,
+)
 
 _HEALTH_PATH = '/_localstack/health'
 _UTF8_MAX_BYTES_PER_CHAR = 4
@@ -148,7 +153,11 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         if manage_container:
             validate_host_address(host_address)
 
-        self._endpoint_url = endpoint_url
+        # A managed container's endpoint depends only on where it is published, so every instance
+        # sharing these settings, and any tool bound to one of them, names the same endpoint.
+        self._endpoint_url = (
+            endpoint_url if self._host_port is None else managed_endpoint_url(host_address, self._host_port)
+        )
         self._region = region
         self._access_key_id = access_key_id
         self._secret_access_key = secret_access_key
@@ -264,7 +273,6 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
                 )
                 await container.__aenter__()
                 self._container = container
-                self._endpoint_url = container.endpoint_url
             self._entered_count += 1
         return self
 
@@ -476,7 +484,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             async with httpx.AsyncClient(timeout=self._default_timeout) as client:
                 response = await client.get(url)
         except httpx.HTTPError as e:
-            return f'[error: could not reach LocalStack at {url}: {e}]'
+            return truncate_tail(f'[error: could not reach LocalStack at {url}: {e}]', self._max_output_chars)
         if response.status_code != 200:
             return f'[error: LocalStack health check returned HTTP {response.status_code}]'
         return truncate_tail(response.text, self._max_output_chars)
