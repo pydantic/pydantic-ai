@@ -593,13 +593,15 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         """Run one of the backend's own short commands; `run` already translates SDK failures.
 
         Its deadline is internal, so a timeout names the operation rather than a command the caller
-        never ran; it stays a `WorkspaceTimeoutError`, as before.
+        never ran; it stays a `WorkspaceTimeoutError` with the command's partial output, as before.
         """
         try:
             return await self.run(argv, timeout=_INTERNAL_EXEC_TIMEOUT)
         except WorkspaceTimeoutError as error:
             raise WorkspaceTimeoutError(
-                f'{context}: the E2B sandbox did not answer within {_INTERNAL_EXEC_TIMEOUT}s'
+                f'{context}: the E2B sandbox did not answer within {_INTERNAL_EXEC_TIMEOUT}s',
+                stdout=error.stdout,
+                stderr=error.stderr,
             ) from error
 
     async def _has_setsid(self, sandbox: e2b.AsyncSandbox) -> bool:
