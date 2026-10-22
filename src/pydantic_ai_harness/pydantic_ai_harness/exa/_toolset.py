@@ -127,7 +127,8 @@ class DefaultExa:
     `AsyncExa` keeps one httpx connection pool, and connections belong to the event loop that opened
     them, so an agent reused on a new loop (a second `asyncio.run`, a new test) can't use the old pool.
     As in Pydantic AI's providers, the client is only replaced once the loop it was last used on has
-    stopped, so runs still going there keep it.
+    stopped, so runs still going there keep it. Only that last loop is checked: with three or more loops
+    taking turns, a run still going on an earlier one can see the client replaced.
 
     Implements both `ExaClient` and `ExaAgentRuns`, including the optional `cancel`.
     """
