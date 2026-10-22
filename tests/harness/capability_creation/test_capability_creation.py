@@ -237,6 +237,17 @@ class TestValidate:
         with pytest.raises(CapabilityValidationError, match=f'{getter}\\(\\) returned a int item, {expected}'):
             validate_capability_file(_write(tmp_path, 'm', BAD_ITEM_CODE.format(getter=getter)))
 
+    def test_native_tool_items_accepted(self, tmp_path: Path) -> None:
+        code = """
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.native_tools import WebSearchTool
+
+class WithNativeTools(AbstractCapability):
+    def get_native_tools(self):
+        return [WebSearchTool(), lambda ctx: None]
+"""
+        assert validate_capability_file(_write(tmp_path, 'm', code)) == 'WithNativeTools'
+
     def test_bad_model_settings_return_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(CapabilityValidationError, match='ModelSettings mapping'):
             validate_capability_file(_write(tmp_path, 'm', BAD_MODEL_SETTINGS_RETURN_CODE))
@@ -323,13 +334,10 @@ class UsesModels(AbstractCapability):
         monkeypatch.setitem(sys.modules, '_capability_load_sync', SimpleNamespace(in_body=in_body))
         monkeypatch.setattr(_validate, '_LOAD_LOCK', _ContentionLock(progress))
         path = _write(tmp_path, 'm', CONCURRENT_LOAD_CODE)
-        results: list[str | CapabilityValidationError] = []
+        results: list[str] = []
 
         def load() -> None:
-            try:
-                results.append(validate_capability_file(path))
-            except CapabilityValidationError as exc:
-                results.append(exc)
+            results.append(validate_capability_file(path))
 
         first, second = threading.Thread(target=load), threading.Thread(target=load)
         first.start()
