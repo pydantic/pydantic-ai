@@ -5926,7 +5926,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         return resolve
 
-    def _should_compact(self, messages: Sequence[ModelMessage], context_window: int | None = None) -> bool:
+    def _should_compact(self, messages: Sequence[ModelMessage], context_window: int | None) -> bool:
         if not self.stateless:
             return False
         if self.trigger is not None:

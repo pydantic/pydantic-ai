@@ -4969,13 +4969,14 @@ class TestCompaction:
         from pydantic_ai.models.openai import OpenAICompaction
 
         cap = OpenAICompaction(trigger=lambda msgs: len(msgs) > 2)
-        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])], None)  # pyright: ignore[reportPrivateUsage]
         assert cap._should_compact(  # pyright: ignore[reportPrivateUsage]
             [
                 ModelRequest(parts=[UserPromptPart(content='1')]),
                 ModelResponse(parts=[TextPart(content='r1')]),
                 ModelRequest(parts=[UserPromptPart(content='2')]),
-            ]
+            ],
+            None,
         )
 
     def test_openai_compaction_should_compact_no_config(self):
@@ -4985,28 +4986,60 @@ class TestCompaction:
 
         cap = OpenAICompaction()
         assert cap.stateless is False
-        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])])  # pyright: ignore[reportPrivateUsage]
+        assert not cap._should_compact([ModelRequest(parts=[UserPromptPart(content='hi')])], None)  # pyright: ignore[reportPrivateUsage]
 
-    def test_openai_compaction_should_compact_at_context_window_threshold(self):
-        """The threshold reads the latest response's usage, and either configured threshold triggers compaction."""
+    @pytest.mark.parametrize(
+        ('context_tokens', 'context_window', 'message_count_threshold', 'swapped_window', 'compacts'),
+        [
+            pytest.param(80, 100, None, None, True, id='threshold-reached'),
+            pytest.param(79, 100, None, None, False, id='below-threshold'),
+            pytest.param(80, None, None, None, False, id='unknown-window'),
+            pytest.param(10, None, 2, None, True, id='message-count-when-window-unknown'),
+            pytest.param(80, 1000, None, 100, True, id='window-of-swapped-model'),
+        ],
+    )
+    async def test_openai_compaction_context_window_threshold(
+        self,
+        context_tokens: int,
+        context_window: int | None,
+        message_count_threshold: int | None,
+        swapped_window: int | None,
+        compacts: bool,
+    ):
+        """The threshold reads the latest response's usage against the window of the model about to be called.
+
+        Compaction is observed through the non-OpenAI-model `UserError`, which is raised only once compaction triggers.
+        """
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
 
-        def history(context_tokens: int) -> list[ModelMessage]:
-            return [
-                ModelRequest(parts=[UserPromptPart(content='1')]),
-                ModelResponse(parts=[TextPart(content='r1')], usage=RequestUsage(input_tokens=context_tokens)),
-                ModelRequest(parts=[UserPromptPart(content='2')]),
-            ]
+        capabilities: list[AbstractCapability[Any]] = []
+        if swapped_window is not None:
+            hooks = Hooks()
+            swap_target = FunctionModel(simple_model_function, profile={'context_window': swapped_window})
 
-        cap = OpenAICompaction(context_window_threshold=0.8)
-        assert cap._should_compact(history(80), context_window=100)  # pyright: ignore[reportPrivateUsage]
-        assert not cap._should_compact(history(79), context_window=100)  # pyright: ignore[reportPrivateUsage]
-        assert not cap._should_compact(history(80), context_window=None)  # pyright: ignore[reportPrivateUsage]
+            @hooks.on.before_model_request
+            async def _(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+                request_context.model = swap_target
+                return request_context
 
-        both = OpenAICompaction(context_window_threshold=0.8, message_count_threshold=2)
-        assert both._should_compact(history(10), context_window=None)  # pyright: ignore[reportPrivateUsage]
-        assert not both._should_compact(history(10)[:2], context_window=None)  # pyright: ignore[reportPrivateUsage]
+            capabilities.append(hooks)
+        capabilities.append(
+            OpenAICompaction(context_window_threshold=0.8, message_count_threshold=message_count_threshold)
+        )
+        agent = Agent(
+            FunctionModel(simple_model_function, profile={'context_window': context_window}),
+            capabilities=capabilities,
+        )
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content='1')]),
+            ModelResponse(parts=[TextPart(content='r1')], usage=RequestUsage(input_tokens=context_tokens)),
+        ]
+        if compacts:
+            with pytest.raises(UserError, match='OpenAICompaction requires OpenAIResponsesModel'):
+                await agent.run('2', message_history=history)
+        else:
+            await agent.run('2', message_history=history)
 
     @pytest.mark.parametrize('threshold', [0, -0.1, 1.1])
     def test_openai_compaction_rejects_invalid_context_window_threshold(self, threshold: float):

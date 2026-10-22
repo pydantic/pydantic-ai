@@ -85,24 +85,9 @@ Rules of thumb:
 
 ## Manage Context Size
 
-For provider-native stateless compaction with the OpenAI Responses API, use
-`OpenAICompaction` instead of writing a history processor:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAICompaction
-
-agent = Agent(
-    'openai-responses:gpt-5.2',
-    capabilities=[OpenAICompaction(context_window_threshold=0.8)],
-)
-```
-
-This calls OpenAI's `/responses/compact` endpoint before the next request when the latest response's
-context-window usage reaches the configured fraction. If usage or the model's context window is unknown,
-it leaves history unchanged.
-
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
+
+With the OpenAI Responses API, `OpenAICompaction(context_window_threshold=0.8)` compacts history through OpenAI's `/responses/compact` endpoint once the latest response fills that fraction of the model's context window, without a custom processor.
 
 In `before_model_request` and `wrap_model_request`, use the two message views deliberately:
 
