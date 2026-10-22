@@ -193,6 +193,8 @@ class ExtractPosting(PydanticAIWorkflow):  # (1)!
 
 1. Start one workflow per posting: the requests of the workflows running on a worker share batches, and no worker slot is held while a batch is processed. See [Temporal](durable_execution/temporal.md) for running the worker and starting workflows.
 
+With [DBOS](durable_execution/dbos.md) or [Prefect](durable_execution/prefect.md), put [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] or [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] next to `BatchModelRequests` instead, and run the agent in a DBOS workflow or a Prefect flow. Under Prefect, the waits between checks are plain sleeps in the flow, which a retried flow run sleeps again.
+
 Once the step that submitted a request has completed, replaying or recovering the workflow reuses its recorded result, so the request isn't submitted again. The one exception is a step that's retried after the provider created its batch but before the step completed, for example because the worker crashed, or because the step timed out: like any model request, the retry sends the request again, which submits it in another batch. A request waits for its batch to be submitted inside its step, so keep `max_wait` well below the step's timeout (for example, the Temporal model activity's `start_to_close_timeout`). For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush] can't be called from workflow code. A [resubmission](#failed-requests) happens inside the step that found the failure, with the same exception.
 
 ## Direct batch requests

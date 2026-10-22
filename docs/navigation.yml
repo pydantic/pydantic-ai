@@ -608,6 +608,11 @@ navigation:
           - page: "Thread Executor"
             path: "capabilities/thread-executor.md"
             slug: "capabilities/thread-executor"
+          - page: "Batch Model Requests"
+            path: "batch.md"
+            slug: "capabilities/batch"
+            aliases:
+              - "batch"
       - section: "Loop Customization"
         slug: ""
         contents:
@@ -753,11 +758,6 @@ navigation:
         slug: "guides/image-generation"
         aliases:
           - "image-generation"
-      - page: "Batch Processing"
-        path: "batch.md"
-        slug: "guides/batch"
-        aliases:
-          - "batch"
       - page: "Embeddings"
         path: "embeddings.md"
         slug: "guides/embeddings"
