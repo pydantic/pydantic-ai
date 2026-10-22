@@ -36,7 +36,7 @@ from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 
 from pydantic_ai_harness.media._store import (
-    EMPTY_CONTEXT,
+    _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     MediaContext,
     PublicUrlResolver,
     coerce_metadata_mapping,
@@ -135,7 +135,7 @@ class MongoMediaStore:
         await self._db[self._chunks_name].create_index([('files_id', 1), ('n', 1)])
         self._indexes_ready = True
 
-    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str:
+    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
         await self._ensure_indexes()
         uri = media_uri_for(data)
         digest = parse_media_uri(uri)
@@ -174,7 +174,7 @@ class MongoMediaStore:
         )
         return uri
 
-    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
+    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
         await self._ensure_indexes()
         digest = parse_media_uri(uri)
         files_doc = await self._db[self._files_name].find_one(
@@ -208,14 +208,14 @@ class MongoMediaStore:
             )
         return bytes(buffer)
 
-    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool:
+    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
         digest = parse_media_uri(uri)
         return await self._db[self._files_name].find_one({'_id': digest}, {'_id': 1}) is not None
 
-    async def public_url(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> str | None:
+    async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
         return await resolve_public_url(self._public_url_resolver, uri, context)
 
-    async def get_metadata(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> Mapping[str, str]:
+    async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
         doc = await self._db[self._files_name].find_one({'_id': digest}, {'metadata': 1})
         if doc is None:

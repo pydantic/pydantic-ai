@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from pydantic_ai_harness.media._store import (
-    EMPTY_CONTEXT,
+    _EMPTY_CONTEXT,  # pyright: ignore[reportPrivateUsage]
     KeyStrategy,
     MediaContext,
     PublicUrlResolver,
@@ -263,7 +263,7 @@ class S3MediaStore:
         async with httpx.AsyncClient() as client:
             return await client.request(method, url, content=body, headers=headers)
 
-    async def put(self, data: bytes, *, context: MediaContext = EMPTY_CONTEXT) -> str:
+    async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
         uri = media_uri_for(data)
         meta = _meta_headers_from_context(context)
         response = await self._request(
@@ -277,7 +277,7 @@ class S3MediaStore:
             raise RuntimeError(f'S3 PUT failed for {uri}: {response.status_code} {response.text[:200]}')
         return uri
 
-    async def get(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bytes:
+    async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
         digest = parse_media_uri(uri)
         response = await self._request('GET', self._object_path(uri, context))
         if response.status_code == 404:
@@ -286,7 +286,7 @@ class S3MediaStore:
             raise RuntimeError(f'S3 GET failed for {digest}: {response.status_code} {response.text[:200]}')
         return response.content
 
-    async def exists(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> bool:
+    async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
         digest = parse_media_uri(uri)
         response = await self._request('HEAD', self._object_path(uri, context))
         if response.status_code == 404:
@@ -295,10 +295,10 @@ class S3MediaStore:
             raise RuntimeError(f'S3 HEAD failed for {digest}: {response.status_code} {response.text[:200]}')
         return True
 
-    async def public_url(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> str | None:
+    async def public_url(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> str | None:
         return await resolve_public_url(self._public_url_resolver, uri, context)
 
-    async def get_metadata(self, uri: str, *, context: MediaContext = EMPTY_CONTEXT) -> Mapping[str, str]:
+    async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
         response = await self._request('HEAD', self._object_path(uri, context))
         if response.status_code == 404:
