@@ -510,6 +510,9 @@ strict = true
 anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+# Print every thread's stack once a test has run this long, so a shard that hangs until its job times out shows
+# where it hung. The test keeps running.
+faulthandler_timeout = 120
 markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
