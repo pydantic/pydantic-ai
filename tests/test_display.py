@@ -157,7 +157,7 @@ def test_render_banner(render: Callable[..., str]):
      /   \\
    /___.___\\     observability: off — see every model and tool call live, with cost
   /    |    \\      set it up free with Logfire and a GitHub login:
-/      |      \\    uvx logfire-cli wizard --task pydantic-ai
+/      |      \\      uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -173,7 +173,7 @@ def test_render_banner_for_an_unnamed_agent(render: Callable[..., str]):
      /   \\
    /___.___\\     observability: off — see every model and tool call live, with cost
   /    |    \\      set it up free with Logfire and a GitHub login:
-/      |      \\    uvx logfire-cli wizard --task pydantic-ai
+/      |      \\      uvx logfire-cli wizard --task pydantic-ai
 `---.._|_..---'    or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
@@ -290,11 +290,22 @@ def test_the_observability_links_and_command_each_survive_on_one_line(
     assert urls == expected_urls
     assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
     # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
-    # a floor under the text column measured from the copy rather than written down beside it.
+    # a floor under the text column measured from the copy rather than written down beside it. When
+    # a destination continues the sentence on its own line, the extra indent keeps it visually
+    # attached to that sentence.
     for width in range(_MIN_TEXT_WIDTH, 121):
         rendered = render(width=width, logfire_cli_available=logfire_cli_available).splitlines()
         for copyable in [logfire_destination, *urls]:
             assert sum(copyable in line for line in rendered) == 1, f'{copyable} was broken at {width} columns'
+
+        text_width, _ = _display._columns(width)  # pyright: ignore[reportPrivateUsage]
+        observability_lines = _display._observability_lines(  # pyright: ignore[reportPrivateUsage]
+            text_width, logfire_cli_available=logfire_cli_available
+        )
+        for copyable in [logfire_destination, *urls]:
+            copyable_line = next(line for line in observability_lines if copyable in line)
+            if copyable_line.strip() == copyable:
+                assert copyable_line == f'    {copyable}'
 
 
 @pytest.mark.parametrize(
@@ -317,7 +328,7 @@ def test_display_banner_detects_uvx(
 
 def test_the_narrowest_widths_the_banner_lays_itself_out_in():
     """Pinned so that rewording a line into a longer one shows up as the cost in room that it is."""
-    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((44, 61))
+    assert (_MIN_TEXT_WIDTH, _MIN_WIDTH_FOR_LOGO) == snapshot((46, 63))
 
 
 def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callable[..., str]):
@@ -333,9 +344,9 @@ def test_render_banner_wraps_the_text_column_to_a_narrow_terminal(render: Callab
    /___.___\\     observability: off — see every model and tool call live, with
   /    |    \\      cost
 /      |      \\    set it up free with Logfire and a GitHub login:
-`---.._|_..---'    uvx logfire-cli wizard --task pydantic-ai
+`---.._|_..---'      uvx logfire-cli wizard --task pydantic-ai
                    or use any OpenTelemetry backend:
-                   https://pydantic.dev/docs/ai/logfire/#otel
+                     https://pydantic.dev/docs/ai/logfire/#otel
 
                  goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1\
 """)
@@ -355,9 +366,9 @@ agent: support_agent • model: openai:gpt-5.6-sol • tools: 2
 observability: off — see every model and tool call live,
   with cost
   set it up free with Logfire and a GitHub login:
-  uvx logfire-cli wizard --task pydantic-ai
+    uvx logfire-cli wizard --task pydantic-ai
   or use any OpenTelemetry backend:
-  https://pydantic.dev/docs/ai/logfire/#otel
+    https://pydantic.dev/docs/ai/logfire/#otel
 
 goes away once observability is on — or
   PYDANTIC_AI_NO_BANNER=1\
