@@ -543,10 +543,12 @@ _(This example is complete, it can be run "as is")_
     underneath one comes back as a plain dict there, while the JSON round-trip stringifies the key
     and restores the item. Use string keys in a tool return if you need both.
 
-    Raw `bytes` returned by a tool are the one value that does not survive: `ToolReturnPart.content`
-    is typed `Any`, so they are written as a base64 string and reload as a `str` rather than as
-    `bytes`. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent] for binary data and it
-    round-trips exactly, in this adapter and in any model of your own.
+    A tool return value with no JSON-native form does not survive as its own type:
+    `ToolReturnPart.content` is typed `Any`, so a `datetime`, `UUID`, `Decimal` or `Path` reloads as
+    its string form, and raw `bytes` are written as a base64 string and reload as that `str`. For these
+    values a model sees the same text before and after, because a value whose JSON form is a string is
+    sent to it as that string from the first run. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent]
+    for binary data and it round-trips exactly, in this adapter and in any model of your own.
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
     protocol (Vercel AI, AG-UI) whose message shape has no place for application-only fields, so
@@ -1190,7 +1192,7 @@ agent = Agent(
 )
 ```
 
-Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
+Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers. On Anthropic, a response that ran a [server-side tool loop or a compaction](models/anthropic.md#server-side-tool-loops) is measured by its last pass only under a beta that reports the passes.
 
 [Instructions](agent.md#instructions) are sent with every request rather than stored in the history, so compaction can't drop them. If you use [`system_prompt`](agent.md#system-prompts) instead, add [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
 

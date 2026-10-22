@@ -119,8 +119,10 @@ frame early. A failed call is framed the same way with `outcome="failed"`, wrapp
 `ModelRetry` or `ToolFailed`.
 
 Text and files returned by the tool are sent to the model. `ToolReturn.metadata` is discarded.
-`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
-other tool exception ends the run with the original exception, as it does for a sequential tool.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
+when a `before_tool_execute` or `after_tool_execute` hook raises them. A `ValidationError` from
+such a hook is reported too, as a sequential tool retries it. Any other tool exception ends the
+run with the original exception, as it does for a sequential tool.
 Running out of retries or raising `CancelledError` also ends the run. The run ends at its next step, so
 a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
 the other background tools.
@@ -146,6 +148,9 @@ the run from stopping.
 - A sequential tool can overlap background work that started earlier. Tools that must not overlap
   should protect their shared data or should not run in the background.
 - Realtime sessions already run tools concurrently, so `BackgroundTools` leaves them unchanged.
+- A `ModelRetry` from a background tool, or from its execute hooks, counts against the tool's
+  `retries` only when the tool finishes before the agent's next step. A slower tool's retries are
+  not counted, so `UsageLimits.request_limit` is what bounds a model that keeps retrying it.
 - `after_tool_execute`, `on_tool_execute_error`, and the `wrap_tool_execute` hooks of capabilities
   listed after `BackgroundTools` run inside the background task and see the real result.
   `wrap_tool_execute` hooks of capabilities listed before it, and tool result events, see the

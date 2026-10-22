@@ -2,6 +2,7 @@ import re
 
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
@@ -16,8 +17,9 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
-def test_moonshotai_provider():
+def test_moonshotai_provider(env: TestEnv):
     """Test basic MoonshotAI provider initialization."""
+    env.remove('MOONSHOTAI_BASE_URL')
     provider = MoonshotAIProvider(api_key='api-key')
     assert provider.name == 'moonshotai'
     assert provider.base_url == 'https://api.moonshot.ai/v1'
@@ -38,11 +40,38 @@ def test_moonshotai_provider_need_api_key(env: TestEnv) -> None:
         MoonshotAIProvider()
 
 
-def test_moonshotai_pass_openai_client() -> None:
+def test_moonshotai_pass_openai_client(env: TestEnv) -> None:
     """Test passing a custom OpenAI client to MoonshotAI provider."""
-    openai_client = openai.AsyncOpenAI(api_key='api-key')
+    env.set('MOONSHOTAI_BASE_URL', 'https://api.moonshot.ai/v1')
+    openai_client = openai.AsyncOpenAI(api_key='api-key', base_url='https://api.moonshot.cn/v1')
     provider = MoonshotAIProvider(openai_client=openai_client)
-    assert provider.client == openai_client
+    assert provider.client is openai_client
+    assert provider.base_url == 'https://api.moonshot.cn/v1/'
+
+
+def test_moonshotai_provider_custom_base_url(env: TestEnv) -> None:
+    env.set('MOONSHOTAI_BASE_URL', 'https://api.moonshot.ai/v1')
+    provider = MoonshotAIProvider(api_key='api-key', base_url='https://api.moonshot.cn/v1')
+    assert provider.base_url == 'https://api.moonshot.cn/v1'
+    assert str(provider.client.base_url) == 'https://api.moonshot.cn/v1/'
+
+
+@pytest.mark.parametrize('base_url', ['https://api.moonshot.cn/v1', ''])
+def test_moonshotai_provider_env_base_url(base_url: str, env: TestEnv) -> None:
+    """Test model-string endpoint resolution without a live API request."""
+    env.set('MOONSHOTAI_BASE_URL', base_url)
+    env.set('MOONSHOTAI_API_KEY', 'api-key')
+    agent = Agent('moonshotai:kimi-k3')
+    assert isinstance(agent.model, OpenAIChatModel)
+    expected_url = base_url or 'https://api.moonshot.ai/v1'
+    assert agent.model.base_url == f'{expected_url}/'
+    assert agent.model.client.api_key == 'api-key'
+
+
+def test_moonshotai_provider_openai_client_and_base_url_are_exclusive() -> None:
+    openai_client = openai.AsyncOpenAI(api_key='api-key')
+    with pytest.raises(UserError, match='Cannot provide both `openai_client` and `base_url`'):
+        MoonshotAIProvider(openai_client=openai_client, base_url='https://api.moonshot.cn/v1')  # type: ignore[call-overload]
 
 
 def test_moonshotai_provider_creates_http_client() -> None:
