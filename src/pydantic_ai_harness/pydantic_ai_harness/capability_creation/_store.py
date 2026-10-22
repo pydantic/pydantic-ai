@@ -161,7 +161,8 @@ class CapabilityStore:
                     manifest.capabilities.append(record)
                 else:
                     manifest.capabilities[manifest.capabilities.index(previous)] = record
-                backup = staging / 'previous.py'
+                # Capability names start with a letter, so no candidate is named like the backup.
+                backup = staging / '.previous'
                 replaced = live.exists()
                 if replaced:
                     shutil.copy2(live, backup)
