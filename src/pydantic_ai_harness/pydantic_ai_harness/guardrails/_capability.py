@@ -111,20 +111,26 @@ def _find_prompt_part(ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessa
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
     the same object, so the guard reads the rewritten text.
 
-    When a capability replaced the prompt with a copy, the copy is found in the message the same
-    distance from the end by `_find_copy`, wherever other parts were put around it. Only when
-    no part there can be told to be the copy, because the request was rebuilt, is the most recent
-    part in `messages` used.
+    When a capability replaced the prompt with a copy, the copy is found by `_find_copy` in the
+    most recent message holding a part with the prompt's timestamp, wherever other parts or
+    messages were put around it, so neither a message appended for this request nor history
+    trimmed from the start moves it. Only when no part can be told to be the copy, because the
+    request was rebuilt, is the most recent part in `messages` used.
     """
-    for from_end, message in enumerate(reversed(ctx.messages), start=1):
-        prompt = next((part for part in reversed(message.parts) if isinstance(part, UserPromptPart)), None)
-        if prompt is not None:
-            break
-    else:
+    prompt = _latest_prompt_part(ctx.messages)
+    if prompt is None:
         return _latest_prompt_part(messages)
     if any(part is prompt for request in messages for part in request.parts):
         return prompt
-    copy = _find_copy(prompt, messages[-from_end].parts if from_end <= len(messages) else ())
+    holder = next(
+        (
+            message
+            for message in reversed(messages)
+            if any(isinstance(part, UserPromptPart) and part.timestamp == prompt.timestamp for part in message.parts)
+        ),
+        None,
+    )
+    copy = None if holder is None else _find_copy(prompt, holder.parts)
     return copy if copy is not None else _latest_prompt_part(messages)
 
 
