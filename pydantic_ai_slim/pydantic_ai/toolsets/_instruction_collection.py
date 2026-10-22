@@ -123,7 +123,10 @@ def flatten_instruction_contributions(
             and contribution.source_id is not None
             and len(sources_by_key[contribution.source_id]) > 1
         ):
-            parts.extend(replace(part, id=None, on_change='rewrite') for part in contribution.parts)
+            # Rewriting, an empty block says nothing, so it's dropped like any other empty rewrite-mode part.
+            parts.extend(
+                replace(part, id=None, on_change='rewrite') for part in contribution.parts if part.content.strip()
+            )
         else:
             parts.extend(contribution.parts)
     return parts

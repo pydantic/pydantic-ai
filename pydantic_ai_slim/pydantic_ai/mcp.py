@@ -1313,15 +1313,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """Return the server's instructions if `include_instructions` is enabled."""
         if not self.include_instructions:
             return None
-        if not self._initialized or self._instructions is None:
+        if not self._initialized:
             return None
         # Instructions are captured during `__aenter__` and don't change while the toolset stays
         # entered, so they're static for prompt caching. A later connection can bring different text,
         # which appends as a change rather than rewriting the prefix. Appending addresses the block by
         # its key, so a server with neither an `id` nor a URL to key it by keeps rewriting.
         if self._instruction_source() is None:
-            return messages.InstructionPart(content=self._instructions, dynamic=False)
-        return messages.InstructionPart(content=self._instructions, dynamic=False, on_change='append')
+            return None if self._instructions is None else messages.InstructionPart(content=self._instructions)
+        # A keyed server contributes its block even while it sends no instructions, so instructions a later
+        # connection adds are appended as a change, and ones it drops are withdrawn, without moving the prefix.
+        return messages.InstructionPart(content=self._instructions or '', dynamic=False, on_change='append')
 
     @property
     def _instruction_key(self) -> str | None:

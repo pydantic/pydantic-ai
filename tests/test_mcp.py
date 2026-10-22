@@ -943,6 +943,41 @@ A later <context> element with the same id replaces the earlier one and stays in
         replacement = element('second')
         assert updates == [[], [replacement if inline_system else f'<system>{replacement}</system>']]
 
+    async def test_server_instructions_added_and_dropped_after_reconnects_append(self, fastmcp_server: FastMCP[None]):
+        """A keyed server that starts without instructions still holds its place, so adding and dropping them later appends."""
+        prefixes: list[str | None] = []
+        sent: list[list[bytes]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            prefixes.append(info.instructions)
+            sent.append([ModelMessagesTypeAdapter.dump_json([message]) for message in messages])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model_fn), toolsets=[MCPToolset(fastmcp_server, id='docs', include_instructions=True)]
+        )
+
+        history: list[ModelMessage] = []
+        deltas: list[list[tuple[str, str | None]]] = []
+        for instructions in [None, 'Use the docs tools.', None]:
+            fastmcp_server.instructions = instructions
+            result = await agent.run('Continue.', message_history=history)
+            history = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+            deltas.append(
+                [
+                    (str(part.id), part.content)
+                    for message in result.new_messages()
+                    if isinstance(message, ModelRequest)
+                    for part in message.parts
+                    if isinstance(part, InstructionDeltaPart)
+                ]
+            )
+
+        assert deltas == [[], [('toolset:docs', 'Use the docs tools.')], [('toolset:docs', None)]]
+        assert prefixes == [None] * 3
+        for previous, current in zip(sent, sent[1:]):
+            assert current[: len(previous)] == previous
+
     async def test_server_instructions_without_an_id_or_url_rewrite_the_prefix(self, fastmcp_server: FastMCP[None]):
         """An in-process server without an `id` has nothing to key its instructions by, so they keep rewriting."""
         prefixes: list[str | None] = []
