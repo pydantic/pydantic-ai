@@ -141,12 +141,6 @@ tool on replay.
 `run_code` is its own step, served from its checkpoint on replay, while the `run_code` body itself
 re-runs.
 
-## Tracing
-
-`AbsurdDurability` adds no spans of its own: the usual agent run, model request, and tool spans cover
-the work. A step served from its checkpoint still produces its model request or tool span, so a
-replayed run's trace has the same shape as the first attempt's.
-
 ## Migrating from `pydantic-ai-absurd`
 
 Import `AbsurdDurability` and `AbsurdParallelExecutionMode` from `pydantic_ai_harness.absurd`
