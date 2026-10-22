@@ -142,7 +142,8 @@ class TestLogfireMCP:
         # Only `None` and `''` are unset: a function is a credential source however it converts to `bool`.
         class FalsyToken:
             def __call__(self, ctx: RunContext[None]) -> str | None:
-                return 'token'  # pragma: no cover - rejected before any run
+                # Rejected before any run.
+                return 'token'  # pragma: no cover
 
             def __bool__(self) -> bool:
                 return False
