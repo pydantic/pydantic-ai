@@ -111,7 +111,9 @@ class TestSmartSearchIndex:
         model = FakeJev('')
         agent = search_agent(project, model)
         for directory in ('..', str(outside), 'link'):
-            assert 'outside the working directory' in await search_error(agent, directory=directory)
+            assert await search_error(agent, directory=directory) == (
+                f'{directory!r} is outside the working directory; `smart_search` only searches inside it.'
+            )
         assert model.requests == []
 
     async def test_without_ripgrep_the_failure_is_reported(self, tmp_path: Path) -> None:

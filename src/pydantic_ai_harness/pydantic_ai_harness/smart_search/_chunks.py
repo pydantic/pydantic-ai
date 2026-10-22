@@ -177,5 +177,5 @@ async def searchable_root(workspace: Workspace, directory: str) -> str:
     root = await workspace.resolve(directory)
     cwd, real = await gather(workspace.realpath(await workspace.working_dir()), workspace.realpath(root))
     if posixpath.commonpath([cwd, real]) != cwd:
-        raise ModelRetry(f'`{directory}` is outside the working directory; `smart_search` only searches inside it.')
+        raise ModelRetry(f'{directory!r} is outside the working directory; `smart_search` only searches inside it.')
     return real
