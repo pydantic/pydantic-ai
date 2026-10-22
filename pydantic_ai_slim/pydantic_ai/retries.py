@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import TypedDict
 
 from ._warnings import PydanticAIDeprecationWarning
+from .exceptions import _parse_retry_after_ms  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from tenacity.asyncio.retry import RetryBaseT
@@ -524,6 +525,9 @@ def wait_retry_after(
     - An integer representing seconds to wait
     - An HTTP date string representing when to retry
 
+    A `retry-after-ms` header (a number of milliseconds), as OpenAI and Anthropic send it,
+    takes precedence over Retry-After, like in their SDKs.
+
     Args:
         fallback_strategy: Wait strategy to use when no Retry-After header is present
                           or parsing fails. Defaults to exponential backoff with max 60s.
@@ -563,6 +567,9 @@ def wait_retry_after(
         exc = state.outcome.exception() if state.outcome else None
         # TODO(v3): remove the legacy `httpx` `HTTPStatusError` arm, leaving only `httpx2.HTTPStatusError`.
         if isinstance(exc, HTTPStatusError | httpx2.HTTPStatusError):
+            # Like the OpenAI and Anthropic SDKs, prefer their more precise `retry-after-ms` over `Retry-After`.
+            if (retry_after_ms := _parse_retry_after_ms(exc.response.headers)) is not None:
+                return min(retry_after_ms, max_wait)
             retry_after = exc.response.headers.get('retry-after')
             if retry_after:
                 try:

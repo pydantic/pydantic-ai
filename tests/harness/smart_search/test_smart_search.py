@@ -1,4 +1,4 @@
-"""Tests for `SmartFileSearch`: the pluggable judge, search results, and the tool (chunking and the index have their own files).
+"""Tests for `SmartSearch`: the pluggable judge, search results, and the tool (chunking and the index have their own files).
 
 Ported from Code Puppy's `code_puppy_core_plugins/jev_grep` tests. The judge is exercised two ways, to pin
 that it is pluggable: a fake `DecisionModel` answering the real Decisions protocol (the path TypeSafe's Jev
@@ -32,14 +32,14 @@ from pydantic_ai.providers import system_one as system_one_provider
 from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
-from pydantic_ai_harness import SmartFileSearch
-from pydantic_ai_harness.smart_file_search import SmartFileSearchResult, SmartFileSearchToolset
+from pydantic_ai_harness import SmartSearch
+from pydantic_ai_harness.smart_search import SmartSearchResult, SmartSearchToolset
 
 from ..conftest import agent_run_names
 from .conftest import (
     FakeJev,
     VanishingBackend,
-    calls_smart_file_search,
+    calls_smart_search,
     judged,
     language_judge,
     search,
@@ -82,7 +82,7 @@ def _workspace(root: Path) -> Workspace:
     return Workspace(LocalWorkspaceBackend(root))
 
 
-class TestSmartFileSearch:
+class TestSmartSearch:
     # ------------------------------------------------------------ judge
 
     async def test_decision_judge_asks_two_probability_questions_and_multiplies(self, tmp_path: Path) -> None:
@@ -129,7 +129,7 @@ class TestSmartFileSearch:
         agent = search_agent(tmp_path, FunctionModel(respond), concurrency=2)
         # The judge's own error, not an `ExceptionGroup` of the judgments run in parallel.
         assert await search_error(agent) == snapshot(
-            '`smart_file_search` failed: ModelHTTPError: status_code: 503, model_name: judge, body: backend down'
+            '`smart_search` failed: ModelHTTPError: status_code: 503, model_name: judge, body: backend down'
         )
         assert len(judgments) < 5  # the first failure cancels the judgments still waiting
 
@@ -140,9 +140,7 @@ class TestSmartFileSearch:
             (tmp_path / f'{name}.py').write_text('expired = True\n')
         judge_model = FakeJev('expired')
         agent = search_agent(tmp_path, judge_model)
-        result = await agent.run(
-            'find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=None)
-        )
+        result = await agent.run('find it', model=calls_smart_search(), usage_limits=UsageLimits(request_limit=None))
         assert len(judge_model.requests) == 3
         assert result.usage.requests == 2 + 3  # the model's two turns, then one per judged snippet
 
@@ -151,9 +149,9 @@ class TestSmartFileSearch:
             (tmp_path / f'm{i}.py').write_text('expired = True\n')
         judge_model = FakeJev('expired')
         agent = search_agent(tmp_path, judge_model)
-        result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=6))
+        result = await agent.run('find it', model=calls_smart_search(), usage_limits=UsageLimits(request_limit=6))
         [part] = tool_returns(result.all_messages())
-        assert isinstance(part.content, SmartFileSearchResult)
+        assert isinstance(part.content, SmartSearchResult)
         # The model's first turn took one request and one is kept for its next: the search spends half of the other four.
         assert part.content.coverage.evaluated == len(judge_model.requests) == 2
         assert any('at most half of what the run' in w for w in part.content.warnings)
@@ -162,13 +160,13 @@ class TestSmartFileSearch:
     async def test_a_search_leaves_the_default_request_limit_room_to_keep_working(self, tmp_path: Path) -> None:
         for i in range(130):  # more snippets than the default 128 `candidates`
             (tmp_path / f'm{i}.py').write_text('expired = True\n')
-        results: list[SmartFileSearchResult] = []
+        results: list[SmartSearchResult] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             returns = tool_returns(messages)
-            results.extend(r.content for r in returns[len(results) :] if isinstance(r.content, SmartFileSearchResult))
+            results.extend(r.content for r in returns[len(results) :] if isinstance(r.content, SmartSearchResult))
             if len(returns) < 2:
-                return ModelResponse(parts=[ToolCallPart('smart_file_search', {'query': 'reject expired sessions'})])
+                return ModelResponse(parts=[ToolCallPart('smart_search', {'query': 'reject expired sessions'})])
             return ModelResponse(parts=[TextPart('done')])
 
         # Default `candidates` (128) and default `UsageLimits` (`request_limit=50`).
@@ -189,13 +187,13 @@ class TestSmartFileSearch:
         for i in range(10):
             (tmp_path / f'm{i}.py').write_text('expired = True\n')
         agent = search_agent(tmp_path, FakeJev('expired'))
-        calls = calls_smart_file_search(*({'query': f'expired {i}'} for i in range(3)))
+        calls = calls_smart_search(*({'query': f'expired {i}'} for i in range(3)))
         result = await agent.run('find it', model=calls, usage_limits=UsageLimits(request_limit=6))
         results = [part.content for part in tool_returns(result.all_messages())]
-        assert all(isinstance(r, SmartFileSearchResult) for r in results)
+        assert all(isinstance(r, SmartSearchResult) for r in results)
         # Each search alone may spend two of the four requests left, but together they never pass four. Fewer
         # when a finished judgment's request is counted before its claim is released, which errs on the safe side.
-        evaluated = sum(r.coverage.evaluated for r in results if isinstance(r, SmartFileSearchResult))
+        evaluated = sum(r.coverage.evaluated for r in results if isinstance(r, SmartSearchResult))
         assert 1 <= evaluated <= 4
         assert result.output == 'done'
 
@@ -217,10 +215,10 @@ class TestSmartFileSearch:
         judge_model = Staggered('expired')
         judge_model.yields = [0, 0, 3, 1] * 20
         agent = search_agent(tmp_path, judge_model)
-        calls = calls_smart_file_search({'query': 'expired 0'}, {'query': 'expired 1'})
+        calls = calls_smart_search({'query': 'expired 0'}, {'query': 'expired 1'})
         result = await agent.run('find it', model=calls, usage_limits=UsageLimits(request_limit=14))
         assert result.output == 'done'
-        assert all(isinstance(part.content, SmartFileSearchResult) for part in tool_returns(result.all_messages()))
+        assert all(isinstance(part.content, SmartSearchResult) for part in tool_returns(result.all_messages()))
 
     async def test_a_judgment_is_exactly_one_request(self, tmp_path: Path) -> None:
         (tmp_path / 'a.py').write_text('expired = True\n')
@@ -231,7 +229,7 @@ class TestSmartFileSearch:
             return ModelResponse(parts=[TextPart('relevant, I think')])  # no `Relevance`: not retried
 
         agent = search_agent(tmp_path, FunctionModel(malformed))
-        result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=3))
+        result = await agent.run('find it', model=calls_smart_search(), usage_limits=UsageLimits(request_limit=3))
         [part] = tool_returns(result.all_messages())
         assert 'UnexpectedModelBehavior' in str(part.content)
         assert len(judge_requests) == 1 and result.output == 'done'
@@ -240,7 +238,7 @@ class TestSmartFileSearch:
         (tmp_path / 'a.py').write_text('expired = True\n')
         judge_model = FakeJev('expired')
         agent = search_agent(tmp_path, judge_model)
-        result = await agent.run('find it', model=calls_smart_file_search(), usage_limits=UsageLimits(request_limit=2))
+        result = await agent.run('find it', model=calls_smart_search(), usage_limits=UsageLimits(request_limit=2))
         [part] = tool_returns(result.all_messages())
         assert 'no requests left to judge with' in str(part.content)
         assert not judge_model.requests
@@ -269,7 +267,7 @@ class TestSmartFileSearch:
     async def test_empty_directory_judges_nothing(self, tmp_path: Path) -> None:
         model = FakeJev('x')
         result = await search(search_agent(tmp_path, model))
-        assert result == SmartFileSearchResult(coverage=result.coverage)
+        assert result == SmartSearchResult(coverage=result.coverage)
         assert result.coverage.selection_complete and not model.requests
 
     async def test_skipped_files_are_reported(self, tmp_path: Path) -> None:
@@ -340,14 +338,14 @@ class TestSmartFileSearch:
 
     def test_capability_validates_its_settings(self) -> None:
         with pytest.raises(ValueError, match='threshold'):
-            SmartFileSearch[None](FakeJev('x'), threshold=1.5)
+            SmartSearch[None](FakeJev('x'), threshold=1.5)
         for concurrency in (0, float('nan')):
             with pytest.raises(ValueError, match='concurrency'):
-                SmartFileSearch[None](FakeJev('x'), concurrency=concurrency)  # pyright: ignore[reportArgumentType]
+                SmartSearch[None](FakeJev('x'), concurrency=concurrency)  # pyright: ignore[reportArgumentType]
 
     @pytest.mark.parametrize(
         ('guidance', 'expected'),
-        [(None, '## Code discovery: smart_file_search first'), ('Use it.', 'Use it.'), ('', None)],
+        [(None, '## Code discovery: smart_search first'), ('Use it.', 'Use it.'), ('', None)],
         ids=['default', 'custom', 'off'],
     )
     async def test_guidance_replaces_or_disables_the_discovery_policy(
@@ -359,11 +357,11 @@ class TestSmartFileSearch:
             seen.append(info.instructions or '')
             return ModelResponse(parts=[TextPart('done')])
 
-        capability = SmartFileSearch(model=FakeJev('x'), guidance=guidance)
+        capability = SmartSearch(model=FakeJev('x'), guidance=guidance)
         await Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), capability]).run('hi')
         [instructions] = seen
         if expected is None:
-            assert 'smart_file_search' not in instructions
+            assert 'smart_search' not in instructions
         else:
             assert expected in instructions
 
@@ -434,33 +432,33 @@ def reject_expired(session):
         seen: list[tuple[list[str], bool]] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            guided = 'smart_file_search first' in (info.instructions or '')
+            guided = 'smart_search first' in (info.instructions or '')
             seen.append(([tool.name for tool in info.function_tools], guided))
             return ModelResponse(parts=[TextPart('done')])
 
-        agent = Agent(FunctionModel(respond), capabilities=[SmartFileSearch(model=FakeJev('x'))])
+        agent = Agent(FunctionModel(respond), capabilities=[SmartSearch(model=FakeJev('x'))])
         await agent.run('hi', workspace=ReadOnlyWorkspace(_workspace(tmp_path)))
         await agent.run('hi', workspace=_workspace(tmp_path))
-        assert seen == [([], False), (['smart_file_search'], True)]
+        assert seen == [([], False), (['smart_search'], True)]
 
     async def test_run_without_a_workspace_fails_at_its_start(self) -> None:
-        agent = Agent(TestModel(), capabilities=[SmartFileSearch(model=FakeJev('x'))])
-        with pytest.raises(UserError, match='`SmartFileSearch` needs a workspace'):
+        agent = Agent(TestModel(), capabilities=[SmartSearch(model=FakeJev('x'))])
+        with pytest.raises(UserError, match='`SmartSearch` needs a workspace'):
             await agent.run('hi')
 
     def test_toolset_validates_its_settings(self) -> None:
-        SmartFileSearchToolset[None](model=FakeJev('x'))  # the capability's defaults
+        SmartSearchToolset[None](model=FakeJev('x'))  # the capability's defaults
         with pytest.raises(ValueError, match='concurrency'):
-            SmartFileSearchToolset[None](model=FakeJev('x'), threshold=0.5, concurrency=0)
+            SmartSearchToolset[None](model=FakeJev('x'), threshold=0.5, concurrency=0)
         with pytest.raises(ValueError, match='threshold'):
-            SmartFileSearchToolset[None](model=FakeJev('x'), threshold=-1, concurrency=1)
+            SmartSearchToolset[None](model=FakeJev('x'), threshold=-1, concurrency=1)
 
     def test_toolset_advertises_the_upstream_schema(self) -> None:
-        toolset = SmartFileSearch[None](FakeJev('x')).get_toolset()
-        assert isinstance(toolset, SmartFileSearchToolset)
-        assert toolset.id == 'smart_file_search'  # durable execution needs a toolset `id`
-        assert SmartFileSearch[None](FakeJev('x'), id='code').get_toolset().id == 'code'
-        schema = toolset.tools['smart_file_search'].function_schema.json_schema
+        toolset = SmartSearch[None](FakeJev('x')).get_toolset()
+        assert isinstance(toolset, SmartSearchToolset)
+        assert toolset.id == 'smart_search'  # durable execution needs a toolset `id`
+        assert SmartSearch[None](FakeJev('x'), id='code').get_toolset().id == 'code'
+        schema = toolset.tools['smart_search'].function_schema.json_schema
         assert set(schema['properties']) == {'query', 'directory', 'glob', 'limit', 'candidates'}
         assert schema['properties']['candidates'] == snapshot(
             {
@@ -495,41 +493,41 @@ judged snippet counts as one request against the run's request limit.\
         (tmp_path / 'a.py').write_text('expired = True\n')
         judge_model = FakeJev('expired')
         agent = Agent(
-            calls_smart_file_search({'query': 'where is the expired flag set'}),
+            calls_smart_search({'query': 'where is the expired flag set'}),
             name='outer',
-            capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=judge_model)],
+            capabilities=[LocalWorkspace(tmp_path), SmartSearch(model=judge_model)],
         )
         agent.instrument = InstrumentationSettings(include_content=include_content)
         await agent.run('find it')
         assert judge_model.requests  # the judge ran
         assert agent_run_names(capfire) == ['outer']
-        [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'smart file search']
-        searched = {k: v for k, v in span['attributes'].items() if k.startswith('smart_file_search.')}
+        [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'smart search']
+        searched = {k: v for k, v in span['attributes'].items() if k.startswith('smart_search.')}
         expected: dict[str, object] = {
-            'smart_file_search.judge_model': 'fake:jev-fake',
-            'smart_file_search.files': 1,
-            'smart_file_search.indexed_files': 1,
-            'smart_file_search.skipped_files': 0,
-            'smart_file_search.snippets': 1,
-            'smart_file_search.evaluated': 1,
-            'smart_file_search.selection_complete': True,
-            'smart_file_search.matches': 1,
-            'smart_file_search.omitted_matches': 0,
+            'smart_search.judge_model': 'fake:jev-fake',
+            'smart_search.files': 1,
+            'smart_search.indexed_files': 1,
+            'smart_search.skipped_files': 0,
+            'smart_search.snippets': 1,
+            'smart_search.evaluated': 1,
+            'smart_search.selection_complete': True,
+            'smart_search.matches': 1,
+            'smart_search.omitted_matches': 0,
         }
         if include_content:
-            expected['smart_file_search.query'] = 'where is the expired flag set'
+            expected['smart_search.query'] = 'where is the expired flag set'
         assert searched == expected
 
     @pytest.mark.usefixtures('instrument_all_agents')
     async def test_search_span_leaves_failures_to_the_tool_span(self, capfire: CaptureLogfire, tmp_path: Path) -> None:
         """A failure's message can carry the arguments, so only the content-aware tool span records it."""
         agent = Agent(
-            calls_smart_file_search({'directory': '..'}),
-            capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FakeJev('x'))],
+            calls_smart_search({'directory': '..'}),
+            capabilities=[LocalWorkspace(tmp_path), SmartSearch(model=FakeJev('x'))],
         )
         agent.instrument = InstrumentationSettings(include_content=False)
         await agent.run('find it')
-        [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'smart file search']
+        [span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'smart search']
         assert 'events' not in span
         assert 'outside the working directory' not in str(span)
 
@@ -538,10 +536,10 @@ judged snippet counts as one request against the run's request limit.\
             {
                 'model': 'test',
                 'capabilities': [
-                    {'SmartFileSearch': {'model': 'openai:gpt-5-mini', 'threshold': 0.6, 'cache_index': True}}
+                    {'SmartSearch': {'model': 'openai:gpt-5-mini', 'threshold': 0.6, 'cache_index': True}}
                 ],
             }
         )
-        agent = Agent.from_spec(spec, custom_capability_types=[SmartFileSearch])
-        [capability] = [c for c in agent.root_capability.capabilities if isinstance(c, SmartFileSearch)]
+        agent = Agent.from_spec(spec, custom_capability_types=[SmartSearch])
+        [capability] = [c for c in agent.root_capability.capabilities if isinstance(c, SmartSearch)]
         assert (capability.model, capability.threshold, capability.cache_index) == ('openai:gpt-5-mini', 0.6, True)

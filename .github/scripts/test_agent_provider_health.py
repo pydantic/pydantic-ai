@@ -1715,6 +1715,81 @@ def test_check_command_accepts_recovery_issue_only_on_default_dispatch_ref(
     assert decision.ready is (selected is not None)
 
 
+@pytest.mark.parametrize('blocker', ['provider_incident', 'quota_exhausted'])
+def test_agent_start_recheck_blocks_a_stale_ready_gate_and_replaces_its_decision(
+    blocker: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A queued agent acts on provider state when it starts, and the monitor reconciles that decision."""
+    client = FakeGitHub()
+    quota = health.Quota('healthy')
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_fetch_zai_quota', lambda *_: quota)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('ZAI_API_KEY', 'zai-key')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'CI Review:workflow_run:feature:head-a1b2:')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'workflow_run')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
+    github_output = tmp_path / 'output'
+    monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
+    gate_decision = tmp_path / 'gate' / 'provider-health.json'
+    start_decision = tmp_path / 'agent-start' / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(gate_decision)]) == 0
+    assert github_output.read_text() == 'ready=true\nreason=Provider health check passed\n'
+
+    if blocker == 'provider_incident':
+        client.issues.append(_issue(10572, health.IncidentMarker('provider', 'zai', 'rate_limit', '39', None)))
+    else:
+        quota = health.Quota('exhausted', reset_at='2026-10-24T00:00:00Z')
+    github_output.write_text('')
+    assert health.main(['check', '--output', str(start_decision)]) == 0
+    assert github_output.read_text().startswith('ready=false\n')
+
+    # The stop step fails the agent job after the recheck and before the engine step.
+    client.jobs[('43', 1)] = [
+        {
+            'name': 'agent',
+            'conclusion': 'failure',
+            'steps': [
+                {'name': health.AGENT_START_HEALTH_STEPS[0], 'conclusion': 'success'},
+                {'name': health.AGENT_START_HEALTH_STEPS[1], 'conclusion': 'success'},
+                {'name': health.AGENT_START_HEALTH_STEPS[2], 'conclusion': 'failure'},
+                {'name': 'Execute Claude Code CLI', 'conclusion': 'skipped'},
+            ],
+        }
+    ]
+    agent_artifact = tmp_path / 'agent'
+    agent_artifact.mkdir()
+    (agent_artifact / 'agent-stdio.log').write_text('')
+
+    def monitor(decision: Path) -> list[object]:
+        client.posts.clear()
+        args = argparse.Namespace(
+            repository=None,
+            run_id=43,
+            run_attempt=1,
+            conclusion='failure',
+            health_artifact=decision,
+            agent_artifact=agent_artifact,
+            dry_run=False,
+            recover_issue=None,
+        )
+        assert _monitor_command(args) == 0
+        return list(client.posts)
+
+    # Read against the stale gate decision, as when the replacement upload fails, the stop opens nothing.
+    assert monitor(gate_decision) == []
+    posts = monitor(start_decision)
+    if blocker == 'provider_incident':
+        assert posts == []
+    else:
+        assert [_marker_from_payload(post) for post in posts] == [
+            health.IncidentMarker('provider', 'zai', 'quota_exhausted', '43', '2026-10-24T00:00:00Z')
+        ]
+
+
 def test_fresh_dispatch_task_key_runs_without_recovery_issue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Manual task keys include the new run ID, so old task incidents do not block them."""
     task_key = 'CI Review:workflow_dispatch:main:head-a1b2:38977267972'
@@ -2296,6 +2371,22 @@ def test_monitor_classifies_post_agent_allowlist_restore_as_validation(
                 }
             ],
             'setup',
+        ),
+        *(
+            (
+                [
+                    {
+                        'name': 'agent',
+                        'conclusion': 'failure',
+                        'steps': [
+                            {'name': name, 'conclusion': 'failure'},
+                            {'name': 'Execute Claude Code CLI', 'conclusion': 'skipped'},
+                        ],
+                    }
+                ],
+                None,
+            )
+            for name in health.AGENT_START_HEALTH_STEPS
         ),
         ([{'name': 'agent', 'conclusion': 'failure', 'runner_name': None, 'steps': []}], None),
         ([{'name': 'provider_health', 'conclusion': 'failure', 'steps': []}], None),
