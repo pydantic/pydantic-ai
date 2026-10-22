@@ -412,8 +412,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`OpenAIResponsesModel.connect()`][pydantic_ai.models.openai.OpenAIResponsesModel.connect] each run on their own
     named `stream_id` lane of the connection. When `False`, requests send no `stream_id` and take turns on the
     connection, since an endpoint that doesn't route events by `stream_id` would hand one request another's events.
-    When unset, lanes run only when the SDK client's WebSocket host is `api.openai.com`. Other hosts, including
-    services and proxies reached through `OpenAIProvider`, take turns unless this is set to `True`.
+    When unset, `connect()` decides by the host of the SDK client's WebSocket URL: lanes on `api.openai.com`, turns
+    on any other host, including services and proxies reached through `OpenAIProvider`. An explicit value wins, set
+    either in the model's `profile=` or in a provider subclass's `model_profile`.
     """
 
     openai_responses_requires_streaming: bool

@@ -2688,9 +2688,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         timeout = HTTPX2Timeout(to_httpx2_timeout(settings.get('timeout', self.client.timeout)))
         stream_id_lanes = self.profile.get('openai_responses_supports_websocket_stream_id')
         if stream_id_lanes is None:
-            # Unlike the client-class rule in `models/AGENTS.md`, this decides by host: lanes on an endpoint that
-            # doesn't route events by `stream_id` hand one conversation another's answer, while lanes off only make
-            # requests take turns. OpenAI runs named lanes; Azure OpenAI and xAI document one response in flight per
+            # This is the one host-based exception `models/AGENTS.md` names: lanes on an endpoint that doesn't route
+            # events by `stream_id` hand one conversation another's answer, while lanes off only make requests take
+            # turns. OpenAI runs named lanes; Azure OpenAI and xAI document one response in flight per
             # connection, and xAI accepts a `stream_id` without echoing it on its events. The socket's host is
             # `websocket_base_url`'s when the SDK client sets one.
             # https://developers.openai.com/api/docs/guides/websocket-mode

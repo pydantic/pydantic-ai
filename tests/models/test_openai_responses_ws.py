@@ -55,6 +55,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import NativeOutput
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers import Provider
 
@@ -763,6 +764,8 @@ async def test_concurrent_requests_share_the_socket_on_separate_lanes(
         if stream_id_lanes is None
         else OpenAIModelProfile(openai_responses_supports_websocket_stream_id=stream_id_lanes),
     )
+    # An explicit value is kept as given; unset stays unset, so `connect()` decides by host.
+    assert source.profile.get('openai_responses_supports_websocket_stream_id') is stream_id_lanes
     results: dict[str, str] = {}
 
     async with source.connect() as connected:
@@ -822,6 +825,8 @@ async def test_endpoint_without_stream_id_lanes_takes_turns(
         if stream_id_lanes is None
         else OpenAIModelProfile(openai_responses_supports_websocket_stream_id=stream_id_lanes),
     )
+    # An explicit value is kept as given; unset stays unset, so `connect()` decides by host.
+    assert source.profile.get('openai_responses_supports_websocket_stream_id') is stream_id_lanes
     results: dict[str, str] = {}
 
     async with source.connect() as connected:
@@ -842,6 +847,27 @@ async def test_endpoint_without_stream_id_lanes_takes_turns(
 
     assert results == {'first': 'first', 'second': 'second'}
     assert [frame.get('stream_id') for frame in socket.sent] == [None, None]
+
+
+def test_provider_stream_id_lanes_override_the_host_default():
+    """A provider subclass for a gateway that runs lanes can opt in through `model_profile`, as for any profile flag.
+
+    `connect()` decides by host only when the resolved profile leaves the flag unset, so the provider's `True` holds on a
+    non-OpenAI host.
+    """
+
+    class LaneGatewayProvider(OpenAIProvider):
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return merge_profile(
+                OpenAIProvider.model_profile(model_name),
+                OpenAIModelProfile(openai_responses_supports_websocket_stream_id=True),
+            )
+
+    model = OpenAIResponsesModel(
+        'gpt-4o', provider=LaneGatewayProvider(base_url='https://gateway.example/v1', api_key='test')
+    )
+    assert model.profile.get('openai_responses_supports_websocket_stream_id') is True
 
 
 async def test_alternating_conversations_continue_on_their_own_lanes(
