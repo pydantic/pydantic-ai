@@ -1986,6 +1986,13 @@ class TestProfileThinkingCapabilities:
         assert profile.get('supports_thinking', False) is True
         assert profile.get('grok_reasoning_efforts') == frozenset({'none', 'low', 'medium', 'high'})
 
+    def test_grok_3_mini_latest_profile_keeps_basic_efforts(self):
+        """Only the `grok-3-mini` ids verified to take Grok 4.3's efforts get them; other ids keep `low`/`high`."""
+        profile = grok_model_profile('grok-3-mini-fast-latest')
+        assert profile is not None
+        assert profile.get('grok_reasoning_efforts') == frozenset({'low', 'high'})
+        assert profile.get('thinking_always_enabled', False) is True
+
     def test_grok_3_fast_profile_thinking_support(self):
         profile = grok_model_profile('grok-3-fast')
         assert profile is not None
