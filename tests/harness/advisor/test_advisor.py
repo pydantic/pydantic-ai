@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import AdvisorTool, Agent
+from pydantic_ai import AdvisorTool, Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -21,9 +21,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionDef, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.advisor import Advisor
 from tests.harness.conftest import agent_run_names
 
@@ -506,6 +508,44 @@ class TestAdvisor:
         assert isinstance(merged, _CustomAdvisor)
         assert merged.max_tokens == 2048
         assert merged.max_uses == 2
+
+    async def test_merged_openrouter_native_advisor_ignores_max_uses_with_a_warning(self) -> None:
+        seen: list[ModelRequestParameters] = []
+
+        def executor(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(info.model_request_parameters)
+            return ModelResponse(parts=[TextPart('done')])
+
+        with pytest.warns(HarnessDeprecationWarning, match=r'`max_uses=2`, .* is ignored'):
+            agent = Agent(
+                _ProviderFunctionModel('openrouter', executor, supports_advisor=True),
+                capabilities=[
+                    Advisor('openrouter:anthropic/claude-opus-4.8', max_uses=2),
+                    Advisor('openrouter:anthropic/claude-opus-4.8', mode='native'),
+                ],
+            )
+
+        await agent.run('Review this plan.')
+
+        assert seen[0].native_tools == [AdvisorTool(model='anthropic/claude-opus-4.8')]
+
+    async def test_rebuilt_advisor_keeps_fields_set_after_construction(self) -> None:
+        later = Advisor[None]('test')
+        later.description = 'Ask the senior engineer.'
+        later.defer_loading = True
+
+        merged = Advisor[None].combine([Advisor[None]('test', max_uses=2), later])
+        assert isinstance(merged, Advisor)
+        per_run = await merged.for_run(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+
+        for advisor in (merged, per_run):
+            assert (advisor.id, advisor.description, advisor.defer_loading, advisor.max_uses) == (
+                'advisor',
+                'Ask the senior engineer.',
+                True,
+                2,
+            )
+        assert per_run is not merged
 
     def test_rejects_invalid_options(self) -> None:
         model = FunctionModel(lambda _messages, _info: ModelResponse(parts=[TextPart('done')]))

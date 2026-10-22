@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, Self
@@ -15,6 +16,7 @@ from pydantic_ai.native_tools import AdvisorTool
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, AgentNativeTool, RunContext, Tool
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 
 _LIMIT_REACHED = 'Advisor consultation limit reached for this model request. Continue without further advice.'
 
@@ -202,24 +204,45 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
         """
         merged = super().combine(capabilities)
         assert isinstance(merged, cls)
-        return merged._rebuilt()
+        max_uses = merged.max_uses
+        if (
+            max_uses is not None
+            and merged.mode == 'native'
+            and cls._parse_native_model(merged.model)[0] == 'openrouter'
+        ):
+            # No single `Advisor` accepts this, but merging used to send the native tool without
+            # `max_uses`; keep doing that rather than make an agent that used to build raise.
+            warnings.warn(
+                f"Merged `Advisor` capabilities combine mode='native' on OpenRouter with `max_uses={max_uses}`, "
+                "which OpenRouter's native advisor does not support, so `max_uses` is ignored. "
+                "This will raise `ValueError` in a future release: remove `max_uses`, or use mode='auto'.",
+                HarnessDeprecationWarning,
+                stacklevel=2,
+            )
+            max_uses = None
+        return merged._rebuilt(max_uses=max_uses)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
         """Return a fresh capability with local usage isolated to this run."""
         if self.max_uses is None or self.mode == 'native':
             return self
-        return self._rebuilt()
+        return self._rebuilt(max_uses=self.max_uses)
 
-    def _rebuilt(self) -> Self:
-        return type(self)(
+    def _rebuilt(self, *, max_uses: int | None) -> Self:
+        rebuilt = type(self)(
             self.model,
             mode=self.mode,
             output_type=self.output_type,
-            max_uses=self.max_uses,
+            max_uses=max_uses,
             max_tokens=self.max_tokens,
             caching=self.caching,
             forward_history=self.forward_history,
         )
+        # `__init__` does not take the inherited capability fields, which callers may set afterwards.
+        rebuilt.id = self.id
+        rebuilt.description = self.description
+        rebuilt.defer_loading = self.defer_loading
+        return rebuilt
 
     async def after_model_request(
         self,
