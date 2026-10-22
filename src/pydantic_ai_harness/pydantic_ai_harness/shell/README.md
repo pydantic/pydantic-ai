@@ -247,10 +247,12 @@ Output events are emitted while a foreground call waits: at most the first
 means the tool stopped waiting, not that the command exited: `exit_code` is
 `None` while no status has been published, and `truncated` says the log held
 more than the events showed. `total_lines` counts logical lines in logs up to
-1 MiB and is `None` for larger logs, which are not scanned. A cancelled call may
-emit no finished event. Events carry command text and command output, so treat
-them as untrusted when rendering. They add no telemetry spans; core already
-traces the tool call.
+1 MiB and is `None` for larger logs, which are not scanned. If `max_log_bytes`
+empties the log during the call, output events start again from its notice,
+`truncated` is true and `total_lines` is `None`. A cancelled call may emit no
+finished event. Events carry command text and command output, so treat them as
+untrusted when rendering. They add no telemetry spans; core already traces the
+tool call.
 
 ## Working directory
 

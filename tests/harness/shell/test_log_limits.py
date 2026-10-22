@@ -5,13 +5,16 @@ from __future__ import annotations
 import os
 import signal
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 import anyio
 import pytest
 
+from pydantic_ai.workspaces import CommandResult, LocalWorkspaceBackend, WorkspaceCommand
 from pydantic_ai_harness.shell import Shell
 
+from .._tool_calls import call_tool
 from ._context import run_context
 from .test_persistent import Recorder, shell
 
@@ -35,6 +38,33 @@ async def _wait_for_notice(log: Path) -> None:
     with anyio.fail_after(30):
         while NOTICE not in log.read_text(encoding='utf-8', errors='replace'):
             await anyio.sleep(0.05)
+
+
+class _ReadsHeldUntilWritten(LocalWorkspaceBackend):
+    """Marks the first read of the start of a job log with a `read` file, and holds later reads until `written` exists."""
+
+    def __init__(self, working_dir: Path) -> None:
+        super().__init__(working_dir)
+        self.markers = working_dir
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert isinstance(command, str)
+        from_start = 'tail -c +1 ' in command
+        if 'tail -c +' in command and not from_start:
+            with anyio.fail_after(10):
+                while not (self.markers / 'written').exists():
+                    await anyio.sleep(0.01)
+        result = await super().run(command, shell=shell, env=env, timeout=timeout)
+        if from_start and result.stdout.strip():
+            (self.markers / 'read').touch()
+        return result
 
 
 class TestShellLogLimits:
@@ -67,16 +97,22 @@ class TestShellLogLimits:
         assert recorder.finished.total_lines is None
 
     async def test_events_report_a_log_cleared_and_regrown_between_reads(self, tmp_path: Path) -> None:
-        # The reader backs off while the command is quiet, so the log is emptied and grows past what was
-        # already read before its next read; it must still start again from the notice.
+        # The command overflows the log only once its start has been read, and writes past that point again
+        # once the log has been emptied; the read after the first is held until then, so it lands in the
+        # regrown log, and the events must start again from the notice.
         command = (
-            "printf '%01500d\\n' 0; sleep 1.5; printf '%01500d\\n' 0; sleep 0.2; "
-            "printf '%01800d\\n' 0; sleep 1; echo after"
+            "printf '%01500d\\n' 0; until [ -e read ]; do sleep 0.01; done; printf '%01500d\\n' 0; "
+            'until [ -s .pydantic-ai-harness/shell/*/log_clears ]; do sleep 0.01; done; '
+            "printf '%01800d\\n' 0; echo after; : > written"
         )
         recorder = Recorder()
-        output = await shell(tmp_path, {'command': command, 'timeout': 60}, capabilities=[recorder], max_log_bytes=2000)
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000), recorder],
+            'shell',
+            {'command': command, 'timeout': 30},
+            workspace=_ReadsHeldUntilWritten(tmp_path),
+        )
         assert '"exit_code": 0' in output
-        assert recorder.output.startswith('0' * 1500)
         assert recorder.output.endswith(f'{NOTICE}\n{"0" * 1800}\nafter\n')
         assert recorder.finished.truncated
         assert recorder.finished.total_lines is None

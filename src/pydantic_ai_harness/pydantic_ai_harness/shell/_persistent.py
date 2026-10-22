@@ -89,6 +89,8 @@ class _CommandOutput(Generic[AgentDepsT]):
         )
         # Checked after the read: a chunk read from a log emptied since the last read may come from
         # the output that followed, at the wrong position, so it is dropped and the log read from its start.
+        # The count goes up only after the log is emptied, so a read between the two can repeat a few bytes
+        # once; counting first instead could restart before the clear and then miss it.
         if (clears := await self._clears()) != self.clears:
             self.clears = clears
             self.offset = 0

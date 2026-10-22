@@ -36,7 +36,10 @@ _KILL_GRACE_PERIOD = 2.0
 """Seconds a job gets to exit after `SIGTERM` before its process group is sent `SIGKILL`."""
 
 _LOG_CHECK_INTERVAL = 1.0
-"""Seconds between a job's log size checks against `max_log_bytes`; `sleep 1` stands in where `sleep` takes only whole seconds."""
+"""Seconds between a job's log size checks against `max_log_bytes`.
+
+`sleep 1` stands in where `sleep` takes only whole seconds.
+"""
 
 POLL_MIN = 0.05
 POLL_MAX = 1.0
@@ -79,12 +82,13 @@ code=$?
 [ -z "$watcher" ] || kill "$watcher" 2> /dev/null
 publish $code
 """
-"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID, the log limit, and
-the seconds between log checks.
+"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID,
+the log limit, and the seconds between log checks.
 
-With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds and empties one that has grown past it, leaving a
-notice, then appends a byte to `log_clears`, so a reader can tell the log was emptied even once it has grown back. The command keeps running, and a command that reads its own log (a glob over job logs) reaches the
-end of it and stops, instead of copying the log into itself until the disk is full.
+With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds and empties one that has grown past it,
+leaving a notice, then appends a byte to `log_clears`, so a reader can tell the log was emptied even once it has grown
+back. The command keeps running, and a command that reads its own log (a glob over job logs) reaches the end of it and
+stops, instead of copying the log into itself until the disk is full.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
