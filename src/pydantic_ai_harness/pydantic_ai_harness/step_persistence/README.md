@@ -764,9 +764,11 @@ emerge. Pass what you have, ignore the rest.
 never stored. A repeated `put` keeps the first metadata on the SQLite,
 MongoDB, and PostgreSQL stores. On `DiskMediaStore` a later `put` with
 metadata replaces it; on `S3MediaStore` every `put` replaces it, and one
-without metadata clears it. `get_metadata` does not return
-`media_type`: S3 sends it as `Content-Type`, the database stores keep it
-in a column, and `DiskMediaStore` does not persist it.
+without metadata clears it. On Disk and S3 this holds for puts that
+resolve to the same key, which a custom `key_strategy` may not.
+`get_metadata` does not return `media_type`: S3 sends it as
+`Content-Type`, the database stores keep it in a column, and
+`DiskMediaStore` does not persist it.
 
 - `SqliteMediaStore` writes `metadata` to a JSON column and `media_type`
   to a dedicated column
