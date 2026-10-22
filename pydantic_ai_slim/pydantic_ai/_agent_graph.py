@@ -1284,9 +1284,9 @@ async def model_request(
         model: The model to call.
         request_context: The merged request context (messages, settings, parameters).
         run_context: The current run context, made available via `get_current_run_context`.
-        on_progress: Callback invoked with the merged response after each segment, so the
-            caller can preserve partial progress when a later segment's error is converted
-            to a retry.
+        on_progress: Callback invoked with the merged response after each segment, before its usage is
+            checked against the limits, so the caller can count the usage billed so far and preserve
+            partial progress when the request stops early, or a later segment's error is converted to a retry.
         committed_attempts: Failed attempts whose usage the run already counts, left out of the limits
             checked between segments.
 
@@ -1364,6 +1364,8 @@ async def model_request(
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
+                # Reported before the limit check, so the caller counts the billed segment if it raises.
+                on_progress(response)
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
@@ -1384,6 +1386,7 @@ async def model_request(
                 # counted against the right ceiling.
                 last_mode = merge_mode(response, new_response)
                 response = merge_responses(response, new_response)
+                on_progress(response)
                 # Enforce token limits early against a provisional total so a runaway
                 # continuation can't blow the budget; the total is committed once later. A resumed
                 # `seed` was counted by the run that suspended it, so only what this run billed counts.
@@ -1399,7 +1402,6 @@ async def model_request(
                     if response.state == 'suspended':
                         await cancel_suspended_job(model, response)
                     raise
-            on_progress(response)
 
 
 @asynccontextmanager

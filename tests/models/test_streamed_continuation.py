@@ -824,6 +824,36 @@ async def test_nonstream_usage_limit_mid_continuation_cancels_job() -> None:
     assert model.cancelled[0].state == 'suspended'
 
 
+@pytest.mark.parametrize('resumed', [False, True])
+async def test_nonstream_usage_limit_mid_continuation_keeps_billed_usage(resumed: bool) -> None:
+    """A continuation that trips a limit leaves the usage billed so far on the run's usage.
+
+    A resumed run counts only what it billed itself, not the suspended response it resumed from history.
+    """
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('paused')], state='suspended', usage=RequestUsage(input_tokens=100, output_tokens=1)
+        )
+
+    history: list[ModelMessage] | None = None
+    if resumed:
+        seed = ModelResponse(
+            parts=[TextPart('earlier')], state='suspended', usage=RequestUsage(input_tokens=1000, output_tokens=10)
+        )
+        history = [ModelRequest(parts=[UserPromptPart(content='go')]), seed]
+    usage = RunUsage()
+    with pytest.raises(UsageLimitExceeded):
+        await Agent(FunctionModel(fn)).run(
+            None if resumed else 'go',
+            message_history=history,
+            usage=usage,
+            usage_limits=UsageLimits(input_tokens_limit=5),
+        )
+
+    assert usage == RunUsage(input_tokens=100, output_tokens=1)
+
+
 async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> None:
     """A token-limit trip on an already-`'complete'` final merge raises without cancelling anything.
 
