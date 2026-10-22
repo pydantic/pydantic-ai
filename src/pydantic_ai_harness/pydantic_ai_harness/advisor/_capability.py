@@ -268,8 +268,7 @@ class Advisor(NativeOrLocalTool[AgentDepsT]):
             caching=self.caching,
             forward_history=self.forward_history,
         )
-        # `_configure` resets the inherited capability fields, which callers may set afterwards.
-        rebuilt.id = self.id
+        # `_configure` resets these inherited fields, which callers may set after construction.
         rebuilt.description = self.description
         rebuilt.defer_loading = self.defer_loading
         return rebuilt
