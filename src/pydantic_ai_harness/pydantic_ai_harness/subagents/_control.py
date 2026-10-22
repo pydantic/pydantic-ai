@@ -86,7 +86,7 @@ class TaskTelemetry:
         self,
         name: str,
         *,
-        agent_name: str,
+        agent_name: str | None,
         task_id: str | None = None,
         attributes: Mapping[str, str | float] | None = None,
         content: Mapping[str, str] | None = None,
@@ -94,7 +94,8 @@ class TaskTelemetry:
         """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
         span = self.tracer.start_span(f'sub_agents {name}')
         if span.is_recording():
-            span.set_attribute('sub_agents.agent_name', agent_name)
+            if agent_name is not None:
+                span.set_attribute('sub_agents.agent_name', agent_name)
             if task_id is not None:
                 span.set_attribute('sub_agents.task_id', task_id)
             for key, value in (attributes or {}).items():
@@ -108,7 +109,9 @@ class TaskTelemetry:
         """Record that a listener vetoed `event`."""
         reason = {'veto_reason': event.veto_reason} if event.veto_reason is not None else None
         if isinstance(event, AgentCreatedEvent):
-            self.decision('vetoed', agent_name=event.name, attributes={'event': event.kind}, content=reason)
+            # The model chose this name, so it is content.
+            content = {'agent_name': event.name, **(reason or {})}
+            self.decision('vetoed', agent_name=None, attributes={'event': event.kind}, content=content)
         else:
             self.decision(
                 'vetoed',
@@ -309,7 +312,6 @@ async def put_question(
                 'question answered',
                 agent_name=record.agent_name,
                 task_id=record.id,
-                attributes={'answered_by': 'listener'},
                 content={'question': event.question, 'answer': answer.answer},
             )
             return answer

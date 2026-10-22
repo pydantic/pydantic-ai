@@ -112,6 +112,7 @@ class _Question:
     queued: bool = False
 
 
+# TODO(#10547): register the tag and use `_framing.wrap()` once a public framing API lands.
 _QUESTION_TAG_OPENER = re.compile(r'<(?=\s*(?:/\s*)?task_question(?=[\s/>]|$))', re.IGNORECASE)
 """The `<` of a `task_question` tag in any spelling, so a question cannot close its own frame.
 

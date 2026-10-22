@@ -19,7 +19,7 @@ from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group
+from pydantic_ai_harness.subagents._control import STEERING_PREFIX, TaskLink, task_group, validate_agent_name
 from pydantic_ai_harness.subagents._events import (
     TaskAnswerEvent,
     TaskCancelledEvent,
@@ -166,6 +166,9 @@ class SubAgentWorker(Generic[AgentDepsT]):
     )
 
     def __post_init__(self) -> None:
+        for name in self.agents:
+            if (problem := validate_agent_name(name)) is not None:
+                raise ValueError(problem)
         if self.retries < 0:
             raise ValueError(f'`retries` must be zero or more, got {self.retries}.')
         if self.max_conversations < 0:

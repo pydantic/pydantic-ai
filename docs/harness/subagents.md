@@ -212,12 +212,12 @@ Task control records its own decisions, which core's spans don't show, as zero-d
 | --- | --- | --- |
 | `sub_agents vetoed` | a listener vetoed a task, message, answer, cancellation, or created agent | `sub_agents.event` (the vetoed event's kind), `sub_agents.veto_reason` |
 | `sub_agents task backgrounded` | a task moved to the background | `sub_agents.reason`: `requested`, `auto`, or `question` |
-| `sub_agents question answered` | a listener answered a task's question, not the model | `sub_agents.answered_by`, `sub_agents.question`, `sub_agents.answer` |
+| `sub_agents question answered` | a listener answered a task's question, not the model | `sub_agents.question`, `sub_agents.answer` |
 | `sub_agents task refused` | `max_running_tasks` refused a delegation | `sub_agents.running_tasks`, `sub_agents.max_running_tasks` |
 | `sub_agents task not accepted` | no worker picked a remote task up within `accept_timeout` | `sub_agents.accept_timeout` |
 | `sub_agents remote task stopped` | a remote task ended without its worker's report, and its worker was told to stop it | |
 
-A veto reason, question, or answer is attached only when the run's instrumentation includes content. While a top-level run waits for its background tasks, a `sub_agents wait for tasks` span covers the wait, with `sub_agents.running_tasks`.
+A veto reason, question, or answer, and the name the model chose for a created agent, are attached only when the run's instrumentation includes content. While a top-level run waits for its background tasks, a `sub_agents wait for tasks` span covers the wait, with `sub_agents.running_tasks`.
 
 ## Task control
 
