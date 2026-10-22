@@ -22,6 +22,7 @@ from pydantic_ai.capabilities import AbstractCapability, ComputerUse, SelectMode
 from pydantic_ai.capabilities.computer_use import _to_pixels  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import BinaryContent, BinaryImage
 from pydantic_ai.models import Model, ModelSelectionContext
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.workspaces import (
@@ -316,6 +317,17 @@ async def test_a_model_without_image_input_fails_at_its_start() -> None:
     agent = Agent(model, capabilities=[InMemoryProvider().capability(), ComputerUse()])
     with pytest.raises(UserError, match="needs a model that accepts images, and 'text-only' does not"):
         await agent.run('Go.')
+
+
+async def test_a_fallback_model_runs_the_tool_in_pixels() -> None:
+    # A fallback model has no profile of its own, so neither the grid nor the image check can be read from it.
+    provider = InMemoryProvider()
+    scripted = _scripted([{'type': 'click', 'x': 5, 'y': 6}])
+    agent = Agent(
+        FallbackModel(scripted, scripted), capabilities=[provider.capability(), ComputerUse(settle_seconds=0)]
+    )
+    assert (await agent.run('Go.')).output == 'done'
+    assert provider.actions == [Click(x=5, y=6)]
 
 
 async def test_a_model_selected_later_without_image_input_is_refused_before_its_request() -> None:
