@@ -26,6 +26,12 @@
     },
     {
       "against": "v2.59.0",
+      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
+      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
+    },
+    {
+      "against": "v2.59.0",
       "fingerprint": "0965c41fe89ce3951f0e18c3bc9d6fda9d8260b859178440ae99e4d449bff350",
       "reason": "Harness 0.x: `GitHub.description`'s default text changes so it no longer says the tools can make changes when `read_only=True`; code that reads or passes `description` keeps working.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
