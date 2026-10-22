@@ -238,7 +238,10 @@ class X11Computer:
             case TypeText(text=text):
                 await self._xdotool(['type', '--', text])
             case PressKeys(keys=keys, repeat=repeat):
-                await self._xdotool(['key', '--repeat', str(repeat), '--', '+'.join(_keysym(key) for key in keys)])
+                keysyms = [_keysym(key) for key in keys]
+                # A cancel can land between pressing and releasing, so let go of the keys then too.
+                release = ('keyup', *reversed(keysyms))
+                await self._xdotool(['key', '--repeat', str(repeat), '--', '+'.join(keysyms)], release=release)
             case HoldKeys(keys=keys, seconds=seconds):
                 await self._xdotool(['sleep', str(seconds)], hold=keys)
             case _:
