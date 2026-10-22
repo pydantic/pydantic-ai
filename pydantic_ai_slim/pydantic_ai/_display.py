@@ -70,11 +70,10 @@ _LINK_CONTINUATION_INDENT = _INFO_INDENT + '  '
 # time, with link-line continuations set apart as the value of the preceding text, so rewriting one
 # doesn't mean re-flowing anything by hand.
 _OBSERVABILITY_HEADING = 'observability: off — see every model and tool call live, with cost'
+_LOGFIRE_PREFIX = 'set it up free with Pydantic Logfire:'
 _LOGFIRE_COMMAND = 'uvx logfire-cli wizard --task pydantic-ai'
 _LOGFIRE_URL = 'https://pydantic.dev/ai-setup.md'
-_LOGFIRE_LINES = tuple(
-    f'set it up free with Logfire and a GitHub login: {destination}' for destination in (_LOGFIRE_COMMAND, _LOGFIRE_URL)
-)
+_LOGFIRE_LINES = tuple(f'{_LOGFIRE_PREFIX} {destination}' for destination in (_LOGFIRE_COMMAND, _LOGFIRE_URL))
 _OTEL_LINE = 'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel'
 """The two paths, one copyable command or link each, including the Logfire fallback.
 
@@ -503,7 +502,7 @@ def _wrapped(
 def _observability_lines(text_width: int, *, logfire_cli_available: bool = False) -> list[str]:
     """How to see what the agent did, falling back to a link when the `uvx` command would fail."""
     logfire_destination = _LOGFIRE_COMMAND if logfire_cli_available else _LOGFIRE_URL
-    logfire_line = f'set it up free with Logfire and a GitHub login: {logfire_destination}'
+    logfire_line = f'{_LOGFIRE_PREFIX} {logfire_destination}'
     return [
         *_wrapped(_OBSERVABILITY_HEADING, text_width),
         # One copyable command or link each, so either path is a single thing to follow.
