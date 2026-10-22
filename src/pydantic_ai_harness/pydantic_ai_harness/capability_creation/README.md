@@ -97,6 +97,8 @@ while not done:
 as `author_capability` before returning it. An entry that fails (corrupt source,
 construction error, a getter with a wrong return type) is skipped rather than raised, and
 its error is recorded in the manifest, so one bad capability does not block the others.
+Each version of a capability that `load_active()` loads stays imported for the life of the
+process, so an instance from an earlier run keeps working after the model re-authors it.
 
 Because the capabilities also persist to disk (`<directory>/<name>.py` plus a
 `manifest.json` index), a fresh process picks them up by constructing a new
@@ -116,9 +118,10 @@ coordinated: point each `directory` at one process at a time.
 Capability names are at most 64 lowercase letters, digits, and underscores, starting with
 a letter. Reusing a name replaces the previous capability of that name once the new code
 passes validation. Code that fails is kept on disk so it can be inspected. If the name's
-current entry has no recorded error (its `last_error` is unset), that version stays in
-place and the rejected code is saved as `<name>.rejected.py`. Otherwise the code is saved
-as `<name>.py` and recorded with its `last_error` set; `load_active()` skips it.
+current entry has no recorded error (its `last_error` is unset) and its `<name>.py` file
+still exists, that version stays in place and the rejected code is saved as
+`<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and recorded with its
+`last_error` set; `load_active()` skips it.
 
 ## Durable execution
 

@@ -75,7 +75,7 @@ while not done:
     # ... decide `next_prompt` and `done` from `result` ...
 ```
 
-`creation.store` is the disk-backed `CapabilityStore` over the same `directory`. `store.load_active()` re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others.
+`creation.store` is the disk-backed `CapabilityStore` over the same `directory`. `store.load_active()` re-imports every active authored capability and runs the same checks as `author_capability` before returning it for injection into the next run. An entry that fails (corrupt source, construction error, a getter with a wrong return type) is skipped rather than raised, and its error is recorded in the manifest, so one bad capability does not block the others. Each version of a capability that `load_active()` loads stays imported for the life of the process, so an instance from an earlier run keeps working after the model re-authors it.
 
 ## Persistence
 
@@ -85,7 +85,7 @@ Authored capabilities persist to disk: each is one `<directory>/<name>.py` file,
 
 Every store over one `directory` in a process shares a lock around each manifest update, so agents in the same process do not lose each other's updates. Separate processes are not coordinated: point each `directory` at one process at a time.
 
-Capability names are at most 64 lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name once the new code passes validation. Code that fails is kept on disk so it can be inspected. If the name's current entry has no recorded error (its `last_error` is unset), that version stays in place and the rejected code is saved as `<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and recorded with its `last_error` set; `load_active()` skips it.
+Capability names are at most 64 lowercase letters, digits, and underscores, starting with a letter. Reusing a name replaces the previous capability of that name once the new code passes validation. Code that fails is kept on disk so it can be inspected. If the name's current entry has no recorded error (its `last_error` is unset) and its `<name>.py` file still exists, that version stays in place and the rejected code is saved as `<name>.rejected.py`. Otherwise the code is saved as `<name>.py` and recorded with its `last_error` set; `load_active()` skips it.
 
 ## Durable execution
 
