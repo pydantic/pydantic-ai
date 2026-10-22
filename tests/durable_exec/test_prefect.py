@@ -3968,7 +3968,7 @@ async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -
 
 
 async def test_prefect_durability_streaming_in_flow() -> None:
-    """`ProcessEventStream` receives captured model events in flow code."""
+    """`ProcessEventStream` receives model events replayed from the task's final response in flow code."""
     events_in_task: list[tuple[AgentStreamEvent, bool]] = []
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -4003,7 +4003,7 @@ async def _chunks_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> As
 
 
 async def test_prefect_durability_process_event_stream_fires_flow_side() -> None:
-    """`ProcessEventStream` sees the real captured events replayed in the flow."""
+    """`ProcessEventStream` sees the task's final response replayed in the flow, one event per part."""
     events_received: list[AgentStreamEvent] = []
 
     async def collect(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -4026,12 +4026,8 @@ async def test_prefect_durability_process_event_stream_fires_flow_side() -> None
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_distinct() -> None:
@@ -4055,7 +4051,7 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
     )
 
     @flow
-    async def run_durable_streams() -> tuple[list[str], str, list[str], int, int]:
+    async def run_durable_streams() -> tuple[list[str], str, list[PartStartEvent | PartDeltaEvent], int, int]:
         async with agent.run_stream('Hello') as stream:
             chunks = [chunk async for chunk in stream.stream_text(debounce_by=None)]
             output = await stream.get_output()
@@ -4064,19 +4060,11 @@ async def test_prefect_durability_buffers_caller_streams_and_keeps_handlers_dist
 
         async with agent.run_stream_events('Hello') as event_stream:
             events = [event async for event in event_stream]
-        deltas = [
-            event.delta.content_delta
-            for event in events
-            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta)
-        ]
-        return chunks, output, deltas, live_handler_calls, buffered_handler_calls
+        model_events = [event for event in events if isinstance(event, (PartStartEvent, PartDeltaEvent))]
+        return chunks, output, model_events, live_handler_calls, buffered_handler_calls
 
-    assert await run_durable_streams() == (
-        ['hello ', 'hello world'],
-        'hello world',
-        ['hello ', 'world'],
-        1,
-        1,
+    assert await run_durable_streams() == snapshot(
+        (['hello world'], 'hello world', [PartStartEvent(index=0, part=TextPart(content='hello world'))], 1, 1)
     )
 
 
@@ -4770,11 +4758,10 @@ def test_prefect_durability_without_handler_does_not_wrap_event_stream() -> None
     assert PrefectDurability().has_wrap_run_event_stream is False
 
 
-async def test_prefect_durability_runtime_handler_receives_buffered_events() -> None:
+async def test_prefect_durability_runtime_handler_receives_replayed_events() -> None:
     """A per-run `event_stream_handler` passed to `agent.run()` inside a flow receives events.
 
-    The buffered replay preserves real granular deltas — the per-run handler sees the same
-    multi-chunk stream the construction-time handler would see.
+    The task's live deltas stay out of the flow: the per-run handler sees each part once, complete.
     """
     events_received: list[AgentStreamEvent] = []
 
@@ -4793,12 +4780,8 @@ async def test_prefect_durability_runtime_handler_receives_buffered_events() -> 
     output = await run_durable_agent()
     assert output == 'Streamed response'
 
-    delta_events = [
-        e.delta.content_delta
-        for e in events_received
-        if isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta)
-    ]
-    assert delta_events == ['ed ', 'response']
+    model_events = [e for e in events_received if isinstance(e, (PartStartEvent, PartDeltaEvent))]
+    assert model_events == snapshot([PartStartEvent(index=0, part=TextPart(content='Streamed response'))])
 
 
 # --- Continuation chains (suspended → complete) run one task per segment ---
@@ -4954,8 +4937,8 @@ async def test_prefect_cancellation_rejects_enqueue() -> None:
 async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None:
     """A streamed suspended → complete chain is stitched across per-segment tasks.
 
-        `ProcessEventStream` receives each captured segment in flow code, and the
-    final response merges both segments' text with usage summed once.
+        `ProcessEventStream` receives each segment's final response in flow code, one event per
+    part, and the final response merges both segments' text with usage summed once.
     """
     model = ScriptedContinuationModel(
         segments=[
@@ -5004,9 +4987,7 @@ async def test_prefect_durability_streaming_continuation_chain_in_flow() -> None
         for event in events_received
         if isinstance(event, (PartStartEvent, PartDeltaEvent))
     ]
-    assert indices == snapshot(
-        [('PartStartEvent', 0), ('PartDeltaEvent', 0), ('PartStartEvent', 1), ('PartDeltaEvent', 1)]
-    )
+    assert indices == snapshot([('PartStartEvent', 0), ('PartStartEvent', 1)])
     assert model.request_stream_calls == 2
 
 
