@@ -1193,24 +1193,38 @@ def test_bedrock_writer_palmyra():
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
-@pytest.mark.parametrize('model_id', ['us.xai.grok-4.6', 'global.xai.grok-4.6'])
-def test_bedrock_xai_grok_4_6(model_id: str):
+@pytest.mark.parametrize('region', ['us', 'global'])
+def test_bedrock_xai_grok(region: str):
     """xAI Grok via Bedrock: upstream `grok_model_profile` + the `xai` thinking variant.
 
-    Converse has no structured output for Grok, so the upstream `supports_json_schema_output` /
-    `supports_json_object_output` are turned off; prompt caching stays at the default (`False`)
+    The upstream `supports_json_schema_output` / `supports_json_object_output` are turned off because
+    Converse has no structured output for Grok 4.6; prompt caching stays at the default (`False`)
     because explicit `cachePoint` blocks are rejected.
     """
-    profile = BedrockProvider.model_profile(model_id)
-    assert _normalize(profile) == snapshot(
+    profiles = {
+        version: _normalize(BedrockProvider.model_profile(f'{region}.xai.grok-{version}')) for version in ('4.6', '4.7')
+    }
+    assert profiles == snapshot(
         {
-            'supports_thinking': True,
-            'thinking_always_enabled': True,
-            'grok_supports_builtin_tools': True,
-            'grok_reasoning_efforts': frozenset({'low', 'medium', 'high'}),
-            'supported_native_tools': frozenset(),
-            'bedrock_supports_tool_choice': True,
-            'bedrock_thinking_variant': 'xai',
+            '4.6': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+            },
+            '4.7': {
+                'supports_thinking': True,
+                'thinking_always_enabled': True,
+                'grok_supports_builtin_tools': True,
+                'grok_reasoning_efforts': frozenset({'high', 'low', 'medium'}),
+                'supported_native_tools': frozenset(),
+                'grok_default_effort_omitted': True,
+                'bedrock_supports_tool_choice': True,
+                'bedrock_thinking_variant': 'xai',
+            },
         }
     )
 

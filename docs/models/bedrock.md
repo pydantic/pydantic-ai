@@ -140,8 +140,8 @@ output keeps it once thinking turns on, with the output tool offered under `tool
 Claude and xAI Grok don't accept output tools alongside thinking, so there a request that thinks switches to
 [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput].
 
-xAI Grok 4.6 (`us.xai.grok-4.6`, `global.xai.grok-4.6`) always reasons, and Converse accepts a forced tool choice
-with it. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
+xAI Grok 4.6 and 4.7 (`us.xai.grok-4.6`, `global.xai.grok-4.6`, `us.xai.grok-4.7`, `global.xai.grok-4.7`) always
+reason, and Converse accepts a forced tool choice with them. A `thinking` setting does not change this: `tool_choice='required'`, a single forced tool, and
 [`ToolOutput`][pydantic_ai.output.ToolOutput] keep working.
 
 ### Array constraints in structured output

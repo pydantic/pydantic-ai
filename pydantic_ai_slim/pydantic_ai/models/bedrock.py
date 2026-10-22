@@ -505,6 +505,8 @@ LatestBedrockModelNames = Literal[
     # xAI Grok (require a cross-region inference profile)
     'us.xai.grok-4.6',
     'global.xai.grok-4.6',
+    'us.xai.grok-4.7',
+    'global.xai.grok-4.7',
 ]
 """Latest Bedrock models."""
 
