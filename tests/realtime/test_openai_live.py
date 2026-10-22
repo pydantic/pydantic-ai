@@ -65,6 +65,7 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
+    RealtimeModelProfileSpec,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
@@ -2899,12 +2900,14 @@ async def test_audio_sent_as_the_pump_wakes_holds_its_frame_back() -> None:
 # --- browser WebRTC ---------------------------------------------------------------------------------
 
 
-def _webrtc_model(handler: Any, *, settings: OpenAILiveModelSettings | None = None) -> OpenAILiveModel:
+def _webrtc_model(
+    handler: Any, *, settings: OpenAILiveModelSettings | None = None, profile: RealtimeModelProfileSpec | None = None
+) -> OpenAILiveModel:
     """A Live model whose signaling request is served by `handler` instead of the network."""
     provider = OpenAIProvider(
         api_key='sk-test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     )
-    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings)
+    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings, profile=profile)
 
 
 def _created(session_id: str = 'live_test') -> httpx2.Response:
@@ -3012,14 +3015,7 @@ async def test_an_offer_ignores_the_profiles_sample_rates() -> None:
         sent.append(json.loads(request.content))
         return _created()
 
-    provider = OpenAIProvider(
-        api_key='sk-test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    )
-    model = OpenAILiveModel(
-        'gpt-live-1',
-        provider=provider,
-        profile={'audio_input_sample_rate': 48000, 'audio_output_sample_rate': 48000},
-    )
+    model = _webrtc_model(handler, profile={'audio_input_sample_rate': 48000, 'audio_output_sample_rate': 48000})
     await model.answer_webrtc_offer('v=0')
 
     assert 'audio' not in sent[0]['session']
