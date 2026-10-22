@@ -311,6 +311,7 @@ try:
     )
     from anthropic.types.model_param import ModelParam
 
+    from ._anthropic_bedrock_count_tokens import BEDROCK_ANTHROPIC_VERSION
 except ImportError as _import_error:
     raise ImportError(
         'Please install `anthropic` to use the Anthropic model, '
@@ -743,10 +744,6 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
 
-_BEDROCK_ANTHROPIC_VERSION = 'bedrock-2023-05-31'
-"""The request body's `anthropic_version` that Bedrock's InvokeModel API takes for every Claude model."""
-
-
 def _build_extra_body(
     model_settings: AnthropicModelSettings,
     thinking_override: dict[str, object] | None = None,
@@ -774,7 +771,7 @@ def _build_extra_body(
     if thinking_override is not None:
         fields['thinking'] = thinking_override
     if bedrock:
-        fields['anthropic_version'] = _BEDROCK_ANTHROPIC_VERSION
+        fields['anthropic_version'] = BEDROCK_ANTHROPIC_VERSION
     extra_body = model_settings.get('extra_body')
     if not fields:
         return extra_body
