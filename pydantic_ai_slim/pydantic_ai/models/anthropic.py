@@ -153,11 +153,17 @@ def _fetched_page_url(citation: BetaCitationCharLocation, fetched_pages: Sequenc
     return next((url for url, page in fetched_pages if page[start:end] == citation.cited_text), None)
 
 
+_CITATION_TYPES = frozenset({'web_search_result_location', 'char_location', 'page_location', 'content_block_location'})
+
+
 def _map_citations(
     citations: Sequence[BetaTextCitation], text: str, fetched_pages: Sequence[tuple[str, str]] = ()
 ) -> list[Citation] | None:
     sources: list[CitationSource] = []
     for citation in citations:
+        # The SDK doesn't validate responses, so it builds a citation of a type it doesn't know into one of its classes.
+        if citation.type not in _CITATION_TYPES:
+            continue
         excerpts = [citation.cited_text] if citation.cited_text else []
         if isinstance(citation, BetaCitationsWebSearchResultLocation):
             sources.append(WebCitationSource(url=citation.url, title=citation.title, excerpts=excerpts))
