@@ -1039,6 +1039,78 @@ class TestSubAgentWorker:
                 result = await parent.run('Go.')
         assert result.output.endswith('(failed):\nThis worker has no conversation to resume.')
 
+    async def test_a_worker_that_stops_fails_its_running_tasks(self) -> None:
+        transport = InMemoryTransport()
+        gate = Gate()
+        blocked = Agent(scripted(call('pause'), text('unreachable')), tools=[gate.pause], name='remote')
+        worker = SubAgentWorker(agents=[SubAgent(blocked)], transport=transport, deps=None)
+        parent, recorder = remote_parent(
+            transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return
+        )
+        stop = anyio.CancelScope()
+        output = ''
+
+        async def serve() -> None:
+            with stop:
+                await worker.serve()
+
+        async def stop_once_running() -> None:
+            await gate.entered.wait()
+            stop.cancel()
+
+        with anyio.fail_after(WAIT):
+            async with anyio.create_task_group() as group:
+                group.start_soon(serve)
+                group.start_soon(stop_once_running)
+                output = (await parent.run('Go.')).output
+        assert output.endswith('(failed):\nThe worker serving this task stopped before it finished.')
+        assert recorder.kinds()[-1] == 'sub_agents.task_failed'
+
+    async def test_a_stopping_worker_that_cannot_report_logs_it(self, caplog: pytest.LogCaptureFixture) -> None:
+        class NoFailures(InMemoryTransport):
+            async def send(self, message: SubAgentMessage) -> None:
+                if isinstance(message, TaskFailedEvent):
+                    raise ConnectionError('gone')
+                await super().send(message)
+
+        transport = NoFailures()
+        gate = Gate()
+        blocked = Agent(scripted(call('pause'), text('unreachable')), tools=[gate.pause], name='remote')
+        worker = SubAgentWorker(agents=[SubAgent(blocked)], transport=transport, deps=None)
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                await transport.send(TaskAssignedEvent(task_id='t' * 32, agent_name='remote', prompt='Work.'))
+                await gate.entered.wait()
+        assert 'Could not report that sub-agent task' in caplog.text
+
+    async def test_the_least_recently_used_conversation_is_forgotten(self) -> None:
+        transport = InMemoryTransport()
+        worker = SubAgentWorker(
+            agents=[SubAgent(child(), name='remote')], transport=transport, deps=None, max_conversations=1
+        )
+
+        def resume(index: int) -> Step:
+            def step(messages: list[ModelMessage]) -> ModelResponse:
+                task_id = task_id_in(tool_returns(messages)[index])
+                return call('delegate_task', agent_name='remote', task='Again.', resume=task_id)
+
+            return step
+
+        parent, _ = remote_parent(
+            transport,
+            call('delegate_task', agent_name='remote', task='First.'),
+            call('delegate_task', agent_name='remote', task='Second.'),
+            resume(0),
+            resume(1),
+            text('Done.'),
+        )
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                result = await parent.run('Go.')
+        returns = tool_returns(result.all_messages())
+        assert returns[2].endswith('(failed):\nThis worker has no conversation to resume.')
+        assert returns[3].endswith('(ok):\nchild output')
+
     async def test_messages_sent_before_a_task_runs_reach_it(self) -> None:
         transport = InMemoryTransport()
         seen: list[str] = []
@@ -1540,6 +1612,72 @@ class TestTaskControlEdges:
         assert 'outcome: cancelled' in system_texts(result.all_messages())[-1]
         [cancelled] = recorder.of(TaskCancelledEvent)
         assert not cancelled.forced
+
+    async def test_list_tasks_shows_a_preview_of_a_long_question(self) -> None:
+        question = 'Which? ' * 40
+        asker = Agent(scripted(call('ask_parent', question=question), lambda messages: text('ok')))
+
+        def listing(messages: list[ModelMessage]) -> ModelResponse:
+            return call('list_tasks')
+
+        def answer(messages: list[ModelMessage]) -> ModelResponse:
+            return call('answer_task', task_id=task_id_in(tool_returns(messages)[0]), answer='this')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Look.'),
+                listing,
+                answer,
+                text('Answered.'),
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(asker))],
+        )
+        with anyio.fail_after(WAIT):
+            result = await parent.run('Go.')
+        waiting = tool_returns(result.all_messages())[1].splitlines()[1]
+        # The question itself came whole as its own message.
+        assert waiting == f'  Waiting for an answer to: {question[:80] + "..."!r}'
+        assert any(question in text_ for text_ in system_texts(result.all_messages()))
+
+    async def test_parallel_create_agent_calls_respect_the_name_and_the_cap(self) -> None:
+        arrived = 0
+        everyone = anyio.Event()
+
+        @dataclass
+        class Slow(AbstractCapability[Any]):
+            calls: int = 2
+
+            @on_event(AgentCreatedEvent)
+            async def wait_for_the_others(self, ctx: RunContext[Any], event: AgentCreatedEvent) -> None:
+                nonlocal arrived
+                arrived += 1
+                if arrived == self.calls:
+                    everyone.set()
+                await everyone.wait()
+
+        def both(*names: str) -> ModelResponse:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('create_agent', {'name': name, 'description': 'd', 'instructions': 'i'})
+                    for name in names
+                ]
+            )
+
+        async def outcomes(capability: SubAgents[Any], *names: str) -> list[str]:
+            nonlocal arrived, everyone
+            arrived, everyone = 0, anyio.Event()
+            parent = Agent(scripted(both(*names), text('Done.')), capabilities=[capability, Slow()])
+            with anyio.fail_after(WAIT):
+                result = await parent.run('Go.')
+            request = result.all_messages()[2]
+            assert isinstance(request, ModelRequest)
+            return sorted(str(part.content) for part in request.parts if isinstance(part, ToolReturnPart))
+
+        exists, created = await outcomes(SubAgents(dynamic_agents=DynamicAgents()), 'poet', 'poet')
+        assert "A sub-agent named 'poet' already exists." in exists and created.startswith("Created sub-agent 'poet'")
+        created, capped = await outcomes(SubAgents(dynamic_agents=DynamicAgents(max_agents=1)), 'poet', 'bard')
+        assert created.startswith('Created sub-agent') and 'the most allowed in one run' in capped
 
 
 class TestDynamicAgentLimits:
@@ -2085,3 +2223,50 @@ class TestDelegationTasksConcurrency:
                         while not older:
                             await asyncio.sleep(0)
                 assert len(older) == 1 and len(newer) == 1, 'the ended run never delivered it'
+
+    async def test_a_top_level_wait_keeps_to_its_conversation(self) -> None:
+        owner = DelegationTasks()
+        gate = anyio.Event()
+
+        async def blocked(record: DelegationTask) -> str:
+            await gate.wait()
+            return 'done'
+
+        async with owner.opened():
+            await owner.delegate(
+                agent_name='worker',
+                prompt='p',
+                conversation_id='other',
+                model=None,
+                background=True,
+                resume=None,
+                run=blocked,
+            )
+            with anyio.fail_after(WAIT):
+                await owner.wait_children(None, conversation_id='mine')
+            assert [record.status for record in owner.records.values()] == ['running']
+            gate.set()
+            with anyio.fail_after(WAIT):
+                await owner.wait_children(None)
+
+    async def test_closing_the_owner_cancels_a_running_task_once(self) -> None:
+        observed: list[DelegationTaskEvent] = []
+
+        async def observe(event: DelegationTaskEvent) -> None:
+            observed.append(event)
+
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('unreachable')), tools=[gate.pause])
+        owner = DelegationTasks(observer=observe)
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Work.', background=True), text('Started.')),
+            capabilities=[controlled(researcher(slow))],
+        )
+        with anyio.fail_after(WAIT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.', conversation_id='session')
+                await gate.entered.wait()
+        [record] = owner.records.values()
+        assert (record.status, record.outcome) == ('finished', 'cancelled')
+        assert sum(isinstance(event.event, TaskCancelledEvent) for event in observed) == 1

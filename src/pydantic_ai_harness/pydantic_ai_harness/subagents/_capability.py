@@ -675,8 +675,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         ):
             return output
         owner = entry[1]
-        await owner.wait_children(None)
-        owner.queue_reports(conversation_id=ctx.conversation_id or ctx.run_id or '', parent_id=None)
+        conversation_id = ctx.conversation_id or ctx.run_id or ''
+        await owner.wait_children(None, conversation_id=conversation_id)
+        owner.queue_reports(conversation_id=conversation_id, parent_id=None)
         return output
 
     def _require_bound_to(self, agent: Agent[Any, Any] | None) -> None:

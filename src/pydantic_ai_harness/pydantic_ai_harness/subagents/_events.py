@@ -4,9 +4,13 @@ One delegation is one `delegate_task` call, so its start and end events share
 the `tool_call_id` core stamps on every event a capability tool emits; that is
 how a subscriber pairs them when several delegations run at once.
 
-Text in these events is bounded: `task` and `output` are cut at
-`MAX_EVENT_TEXT_CHARS` with a `truncated` flag, so an event stream that is
-persisted or forwarded to a UI cannot be flooded by one verbose delegation.
+The text of `DelegationStartEvent` and `DelegationEndEvent` is bounded: `task`
+and `output` are cut at `MAX_EVENT_TEXT_CHARS` with a `truncated` flag, so an
+event stream that is persisted or forwarded to a UI cannot be flooded by one
+verbose delegation. A `SubAgentMessage` is not cut: it is the message itself,
+which a transport carries to the other side of the task, so its prompt, question,
+answer, or output arrives whole. A listener that persists or forwards these
+messages bounds them itself.
 
 As with any capability event, a listener that raises aborts the parent run.
 """
@@ -89,6 +93,25 @@ class DelegationEndEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='del
     """Wall-clock seconds from just after the start event was emitted until the delegation settled."""
 
 
+@dataclass(kw_only=True)
+class _Vetoable:
+    """The veto of an immediately dispatched event: a listener can stop what the event announces.
+
+    Named `veto`, not `cancel` as `FileChangeRequestEvent` has it, as these events sit beside task cancellation.
+    """
+
+    vetoed: bool = False
+    """Whether a listener vetoed it."""
+
+    veto_reason: str | None = None
+    """Why it was vetoed, reported to the model that asked for it."""
+
+    def veto(self, reason: str | None = None) -> None:
+        """Stop it from taking effect."""
+        self.vetoed = True
+        self.veto_reason = reason
+
+
 Recipient: TypeAlias = Literal['worker', 'task', 'parent']
 """Which side of a task a message is for: the worker serving the agent, the running task, or its parent."""
 
@@ -124,21 +147,10 @@ class SubAgentMessage(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, dispatch='im
 
 
 @dataclass(kw_only=True)
-class ParentMessage(SubAgentMessage, abstract=True):
+class ParentMessage(_Vetoable, SubAgentMessage, abstract=True):
     """A message from a delegating run to its task. A listener can veto it, and then it has no effect."""
 
     recipient: ClassVar[Recipient] = 'task'
-
-    vetoed: bool = False
-    """Whether a listener vetoed this message."""
-
-    veto_reason: str | None = None
-    """Why it was vetoed, reported to the model that tried to send it."""
-
-    def veto(self, reason: str | None = None) -> None:
-        """Stop this message from taking effect."""
-        self.vetoed = True
-        self.veto_reason = reason
 
 
 @dataclass(kw_only=True)
@@ -149,8 +161,11 @@ class ChildMessage(SubAgentMessage, abstract=True):
 
 
 @dataclass(kw_only=True)
-class TaskStartEvent(ParentMessage, abstract=True):
-    """A message that starts a run of the sub-agent: a new task or a follow-up."""
+class TaskRequestEvent(ParentMessage, abstract=True):
+    """A request to a worker to start a run of the sub-agent: a new task or a follow-up.
+
+    Not to be confused with `TaskStartedEvent`, the worker's reply once the run started.
+    """
 
     recipient: ClassVar[Recipient] = 'worker'
 
@@ -177,12 +192,12 @@ class TaskStartEvent(ParentMessage, abstract=True):
 
 
 @dataclass(kw_only=True)
-class TaskAssignedEvent(TaskStartEvent, name='task_assigned'):
+class TaskAssignedEvent(TaskRequestEvent, name='task_assigned'):
     """The delegating run assigns a new task to a sub-agent."""
 
 
 @dataclass(kw_only=True)
-class TaskFollowUpEvent(TaskStartEvent, name='task_follow_up'):
+class TaskFollowUpEvent(TaskRequestEvent, name='task_follow_up'):
     """The delegating run resumes a finished task's conversation with a new prompt."""
 
 
@@ -312,12 +327,19 @@ class TaskBackgroundedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='
     """A task now runs in the background: the delegation tool returned a receipt, and its report arrives later."""
 
     task_id: str
+    """The task now running in the background."""
+
     agent_name: str
+    """The name of the sub-agent running the task."""
+
     reason: BackgroundReason
+    """Why it moved to the background."""
 
 
 @dataclass(kw_only=True)
-class AgentCreatedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='agent_created', dispatch='immediate'):
+class AgentCreatedEvent(
+    _Vetoable, CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='agent_created', dispatch='immediate'
+):
     """The model is creating a sub-agent with `create_agent` (`SubAgents.dynamic_agents`).
 
     Dispatched immediately, so a listener can rewrite `description` and `instructions`, or veto the
@@ -325,15 +347,13 @@ class AgentCreatedEvent(CapabilityEvent, namespace=SUB_AGENTS_EVENTS, name='agen
     """
 
     name: str
+    """The name the model gave the sub-agent, which it delegates to."""
+
     description: str
+    """What the sub-agent is for, shown in the delegate tool's roster. A listener can rewrite it."""
+
     instructions: str
+    """The sub-agent's instructions. A listener can rewrite them."""
+
     model: str | None
     """The `SubAgents.models` key the sub-agent runs on, or `None` for the delegating run's model."""
-
-    vetoed: bool = False
-    veto_reason: str | None = None
-
-    def veto(self, reason: str | None = None) -> None:
-        """Stop the sub-agent from being created."""
-        self.vetoed = True
-        self.veto_reason = reason

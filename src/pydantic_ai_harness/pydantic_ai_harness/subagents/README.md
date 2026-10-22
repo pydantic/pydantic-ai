@@ -195,7 +195,7 @@ agent = Agent(
 
 Nested model streaming from the child run is not an event concern; pass an `event_stream_handler` for that.
 
-`SubAgents` emits no OpenTelemetry spans of its own: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result.
+`SubAgents` emits no OpenTelemetry spans of its own: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result. Task control adds no spans either. Its decisions are capability events: a vetoed message, an answer a listener gave, a task moved to the background and why, a remote task that failed or was retried. Refusals such as `max_running_tasks` reach the model as tool retries, which core's spans show. While a top-level run waits for its background tasks, their own runs' spans and events show what it waits on. A listener can turn any of these events into spans of its own.
 
 ## Task control
 
@@ -227,6 +227,7 @@ orchestrator = Agent(
 - **Who controls a task.** Only the run that started a task can message, answer, or resume it. Any run above it can cancel it.
 - **Each run gets an owner.** When no `DelegationTasks` is bound, `SubAgents` opens one for the run and cancels the tasks still running when the run ends. Delegations then follow the owner's rules in [Managed delegation sessions](#managed-delegation-sessions), including how a delegate's `usage_limits` apply. Another agent's run that one of the run's tools starts is not a task, and doesn't share the owner. Bind your own owner to keep tasks across runs, persist them, and observe them.
 - Only one `SubAgents` on an agent can set `task_control`. Task control and `dynamic_agents` are not supported under durable execution, where a run that uses them raises a `UserError`.
+- Task control runs tasks as asyncio tasks, as `DelegationTasks` always has, so it needs the asyncio event loop: AnyIO's Trio backend is not supported.
 
 ### Task events
 
@@ -244,6 +245,8 @@ With task control, every step of a task is a typed capability event in the `sub_
 | `TaskCancelRequestEvent`, `TaskForceCancelEvent` | a cancellation is about to reach the task | `veto()` it |
 | `TaskRetryEvent` | a worker is running a failed remote task again | |
 | `TaskCompletedEvent`, `TaskFailedEvent`, `TaskCancelledEvent` | the task settled | rewrite `output` of a completed task |
+
+Unlike `DelegationStartEvent` and `DelegationEndEvent`, these events are not cut at `MAX_EVENT_TEXT_CHARS`: each is the message itself, which a transport carries to the other side, so a prompt, question, answer, or output arrives whole. A listener that persists or forwards them bounds them itself.
 
 Events listeners can change are dispatched immediately, so their decisions take effect. A vetoed message is not sent, and the model is told why. With a bound `DelegationTasks`, `DelegationStartEvent` and `DelegationEndEvent` go to its observer only, as in [Managed delegation sessions](#managed-delegation-sessions); with the run's own owner, they go to the run as before.
 
@@ -295,7 +298,9 @@ orchestrator = Agent(
 ```
 
 - **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessage` events above. `InMemoryTransport` serves a worker in the same process.
-- **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
+- **The transport is the trust boundary.** Anyone who can send to it can run the served agents, with their tools and `deps`, and read what they return. Put authentication, authorization, and network binding in your transport. A worker's output and errors reach the delegating model as tool results, like a local delegate's.
+- **A transport reports a lost worker.** A worker that stops sends `TaskFailedEvent` for the tasks it was running. One that dies without doing so can't: the delegating run then waits for its report until the run is cancelled, unless `receive` raises when the worker is gone. Heartbeats are not part of the protocol.
+- **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. Of each `SubAgent` it serves, it uses only the agent and name: the `SubAgent`'s own run controls, such as its `usage_limits`, `timeout_seconds`, or `on_failure`, don't apply there. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
 - **A task nobody picks up fails.** The worker sends `TaskStartedEvent` when it starts a task. A remote task that no worker picks up within `accept_timeout` seconds (default `30`) fails, and a remote task that stops without its worker's report, for example because its delegating run ended, is force-cancelled on the worker.
 - `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetryEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed.
 - A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartEvent` or `DelegationEndEvent`.

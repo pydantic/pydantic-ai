@@ -38,10 +38,10 @@ from pydantic_ai_harness.subagents._events import (
     TaskMessageEvent,
     TaskProgressEvent,
     TaskQuestionEvent,
+    TaskRequestEvent,
     TaskRetryEvent,
     TaskSettledEvent,
     TaskStartedEvent,
-    TaskStartEvent,
 )
 from pydantic_ai_harness.subagents._models import ModelOption
 from pydantic_ai_harness.subagents._tasks import (
@@ -107,7 +107,7 @@ __all__ = [
     'TaskQuestionEvent',
     'TaskRetryEvent',
     'TaskSettledEvent',
-    'TaskStartEvent',
+    'TaskRequestEvent',
     'TaskStartedEvent',
     'ToolResolver',
     'clamp_effort',

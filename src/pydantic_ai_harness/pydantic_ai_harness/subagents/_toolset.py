@@ -71,7 +71,7 @@ from pydantic_ai_harness.subagents._events import (
     TaskForceCancelEvent,
     TaskMessageEvent,
     TaskProgressEvent,
-    TaskStartEvent,
+    TaskRequestEvent,
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
@@ -330,12 +330,15 @@ def _task_line(owner: DelegationTasks, record: DelegationTask) -> str:
     if record.parent_id != DelegationTasks.child_id():
         details.append(f'started by task {record.parent_id}')
     details.append('resumable' if record.resumable and not record.user_stopped else 'not resumable')
-    prompt = record.prompt
-    preview = prompt if len(prompt) <= _PREVIEW_CHARS else f'{prompt[:_PREVIEW_CHARS]}...'
-    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {preview!r}'
+    line = f'- {record.id} ({record.agent_name}, {", ".join(details)}): {_preview(record.prompt)!r}'
     if (question := owner.pending_question(record.id)) is not None:
-        line += f'\n  Waiting for an answer to: {question[1]!r}'
+        # The question came whole as its own message; this is a reminder of which one it is.
+        line += f'\n  Waiting for an answer to: {_preview(question[1])!r}'
     return line
+
+
+def _preview(text: str) -> str:
+    return text if len(text) <= _PREVIEW_CHARS else f'{text[:_PREVIEW_CHARS]}...'
 
 
 class SubAgentToolset(FunctionToolset[AgentDepsT]):
@@ -749,7 +752,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         sub_agent: SubAgent[AgentDepsT],
         *,
         key: str | None,
-        start: TaskStartEvent,
+        start: TaskRequestEvent,
     ) -> str:
         """Run a local task and report how it settled as task events."""
         link = LocalTaskLink(owner=owner, record=record, can_ask=start.can_ask_questions)
@@ -947,6 +950,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             await ctx.emit(event)
         if event.vetoed:
             return f'The sub-agent was not created: {event.veto_reason or "a policy refused it"}.'
+        # A parallel call may have created it, or the last one allowed, while listeners ran.
+        if name in created:
+            raise ModelRetry(f'A sub-agent named {name!r} already exists.')
+        if len(created) >= dynamic.max_agents:
+            raise ModelRetry(f'You already created {dynamic.max_agents} sub-agents, the most allowed in one run.')
         spec = DynamicAgentSpec(name=name, description=event.description, instructions=event.instructions, model=model)
         agent = (dynamic.factory or default_factory)(spec)
         created[name] = SubAgent(
