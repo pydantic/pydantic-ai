@@ -5949,7 +5949,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             warnings.warn(
                 f'`context_window_threshold` cannot trigger compaction because the context window of model '
                 f"{request_context.model.model_name!r} is unknown. Set it with `profile={{'context_window': ...}}` "
-                'on the model.',
+                'on the model, or use `message_count_threshold` or `trigger` instead.',
                 UserWarning,
             )
         if not self._should_compact(request_context.messages, context_window):
