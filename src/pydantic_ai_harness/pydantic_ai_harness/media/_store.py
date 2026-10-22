@@ -23,6 +23,9 @@ import anyio.to_thread
 _URI_SCHEME = 'media+sha256://'
 _HEX_RE = re.compile(r'^[0-9a-f]{64}$')
 
+_BUSY_TIMEOUT_SECONDS = 30.0
+"""How long a connection `SqliteMediaStore` opens waits for another writer, as `SqliteStepStore`'s do."""
+
 # Sentinel: empty, shareable, immutable. Used as the default `context` on every
 # `MediaStore` method. Pulled into a module constant so a default-bound empty
 # context is always the same instance (cheap identity checks, no per-call
@@ -302,7 +305,8 @@ class SqliteMediaStore:
     Pass either a path to a SQLite file (created on demand) or an existing
     `sqlite3.Connection`. When a connection is passed the caller owns its
     lifecycle; when a path is passed each call opens a short-lived connection
-    inside the worker thread (safe across event-loop threads).
+    inside the worker thread (safe across event-loop threads), which waits up
+    to 30 seconds for another writer before raising `database is locked`.
 
     A caller-owned connection **must** be created with
     `check_same_thread=False`. Store methods dispatch SQL onto worker threads
@@ -371,7 +375,9 @@ class SqliteMediaStore:
             return self._connection
         assert self._database is not None
         self._database.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._database, isolation_level=None, check_same_thread=False)
+        conn = sqlite3.connect(
+            self._database, isolation_level=None, check_same_thread=False, timeout=_BUSY_TIMEOUT_SECONDS
+        )
         conn.execute('PRAGMA journal_mode=WAL').close()
         return conn
 
