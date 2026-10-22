@@ -1024,7 +1024,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """Return the active step's toolset of this class, or `None` when the run does not use one."""
         tool_manager = ctx.tool_manager
         if tool_manager is None or tool_manager.tools is None:
-            return None  # pragma: no cover - the agent installs its tool manager before streaming
+            return None
         tool = tool_manager.tools.get(_RUN_CODE_TOOL_NAME)
         if tool is None:
             return None  # pragma: no cover - `CodeMode` always contributes `run_code`

@@ -377,7 +377,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         """
         toolset = CodeModeToolset.from_run_context(ctx)
         if toolset is None:
-            return  # pragma: no cover - `CodeMode` always contributes `run_code`
+            # Only a hook called outside a run, with no tools installed, gets here.
+            return
         announced = _visible_announced_tools(ctx.messages) | self._in_flight_announcements
         functions = await toolset.functions_revealed_by(ctx, [name for name in names if name not in announced])
         if not functions:
