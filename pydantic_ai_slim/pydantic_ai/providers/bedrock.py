@@ -528,7 +528,8 @@ def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
     # Structured output (`outputConfig`) is listed as "Not Supported" on the Grok 4.6 model card, so the
     # upstream Grok profile's `supports_json_schema_output`/`supports_json_object_output` are turned off. The
     # Grok 4.7 card lists it as supported, but it stays off there too until it's verified on Converse.
-    # Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, so they're dropped.
+    # Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, and 4.7 is
+    # assumed to match, so they're dropped.
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-6.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-7.html
     return merge_profile(

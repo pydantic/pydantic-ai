@@ -8579,7 +8579,8 @@ async def test_bedrock_openai_gpt_oss_keeps_sampling_settings(
 
 @pytest.mark.parametrize('model_name', ['us.xai.grok-4.6', 'global.xai.grok-4.7'])
 def test_bedrock_xai_grok_drops_sampling_settings(bedrock_provider: BedrockProvider, model_name: str):
-    """Grok on Converse rejects `temperature`, `topP` and `top_k` with a `ValidationException`, so they're dropped.
+    """Converse rejects `temperature`, `topP` and `top_k` on Grok 4.6 with a `ValidationException`, and Grok 4.7 is
+    assumed to match, so they're dropped for both.
 
     Not a VCR test: the recording account has no Grok access on Converse.
     """
