@@ -198,7 +198,9 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
     authored code raises, `SystemExit` and other `BaseException` subclasses included,
     is reported as a validation error rather than ending the process; only
     `KeyboardInterrupt` propagates. Loads of the same source from different threads
-    run one at a time.
+    run one at a time. Loads of different sources run concurrently, so authored
+    code that loads a second authored file while it is itself loading can deadlock
+    against a second thread loading the same two files in the opposite order.
 
     Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
     instance is accepted by any agent's `capabilities=` parameter.
