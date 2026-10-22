@@ -173,6 +173,33 @@ written for the model rather than a format to parse, so their returns stay plain
 `ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
 carry their outcomes as structured data.
 
+### Capabilities that step aside for `read_file`
+
+Some capabilities have a reader of their own for files they keep in the workspace. When those files
+are in the run's workspace, the reader is marked with
+[`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`,
+so it is left out of every run step that has `read_file`. The instructions name no reader, so
+they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
+is called in the run:
+
+- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
+  files through `read_file` are not reduced again.
+- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own and a relative
+  `directory` inside the working directory.
+- `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
+
+A `FileSystem` tool can't be called under a new name yet, such as under `PrefixTools`, because
+Pydantic AI refuses its capability events ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)).
+The dedicated reader steps aside for a renamed `FileSystem` all the same, so keep `FileSystem` under
+its own names for now.
+
+The capability decides from its own configuration, not from `FileSystem`'s access rules. With
+`denied_patterns` that cover those files (`.pydantic-ai-harness/` for spills, the memory directory,
+the asset roots), or `allowed_patterns` that leave them out, the dedicated reader is still left out
+and `read_file` refuses the files. To keep the dedicated reader, give `ToolOutputLimits` or `Memory` a store with a workspace of its
+own, and for `RepoContext` keep the asset roots readable or use an asset root outside the working
+directory.
+
 ## Events
 
 `FileSystem` emits typed capability events in the `file_system` namespace so a
