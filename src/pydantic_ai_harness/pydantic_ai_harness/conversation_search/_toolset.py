@@ -333,11 +333,15 @@ def _display_line(index: int, text: str) -> str:
 
 
 def _delta_keys(message: ModelMessage) -> str:
-    """Keys of the instruction changes `message` carries, which `message_hash` leaves out."""
+    """Keys of the instruction changes `message` carries, which `message_hash` leaves out.
+
+    Built from the fields that define a change, not its `repr`: the index stores these keys, so
+    they must match the ones a later pydantic-ai release computes for the same change.
+    """
     if not isinstance(message, ModelRequest):
         return ''
     return ' '.join(
-        hashlib.sha256(repr(part).encode()).hexdigest()
+        hashlib.sha256(json.dumps([str(part.id), part.content, part.base_hash]).encode()).hexdigest()
         for part in message.parts
         if isinstance(part, InstructionDeltaPart)
     )

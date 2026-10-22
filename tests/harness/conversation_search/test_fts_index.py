@@ -354,6 +354,41 @@ class TestFullTextIndex:
         assert 'the MOOSE note' in await _search(_toolset(store), 'moose')
         assert _rows(database, 'SELECT run_id, hash FROM conversation_search_messages') == [('r1', 'written-first')]
 
+    async def test_instruction_change_keys_survive_a_core_repr_change(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Keys stored by one library version still match those a later one computes.
+
+        A release that renders `InstructionDeltaPart` differently must not make an inherited
+        instruction change count as new, which would index the request again in every later run.
+        """
+        store = SqliteStepStore(database=tmp_path / 'sessions.db')
+        user = _user('finish the HERON task')
+        call = ModelResponse(parts=[ToolCallPart(tool_name='finish', args={}, tool_call_id='c1')])
+        tool_return = ModelRequest(parts=[ToolReturnPart(tool_name='finish', content='ok', tool_call_id='c1')])
+        changed = replace(
+            tool_return,
+            parts=[
+                *tool_return.parts,
+                InstructionDeltaPart(
+                    id=InstructionId(AgentInstructionSource(), name='state'), content='status FINISHED'
+                ),
+            ],
+        )
+        await _seed_run(store, 'r1', [user, call, tool_return], minute=1)
+        await _seed_run(store, 'r2', [user, call, changed, _reply('all set')], minute=2)
+        toolset = _toolset(store, context_lines=0)
+        assert (await _search(toolset, 'ok')).count('[score:') == 2
+
+        def later_repr(part: InstructionDeltaPart) -> str:
+            return 'InstructionDeltaPart(<a later release>)'
+
+        monkeypatch.setattr(InstructionDeltaPart, '__repr__', later_repr)
+        assert repr(changed.parts[-1]) == 'InstructionDeltaPart(<a later release>)'
+        await _seed_run(store, 'r3', [user, call, changed, _reply('all set'), _user('next step')], minute=3)
+
+        assert (await _search(toolset, 'ok')).count('[score:') == 2
+
     async def test_a_newer_index_is_not_overwritten_by_an_older_load(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
