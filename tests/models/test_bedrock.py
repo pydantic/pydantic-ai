@@ -1907,16 +1907,8 @@ _RETURNS_POLICY_CITATION = {
 @pytest.mark.parametrize(
     'citations_content,expected',
     [
-        pytest.param(
-            {'content': [], 'citations': [_RETURNS_POLICY_CITATION]},
-            TextPart(
-                '',
-                provider_name='bedrock',
-                provider_details={'citations': [_RETURNS_POLICY_CITATION]},
-                citations=[Citation(sources=[DocumentCitationSource(title='Returns policy')])],
-            ),
-            id='citation-without-text',
-        ),
+        # Sent back, the empty text would be rejected.
+        pytest.param({'content': [], 'citations': [_RETURNS_POLICY_CITATION]}, None, id='citation-without-text'),
         pytest.param(
             {'content': [{'text': 'No citation.'}], 'citations': []},
             TextPart('No citation.'),
@@ -1933,7 +1925,7 @@ _RETURNS_POLICY_CITATION = {
 async def test_bedrock_partial_citation_block(
     bedrock_provider: BedrockProvider, citations_content: dict[str, Any], expected: TextPart | None
 ) -> None:
-    """A citations block missing its text or its citations keeps whatever it has, without an anchor.
+    """A citations block without citations keeps its text, and one without text makes no part.
 
     Unit test: these degenerate blocks are synthetic, as no recorded Bedrock answer has one.
     """
@@ -1956,7 +1948,7 @@ async def test_bedrock_partial_citation_block(
 async def test_bedrock_stream_empty_citation_mapping(
     allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
 ) -> None:
-    """Bedrock streaming preserves citations when a citation block has no text delta.
+    """A streamed citation block without text makes no part, like a non-streamed one.
 
     Unit test: no recorded Bedrock stream has a citation block without text.
     """
@@ -1971,17 +1963,13 @@ async def test_bedrock_stream_empty_citation_mapping(
     mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
     mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
 
-    async with Agent(model).run_stream('What is the return window?') as result:
-        await result.get_output()
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('What is the return window?')], None, ModelRequestParameters()
+    ) as stream:
+        async for _ in stream:
+            pass
 
-    assert result.response.parts == [
-        TextPart(
-            '',
-            provider_name='bedrock',
-            provider_details={'citations': [_RETURNS_POLICY_CITATION]},
-            citations=[Citation(sources=[DocumentCitationSource(title='Returns policy')])],
-        )
-    ]
+    assert stream.get().parts == []
 
 
 async def test_bedrock_model_service_tier(allow_model_requests: None, bedrock_provider: BedrockProvider):

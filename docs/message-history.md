@@ -550,7 +550,7 @@ _(This example is complete, it can be run "as is")_
     sent to it as that string from the first run. Return a [`BinaryContent`][pydantic_ai.messages.BinaryContent]
     for binary data and it round-trips exactly, in this adapter and in any model of your own.
 
-    Citations survive persistence, but are only sent back to the provider that produced them. See
+    Citations are saved with the messages, and some are sent back to the provider that produced them. See
     [citations in message history](citations.md#citations-in-message-history).
 
     The [UI adapters](ui/overview.md) are different: they convert messages to a foreign wire
