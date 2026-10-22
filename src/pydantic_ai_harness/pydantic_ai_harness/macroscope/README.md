@@ -125,7 +125,7 @@ them, which in-flight runs then cannot find.
 The review uploads the branch diff to Macroscope's service. Finding bodies are
 written by Macroscope's model from that diff, so on a branch you do not trust,
 treat them as untrusted input: run the agent in a sandbox workspace, or require
-approval for its shell and write tools.
+[approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) for its shell and write tools.
 
 ## Telemetry
 
