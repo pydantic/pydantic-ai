@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from typing import Any
 
 from typing_extensions import TypeIs
 
@@ -27,14 +28,26 @@ compaction preserved, so the time it was written is kept on the part.
 """
 
 
-def summary_request(summary: str) -> ModelRequest:
+@dataclass(frozen=True)
+class WrittenSummary:
+    """A summary and when it was written, recorded together by a durable engine so a replay restores both."""
+
+    text: str
+    created_at: datetime
+
+
+def summary_request(summary: str, created_at: datetime | None = None) -> ModelRequest:
     """The request holding *summary*: a provider-less `CompactionPart`, marked as this capability's own.
 
-    Core's provider models send such a part as framed user-voice text.
+    Core's provider models send such a part as framed user-voice text. *created_at* is recorded on the part
+    when given; a summary replayed from a result recorded before the time was kept goes without it.
     """
-    now = datetime.now(UTC)
-    metadata = {SUMMARY_METADATA_KEY: True, SUMMARY_TIME_METADATA_KEY: now.isoformat()}
-    return ModelRequest(parts=[CompactionPart(content=summary, metadata=metadata)], timestamp=now)
+    metadata: dict[str, Any] = {SUMMARY_METADATA_KEY: True}
+    if created_at is not None:
+        metadata[SUMMARY_TIME_METADATA_KEY] = created_at.isoformat()
+    return ModelRequest(
+        parts=[CompactionPart(content=summary, metadata=metadata)], timestamp=created_at or datetime.now(UTC)
+    )
 
 
 def summary_time(part: ModelRequestPart | ModelResponsePart) -> datetime | None:

@@ -6,6 +6,7 @@ import pytest
 
 from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
 from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY, SUMMARY_TIME_METADATA_KEY, summary_time
 
@@ -68,3 +69,30 @@ WRITTEN = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
 )
 def test_summary_time_reads_only_a_summarys_own_time(part: CompactionPart, expected: datetime | None) -> None:
     assert summary_time(part) == expected
+
+
+class _RecordedBeforeTheTimeWasKept(SummarizingCompaction[None]):
+    """Stands in for a durable replay of a summary an earlier version recorded as a bare `str`."""
+
+    async def _summarize(
+        self, messages: list[ModelMessage], ctx: RunContext[None], *, previous_summary: str | None = None
+    ) -> str:
+        return 'recorded summary'
+
+
+async def test_a_summary_recorded_without_its_time_still_replays() -> None:
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first prompt')]),
+        ModelResponse(parts=[TextPart('first answer')]),
+        ModelRequest(parts=[UserPromptPart('later prompt')]),
+        ModelResponse(parts=[TextPart('later answer')]),
+    ]
+    result = await compact_now(
+        _RecordedBeforeTheTimeWasKept(max_messages=1, keep_messages=1, preserve_first_user_message=False),
+        messages,
+        model=TestModel(),
+    )
+
+    summary = result[0]
+    assert isinstance(summary, ModelRequest)
+    assert summary.parts == [CompactionPart(content='recorded summary', metadata={SUMMARY_METADATA_KEY: True})]

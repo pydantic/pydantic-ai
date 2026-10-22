@@ -6,6 +6,7 @@ import html
 import re
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from pydantic_ai._utils import is_str_dict
@@ -55,6 +56,7 @@ from pydantic_ai_harness.compaction._shared import (
     validate_token_trigger,
 )
 from pydantic_ai_harness.compaction._summary import (
+    WrittenSummary,
     is_summary_part,
     summary_request,
     without_summaries,
@@ -768,7 +770,10 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             return messages
 
         previous_summary = _extract_previous_summary(messages) if self.incremental else None
-        summary = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
+        written = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
+        # A durable engine replays the time with the text, so the summary's metadata, which later requests
+        # and tools are keyed on, is the same on a retry. A result recorded before the time was kept is a `str`.
+        summary, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
         summary = self._maybe_bridge_prefix(summary, messages, ctx)
 
         # The summary is model-written text standing in for the turns it replaced, so it is a
@@ -776,7 +781,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         # it as a compaction boundary, and the standing system prompt stays exactly as it was. The
         # original first user turn precedes everything it summarizes, so it goes ahead of it; recent user
         # turns kept by `keep_user_messages` follow it, as they always did.
-        summary_message = summary_request(summary)
+        summary_message = summary_request(summary, created_at)
         standing: list[ModelMessage] = [ModelRequest(parts=system_parts)] if system_parts else []
 
         if previous_summary is not None:
@@ -974,8 +979,11 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         *,
         previous_summary: str | None = None,
-    ) -> str:
-        """Generate a summary for the given messages using the configured model."""
+    ) -> WrittenSummary | str:
+        """Generate a summary for the given messages using the configured model.
+
+        The return type keeps the `str` an earlier version recorded, so a durable run started before it replays.
+        """
         from pydantic_ai import Agent
 
         formatted = _format_messages(
@@ -1030,4 +1038,4 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             usage_limits=reserved_usage_limits(ctx.usage_limits),
             event_stream_handler=self.event_stream_handler,
         )
-        return result.output
+        return WrittenSummary(result.output, datetime.now(UTC))
