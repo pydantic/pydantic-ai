@@ -419,6 +419,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
     # The first segment's sub-stream and the exit stack that closes it, when `prime()` opened it ahead
     # of iteration. Taken over by the first `_open_segment`, or closed by `aclose()` if iteration never starts.
     _primed_segment: tuple[AsyncExitStack, StreamedResponse] | None = field(default=None, init=False)
+    # Whether `prime()` went on to the stitched stream's first event, as it does past a first segment without output.
+    _primed_stitched: bool = field(default=False, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream every segment as one continuous event stream.
@@ -455,7 +457,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
 
         When the stream resumes a suspended response, the first segment is its continuation: the
         provider's requested delay is waited out first, and a failure to open it cancels the
-        server-side job, as it would once iteration had started.
+        server-side job, as it would once iteration had started. A first segment that's suspended without any
+        output hasn't produced anything for the consumer either, so priming carries on to the stitched stream's
+        first event, through the continuations it takes.
 
         Must be awaited once, before iteration, in the task that consumes the stream: the segment's
         `model.request_stream(...)` context is exited by the task that iterates it.
@@ -495,6 +499,20 @@ class _ContinuationStreamedResponse(StreamedResponse):
         # The segment is in flight from here, so a `cancel()` before iteration starts reaches its server-side
         # job, and `get()` sees what it has produced.
         self._current_sub = sub
+        first_events = sub._event_iterator
+        if (
+            isinstance(first_events, _utils.PeekableAsyncStream)
+            and isinstance(await first_events.peek(), _utils.Unset)
+            and sub.get().state == 'suspended'
+        ):
+            # The segment was suspended without producing any output, like a job the provider hasn't started on:
+            # nothing has reached the consumer, so keep going until the stitched stream's first event, and a
+            # continuation that fails before then can still be retried or fallen back from.
+            aiter(self)
+            assert self._segment_stream is not None
+            self._primed_stitched = True
+            with enforce_request_deadline(self._request_deadline):
+                await self._segment_stream.peek()
 
     async def release_primed_segment(self) -> None:
         """Close the segment `prime()` opened if iteration never took it over.
@@ -507,6 +525,11 @@ class _ContinuationStreamedResponse(StreamedResponse):
             self._current_sub = None
             with self.segment_context():
                 await primed[0].aclose()
+        if self._primed_stitched and self._first_chunk_monotonic is None and self._segment_stream is not None:
+            # `prime()` carried on into the stitched stream, whose open segment is closed here for the same reason.
+            self._primed_stitched = False
+            with anyio.CancelScope(shield=True):
+                await self._segment_stream.aclose()
 
     @asynccontextmanager
     async def _open_segment(self, messages: list[ModelMessage]) -> AsyncGenerator[StreamedResponse]:

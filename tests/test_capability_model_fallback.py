@@ -7,7 +7,8 @@ The attempt loop it drives (`prepare_model_request`, `RetryModelRequest`) is tes
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, cast
@@ -50,7 +51,13 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import ModelRequestAttempt
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    StreamedResponse,
+)
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -277,6 +284,62 @@ async def test_streamed_failed_pinned_continuation_moves_on_to_the_next_model():
     async with agent.run_stream(message_history=_suspended_history(pinned.model_id)) as stream:
         assert await stream.get_output() == 'fresh'
     assert next_saw == [False]
+
+
+class _SilentlySuspendsThenFails(ScriptedContinuationModel):
+    """Streams a billed, suspended first segment without any output, then fails to open its continuation."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            segments=[
+                StreamSegment(
+                    texts=[], state='suspended', provider_response_id='job-1', input_tokens=100, output_tokens=10
+                )
+            ]
+        )
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        if self.request_stream_calls:
+            raise ModelAPIError(model_name='scripted', message='continuation failed')
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            yield stream
+
+
+async def test_a_streamed_continuation_failing_before_any_output_falls_back():
+    """A stream whose first segment is suspended without output hasn't streamed anything when its continuation fails.
+
+    So the failure still falls back, and what the provider billed for the suspended segment is counted.
+    """
+    primary = _SilentlySuspendsThenFails()
+    agent = Agent(primary, capabilities=[ModelFallback(TestModel())])
+    async with agent.run_stream('x') as result:
+        assert ''.join([text async for text in result.stream_text(delta=True, debounce_by=None)]) == (
+            'success (no tool calls)'
+        )
+    assert result.usage == RunUsage(input_tokens=151, output_tokens=14, requests=1)
+    assert [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []] == [
+        ('scripted', 'error')
+    ]
+    assert [response.provider_response_id for response in primary.cancelled] == ['job-1']
+
+
+async def test_a_streamed_continuation_failing_before_any_output_counts_its_usage_once():
+    """When nothing falls back from that failure, the billed suspended segment is still counted, and only once."""
+    agent = Agent(
+        _SilentlySuspendsThenFails(), capabilities=[ModelFallback(TestModel(), fallback_on=lambda error: False)]
+    )
+    usage = RunUsage()
+    with pytest.raises(ModelAPIError, match='continuation failed'):
+        async with agent.run_stream('x', usage=usage) as result:
+            await result.get_output()
+    assert usage == RunUsage(input_tokens=100, output_tokens=10)
 
 
 async def test_suspended_response_is_pinned_to_the_model_that_served_it():

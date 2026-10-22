@@ -2850,6 +2850,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_start = time.perf_counter()
             start = AttemptStart()
             attempt_stack = AsyncExitStack()
+            opened: _ContinuationStreamedResponse | None = None
             try:
                 # `model_request_stream` stitches the (possibly suspended → complete) segments
                 # into one continuous stream, so the whole chain is presented as a single
@@ -2862,6 +2863,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         return_pending=ctx.deps.output_schema.allows_pending_model_response,
                     )
                 )
+                opened = sr
                 if ctx.deps.root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
                     # Only worth opening early when a hook can act on a failure to open: otherwise the
                     # stream keeps opening lazily, once the consumer starts iterating it.
@@ -2871,6 +2873,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         raise error
             except BaseException as e:
                 await attempt_stack.aclose()
+                if opened is not None and (partial := opened.get()).state == 'suspended':
+                    # Priming got past a suspended segment, which the provider billed, before the stream failed.
+                    self._record_response_usage(ctx, partial, request_context=request_context)
                 # Cancellation and control flow aren't failures to open for the error hooks to handle.
                 if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
                     raise
