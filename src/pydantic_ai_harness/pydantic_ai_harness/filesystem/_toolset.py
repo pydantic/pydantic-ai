@@ -506,19 +506,24 @@ def _matching_lines(text: str, compiled: re.Pattern[str], rel_str: str, limit: i
     return matches, False
 
 
-_QUANTIFIER = re.compile(r'[*+]|\{(?P<count>\d+)\}|\{(?P<low>\d*),(?P<high>\d*)\}')
+_QUANTIFIER = re.compile(r'[*+?]|\{(?P<count>\d+)\}|\{(?P<low>\d*),(?P<high>\d*)\}')
 
 
 def _quantifier_at(pattern: str, index: int) -> tuple[int, float, int] | None:
-    """The fewest and most repetitions of a quantifier starting at `index`, and the index after it."""
+    """The fewest and most repetitions of a quantifier starting at `index`, and the index after it.
+
+    The index skips a lazy `?` or possessive `+` suffix, which changes the order matches are tried
+    in, not how many there are.
+    """
     if (quantifier := _QUANTIFIER.match(pattern, index)) is None:
         return None
-    if quantifier[0] in '*+':
-        return int(quantifier[0] == '+'), math.inf, quantifier.end()
+    end = quantifier.end() + (pattern[quantifier.end() : quantifier.end() + 1] in ('?', '+'))
+    if quantifier[0] in '*+?':
+        return int(quantifier[0] == '+'), 1 if quantifier[0] == '?' else math.inf, end
     if (count := quantifier['count']) is not None:
-        return int(count), int(count), quantifier.end()
+        return int(count), int(count), end
     high = quantifier['high']
-    return int(quantifier['low'] or 0), int(high) if high else math.inf, quantifier.end()
+    return int(quantifier['low'] or 0), int(high) if high else math.inf, end
 
 
 _MAX_BOUNDED_PATHS = 64
@@ -565,15 +570,18 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
     polynomial time on a short line, and `re` has no timeout, so a search run in Python refuses it.
     A group repeated a bounded number of times whose inside is bounded too, such as
     `([0-9]{1,3}[.]){3}`, is allowed while the ways all such groups can match, together, stay within `_MAX_BOUNDED_PATHS`.
-    This is a heuristic for the common shape: it also refuses some harmless patterns, such as
-    `([a-z]+,)+x`, and misses overlapping alternatives, such as `(a|a)+`. `verbose` says whether
+    An optional part counts too: `(a?)+` is refused. This is a heuristic for the common shape: it also
+    refuses some harmless patterns, such as `([a-z]+,)+x`, and misses overlapping alternatives, such as
+    `(a|a)+`. `verbose` says whether
     the compiled pattern is verbose as a whole; a scoped `(?x:...)` group is tracked here. Where
     verbose mode applies, whitespace and comments are skipped as `re` skips them, so they cannot
     hide a quantifier from the check.
     """
     # Each open group saves the enclosing group's state and verbose mode, restored when it closes.
     enclosing: list[tuple[bool, float, bool]] = []
-    repeats = False  # whether the innermost open group repeats anything so far
+    # Whether the innermost open group can match a text more than one way, through a quantifier
+    # whose count varies (`?`, `{1,3}`) or that repeats (`+`, `{2}`, which `|` can make ambiguous).
+    varies = False
     paths = 1.0  # a bound on the ways the innermost open group can match a given text so far
     allowed = 1.0  # the product of the ways every bounded repeated group allowed so far can match
     index = 0
@@ -590,34 +598,35 @@ def _has_nested_quantifier(pattern: str, *, verbose: bool) -> bool:
             while index < len(pattern) and pattern[index] != ']':
                 index += 2 if pattern[index] == '\\' else 1
         elif char == '(':
-            enclosing.append((repeats, paths, verbose))
-            repeats, paths = False, 1.0
+            enclosing.append((varies, paths, verbose))
+            varies, paths = False, 1.0
             if (flags := _SCOPED_FLAGS.match(pattern, index)) is not None:
                 if 'x' in flags['on']:
                     verbose = True
                 elif 'x' in (flags['off'] or ''):
                     verbose = False
+            index += pattern.startswith('?', index + 1)  # `(?:`, `(?P<name>`, ...: not a quantifier
         elif char == '|':
             paths = math.inf  # Alternatives can overlap, which this does not track.
         elif char == ')':  # the pattern compiled, and comments are skipped, so a group is open
-            outer_repeats, outer_paths, verbose = enclosing.pop()
+            outer_varies, outer_paths, verbose = enclosing.pop()
             # The quantifier after `)` is read in the enclosing group's verbose mode.
             quantifier = _quantifier_at(pattern, _skip_insignificant(pattern, index + 1, verbose))
             if quantifier is not None:
                 low, high, index = quantifier
                 index -= 1
-                if repeats and high > 1:
+                if varies and high > 1:
                     # Groups one after another multiply, so they share one budget.
                     allowed *= _power(paths, high) * (high - low + 1)
                     if allowed > _MAX_BOUNDED_PATHS:
                         return True
-                repeats = repeats or high > 1
+                varies = varies or high > 1 or high > low
                 paths = _power(paths, high) * (high - low + 1)
-            repeats, paths = outer_repeats or repeats, outer_paths * paths
+            varies, paths = outer_varies or varies, outer_paths * paths
         elif (quantifier := _quantifier_at(pattern, index)) is not None:
             low, high, index = quantifier
             index -= 1
-            repeats = repeats or high > 1
+            varies = varies or high > 1 or high > low
             paths *= high - low + 1
         index += 1
     return False
