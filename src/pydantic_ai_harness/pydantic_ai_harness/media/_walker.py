@@ -41,7 +41,6 @@ marker.
 from __future__ import annotations
 
 import base64
-import binascii
 from typing import TypeGuard
 
 from pydantic_ai_harness.media._store import MediaContext, MediaStore
@@ -133,7 +132,8 @@ def _decode_base64(data: str) -> tuple[bytes, bytes | None] | None:
     altchars = b'-_' if urlsafe else None
     try:
         return base64.b64decode(data, altchars=altchars, validate=True), altchars
-    except binascii.Error:
+    except ValueError:
+        # Malformed input raises `binascii.Error`, a `ValueError`; a non-ASCII string raises `ValueError` itself.
         return None
 
 

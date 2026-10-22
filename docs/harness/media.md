@@ -162,7 +162,7 @@ class MediaContext:
     metadata: Mapping[str, str] = field(default_factory=dict)  # user-supplied tags
 ```
 
-All fields default, so you pass what you have and ignore the rest; new fields are added non-breakingly as use cases emerge. `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores and raises `FileNotFoundError` for a blob that was never stored. On `DiskMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
+All fields default, so you pass what you have and ignore the rest; new fields are added non-breakingly as use cases emerge. `get_metadata(uri)` round-trips the user-supplied `metadata` mapping on all five stores (S3 lowercases keys) and raises `FileNotFoundError` for a blob that was never stored. On `DiskMediaStore` a later `put` of the same bytes with metadata replaces it; on `S3MediaStore` every `put` replaces it, so one without metadata clears it; the SQLite, MongoDB, and PostgreSQL stores keep the first. On Disk and S3 this holds for puts that resolve to the same key, which a custom `key_strategy` may not. `get_metadata` never returns `media_type`, which S3 sends as `Content-Type` and the database stores keep in a column.
 
 ## `KeyStrategy`
 

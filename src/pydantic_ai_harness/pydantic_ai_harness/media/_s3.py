@@ -195,7 +195,8 @@ class S3MediaStore:
     `x-amz-meta-*` headers on PUT and read back via `get_metadata(uri)`,
     which strips the `x-amz-meta-` prefix from the HEAD response headers.
     Keys must match `[A-Za-z0-9-]+` and come back lowercased. Every `put`
-    is a PUT, so a later `put` with different metadata replaces it.
+    is a PUT, so a later `put` with different metadata replaces it when both
+    calls resolve to the same key.
     """
 
     def __init__(
