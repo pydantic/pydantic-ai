@@ -142,6 +142,18 @@ class TestGitHub:
     def test_custom_id_is_forwarded(self, capability: GitHub[str | None]) -> None:
         assert capability.get_toolset().id == 'work-github'
 
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            GitHub[str | None](id='work-github', auth='token', read_only=True),
+            GitHub[str | None](id='work-github', auth=per_user_token, read_only=True),
+        ],
+        ids=['token', 'function'],
+    )
+    def test_hosted_read_only_keeps_the_id(self, capability: GitHub[str | None]) -> None:
+        # Durable execution finds a run's held connection by the toolset's `id`.
+        assert capability.get_toolset().id == 'work-github'
+
     def test_defer_loading_needs_no_id(self, server: FastMCP) -> None:
         Agent(TestModel(), capabilities=[GitHub(client=server, defer_loading=True)])
 
@@ -151,6 +163,14 @@ class TestGitHub:
             match="Capability id 'github' is used by multiple GitHub capabilities that disagree on 'auth', 'read_only'",
         ):
             Agent(TestModel(), capabilities=[GitHub(auth='a'), GitHub(auth='b', read_only=True)])
+
+    def test_lockdown_is_part_of_the_connection(self) -> None:
+        # Two that differ only in `lockdown` must raise, so a same-id duplicate cannot silently drop the filter.
+        first = GitHub[None](auth='secret-token', lockdown=True)
+        assert GitHub[None].combine([first, GitHub[None](auth='secret-token', lockdown=True)]) is first
+        with pytest.raises(UserError, match=r"disagree on 'lockdown'") as exc_info:
+            Agent(TestModel(), capabilities=[GitHub(auth='secret-token'), GitHub(auth='secret-token', lockdown=True)])
+        assert 'secret-token' not in str(exc_info.value)
 
     @pytest.mark.parametrize('unset', [None, ''])
     def test_unset_id_connects_under_the_default_id(self, unset: str | None) -> None:
