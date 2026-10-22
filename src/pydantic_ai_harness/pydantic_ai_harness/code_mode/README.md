@@ -122,6 +122,10 @@ from pydantic_ai_harness import CodeMode
 CodeMode(dynamic_catalog=True)
 ```
 
+  The catalog renders tool definitions into the instructions, including the names, descriptions and schemas an MCP server supplies. Tool definitions are trusted operator configuration: the model already receives them in the request's tool definitions with the same authority, so moving them into instructions gives them no authority they didn't have. Connect only MCP servers you trust. The discovery announcement names functions only by their Python identifiers, and keeps the tool names as found in its metadata.
+
+  The catalog block is keyed through the toolset id `code_mode`, which `CodeModeToolset` takes only with `dynamic_catalog=True`. Another toolset on the same agent with the id `code_mode` that contributes instructions then raises a `UserError` for the duplicate id.
+
   Two setups still declare such a tool natively, because only the provider's native tool search can find it there: the `'bm25'` and `'regex'` Tool Search strategies, which have no local `search_tools`, and a `tools` selector that keeps another deferred tool native, which keeps the native search on the wire in place of `search_tools`. In those setups the declaration is dropped when the tool moves into `run_code`, as it is without `dynamic_catalog`.
 
   This pays off with Tool Search or deferred capabilities, at the cost of a larger system prompt. With a fixed toolset, the default keeps the system prompt shorter and is the better choice.

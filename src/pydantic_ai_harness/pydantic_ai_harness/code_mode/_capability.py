@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
@@ -35,9 +34,9 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeOS,
     CodeModeResourceLimits,
     CodeModeToolset,
+    _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     as_os_handler,
     in_durable_execution,
-    sanitize_tool_name,
 )
 
 if TYPE_CHECKING:
@@ -52,10 +51,6 @@ _DISCOVERY_ANNOUNCEMENT_PREFIX = (
 )
 _DISCOVERY_ANNOUNCEMENT_ORIGIN = 'pydantic-ai-harness.code_mode.discovery.v1'
 """`SystemPromptPart.metadata['origin']` of a discovery announcement, whose `metadata['tools']` lists the names it announced."""
-# TODO: switch to `pydantic_ai._framing.neutralize_tags` (https://github.com/pydantic/pydantic-ai/pull/10547).
-# It escapes strictly more (opening spellings, every framing tag, and tags cut off at the end), so switching
-# widens this escaping and changes announcement bytes for names carrying those, rather than preserving them.
-_CLOSING_SYSTEM_TAG_OPENER = re.compile(r'<(?=\s*/\s*system(?=[\s/>]))', re.IGNORECASE)
 
 
 @dataclass
@@ -377,9 +372,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         if not fresh:
             return
         self._in_flight_announcements.update(fresh)
-        # A name can come from a remote MCP server, so one carrying `</system>` must not be able to end
-        # the `<system>` element that models without inline system prompts receive this in.
-        listing = ', '.join(_announced_function(name) for name in fresh)
+        # A name can come from a remote MCP server, so the text names each function only by the Python
+        # identifier `run_code` calls it by, which can't carry markup or prose. The tool names as found are
+        # kept in the metadata, which the model never sees.
+        listing = ', '.join(f'`{function}`' for function in dict.fromkeys(_sanitize_tool_name(name) for name in fresh))
         # Enqueue a `SystemPromptPart` so the announcement is framed as system-level context.
         # Mid-conversation `SystemPromptPart`s are rendered inline (not hoisted to the top-level
         # system prompt) on all providers since pydantic/pydantic-ai#5509, so this is cache-safe.
@@ -391,25 +387,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         )
 
 
-def _announced_function(name: str) -> str:
-    """How an announcement names a tool's function: by the name code calls it by, and the tool's own if that differs."""
-    function_name = sanitize_tool_name(name)
-    if function_name == name:
-        return f'`{_neutralize_closing_system_tag(name)}`'
-    return f'`{function_name}` (the `{_neutralize_closing_system_tag(name)}` tool)'
-
-
-def _neutralize_closing_system_tag(text: str) -> str:
-    """Escape the `<` of every closing `system` tag in `text` as `&lt;`, and leave everything else as written."""
-    return _CLOSING_SYSTEM_TAG_OPENER.sub('&lt;', text)
-
-
 def _visible_announced_tools(messages: Sequence[ModelMessage]) -> set[str]:
     """Read the names announced after the latest compaction boundary.
 
-    An announcement is identified by its `SystemPromptPart.metadata`, never by its text: the text carries
-    names a remote server chose, so a system prompt that merely reads like one, or a name shaped like a
-    list of names, must not count. Part metadata survives serialization and the merging of adjacent
+    An announcement is identified by its `SystemPromptPart.metadata`, never by its text: a system prompt that
+    merely reads like one, or a name shaped like a list of names, must not count. Part metadata survives serialization and the merging of adjacent
     requests, and an announcement a history processor or a UI round trip dropped no longer counts, so the
     tool is announced again when it's next discovered.
 

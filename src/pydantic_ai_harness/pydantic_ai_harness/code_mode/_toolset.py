@@ -573,7 +573,7 @@ def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
     return bool(tool_def.metadata and 'code_arg_name' in tool_def.metadata)
 
 
-def sanitize_tool_name(name: str) -> str:
+def _sanitize_tool_name(name: str) -> str:
     """Turn a tool name into a valid Python identifier.
 
     Replaces hyphens, dots, and other non-identifier characters with underscores,
@@ -947,8 +947,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        """`'code_mode'`, which qualifies the catalog instruction into the id `toolset:code_mode:catalog`."""
-        return _CODE_MODE_TOOLSET_ID
+        """`'code_mode'` with `dynamic_catalog`, which qualifies the catalog block into `toolset:code_mode:catalog`, else `None`."""
+        return _CODE_MODE_TOOLSET_ID if self.dynamic_catalog else None
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         """Return a fresh toolset instance with isolated REPL state for this agent run."""
@@ -1478,7 +1478,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
 
-            safe_name = sanitize_tool_name(name)
+            safe_name = _sanitize_tool_name(name)
             if safe_name == _RUN_CODE_TOOL_NAME:
                 raise UserError(
                     f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
