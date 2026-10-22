@@ -1219,8 +1219,9 @@ class BedrockConverseModel(Model[BaseClient]):
                     text = ''.join(content.get('text', '') for content in citations_content.get('content', []))
                     block_citations = citations_content.get('citations', [])
                     citations = _map_citations(block_citations, text)
-                    # Like a stream, a block with neither text nor citations makes no part.
-                    if text or citations:
+                    # Like a stream, a block without text makes no part: there's nothing to cite, and Bedrock would
+                    # reject the empty text when the history is sent back.
+                    if text:
                         items.append(
                             TextPart(
                                 content=text,
@@ -2292,7 +2293,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         block_citations = citations.pop(index, [])
                         part = self._parts_manager.get_part_by_vendor_id(index)
                         text = part.content if isinstance(part, TextPart) else ''
-                        if block_text_citations := _map_citations(block_citations, text):
+                        if text and (block_text_citations := _map_citations(block_citations, text)):
                             for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id=index,
                                 content='',
