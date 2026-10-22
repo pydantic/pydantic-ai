@@ -1439,6 +1439,105 @@ pre {
   background: var(--text-soft);
 }
 
+.send.steer {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.send.steer:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* What waits for the running turn, as the terminal lists it above its prompt. */
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 12px 6px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  font-size: 13px;
+}
+
+.queue-head {
+  display: flex;
+  gap: 8px;
+  padding: 2px 6px 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.queue-hint {
+  margin-left: auto;
+}
+
+.queued {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 8px;
+}
+
+.queued:hover {
+  background: var(--hover);
+}
+
+.queued-label {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.queued-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queued-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.queued.editing {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  background: var(--hover);
+}
+
+.queued.editing textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  outline: 0;
+  padding: 4px 8px;
+  background: var(--composer);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.queued.editing textarea:focus {
+  border-color: var(--focus);
+}
+
+.queued-keys {
+  flex-basis: 100%;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
 .suggestions {
   position: absolute;
   bottom: calc(100% + 8px);

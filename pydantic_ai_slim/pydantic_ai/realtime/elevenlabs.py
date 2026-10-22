@@ -72,11 +72,20 @@ from ..providers import Provider, infer_provider
 from ..providers.elevenlabs import ElevenLabsProvider
 from ..tools import ToolDefinition
 from ._elevenlabs_audio_tags import AudioTagStripper, strip_audio_tags
-from ._lifecycle import LifecycleEvent, ResponseEnded, ToolCallsAbandoned
+from ._lifecycle import (
+    AnswersRevised,
+    InputId,
+    LifecycleEvent,
+    ResponseEnded,
+    ResponseStarted,
+    ToolCallsAbandoned,
+)
 from ._openai_lifecycle import OpenAILifecycle
 from ._openai_protocol import (
     AUTO_TRANSCRIPTION_MODEL,
+    CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     CONVERSATION_ITEM_CREATE_EVENT,
+    ProtocolResponse,
     config_has_manual_turns,
     config_interrupts_response_on_speech,
     loads_obj,
@@ -116,6 +125,7 @@ A data-residency `base_url` maps onto its own realtime host the same way."""
 _KEEP_ALIVE_FRAME = '{"type":"input_audio_buffer.append","audio":""}'
 """An empty audio append: a client message that adds no audio, which keeps the session open (verified live)."""
 _RESPONSE_CREATED_EVENT = 'response.created'
+_ITEM_ADDED_EVENT = 'conversation.item.added'
 
 LatestElevenLabsRealtimeModelNames = Literal['eleven_realtime_v1_mini', 'eleven_realtime_v1_max']
 """The latest Eleven Realtime model names."""
@@ -170,12 +180,64 @@ class ElevenLabsRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
 
 
 class _ElevenLabsLifecycle(OpenAILifecycle):
-    """The OpenAI lifecycle, except that a spoken turn joins the conversation when its audio is committed.
+    """The OpenAI lifecycle, adjusted for two things ElevenLabs does differently.
 
     OpenAI's VAD commits a turn as soon as it reports `speech_stopped`. ElevenLabs' semantic VAD can instead hear
     the user carry on after a pause, and report `speech_started` again for the same item, so a turn is only over
     once `input_audio_buffer.committed` says so.
+
+    And ElevenLabs answers the requests for the results of parallel tool calls with one reply (see
+    `response_created`).
     """
+
+    def __init__(self, *, server_vad: bool) -> None:
+        super().__init__(server_vad=server_vad)
+        self._tool_results: set[InputId] = set()
+        """The inputs that carried our tool outputs."""
+
+    def tool_output_sent(self, call_id: str, input_id: InputId) -> None:
+        super().tool_output_sent(call_id, input_id)
+        self._tool_results.add(input_id)
+
+    def response_created(
+        self,
+        response: ProtocolResponse,
+        *,
+        outstanding: tuple[str, tuple[InputId, ...]] | None,
+    ) -> list[LifecycleEvent]:
+        """A `response.created`, which also answers our earlier requests ElevenLabs neither started nor refused.
+
+        ElevenLabs makes parallel tool calls as back-to-back responses of one call each, and holds back a
+        `response.create` sent while any of them is still without its result until they all have one, answering all
+        the requests it held with one reply (checked live). So the request that went out with the first result gets
+        neither a response nor an error of its own. A response of ours that starts therefore answers the requests for
+        tool results still outstanding whose results are in the conversation.
+        """
+        events = super().response_created(response, outstanding=outstanding)
+        started = events[0] if events else None
+        if not isinstance(started, ResponseStarted) or not started.answers:
+            # A response of the provider's own, which answers none of ours.
+            return events
+        coalesced = [
+            event_id for event_id, (answers, _) in self._requests.items() if self._answered_with_round(answers)
+        ]
+        answers = [input_id for event_id in coalesced for input_id in self._requests.pop(event_id)[0]]
+        if not (answered := self._settle(answers)):
+            return events
+        return [replace(started, answers=(*answered, *started.answers)), *events[1:]]
+
+    def answers_held_request(self, answers: Sequence[InputId]) -> tuple[InputId, ...] | None:
+        """Which inputs of a request held back behind a response under way the response of ours that just started answers.
+
+        A request for tool results is answered as an outstanding one is (see `response_created`), once the results are
+        in the conversation: the inputs are settled then, and the request is not to be sent, as it would ask for a
+        second reply. Otherwise this is `None`, and the request still goes out.
+        """
+        return self._settle(answers) if self._answered_with_round(answers) else None
+
+    def _answered_with_round(self, answers: Sequence[InputId]) -> bool:
+        """Whether a request is for tool results that are all in the conversation, which ElevenLabs answers together."""
+        return self._tool_results.issuperset(answers) and not self._unacknowledged(answers)
 
     def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         # Its commit, when it comes, is still VAD's own, not the acknowledgement of one of ours. (ElevenLabs also
@@ -236,7 +298,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
             manual_turns=manual_turns,
         )
         # Semantic VAD commits the speech it hears on its own, unless turn detection is off.
-        self._lifecycle = _ElevenLabsLifecycle(server_vad=not manual_turns)
+        self._lifecycle: _ElevenLabsLifecycle = _ElevenLabsLifecycle(server_vad=not manual_turns)
         # See `ElevenLabsRealtimeModelSettings.elevenlabs_strip_audio_tags`.
         self._strip_audio_tags = strip_audio_tags
         # The streamed transcript of each output item under way, with its audio tags removed, and the tags each
@@ -245,9 +307,12 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         self._audio_tags: dict[str | None, list[str]] = {}
         # When this connection last sent the server anything, on the event loop's clock (see `_keep_alive`).
         self._last_sent = 0.0
-        # Tool calls ElevenLabs gave up on when it started another response before their results were in (see
+        # Tool calls ElevenLabs gave up on when it started a reply to the user before their results were in (see
         # `_abandon_outstanding_tool_calls`).
         self._abandoned_tool_calls: set[str] = set()
+        # Responses with tool calls that a user message joined the conversation after: the next response to start can
+        # be the reply to it, which abandons their calls (see `_abandon_outstanding_tool_calls`).
+        self._interjected: set[str] = set()
 
     @property
     def _prunes_tool_calls(self) -> bool:
@@ -299,6 +364,13 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
         if _RESPONSE_CREATED_EVENT in raw and loads_obj(raw).get('type') == _RESPONSE_CREATED_EVENT:
             abandoned = self._abandon_outstanding_tool_calls()
         decoded = await super()._decode_frame(raw)
+        if self._pending_response:
+            self._answer_held_request(decoded)
+        if _ITEM_ADDED_EVENT in raw and (data := loads_obj(raw)).get('type') == _ITEM_ADDED_EVENT:
+            item = CONVERSATION_ITEM_ADDED_EVENT_ADAPTER.validate_python(data).item
+            if item.type == 'message' and item.role == 'user':
+                # Typed or spoken: a response that starts from now on can be the reply to it.
+                self._interjected.update(self._tool_call_batches)
         if self._strip_audio_tags:
             decoded.codec = self._strip_transcript_tags(decoded.codec)
             decoded.after = self._with_audio_tags(decoded.after)
@@ -318,16 +390,39 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
             )
         return decoded
 
+    def _answer_held_request(self, decoded: _DecodedFrame) -> None:
+        """Let a response of ours that the frame starts answer the request held back behind the one before, too.
+
+        Once a response's tool results are all out, the connection asks for a response, unless one is under way, as when
+        the next of ElevenLabs' back-to-back parallel calls was. The request is then held back until that response
+        is over, and the response of ours that starts meanwhile, for an earlier result, answers it too, if the results
+        are in the conversation by then. Sent after it, the request would ask for a second reply.
+        """
+        started = next((event for event in decoded.after if isinstance(event, ResponseStarted) and event.answers), None)
+        if started is None:
+            return
+        claimed = self._lifecycle.answers_held_request(self._deferred_response_answers)
+        if claimed is None:
+            return
+        self._take_deferred_response_inputs()
+        decoded.after.append(AnswersRevised(response_id=started.response_id, claimed=claimed))
+
     def _abandon_outstanding_tool_calls(self) -> list[str]:
         """Give up on the tool calls of finished responses still waiting for results, as ElevenLabs just did.
 
-        Once another response starts, a `function_call_output` for an earlier call never reaches the model, and the
-        `response.create` that follows it goes unanswered, so the results already sent for those responses are
-        answered by nothing, and those still to come are not asked to be.
+        Once the reply to something the user said after a response started does, a `function_call_output` for the
+        response's calls never reaches the model, and the `response.create` that follows it goes unanswered, so the
+        results already sent for those calls are answered by nothing, and those still to come are not asked to be.
+
+        A response that starts with nothing new from the user is no such reply: it carries on the generation of the
+        one before. That is how ElevenLabs makes parallel tool calls, as back-to-back responses of one call each, and
+        the results of all of them do reach the model (checked live).
         """
+        self._interjected &= self._tool_call_batches.keys()
         abandoned: list[str] = []
         for response_id, batch in list(self._tool_call_batches.items()):
-            if batch.done and batch.unanswered:
+            if batch.done and batch.unanswered and response_id in self._interjected:
+                self._interjected.discard(response_id)
                 del self._tool_call_batches[response_id]
                 self._lifecycle.requests_dropped(batch.inputs)
                 abandoned.extend(sorted(batch.unanswered))
