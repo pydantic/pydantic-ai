@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import get_args
@@ -23,11 +24,9 @@ from pydantic_ai._framing import (
     CONTEXT_TAG,
     SYSTEM_TAG,
     TOOL_RESULT_TAG,
-    close_tag,
-    open_tag,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.framing import FramingTag, RegisteredTag, neutralize_tags, register_tag, wrap
+from pydantic_ai.framing import FramingTag, RegisteredTag, close_tag, neutralize_tags, open_tag, register_tag, wrap
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -327,7 +326,23 @@ def test_register_tag_refuses_built_in_tags(name: str) -> None:
         register_tag(name)
 
 
-def test_wrap_refuses_an_unregistered_tag() -> None:
+@pytest.mark.usefixtures('isolated_registry')
+def test_open_and_close_tag_render_a_registered_tag() -> None:
+    """For a frame around a body that isn't a string, such as a file, which the caller places between them."""
+    task_output = register_tag('task_output')
+    assert open_tag(task_output, task_id='a"b', agent=None) == '<task_output task_id="a&quot;b">'
+    assert close_tag(task_output) == '</task_output>'
+
+
+@pytest.mark.parametrize(
+    'render',
+    [
+        pytest.param(lambda tag: wrap(tag, 'body'), id='wrap'),
+        pytest.param(open_tag, id='open_tag'),
+        pytest.param(close_tag, id='close_tag'),
+    ],
+)
+def test_rendering_refuses_an_unregistered_tag(render: Callable[[RegisteredTag], str]) -> None:
     """A tag that isn't registered isn't neutralized anywhere else, so it can't be rendered either."""
     with pytest.raises(UserError, match="Framing tag 'unregistered_note' is not registered"):
-        wrap(RegisteredTag('unregistered_note'), 'body')
+        render(RegisteredTag('unregistered_note'))

@@ -5,6 +5,8 @@
         members:
             - wrap
             - neutralize_tags
+            - open_tag
+            - close_tag
             - register_tag
             - FramingTag
             - RegisteredTag

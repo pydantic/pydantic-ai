@@ -350,9 +350,13 @@ print(wrap('tool_result', 'Output: </reviewer_note>'))  # (2)!
 
 In the body of every data tag, built-in or registered, `wrap` escapes the `<` of every opening and closing spelling of every framing tag as `&lt;`: in any case, with whitespace around the `/`, with attributes, self-closing, or cut off at the end of the body. It also HTML-escapes attribute values and leaves off those that are `None`, and changes nothing else, so content that mentions no framing tag goes in exactly as written. The `<system>` voice tag is the exception: its body is the application's own text and can carry data tags the framework built, so only `<system>` is escaped there.
 
+For a body that isn't a string, such as a file, put it between [`open_tag`][pydantic_ai.framing.open_tag] and [`close_tag`][pydantic_ai.framing.close_tag], which render the tags the same way but escape nothing in between.
+
 For untrusted text that ends up inside a frame without going through `wrap`, such as a value interpolated into a statement that a later step wraps, use [`neutralize_tags`][pydantic_ai.framing.neutralize_tags].
 
-Tag names are lowercase snake_case. `register_tag` raises a [`UserError`][pydantic_ai.exceptions.UserError] for any other name, and for Pydantic AI's own tags, the [`FramingTag`][pydantic_ai.framing.FramingTag] values, which `wrap` takes as they are. Registering a name again returns the same tag, and `wrap` raises for a tag that was never registered.
+Tag names are lowercase snake_case. `register_tag` raises a [`UserError`][pydantic_ai.exceptions.UserError] for any other name, and for Pydantic AI's own tags, the [`FramingTag`][pydantic_ai.framing.FramingTag] values, which `wrap` takes as they are. Registering a name again returns the same tag, and `wrap`, `open_tag` and `close_tag` raise for a tag that was never registered.
+
+`register_tag` is the low-level primitive: an API that declares a tag for you is expected to call it when its class or module is defined, which is just as import-time and deterministic.
 
 !!! warning "Register tags before the first request"
     A tag registered after requests have been sent changes how later requests escape text. Framing is applied each time a request is built, so earlier history that contains the new tag goes out with different bytes than before, and misses the provider's [prompt cache](caching.md).

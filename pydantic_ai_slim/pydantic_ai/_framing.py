@@ -136,21 +136,51 @@ def neutralize_tags(text: str) -> str:
     return _data_tag_openers.sub('&lt;', text)
 
 
-def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
-    """Render the opening `tag`, with each attribute's value escaped and those that are `None` left off.
-
-    Attributes keep the order they're given in, so the same call always renders the same bytes.
-    """
+def _require_known(tag: str) -> None:
     if tag not in _BUILTIN_TAGS and tag not in _registered_tags:
         raise UserError(
             f'Framing tag {tag!r} is not registered: call `pydantic_ai.framing.register_tag({tag!r})` at import time.'
         )
+
+
+def open_tag(tag: FramingTag | RegisteredTag, /, **attrs: str | None) -> str:
+    """Render the opening `tag`, for a frame whose body isn't a string, such as a file.
+
+    Put the body between this and [`close_tag`][pydantic_ai.framing.close_tag] yourself; nothing in it is
+    escaped, so a text body goes through [`wrap`][pydantic_ai.framing.wrap] instead. Attribute values are
+    HTML-escaped, attributes whose value is `None` are left off, and the rest keep the order they're
+    given in, so the same call always renders the same bytes.
+
+    ```python
+    from pydantic_ai.framing import close_tag, open_tag
+    from pydantic_ai.messages import BinaryContent
+
+    image = BinaryContent(data=b'...', media_type='image/png')
+    content = [open_tag('tool_result', tool_name='screenshot'), image, close_tag('tool_result')]
+    print(content[0], content[2])
+    #> <tool_result tool_name="screenshot"> </tool_result>
+    ```
+
+    Args:
+        tag: One of Pydantic AI's own [`FramingTag`][pydantic_ai.framing.FramingTag]s, or a tag
+            returned by [`register_tag`][pydantic_ai.framing.register_tag].
+        **attrs: Attributes to put on the tag.
+
+    Raises:
+        UserError: If `tag` is neither a built-in tag nor registered.
+    """
+    _require_known(tag)
     rendered = ''.join(f' {name}="{html.escape(value)}"' for name, value in attrs.items() if value is not None)
     return f'<{tag}{rendered}>'
 
 
 def close_tag(tag: FramingTag | RegisteredTag) -> str:
-    """Render the closing `tag`."""
+    """Render the closing `tag`, ending a frame opened with [`open_tag`][pydantic_ai.framing.open_tag].
+
+    Raises:
+        UserError: If `tag` is neither a built-in tag nor registered.
+    """
+    _require_known(tag)
     return f'</{tag}>'
 
 
