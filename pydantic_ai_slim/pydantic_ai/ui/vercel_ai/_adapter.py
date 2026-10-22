@@ -763,8 +763,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     ) -> list[UIMessagePart]:
         """Convert a ModelResponse into a UIMessage."""
         ui_parts: list[UIMessagePart] = []
-        # Consecutive text parts merge into one UI text part. Keyed by its index: the UI part and the text parts in it.
-        text_runs: dict[int, tuple[TextUIPart, list[TextPart]]] = {}
+        # Consecutive text parts merge into one UI text part, so the text parts in each are kept by its index.
+        text_runs: dict[int, list[TextPart]] = {}
 
         # For builtin tools, returns can be in the same ModelResponse as calls
         local_builtin_returns: dict[str, NativeToolReturnPart] = {
@@ -777,13 +777,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, TextPart):
                 # Combine consecutive text parts
                 if ui_parts and isinstance(ui_parts[-1], TextUIPart):
-                    text_ui_part, text_parts = text_runs[len(ui_parts) - 1]
-                    text_ui_part.text += part.content
-                    text_parts.append(part)
+                    ui_parts[-1].text += part.content
+                    text_runs[len(ui_parts) - 1].append(part)
                 else:
-                    text_ui_part = TextUIPart(text=part.content, state='done')
-                    text_runs[len(ui_parts)] = (text_ui_part, [part])
-                    ui_parts.append(text_ui_part)
+                    text_runs[len(ui_parts)] = [part]
+                    ui_parts.append(TextUIPart(text=part.content, state='done'))
             elif isinstance(part, ThinkingPart):
                 provider_metadata = dump_provider_metadata(
                     id=part.id,
@@ -1146,9 +1144,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         return result
 
 
-def _with_text_citations(
-    ui_parts: list[UIMessagePart], text_runs: dict[int, tuple[TextUIPart, list[TextPart]]]
-) -> list[UIMessagePart]:
+def _with_text_citations(ui_parts: list[UIMessagePart], text_runs: dict[int, list[TextPart]]) -> list[UIMessagePart]:
     """Set each UI text part's provider metadata, with its citations, and list its web sources after it.
 
     Sources follow their text part as `source-url` parts, matching the event stream.
@@ -1157,9 +1153,9 @@ def _with_text_citations(
     source_urls: set[str] = set()
     for index, ui_part in enumerate(ui_parts):
         result.append(ui_part)
-        if (text_run := text_runs.get(index)) is not None:
-            text_ui_part, text_parts = text_run
-            text_ui_part.provider_metadata = dump_text_metadata(text_parts)
+        if isinstance(ui_part, TextUIPart):
+            text_parts = text_runs[index]
+            ui_part.provider_metadata = dump_text_metadata(text_parts)
             result.extend(
                 SourceUrlUIPart(source_id=chunk.source_id, url=chunk.url, title=chunk.title)
                 for chunk in iter_citation_source_chunks(merged_text_citations(text_parts), source_urls)
