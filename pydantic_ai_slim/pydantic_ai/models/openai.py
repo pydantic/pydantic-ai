@@ -5861,9 +5861,10 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
             context_window_threshold: Stateless-mode only. Compact when
                 [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]
                 reaches this fraction of the model's context window. Must be
-                greater than `0` and at most `1`. Before the first response
-                this threshold does not trigger compaction; if the model's
-                context window is unknown, it never does and a warning is emitted.
+                greater than `0` and at most `1`. If the latest response's usage
+                is unknown (e.g. before the first response), this threshold does
+                not trigger compaction; if the model's context window is unknown,
+                it never does and a warning is emitted.
             message_count_threshold: Stateless-mode only. Compact when the
                 message count exceeds this threshold. When combined with
                 `context_window_threshold`, compaction runs when either is reached.
