@@ -926,6 +926,16 @@ deterministically by the workflow. The `id`, `task_queue`, `execution_timeout`, 
 runs as deterministic workflow code, so it must delegate I/O to durable operations, such as a nested
 agent's activities. Child workflows are not supported for sync, dynamic, or MCP tools.
 
+An exception raised by the tool body fails the child workflow, subject to its `retry_policy`, and
+reaches the parent's tool call the way a failed activity would.
+
+A worker registers a toolset's child workflow when the plugin configures it, if a tool in the
+toolset has `child_workflow` metadata by then (tools added with `@agent.tool` included) or a
+[`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability sets it. Workers for agents
+without such tools register only their activities, as before. Metadata that first appears later,
+for example from a capability that rewrites tool definitions during a run, fails the tool call
+with a `UserError`.
+
 ## Activity Retries
 
 On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.

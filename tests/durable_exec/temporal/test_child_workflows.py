@@ -16,6 +16,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 
+from ..._inline_snapshot import snapshot
+
 try:
     from temporalio import activity, workflow
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
@@ -86,13 +88,11 @@ _metadata_error_agents = {
         _metadata_error_agent('child_extra_key', extra_key_toolset),
         _metadata_error_agent('child_sync_tool', sync_child_toolset),
         _metadata_error_agent('child_invalid_config', invalid_config_toolset),
-        # The child-workflow tool below is added after the agent was built, so no child workflow is registered.
         _metadata_error_agent('child_added_late', late_child_toolset),
     ]
 }
 
 
-@late_child_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
 async def late_child_tool() -> str:
     return 'unreachable'  # pragma: no cover
 
@@ -117,12 +117,6 @@ class MetadataErrorWorkflow:
             'in workflow code. Make the tool function async instead.',
         ),
         ('child_invalid_config', "Invalid Temporal `ChildWorkflowConfig` in tool 'invalid_config_tool' metadata:"),
-        (
-            'child_added_late',
-            "Toolset 'late_child_tools' has a tool configured to run as a Temporal child workflow, but no child "
-            'workflow was registered for it because the `child_workflow` metadata was not present when the agent '
-            'was constructed. Set it on the tool itself or with a `SetToolMetadata` capability.',
-        ),
     ],
 )
 async def test_child_workflow_metadata_errors_fail_the_workflow(client: Client, agent_name: str, message: str) -> None:
@@ -143,6 +137,110 @@ async def test_child_workflow_metadata_errors_fail_the_workflow(client: Client, 
     cause = _workflow_failure_cause(exc_info.value)
     assert cause.type == UserError.__name__
     assert cause.message.startswith(message)
+
+
+async def test_child_workflow_metadata_added_after_worker_configured(client: Client) -> None:
+    late_agent = _metadata_error_agents['child_added_late']
+    # The plugin reads the toolset's tools now, before the child-workflow tool exists, so it registers no child workflow.
+    plugin = AgentPlugin(late_agent)
+    late_child_toolset.add_function(late_child_tool, metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+    try:
+        async with Worker(client, task_queue=TASK_QUEUE, workflows=[MetadataErrorWorkflow], plugins=[plugin]):
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await client.execute_workflow(
+                    MetadataErrorWorkflow.run,
+                    'child_added_late',
+                    id='test_child_workflow_metadata_added_after_worker_configured',
+                    task_queue=TASK_QUEUE,
+                )
+    finally:
+        late_child_toolset.tools.pop('late_child_tool')
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == snapshot(
+        "Toolset 'late_child_tools' has a tool configured to run as a Temporal child workflow, but its child "
+        'workflow was not registered with the worker, because no tool in the toolset had `child_workflow` metadata '
+        'when the worker was configured. Set the metadata on the tool, or with a `SetToolMetadata` capability, '
+        'before creating the worker, and register the worker through `PydanticAIPlugin` or `AgentPlugin`.'
+    )
+
+
+decorated_agent = Agent(
+    TestModel(call_tools='all'),
+    name='decorated_child_workflow_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability()],
+)
+
+
+# Decorated after the agent is built: the worker, not the agent constructor, decides which child workflows to register.
+@decorated_agent.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def decorated_child_tool() -> str:
+    return 'ran in a child workflow'
+
+
+@workflow.defn
+class DecoratedChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await decorated_agent.run('call the tool')).output
+
+
+async def test_agent_decorated_tool_runs_as_child_workflow(client: Client) -> None:
+    workflow_id = 'test_agent_decorated_tool_runs_as_child_workflow'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DecoratedChildWorkflowAgentWorkflow],
+        plugins=[AgentPlugin(decorated_agent)],
+    ):
+        result = await client.execute_workflow(
+            DecoratedChildWorkflowAgentWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE
+        )
+
+    assert 'ran in a child workflow' in result
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    assert _child_start(history).workflow_type.name == (
+        'agent__decorated_child_workflow_agent__toolset__<agent>__call_tool__child_workflow'
+    )
+
+
+failing_toolset = FunctionToolset[None](id='failing_child_tools')
+
+
+@failing_toolset.tool_plain(metadata={'temporal': {'child_workflow': _CHILD_WORKFLOW}})
+async def failing_child_tool() -> str:
+    raise ValueError('Something broke in the child.')
+
+
+failing_agent = _metadata_error_agent('failing_child_workflow_agent', failing_toolset)
+
+
+@workflow.defn
+class FailingChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await failing_agent.run('call the tool')).output
+
+
+async def test_child_workflow_tool_exception_fails_the_child(client: Client) -> None:
+    """An ordinary exception fails the child workflow, like an activity, instead of retrying its workflow task."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FailingChildWorkflowAgentWorkflow],
+        plugins=[AgentPlugin(failing_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                FailingChildWorkflowAgentWorkflow.run,
+                id='test_child_workflow_tool_exception_fails_the_child',
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.message) == ('ValueError', 'Something broke in the child.')
 
 
 async def test_child_workflow_metadata_rejects_non_function_tool_operation() -> None:

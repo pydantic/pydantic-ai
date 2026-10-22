@@ -337,7 +337,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
-        self._child_workflow_toolset_ids: set[str] = set()
         self._child_workflow_metadata_capability = False
 
     def _check_bindable(self) -> None:
@@ -362,9 +361,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
 
         assert self._deps_type is not None
-        # Child workflow definitions are registered only for toolsets that can select one, so workers for agents
-        # that don't use the feature keep exactly their activity registrations.
-        self._child_workflow_toolset_ids = set()
         self._child_workflow_metadata_capability = False
         agent.root_capability.apply(self._detect_child_workflow_metadata)
         self._operation_backend = TemporalOperationBackend(
@@ -376,7 +372,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             resolve_tool_config=self._resolve_temporal_tool_config,
             non_retryable_model_errors=self._non_retryable_model_errors,
             runtime=self,
-            registers_child_workflow=self._registers_child_workflow,
         )
         self._register_activities(agent)
 
@@ -385,8 +380,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if isinstance(capability, SetToolMetadata) and is_child_workflow_metadata(capability.metadata.get('temporal')):
             self._child_workflow_metadata_capability = True
 
-    def _registers_child_workflow(self, toolset_id: str) -> bool:
-        return self._child_workflow_metadata_capability or toolset_id in self._child_workflow_toolset_ids
+    def _selects_child_workflow(self, toolset_id: str) -> bool:
+        """Whether the function toolset has a tool that runs as a child workflow, read when the worker is configured.
+
+        Reading the tools then, rather than at agent construction, includes tools added later with `@agent.tool`.
+        """
+        if self._child_workflow_metadata_capability:
+            return True
+        wrapper = self._toolsets_by_id.get(toolset_id)
+        toolset = wrapper.wrapped if wrapper is not None else None
+        return isinstance(toolset, FunctionToolset) and any(
+            is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in toolset.tools.values()
+        )
 
     def _workspace_call_transport(self) -> _WorkspaceCallTransport:
         return _WorkspaceCallTransport(self)
@@ -438,15 +443,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._agent,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
-
-    def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
-        if (
-            isinstance(ts, FunctionToolset)
-            and ts.id is not None
-            and any(is_child_workflow_metadata((tool.metadata or {}).get('temporal')) for tool in ts.tools.values())
-        ):
-            self._child_workflow_toolset_ids.add(ts.id)
-        return super()._wrap_leaf_toolset(ts)
 
     def get_durable_operation_backend(self) -> TemporalOperationBackend:
         backend = self._operation_backend
@@ -815,5 +811,14 @@ def worker_registrations(durability: TemporalDurability[Any]) -> tuple[list[Call
         return [], []
     registrations = backend.registrations()
     activities = [registration for registration in registrations if not isinstance(registration, type)]
-    workflows = [registration for registration in registrations if isinstance(registration, type)]
+    # A worker only registers the child workflows of toolsets that select one, so workers for agents that don't use
+    # the feature keep exactly their activity registrations.
+    workflows: list[type] = []
+    for registration in registrations:
+        if not isinstance(registration, type):
+            continue
+        toolset_id = backend.child_workflow_toolset_ids[registration]
+        if durability._selects_child_workflow(toolset_id):  # pyright: ignore[reportPrivateUsage]
+            workflows.append(registration)
+            backend.registered_child_workflow_toolset_ids.add(toolset_id)
     return activities, workflows
