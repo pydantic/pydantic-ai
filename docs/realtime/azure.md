@@ -161,20 +161,17 @@ model targets the Voice Live endpoint and beta session protocol.
 Voice Live is a distinct Azure resource with its own credentials, so set `AZURE_VOICELIVE_ENDPOINT`,
 `AZURE_VOICELIVE_API_KEY`, and `AZURE_VOICELIVE_API_VERSION`, or pass `voice_live_endpoint`,
 `voice_live_api_key`, and `voice_live_api_version` to
-[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]. Each value resolves explicit argument
-first, then its own `AZURE_VOICELIVE_*` variable. The endpoint and key then fall back, each on its
-own, to the Azure OpenAI endpoint and key, so a single resource serving both only needs configuring
-once; the version falls back to a supported default instead. Because the fallback is per value, set
-both the Voice Live endpoint and key when the two resources are distinct, or Voice Live is called
-with the other resource's endpoint or key.
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]. Each value resolves the explicit argument
+first, then its own `AZURE_VOICELIVE_*` variable. A missing endpoint or key then falls back to the Azure
+OpenAI one, each on its own, so a single resource serving both needs configuring only once; the version
+falls back to a supported default instead. When the two resources are distinct, set both the Voice Live
+endpoint and key, or Voice Live is called with the other resource's value.
 
-`AzureProvider` still needs a valid Azure OpenAI configuration when one is present. If
-`AZURE_OPENAI_ENDPOINT` holds a bare resource endpoint and `OPENAI_API_VERSION` is unset, constructing
-it raises a [`UserError`][pydantic_ai.exceptions.UserError] asking for an `api_version`. Pass
-`azure_endpoint` in its `/openai/v1` form (or set `OPENAI_API_VERSION`) alongside the Voice Live
-values in that case, together with `api_key` / `AZURE_OPENAI_API_KEY`: once any Azure OpenAI value is
-set, the Voice Live key no longer stands in for it. With no Azure OpenAI configuration at all, the
-Voice Live values are enough.
+The Voice Live values also stand in for the Azure OpenAI configuration, but only when none of it is
+set. Once any Azure OpenAI endpoint, key, or version is configured (a leftover `AZURE_OPENAI_ENDPOINT`,
+say), it has to be complete on its own: `azure_endpoint` in its `/openai/v1` form or with an
+`api_version` / `OPENAI_API_VERSION`, plus `api_key` / `AZURE_OPENAI_API_KEY`. Otherwise constructing the
+provider raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ```python
 from pydantic_ai import Agent
