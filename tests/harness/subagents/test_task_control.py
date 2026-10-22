@@ -1113,6 +1113,100 @@ class TestSubAgentWorker:
         kinds = recorder.kinds()
         assert kinds.count('sub_agents.task_completed') == 1 and 'sub_agents.task_failed' not in kinds
 
+    async def test_a_worker_that_stops_as_a_settled_task_winds_down_reports_it_once(self) -> None:
+        exiting, gate = anyio.Event(), anyio.Event()
+
+        class Lingering(InMemoryTransport):
+            """A transport whose task-side receive takes a while to stop, once the task settled."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.sent: list[str] = []
+
+            async def send(self, message: SubAgentMessage) -> None:
+                self.sent.append(message.kind)
+                await super().send(message)
+
+            async def receive(self, mailbox: str) -> SubAgentMessage:
+                try:
+                    return await super().receive(mailbox)
+                except anyio.get_cancelled_exc_class():
+                    if mailbox.endswith(':worker'):
+                        exiting.set()
+                        with anyio.CancelScope(shield=True):
+                            await gate.wait()
+                    raise
+
+        transport = Lingering()
+        worker = SubAgentWorker(agents=[SubAgent(child(), name='remote')], transport=transport, deps=None)
+        parent, _ = remote_parent(transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return)
+        stop = anyio.CancelScope()
+        output = ''
+
+        async def serve() -> None:
+            with stop:
+                await worker.serve()
+
+        async def stop_while_winding_down() -> None:
+            await exiting.wait()
+            stop.cancel()
+            gate.set()
+
+        with anyio.fail_after(WAIT):
+            async with anyio.create_task_group() as group:
+                group.start_soon(serve)
+                group.start_soon(stop_while_winding_down)
+                output = (await parent.run('Go.')).output
+        assert output.endswith('(ok):\nchild output')
+        settled = [kind for kind in transport.sent if kind in ('sub_agents.task_completed', 'sub_agents.task_failed')]
+        assert settled == ['sub_agents.task_completed']
+
+    async def test_a_stopping_worker_gives_up_on_a_stuck_report(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.subagents._worker._STOP_REPORT_SECONDS', 0.01)
+
+        class Stuck(InMemoryTransport):
+            async def send(self, message: SubAgentMessage) -> None:
+                if isinstance(message, TaskFailedEvent):
+                    await anyio.Event().wait()
+                await super().send(message)
+
+        transport = Stuck()
+        gate = Gate()
+        blocked = Agent(scripted(call('pause'), text('unreachable')), tools=[gate.pause], name='remote')
+        worker = SubAgentWorker(agents=[SubAgent(blocked)], transport=transport, deps=None)
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                await transport.send(TaskAssignedEvent(task_id='s' * 32, agent_name='remote', prompt='Work.'))
+                await gate.entered.wait()
+        assert 'Timed out reporting sub-agent task' in caplog.text
+
+    async def test_a_worker_that_cannot_release_a_mailbox_logs_it(self, caplog: pytest.LogCaptureFixture) -> None:
+        class Unreleasing(InMemoryTransport):
+            def __init__(self) -> None:
+                super().__init__()
+                self.sent: list[str] = []
+
+            async def send(self, message: SubAgentMessage) -> None:
+                self.sent.append(message.kind)
+                await super().send(message)
+
+            async def release(self, mailbox: str) -> None:
+                if mailbox.endswith(':worker'):
+                    raise ConnectionError('gone')
+                await super().release(mailbox)
+
+        transport = Unreleasing()
+        worker = SubAgentWorker(agents=[SubAgent(child(), name='remote')], transport=transport, deps=None)
+        parent, _ = remote_parent(transport, call('delegate_task', agent_name='remote', task='Work.'), echo_last_return)
+        with anyio.fail_after(WAIT):
+            async with serving(worker):
+                result = await parent.run('Go.')
+        assert result.output.endswith('(ok):\nchild output')
+        assert 'sub_agents.task_failed' not in transport.sent
+        assert 'Could not release the mailbox' in caplog.text
+
     async def test_a_stopping_worker_that_cannot_report_logs_it(self, caplog: pytest.LogCaptureFixture) -> None:
         class NoFailures(InMemoryTransport):
             async def send(self, message: SubAgentMessage) -> None:

@@ -40,6 +40,9 @@ from pydantic_ai_harness.subagents._tasks import CANCELLED_ANSWER
 from pydantic_ai_harness.subagents._toolset import SubAgent, delegation_level
 from pydantic_ai_harness.subagents._transport import SubAgentTransport
 
+_STOP_REPORT_SECONDS = 5.0
+"""How long a stopping worker tries to report each task it was running."""
+
 _logger = logging.getLogger(__name__)
 
 
@@ -234,19 +237,26 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     agent_name=start.agent_name,
                     error='The worker serving this task stopped before it finished.',
                 )
-                with anyio.CancelScope(shield=True), anyio.move_on_after(5):
+                with anyio.CancelScope(shield=True), anyio.move_on_after(_STOP_REPORT_SECONDS) as deadline:
                     try:
                         await self.transport.send(report)
                     except Exception:
                         _logger.exception('Could not report sub-agent task %s as its worker stopped.', start.task_id)
+                if deadline.cancelled_caught:
+                    _logger.error('Timed out reporting sub-agent task %s as its worker stopped.', start.task_id)
                 raise
             assert settled is not None, 'the attempts returned, so the task settled'
-            # Sent even if the worker stops meanwhile, so the report is neither lost nor followed by a failure.
+            # Sent even if the worker stops meanwhile, which then waits for it, so the report is neither lost
+            # nor followed by a failure.
             with anyio.CancelScope(shield=True):
                 await self.transport.send(settled)
         finally:
             with anyio.CancelScope(shield=True):
-                await self.transport.release(f'task:{start.task_id}:worker')
+                try:
+                    await self.transport.release(f'task:{start.task_id}:worker')
+                except Exception:
+                    # The task was reported, or is reported as failed: this is no failure of the task.
+                    _logger.exception('Could not release the mailbox of sub-agent task %s.', start.task_id)
 
     async def _attempts(
         self, agent: AbstractAgent[AgentDepsT, Any], start: TaskRequestEvent, link: _WorkerLink
