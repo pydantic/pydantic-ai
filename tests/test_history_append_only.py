@@ -813,3 +813,22 @@ def test_instruction_parts_sharing_an_id_are_told_apart():
         'anthropic', [body('First.'), body('First.')], (b'', b''), [parameters('First.'), parameters('First.')]
     )
     assert result.changes() == []
+
+
+def test_a_request_scoped_prompt_left_visible_fails():
+    """A request-scoped prompt still visible after its request fails the `request-scope` check.
+
+    A unit test of the check on hand-built Anthropic requests, since #10938 fixed the one case the matrix had:
+    the earlier request's prompt is marked `clear_at: next_user_message`, and no user message follows it.
+    """
+    nudge = {'role': 'system', 'content': [{'type': 'text', 'text': 'Keep it short.'}], 'clear_at': 'next_user_message'}
+    first = [{'role': 'user', 'content': 'Hi'}, nudge]
+    second = [
+        *first,
+        {'role': 'assistant', 'content': [{'type': 'text', 'text': ''}]},
+        {'role': 'system', 'content': [{'type': 'text', 'text': 'Please return text or call a tool.'}]},
+    ]
+    bodies = [json.dumps({'model': 'claude-opus-5-5', 'messages': messages}).encode() for messages in (first, second)]
+    result = ConversationResult('anthropic', bodies, (b'', b''), [])
+    with pytest.raises(pytest.fail.Exception, match=re.escape('request 1 still shows')):
+        check_conversation('example', result)
