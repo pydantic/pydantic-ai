@@ -481,9 +481,10 @@ def _seed_request_part(part: ModelRequestPart, *, provider_name: str) -> tuple[_
     """The role and text a request part seeds as, or `None` when it carries nothing replayable.
 
     The standing system prompt is routed through `instructions` instead, exactly as on the Realtime
-    protocol, and `seed_input_items` has already turned a later one into `<system>`-tagged user text. A tool result becomes user-level text because Live has nowhere to put a function part in
-    seeded history, and not a developer note: its content comes from whatever the tool read, which
-    must not be replayed with more authority than it had as a tool result.
+    protocol, and `seed_input_items` has already turned a later one into `<system>`-tagged user text.
+    A tool result becomes user-level text because Live has nowhere to put a function part in seeded
+    history, and not a developer note: its content comes from whatever the tool read, which must not
+    be replayed with more authority than it had as a tool result.
     """
     # TODO(v3): remove `RetryPromptPart`. Translated ahead of the branches rather than inside one of
     # them, so a tool-bound legacy retry seeds through the `ToolReturnPart` branch below and reads
