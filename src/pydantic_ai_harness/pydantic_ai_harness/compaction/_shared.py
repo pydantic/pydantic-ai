@@ -282,9 +282,10 @@ def estimate_context_tokens(
     `input_tokens` measured everything the provider was actually sent for that request --
     instructions, tool definitions, and every prior message -- and its `output_tokens` measured
     the response's own parts, so their sum is ground truth for the history up to and including
-    that response. A response a provider SDK continued across several requests (Google long
-    decode) sums their usage, re-counting earlier output as input, so it anchors on the first
-    request's input tokens instead. Only the messages after the anchor are estimated with the character
+    that response. A response whose usage sums several model requests re-counts the context of each,
+    so it anchors on the input tokens of the one that measures the context instead: the first
+    request of a Google long decode, the last sampling pass of an Anthropic response that reported
+    its passes. Only the messages after the anchor are estimated with the character
     heuristic (or *tokenizer*), without re-counting instructions, which the anchor already
     covers; when the instructions changed since the anchor, the estimate swaps the old set for
     the new one rather than adding the new set on top. Tool schemas named by availability
@@ -340,9 +341,11 @@ def estimate_message_tokens(
     earlier one is exactly what the earlier response and the requests after it added, so those
     messages share that difference in proportion to their estimates. Where the history did not grow
     between two such responses, as across a compaction, the difference measures nothing and the
-    estimates stand; so do messages before the first such response and after the last. A response a
-    provider continued across several requests enters the difference with its first request's input
-    tokens, since its summed `input_tokens` re-count the earlier requests' output.
+    estimates stand; so do messages before the first such response and after the last. A response
+    whose usage sums several model requests enters the difference with its input tokens as
+    `context_input_tokens` reads them, since its summed `input_tokens` re-count each request's context.
+    An Anthropic last pass also read that response's own earlier passes, so the difference credits
+    them to the messages before it, which the response then counts again: the tail measures high.
 
     Instructions are left out: they are sent with every request, not carried by any one message.
     """
@@ -374,7 +377,7 @@ def _estimate_segments(segments: Sequence[str], tokenizer: Callable[[str], int] 
 def _reported_input_tokens(message: ModelMessage) -> int:
     """The provider-reported input tokens of a response, or 0 for a request or a response without usage.
 
-    For a response a provider continued across several requests, the first request's input tokens.
+    For a response whose usage sums several model requests, as `context_input_tokens` reads it.
     """
     return context_input_tokens(message) if isinstance(message, ModelResponse) else 0
 
