@@ -844,7 +844,8 @@ class TestClaim:
             before = await claim_expires_at(absurd, task['id'])
             with anyio.fail_after(READINESS_WAIT_TIMEOUT):
                 while await claim_expires_at(absurd, task['id']) <= before:
-                    pass
+                    # Leave the shared connection to the heartbeat between polls.
+                    await anyio.sleep(0.01)
             return 'done slowly'
 
         agent = Agent(
