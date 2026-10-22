@@ -27,6 +27,7 @@ __all__ = (
     'computer_tool',
 )
 
+
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
 class Wait:
     """Pause, for example while a page or application loads."""
