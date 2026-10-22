@@ -107,7 +107,7 @@ def install_rclone() -> str:
         request = urllib.request.Request(url, headers={'User-Agent': 'pydantic-ai-harness'})
         with urllib.request.urlopen(request, timeout=DOWNLOAD_SECONDS) as reply:
             archive = reply.read()
-    except OSError as error:
+    except (OSError, http.client.HTTPException) as error:
         raise MountFailed(
             'rclone', f'Could not download rclone ({error}). Install rclone in the sandbox image.'
         ) from None
