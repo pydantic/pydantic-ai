@@ -5126,34 +5126,26 @@ def test_google_image_grounding_source() -> None:
 
 
 @pytest.mark.parametrize(
-    ('context', 'expected_excerpts'),
+    ('text', 'rag_chunk_text', 'expected_excerpts'),
     [
+        pytest.param(None, 'RAG chunk excerpt', ['RAG chunk excerpt'], id='rag-chunk'),
         pytest.param(
-            GroundingChunkRetrievedContext(rag_chunk=RagChunk(text='RAG chunk excerpt')),
-            ['RAG chunk excerpt'],
-            id='rag-chunk',
-        ),
-        pytest.param(
-            GroundingChunkRetrievedContext(
-                text='retrieved context excerpt', rag_chunk=RagChunk(text='RAG chunk excerpt')
-            ),
+            'retrieved context excerpt',
+            'RAG chunk excerpt',
             ['retrieved context excerpt', 'RAG chunk excerpt'],
             id='distinct-texts',
         ),
-        pytest.param(
-            GroundingChunkRetrievedContext(text='same excerpt', rag_chunk=RagChunk(text='same excerpt')),
-            ['same excerpt'],
-            id='identical-texts',
-        ),
+        pytest.param('same excerpt', 'same excerpt', ['same excerpt'], id='identical-texts'),
     ],
 )
 def test_google_retrieved_context_rag_chunk_excerpts(
-    context: GroundingChunkRetrievedContext, expected_excerpts: list[str]
+    text: str | None, rag_chunk_text: str, expected_excerpts: list[str]
 ) -> None:
     """A RAG chunk's text is an excerpt, listed once when it repeats the retrieved context's text.
 
     Unit test: no recording uses Vertex AI RAG retrieval.
     """
+    context = GroundingChunkRetrievedContext(text=text, rag_chunk=RagChunk(text=rag_chunk_text))
     assert _map_citation_source(GroundingChunk(retrieved_context=context)) == DocumentCitationSource(
         excerpts=expected_excerpts
     )
