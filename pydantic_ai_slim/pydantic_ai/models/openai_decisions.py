@@ -148,7 +148,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         self,
         model_name: OpenAIDecisionsModelName,
         *,
-        provider: Literal['openai', 'openai-decisions'] | OpenAIProvider = 'openai',
+        provider: Literal['openai', 'openai-decisions'] | OpenAIProvider = 'openai-decisions',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
