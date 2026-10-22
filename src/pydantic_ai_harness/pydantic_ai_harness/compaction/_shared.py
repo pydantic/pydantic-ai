@@ -856,9 +856,42 @@ def find_token_cutoff(
 # ---------------------------------------------------------------------------
 
 
+# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
+# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
+# `BackgroundTools` results, `TrajectoryJudge` feedback and `SubAgents` task reports. `Memory` marks its
+# snapshot with a bare string instead, so it isn't recognized yet: a known gap. The rule is temporary: once
+# core provenance (`CapabilityPart`) lands, recognize that instead of this metadata convention.
+HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
+"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
+
+
+def harness_data_origin(part: UserPromptPart) -> str | None:
+    """The `origin` of user-channel content a harness capability added, or `None` for anything else.
+
+    A part counts when its first item is a `TextContent` whose metadata names a harness origin: that tag
+    marks the whole part, as a `BackgroundTools` result marks the files and text that follow it. A part
+    that only mentions such content later, after what the user wrote, is never relabeled.
+    """
+    # TODO: switch to the core provenance field once it exists.
+    match part.content:
+        case [TextContent(metadata=metadata), *_] if (
+            is_str_dict(metadata)
+            and isinstance(origin := metadata.get('origin'), str)
+            and origin.startswith(HARNESS_ORIGIN_PREFIX)
+        ):
+            return origin
+        case _:
+            return None
+
+
+def is_harness_data(part: ModelRequestPart) -> bool:
+    """Whether *part* is user-channel content a harness capability added, such as a `SubAgents` task report."""
+    return isinstance(part, UserPromptPart) and harness_data_origin(part) is not None
+
+
 def _is_harness_marker_part(part: ModelRequestPart) -> bool:
-    """Return whether a user-role part is harness bookkeeping rather than a user turn."""
-    return is_pinned(part) or is_receipt_part(part)
+    """Return whether a user-role part is harness bookkeeping or data rather than a user turn."""
+    return is_pinned(part) or is_receipt_part(part) or is_harness_data(part)
 
 
 def find_first_user_message(messages: list[ModelMessage]) -> ModelRequest | None:
@@ -880,14 +913,17 @@ def prepend_first_user_message(
 
     If the first `ModelRequest` containing a `UserPromptPart` in *original*
     was discarded (its index is before *cutoff*) and is not already in *trimmed*,
-    prepend it.
+    prepend it. Harness data merged into that request, such as a `SubAgents` task
+    report delivered with the user's prompt, is left out: it isn't the user's turn,
+    and keeping it would hold it outside the window on every run.
     """
     first = find_first_user_message(original)
     if first is None:
         return trimmed
     idx = original.index(first)
     if idx < cutoff and first not in trimmed:
-        return [first, *trimmed]
+        genuine = [part for part in first.parts if not is_harness_data(part)]
+        return [first if len(genuine) == len(first.parts) else replace(first, parts=genuine), *trimmed]
     return trimmed
 
 

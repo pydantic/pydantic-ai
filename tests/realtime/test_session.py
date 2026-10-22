@@ -58,6 +58,7 @@ from pydantic_ai.messages import (
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
+    TextContent,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -8506,6 +8507,33 @@ async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> No
     assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
 
 
+async def test_session_enqueue_delivers_text_content_and_keeps_its_metadata() -> None:
+    """Text-only `TextContent` crosses the live input channel, and history keeps the part with its metadata."""
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+    tagged = UserPromptPart(
+        ['Report:', TextContent('<report>\nfound it\n</report>', metadata={'origin': 'app.report'})]
+    )
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(tagged) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['Report:\n<report>\nfound it\n</report>']
+    assert session.new_messages()[-1] == ModelRequest(
+        parts=[tagged], timestamp=IsDatetime(), conversation_id=IsStr(), run_id=IsStr()
+    )
+
+
+async def test_session_enqueue_rejects_text_content_mixed_with_media() -> None:
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
+        with pytest.raises(UserError, match=r'support text prompts \(a `str` or `TextContent`\)'):
+            session.enqueue(
+                UserPromptPart([TextContent('caption'), BinaryImage(data=b'image', media_type='image/png')])
+            )
+
+
 async def test_session_enqueue_empty_call_is_noop() -> None:
     agent: Agent[None, str] = Agent()
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
@@ -8525,7 +8553,9 @@ async def test_session_enqueue_rejects_invalid_content_immediately() -> None:
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
         with pytest.raises(UserError, match='Enqueued content must end with a `ModelRequest`'):
             session.enqueue(ModelResponse(parts=[TextPart(content='not a request')]))
-        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+        with pytest.raises(
+            UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+        ):
             session.enqueue(BinaryImage(data=b'image', media_type='image/png'))
 
 
@@ -8625,7 +8655,9 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='queue_image', args='{}')])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+        with pytest.raises(
+            UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+        ):
             _ = [event async for event in session]
 
 
@@ -8642,7 +8674,9 @@ async def test_realtime_pending_messages_reject_unsupported_message_shapes(messa
     manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
-    with pytest.raises(UserError, match='support plain-text prompts and system-prompt parts only'):
+    with pytest.raises(
+        UserError, match=r'support text prompts \(a `str` or `TextContent`\) and system-prompt parts only'
+    ):
         manager.ctx.pending_messages.append(PendingMessage(messages=messages))
 
 

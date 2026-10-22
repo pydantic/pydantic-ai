@@ -48,6 +48,8 @@ from pydantic_ai_harness.compaction._shared import (
     exceeds,
     find_safe_cutoff,
     find_token_cutoff,
+    harness_data_origin,
+    is_harness_data,
     is_realtime_model,
     record_compaction_reclaim,
     resolve_token_trigger,
@@ -126,14 +128,6 @@ Continuing a history merges adjacent requests and keeps only the framework's own
 so the request-level marker is lost there; the copy's `TextContent` items carry the same marker as
 their `metadata`, the way pins do, so a retained copy is still recognized inside a merged request.
 """
-
-# Interim, deliberately generic rule: a harness capability that tags the content it adds on the user channel
-# with an `origin` under this prefix is covered by this one check, without per-capability code. Today that is
-# `BackgroundTools` results and `TrajectoryJudge` feedback. `Memory` marks its snapshot with a bare string
-# instead, so it isn't recognized yet: a known gap. The rule is temporary: once core provenance
-# (`CapabilityPart`) lands, recognize that instead of this metadata convention.
-_HARNESS_ORIGIN_PREFIX = 'pydantic-ai-harness.'
-"""The prefix of the `origin` metadata harness capabilities put on content they add on the user channel."""
 
 
 def _model_name(model: str | AbstractModel | None) -> str | None:
@@ -231,7 +225,7 @@ def format_transcript(
         if isinstance(msg, ModelRequest):
             kept = _is_kept_user_message(msg)
             for part in msg.parts:
-                if isinstance(part, UserPromptPart) and (origin := _harness_data_origin(part)) is not None:
+                if isinstance(part, UserPromptPart) and (origin := harness_data_origin(part)) is not None:
                     elements.append(_harness_data_element(origin, user_prompt_text(part), tool_return_max_chars))
                 elif kept or (isinstance(part, UserPromptPart) and _is_kept_user_part(part)):
                     # The rest of a kept turn is carried forward as-is, so it isn't summarized too. Harness data an
@@ -293,30 +287,6 @@ def _message_element(
     if max_chars is not None:
         body = _truncate_with_marker(body, max_chars)
     return f'<message role="{role}"{name_attr}>\n{body}\n</message>'
-
-
-def _harness_data_origin(part: UserPromptPart) -> str | None:
-    """The `origin` of user-channel content a harness capability added, or `None` for anything else.
-
-    A part counts when its first item is a `TextContent` whose metadata names a harness origin: that tag
-    marks the whole part, as a `BackgroundTools` result marks the files and text that follow it. A part
-    that only mentions such content later, after what the user wrote, is never relabeled.
-    """
-    # TODO: switch to the core provenance field once it exists.
-    match part.content:
-        case [TextContent(metadata=metadata), *_] if (
-            is_str_dict(metadata)
-            and isinstance(origin := metadata.get('origin'), str)
-            and origin.startswith(_HARNESS_ORIGIN_PREFIX)
-        ):
-            return origin
-        case _:
-            return None
-
-
-def is_harness_data(part: ModelRequestPart) -> bool:
-    """Whether *part* is user-channel content a harness capability added."""
-    return isinstance(part, UserPromptPart) and _harness_data_origin(part) is not None
 
 
 def _harness_data_element(origin: str, content: str, max_chars: int | None) -> str:
