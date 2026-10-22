@@ -572,7 +572,11 @@ export function App() {
                   <span className="context" title="Context used / window">
                     {compact(status.context_tokens)} / {compact(status.context_window)}
                   </span>
-                  {status.cost && <span className="cost">${Number(status.cost).toFixed(2)}</span>}
+                  {status.cost && (
+                    <span className="cost">
+                      {status.cost_is_lower_bound && '>='}${Number(status.cost).toFixed(2)}
+                    </span>
+                  )}
                 </div>
               )}
               {panels.map((panel) => {

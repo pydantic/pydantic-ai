@@ -29,6 +29,8 @@ Temporal, DBOS, Prefect, Restate, and AWS Lambda are co-maintained by the Pydant
 
 Capability authors can also move custom hook work into engine activities, steps, or tasks with [durable capability operations](../capabilities/custom.md#durable-capability-operations).
 
+[Append-on-change instructions](../agent.md#appending-instruction-changes) derive their baseline and replacements from persisted history. Instruction callbacks still follow the engine's replay rules: use a durable operation for external reads so replay uses the same values and produces the same history shape.
+
 Third-party runtime authors can use the stable [durable execution backend builder](./backends.md)
 to integrate another engine without importing Pydantic AI internals.
 
