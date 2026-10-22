@@ -1,3 +1,9 @@
+"""Tests for `FileUnderstanding`.
+
+All but the last test are unit tests on `FunctionModel` and `TestModel` rather than VCR recordings: they count
+describer calls, set model profiles by hand and control concurrency, none of which a recording can do.
+"""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
