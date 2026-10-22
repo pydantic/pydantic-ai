@@ -158,8 +158,9 @@ and its text is still sent:
 - Anthropic and Bedrock refer to a document by its position among the documents in the request, including documents in
   tool results and, for Anthropic, pages fetched by Web Fetch. Leaving out earlier messages, as a
   [history processor](message-history.md#processing-message-history) or [compaction](capabilities/compaction.md) can,
-  moves the documents after them. So a document citation is sent with the position of the document that holds its
-  cited text at the cited characters. If no document does, or several do, it's left out.
+  moves the documents after them. So a document citation keeps its position if the document there still holds the
+  cited text at the cited characters, and otherwise moves to the one document that does. If none does, or more than
+  one does, it's left out.
 - An OpenAI URL citation covers the link the model wrote into its answer. It's left out if that range no longer
   contains the link, for example because the text was edited.
 - Bedrock requires a title on each citation. A citation without one, as in history edited after Bedrock sent it, is
