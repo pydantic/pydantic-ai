@@ -1065,6 +1065,20 @@ class TestBedrockThinkingTranslation:
         result = model._build_additional_model_request_fields(settings, params, [])
         assert result is None
 
+    def test_xai_variant_thinking_true_keeps_model_default(self):
+        """thinking=True on Grok 4.7 omits `reasoning` so its documented `high` default applies.
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
+        profile = BedrockProvider.model_profile('us.xai.grok-4.7')
+        assert profile is not None
+        model = _bedrock_model(profile)
+
+        settings = BedrockModelSettings()
+        params = ModelRequestParameters(thinking=True)
+        result = model._build_additional_model_request_fields(settings, params, [])
+        assert result is None
+
     def test_xai_variant_user_reasoning_wins(self):
         """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched."""
         model = _bedrock_model(

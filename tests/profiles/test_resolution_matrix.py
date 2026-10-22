@@ -1198,8 +1198,8 @@ def test_bedrock_xai_grok(region: str):
     """xAI Grok via Bedrock: upstream `grok_model_profile` + the `xai` thinking variant.
 
     The upstream `supports_json_schema_output` / `supports_json_object_output` are turned off because
-    Converse has no structured output for Grok 4.6; prompt caching stays at the default (`False`)
-    because explicit `cachePoint` blocks are rejected.
+    Converse has no structured output for Grok 4.6, and stay off on Grok 4.7 until it's verified there;
+    prompt caching stays at the default (`False`) because explicit `cachePoint` blocks are rejected.
     """
     profiles = {
         version: _normalize(BedrockProvider.model_profile(f'{region}.xai.grok-{version}')) for version in ('4.6', '4.7')

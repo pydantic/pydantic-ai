@@ -526,7 +526,8 @@ def bedrock_xai_model_profile(model_name: str) -> ModelProfile | None:
     # Grok on Converse always reasons: `additionalModelRequestFields.reasoning.effort` takes `low`, `medium`,
     # `high`, or `xhigh` (the default is `low` on 4.6 and `high` on 4.7), and no value turns reasoning off.
     # Structured output (`outputConfig`) is listed as "Not Supported" on the Grok 4.6 model card, so the
-    # upstream Grok profile's `supports_json_schema_output`/`supports_json_object_output` are turned off.
+    # upstream Grok profile's `supports_json_schema_output`/`supports_json_object_output` are turned off. The
+    # Grok 4.7 card lists it as supported, but it stays off there too until it's verified on Converse.
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-6.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-7.html
     return merge_profile(
