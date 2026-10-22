@@ -859,7 +859,10 @@ async def test_openrouter_streamed_reasoning_details_are_preserved(
 
 
 async def test_openrouter_stream_raw_file_annotation_is_serialized(allow_model_requests: None) -> None:
-    """OpenRouter's streamed `file` annotation is stored as a dict, as in a non-streamed response."""
+    """OpenRouter's streamed `file` annotation is stored as a dict, as in a non-streamed response.
+
+    Unit test: no recorded OpenRouter stream returns a `file` annotation.
+    """
     file_annotation = {'type': 'file', 'file': {'filename': 'test.pdf', 'file_id': 'file-123'}}
 
     def chunk(delta: dict[str, Any], finish_reason: str | None = None) -> ChatCompletionChunk:

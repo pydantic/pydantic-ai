@@ -2389,6 +2389,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
+responses_output_text_annotation_ta: TypeAdapter[responses.response_output_text.Annotation] = TypeAdapter(
+    responses.response_output_text.Annotation
+)
 chat_annotations_ta = TypeAdapter(list[chat.chat_completion_message.Annotation])
 chat_annotation_ta = TypeAdapter(chat.chat_completion_message.Annotation)
 
@@ -2398,12 +2401,33 @@ def _marker_citation_anchor(start: int, end: int, text: str) -> MarkerCitationAn
     return MarkerCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
 
 
+def _responses_citation_annotations(
+    annotations: Sequence[responses.response_output_text.Annotation],
+) -> list[responses.response_output_text.AnnotationURLCitation | responses.response_output_text.AnnotationFileCitation]:
+    """Return the URL and file citations, checked by `type` as well as by class.
+
+    The SDK doesn't validate responses, so it builds an annotation of a type it doesn't know into one of its classes.
+    """
+    return [
+        annotation
+        for annotation in annotations
+        if (
+            isinstance(annotation, responses.response_output_text.AnnotationURLCitation)
+            and annotation.type == 'url_citation'
+        )
+        or (
+            isinstance(annotation, responses.response_output_text.AnnotationFileCitation)
+            and annotation.type == 'file_citation'
+        )
+    ]
+
+
 def _map_responses_citations(
     annotations: Sequence[responses.response_output_text.Annotation],
     text: str,
 ) -> list[Citation] | None:
     citations: list[Citation] = []
-    for annotation in annotations:
+    for annotation in _responses_citation_annotations(annotations):
         if isinstance(annotation, responses.response_output_text.AnnotationURLCitation):
             start, end = annotation.start_index, annotation.end_index
             citations.append(
@@ -2412,7 +2436,7 @@ def _map_responses_citations(
                     anchor=_marker_citation_anchor(start, end, text),
                 )
             )
-        elif isinstance(annotation, responses.response_output_text.AnnotationFileCitation):
+        else:
             citations.append(
                 Citation(
                     sources=[DocumentCitationSource(document_id=annotation.file_id, title=annotation.filename)],
@@ -2424,18 +2448,12 @@ def _map_responses_citations(
 def _responses_citations_provider_details(
     annotations: Sequence[responses.response_output_text.Annotation],
 ) -> dict[str, Any]:
-    citations: list[responses.response_output_text.Annotation] = [
-        annotation
-        for annotation in annotations
-        if isinstance(
-            annotation,
-            (
-                responses.response_output_text.AnnotationURLCitation,
-                responses.response_output_text.AnnotationFileCitation,
-            ),
-        )
-    ]
-    return {'citations': responses_output_text_annotations_ta.dump_python(citations, warnings=False)}
+    return {
+        'citations': [
+            annotation.model_dump(mode='json', warnings=False)
+            for annotation in _responses_citation_annotations(annotations)
+        ]
+    }
 
 
 def _chat_citations_provider_details(annotations: Sequence[BaseModel]) -> dict[str, Any]:
@@ -2492,7 +2510,8 @@ def _map_chat_content(
             text_parts[-1].provider_name = provider_name
             text_parts[-1].provider_details = {
                 **(text_parts[-1].provider_details or {}),
-                'annotations': chat_annotations_ta.dump_python(message.annotations, warnings=False),
+                # Dumped one by one, so OpenRouter's own annotation types keep their fields.
+                'annotations': [annotation.model_dump(mode='json') for annotation in message.annotations],
             }
     return [
         replace(part, id='content', provider_name=provider_name) if isinstance(part, ThinkingPart) else part
@@ -5705,10 +5724,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     raw_annotations = _annotations_by_item.pop(content_key, [])
                     if raw_annotations and self._model_settings.get('openai_include_raw_annotations'):
                         provider_details['annotations'] = raw_annotations
-                    try:
-                        annotations = responses_output_text_annotations_ta.validate_python(raw_annotations)
-                    except ValidationError:
-                        annotations = []
+                    annotations: list[responses.response_output_text.Annotation] = []
+                    for raw_annotation in raw_annotations:
+                        try:
+                            annotations.append(responses_output_text_annotation_ta.validate_python(raw_annotation))
+                        except ValidationError:
+                            pass  # an annotation type the SDK doesn't know
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if (
