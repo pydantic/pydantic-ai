@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -9,8 +10,17 @@ from cassetter import Cassette
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, ComputerUse
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    PartStartEvent,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import Click, TypeText, WorkspaceBackend, WorkspaceError, WorkspaceRef
 
 from ...cassette_utils import request_json
@@ -25,7 +35,21 @@ with try_import() as imports_successful:
         AsyncAnthropicFoundry,
         AsyncAnthropicVertex,
     )
-    from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
+    from anthropic.types.beta import (
+        BetaInputJSONDelta,
+        BetaMessage,
+        BetaMessageDeltaUsage,
+        BetaRawContentBlockDeltaEvent,
+        BetaRawContentBlockStartEvent,
+        BetaRawContentBlockStopEvent,
+        BetaRawMessageDeltaEvent,
+        BetaRawMessageStartEvent,
+        BetaRawMessageStopEvent,
+        BetaTextBlock,
+        BetaToolUseBlock,
+        BetaUsage,
+    )
+    from anthropic.types.beta.beta_raw_message_delta_event import Delta
 
     from pydantic_ai.models.anthropic import AnthropicModel, _map_computer_member  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -253,7 +277,12 @@ async def test_computer_calls_from_another_provider_replay_as_a_plain_tool_call(
         ),
         ('middle_click', {}, {'type': 'click', 'button': 'middle', 'count': 1, 'modifiers': []}),
         ('double_click', {}, {'type': 'click', 'button': 'left', 'count': 2, 'modifiers': []}),
-        ('mouse_move', {'coordinate': [3, 4]}, {'type': 'move', 'x': 3, 'y': 4}),
+        ('mouse_move', {'coordinate': [3, 4]}, {'type': 'move', 'x': 3, 'y': 4, 'modifiers': []}),
+        (
+            'mouse_move',
+            {'coordinate': [3, 4], 'text': 'shift'},
+            {'type': 'move', 'x': 3, 'y': 4, 'modifiers': ['shift']},
+        ),
         (
             'left_click_drag',
             {'start_coordinate': [1, 2], 'coordinate': [3, 4]},
@@ -296,3 +325,131 @@ def test_the_toolset_goes_to_the_models_that_accept_it(model_name: str, native: 
     profile = anthropic_model_profile(model_name)
     assert profile is not None
     assert profile.get('anthropic_supports_computer_toolset', False) is native
+
+
+def _stream(*blocks: Any) -> list[Any]:
+    """The events Anthropic streams for a message made of these blocks."""
+    events: list[Any] = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='msg_1',
+                model='claude-sonnet-5-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=1, output_tokens=0),
+            ),
+        )
+    ]
+    for index, block in enumerate(blocks):
+        if isinstance(block, BetaToolUseBlock):
+            start = block.model_copy(update={'input': {}})
+            events.append(BetaRawContentBlockStartEvent(type='content_block_start', index=index, content_block=start))
+            events.append(
+                BetaRawContentBlockDeltaEvent(
+                    type='content_block_delta',
+                    index=index,
+                    delta=BetaInputJSONDelta(type='input_json_delta', partial_json=json.dumps(block.input)),
+                )
+            )
+        else:
+            events.append(BetaRawContentBlockStartEvent(type='content_block_start', index=index, content_block=block))
+        events.append(BetaRawContentBlockStopEvent(type='content_block_stop', index=index))
+    events.append(
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='tool_use'),
+            usage=BetaMessageDeltaUsage(output_tokens=1),
+        )
+    )
+    events.append(BetaRawMessageStopEvent(type='message_stop'))
+    return events
+
+
+COMPUTER = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind='computer')
+
+
+async def test_streamed_and_whole_responses_give_the_same_calls_and_each_batch_starts_once(
+    allow_model_requests: None,
+) -> None:
+    # Text between member calls ends a batch, so this turn is two `computer` calls.
+    blocks = [
+        _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),
+        _tool_use('toolu_2', 'type', {'text': 'hi'}),
+        BetaTextBlock(text='Now the other field.', type='text'),
+        _tool_use('toolu_3', 'key', {'text': 'Return'}),
+    ]
+    params = ModelRequestParameters(function_tools=[COMPUTER], allow_text_output=True)
+    prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+
+    whole_client = MockAnthropic.create_mock(_turn(*blocks))
+    whole = await AnthropicModel(
+        'claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=whole_client)
+    ).request(prompt, None, params)
+
+    stream_client = MockAnthropic.create_stream_mock(_stream(*blocks))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(anthropic_client=stream_client))
+    async with model.request_stream(prompt, None, params) as stream:
+        events = [event async for event in stream]
+    streamed = stream.get()
+
+    def calls(response: ModelResponse) -> list[tuple[str, Any]]:
+        return [(part.tool_call_id, part.args_as_dict()) for part in response.parts if isinstance(part, ToolCallPart)]
+
+    assert (
+        calls(streamed)
+        == calls(whole)
+        == [
+            (
+                'toolu_1',
+                {
+                    'actions': [
+                        {'type': 'click', 'x': 5, 'y': 6, 'button': 'left', 'count': 1, 'modifiers': []},
+                        {'type': 'type', 'text': 'hi'},
+                    ]
+                },
+            ),
+            ('toolu_3', {'actions': [{'type': 'keypress', 'keys': ['Return'], 'repeat': 1}]}),
+        ]
+    )
+    assert [type(part) for part in streamed.parts] == [type(part) for part in whole.parts]
+    starts = [
+        event.part for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
+    ]
+    assert [part.tool_call_id for part in starts] == ['toolu_1', 'toolu_3']
+
+
+async def test_the_toolset_follows_tool_choice(allow_model_requests: None) -> None:
+    client = MockAnthropic.create_mock([_turn(BetaTextBlock(text='ok', type='text'))] * 2)
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(anthropic_client=client))
+    note = ToolDefinition(name='note', parameters_json_schema={'type': 'object'})
+    other = ToolDefinition(name='other', parameters_json_schema={'type': 'object'})
+    params = ModelRequestParameters(function_tools=[COMPUTER, note, other], allow_text_output=True)
+    prompt: list[ModelMessage] = [ModelRequest.user_text_prompt('Go.')]
+
+    await model.request(prompt, {'tool_choice': ['computer']}, params)
+    await model.request(prompt, {'tool_choice': ['note', 'other']}, params)
+
+    forced, without = get_mock_chat_completion_kwargs(client)
+    # The toolset can't be named, so forcing the computer offers it alone and requires a tool.
+    assert [tool['type'] for tool in forced['tools']] == ['computer_toolset_20260801']
+    assert forced['tool_choice'] == {'type': 'any'}
+    assert [tool.get('name') for tool in without['tools']] == ['note', 'other']
+
+
+async def test_a_result_without_its_metadata_reads_as_every_call_having_run() -> None:
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='unused'))
+    blocks: list[dict[str, Any]] = [
+        {'id': 'toolu_1', 'type': 'tool_use', 'name': 'left_click', 'input': {}, 'toolset_name': 'computer'},
+        {'id': 'toolu_2', 'type': 'tool_use', 'name': 'type', 'input': {'text': 'hi'}, 'toolset_name': 'computer'},
+    ]
+    part = ToolReturnPart('computer', 'Ran 2 actions.', tool_call_id='toolu_1')
+
+    results = await model._map_computer_results(part, blocks)  # pyright: ignore[reportPrivateUsage]
+
+    assert [(r['tool_use_id'], r.get('is_error'), r.get('content')) for r in results] == [
+        ('toolu_1', False, [{'text': 'OK', 'type': 'text'}]),
+        ('toolu_2', False, [{'text': 'OK', 'type': 'text'}]),
+    ]

@@ -1951,7 +1951,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 | BetaAdvisorToolResultBlock,
             )
         }
+        computer_def = computer_tool(model_request_parameters)
+        previous: BetaContentBlock | None = None
         for item in response.content:
+            # A member call right after another is part of the same batch.
+            follows_member, previous = _is_computer_member(previous, computer_def), item
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaServerToolUseBlock):
@@ -1997,11 +2001,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
-                if item.toolset_name == 'computer' and (computer_def := computer_tool(model_request_parameters)):
+                if computer_def is not None and _is_computer_member(item, computer_def):
                     # A turn's consecutive member calls are one batch: they become one `computer` call.
-                    blocks = [*_computer_blocks(items[-1] if items else None), _computer_block(item)]
-                    if len(blocks) > 1:
-                        items.pop()
+                    blocks = [_computer_block(item)]
+                    if follows_member:
+                        blocks[:0] = _computer_blocks(items.pop())
                     items.append(_computer_call_part(blocks, computer_def.name, self.system))
                     continue
                 items.append(
@@ -2269,6 +2273,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
+        native_computer = self._native_computer_tool(model_request_parameters)
 
         tool_choice: BetaToolChoiceParam
 
@@ -2282,7 +2287,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_choice_mode, tool_names = resolved_tool_choice
             supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
-                if supports:
+                if supports and native_computer is not None and native_computer.name in tool_names:
+                    # The toolset can't be named, so it is forced as the only tool on offer.
+                    tool_defs = {native_computer.name: tool_defs[native_computer.name]}
+                    tool_choice = {'type': 'any'}
+                elif supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
                 else:
                     # Forcing not supported (extended thinking, or a model that rejects it outright):
@@ -2310,7 +2319,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
         ]
-        if (native_computer := self._native_computer_tool(model_request_parameters)) is not None:
+        if native_computer is not None and native_computer.name in tool_defs:
             # The toolset stands in for the `computer` tool; `_computer_call_part` maps its calls back.
             tools = [tool for tool in tools if tool.get('name') != native_computer.name]
             tools.append(
@@ -3346,16 +3355,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ran it goes on the first call that didn't, and is left out when the only call failed.
         """
         raw_metadata: Any = part.metadata
-        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else None
+        # A result without its metadata, such as one rebuilt by a UI, reads as every call having run.
+        metadata = cast(dict[str, Any], raw_metadata) if isinstance(raw_metadata, dict) else {}
         if part.outcome != 'success':
             performed, error = 0, part.model_response_str(wrap_if_error=False)
-        elif metadata is not None:
+        else:
             performed, error = (
                 cast(int, metadata.get('performed', len(blocks))),
                 cast(str | None, metadata.get('error')),
             )
-        else:  # pragma: no cover - `ComputerUse` always sets the metadata
-            performed, error = len(blocks), None
         screenshot = [
             await self._map_file_to_content_block(file, 'tool returns')
             for file in part.files
@@ -3747,10 +3755,21 @@ class AnthropicStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
-            # A turn's consecutive computer toolset calls stream as one `computer` call, rebuilt as each one ends.
+            # A turn's consecutive computer toolset calls stream as one `computer` call, emitted once the batch ends.
             computer_def = computer_tool(self.model_request_parameters)
             computer_group: list[dict[str, Any]] = []
             computer_input: list[str] = []
+
+            def end_computer_call() -> ModelResponseStreamEvent | None:
+                nonlocal computer_group
+                if not computer_group:
+                    return None
+                assert computer_def is not None
+                group, computer_group = computer_group, []
+                return self._parts_manager.handle_part(
+                    vendor_part_id=f'computer-{group[0]["id"]}',
+                    part=_computer_call_part(group, computer_def.name, self.provider_name),
+                )
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
@@ -3783,7 +3802,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if _is_computer_member(current_block, computer_def):
                         computer_input = []
                         continue
-                    computer_group = []
+                    if (computer_call := end_computer_call()) is not None:
+                        yield computer_call
                     if isinstance(current_block, BetaTextBlock) and current_block.text:
                         for event_ in self._parts_manager.handle_text_delta(
                             vendor_part_id=event.index, content=current_block.text
@@ -3990,10 +4010,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                         if computer_input:
                             block['input'] = pydantic_core.from_json(''.join(computer_input))
                         computer_group.append(block)
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=f'computer-{computer_group[0]["id"]}',
-                            part=_computer_call_part(computer_group, computer_def.name, self.provider_name),
-                        )
                     elif event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):
@@ -4021,6 +4037,8 @@ class AnthropicStreamedResponse(StreamedResponse):
                     current_block = None
                 elif isinstance(event, BetaRawMessageStopEvent):  # pragma: no branch
                     current_block = None
+            if (computer_call := end_computer_call()) is not None:
+                yield computer_call
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -4834,13 +4852,13 @@ def _map_computer_member(name: str, input: dict[str, Any]) -> dict[str, Any]:
     """One computer toolset call as a `computer` tool action; an unknown member fails validation, so the model retries."""
     coordinate: list[int] = input.get('coordinate') or []
     position = {'x': coordinate[0], 'y': coordinate[1]} if len(coordinate) == 2 else {}
-    modifiers = [input['text']] if input.get('text') else []  # keys held during a click, scroll or drag
+    modifiers = [input['text']] if input.get('text') else []  # keys held during a click, move, scroll or drag
     if name in _COMPUTER_CLICKS:
         button, count = _COMPUTER_CLICKS[name]
         return {'type': 'click', **position, 'button': button, 'count': count, 'modifiers': modifiers}
     match name:
         case 'mouse_move':
-            return {'type': 'move', **position}
+            return {'type': 'move', **position, 'modifiers': modifiers}
         case 'left_click_drag':
             # A missing end leaves the path too short to validate, so the model is asked again.
             start: list[int] = input.get('start_coordinate') or []
