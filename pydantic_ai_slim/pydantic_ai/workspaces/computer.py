@@ -5,15 +5,14 @@ pointer and key holds Anthropic's tool adds. Actions are validated on constructi
 bounded, and unknown fields are ignored. Coordinates are pixels of the backend's screenshot, with the origin at the top left; a click or
 scroll without coordinates happens at the pointer.
 
-Common key names are normalized to one lowercase spelling (`ctrl`, `shift`, `alt`, `super`, `enter`, `escape`,
-`tab`, `backspace`, `delete`, `insert`, `home`, `end`, `pageup`, `pagedown`, `up`, `down`, `left`, `right`,
-`space`, `f1` to `f24`, and single characters), and a combination written as one name, such as `ctrl+s`, is split
-into its keys. Other names, such as the X keysym `KP_Enter`, are kept as written; a backend refuses names it can't
-press.
+Common key names are normalized to one lowercase spelling, and a combination written as one name, such as `ctrl+s`,
+is split into its keys. Other names, such as the X keysym `KP_Enter`, are kept as written; a backend refuses names it
+can't press.
 """
 
 from __future__ import annotations as _annotations
 
+import re
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import ConfigDict, Field
@@ -111,15 +110,12 @@ def _normalize_key(key: str) -> str:
     return key
 
 
-def _split_combination(key: str) -> list[str]:
-    # `ctrl+s` is one combination written as one name; a lone `+`, or one after the last `+` (`ctrl++`), is the plus key.
-    if len(key) > 2 and key.endswith('++'):
-        return [*_split_combination(key[:-2]), '+']
-    return key.split('+') if len(key) > 1 and '+' in key.strip('+') else [key]
+_COMBINATION = re.compile(r'(?<=.)\+(?=.)')
+"""A `+` between two characters joins keys, as in `ctrl+s`; a lone `+`, or the last one in `ctrl++`, is the plus key."""
 
 
 def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(_normalize_key(part) for key in keys for part in _split_combination(key) if part)
+    return tuple(_normalize_key(part) for key in keys for part in _COMBINATION.split(key) if part)
 
 
 def _check_position(x: int | None, y: int | None) -> None:

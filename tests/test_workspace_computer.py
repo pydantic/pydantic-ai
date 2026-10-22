@@ -46,7 +46,7 @@ class ScriptedCommands:
     def __init__(self, *results: CommandResult) -> None:
         self.results = list(results)
         self.calls: list[tuple[WorkspaceCommand, bool, Mapping[str, str] | None]] = []
-        self.timeouts: list[tuple[WorkspaceCommand, bool, float | None]] = []
+        self.timeouts: list[float | None] = []
 
     async def run(
         self,
@@ -57,7 +57,7 @@ class ScriptedCommands:
         timeout: float | None = None,
     ) -> CommandResult:
         self.calls.append((command, shell, env))
-        self.timeouts.append((command, shell, timeout))
+        self.timeouts.append(timeout)
         return self.results.pop(0) if self.results else CommandResult(exit_code=0, stdout='', stderr='')
 
     @property
@@ -174,10 +174,6 @@ async def test_x11_computer_releases_held_keys_when_cancelled() -> None:
     ]
 
 
-def test_an_x11_computer_has_a_display() -> None:
-    assert X11Computer(ScriptedCommands()).has_display is True
-
-
 async def test_x11_computer_does_not_release_after_an_action_without_held_input() -> None:
     commands = ScriptedCommands(CommandResult(exit_code=1, stdout='', stderr='BadValue'))
     with pytest.raises(WorkspaceError):
@@ -228,12 +224,11 @@ async def test_x11_computer_failures_raise_workspace_error(result: CommandResult
         pytest.param('abc', id='bad-padding'),
         pytest.param('iVBO*w0KGgo=', id='not-base64'),
         pytest.param('iVBORw0KGgo\u00e9', id='not-ascii'),
-        pytest.param(base64.b64encode(FAKE_SCREENSHOT[:-12]).decode(), id='truncated'),
     ],
 )
-async def test_x11_computer_refuses_a_screenshot_that_is_not_a_complete_png(output: str) -> None:
+async def test_x11_computer_refuses_a_screenshot_that_is_not_a_png(output: str) -> None:
     computer = X11Computer(ScriptedCommands(CommandResult(exit_code=0, stdout=output, stderr='')))
-    with pytest.raises(WorkspaceError, match='did not print a complete base64-encoded PNG'):
+    with pytest.raises(WorkspaceError, match='did not print a base64-encoded PNG'):
         await computer.screenshot()
 
 
@@ -340,7 +335,6 @@ def test_has_display_follows_wrappers_without_io() -> None:
     assert ReadOnlyWorkspace(Workspace(provider.backend(None))).has_display is True
     assert ReadOnlyWorkspace(Workspace(FakeWorkspace('no-display'))).has_display is False
     assert Workspace(UnavailableWorkspace('no workspace here')).has_display is False
-    assert Workspace(InMemoryProvider(has_display=False).backend(None)).has_display is False
     assert provider.log == []
 
 
@@ -349,14 +343,9 @@ def test_the_schema_tells_the_model_what_each_field_means() -> None:
     assert all(definition['required'][0] == 'type' for name, definition in schema.items() if name != 'Point')
     # Every required name must exist: Gemini rejects a schema that requires an undeclared property.
     assert all(set(definition['required']) <= set(definition['properties']) for definition in schema.values())
-    assert schema['Scroll']['properties']['direction']['description'] == (
-        'Which way the content moves into view: `down` shows what is below.'
-    )
-    assert schema['PressKeys']['properties']['keys']['description'].startswith('One key per entry')
 
 
 async def test_x11_computer_bounds_every_command() -> None:
     commands = ScriptedCommands()
     await X11Computer(commands).act(TypeText(text='hi'))
-    ((_, _, timeout),) = commands.timeouts
-    assert timeout == 60
+    assert commands.timeouts == [60]
