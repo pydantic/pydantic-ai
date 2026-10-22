@@ -37,7 +37,7 @@ from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
@@ -1459,12 +1459,14 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     assert 'get_weather' in local_names
     assert 'search_tools' in local_names
 
-    # An undiscovered deferred tool is in the dispatch dict but not callable: `ToolManager`
-    # gates on availability, so the model is told to search rather than that it doesn't exist.
-    with pytest.raises(ToolRetryError, match='is not available yet'):
-        await run_step_toolset.handle_call(
-            ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
-        )
+    # Dispatching a known name does not disclose its schema or remove it from the search corpus.
+    result = await run_step_toolset.handle_call(
+        ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
+    )
+    assert result == 'Mortgage calculated'
+    assert ctx.discovered_tool_names == set()
+    mortgage = next(tool for tool in run_step_toolset.tool_defs if tool.name == 'calculate_mortgage')
+    assert not ctx.is_tool_available(mortgage)
 
     # The local search_tools function is also dispatchable.
     result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}))
@@ -7764,17 +7766,15 @@ async def test_searchable_corpus_survives_discovery_and_compaction() -> None:
     assert executed == ['a']
 
 
-async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
-    """A model that remembers a pre-compaction tool from the summary is asked to search again
-    rather than allowed to call it, so the search exchange that justifies the call is regenerated
-    on the near side of the boundary."""
+async def test_pre_compaction_tool_remains_callable_without_redisclosure() -> None:
+    """Compaction resets schema disclosure, but a remembered tool name remains callable."""
     toolset = FunctionToolset()
     executed: list[str] = []
 
     @toolset.tool_plain(defer_loading=True)
     def issue_refund() -> str:
-        executed.append('issue_refund')  # pragma: no cover
-        return 'refunded'  # pragma: no cover
+        executed.append('issue_refund')
+        return 'refunded'
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='discover tools')]),
@@ -7790,23 +7790,25 @@ async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
         ),
     ]
 
-    refusals: list[str] = []
-
-    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert 'issue_refund' not in {tool.name for tool in info.function_tools}
         for part in iter_message_parts(messages, ModelRequest, ToolReturnPart):
-            if part.outcome != 'retried':
-                continue
-            refusals.append(str(part.content))
-            return ModelResponse(parts=[TextPart('done')])
+            if part.tool_name == 'issue_refund':
+                assert (part.outcome, part.content) == ('success', 'refunded')
+                return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 
     agent: Agent[None, str] = Agent(
         NoNativeToolSearchModel(model_fn), toolsets=[toolset], capabilities=[ToolSearch()], deps_type=type(None)
     )
-    await agent.run('refund now', message_history=history)
+    result = await agent.run('refund now', message_history=history)
 
-    assert executed == []
-    assert refusals and 'search for it first' in refusals[0]
+    assert result.output == 'done'
+    assert executed == ['issue_refund']
+    assert not list(iter_message_parts(result.new_messages(), ModelRequest, ToolSearchReturnPart))
+    assert not any(
+        isinstance(part, ToolAvailabilityDeltaPart) for message in result.new_messages() for part in message.parts
+    )
 
 
 async def test_delta_in_history_does_not_reveal_a_capability_tool_without_a_load(allow_model_requests: None):

@@ -26,7 +26,7 @@ from pydantic_core import ErrorDetails
 from pydantic_ai import Agent, BinaryImage, ModelRequestContext, RunContext, capture_run_messages
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai._output import build_retried_tool_return
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import Capability, Hooks
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.exceptions import (
     CallDeferred,
@@ -1781,7 +1781,7 @@ answer with the number spelled out
 
 _RETRY_CAUSE_CASES: dict[str, tuple[str, dict[str, Any], RetryInfo[ToolRetryCause]]] = {
     'unknown_tool': ('ghost_tool', {}, RetryInfo(cause='unknown_tool', attempt=1, max_retries=1)),
-    # A tool's first availability refusal is free, so it isn't an attempt on the budget.
+    # A tool's first inactive-owner refusal is free, so it isn't an attempt on the budget.
     'unavailable_tool': ('hidden_tool', {}, RetryInfo(cause='unavailable_tool')),
     'validation_error': (
         'count_things',
@@ -1796,9 +1796,9 @@ _RETRY_CAUSE_CASES: dict[str, tuple[str, dict[str, Any], RetryInfo[ToolRetryCaus
 async def test_a_retried_tool_return_records_why_it_was_retried(cause: str):
     """Each way a tool call is retried is recorded on the retried return, in history and in the event stream.
 
-    The two the tool manager rejects before running anything, an unknown name and a tool that isn't
-    available yet, are the ones a capability can't see through any tool hook, so `cause` is how an
-    audit tells them apart from a retry the tool asked for.
+    The two the tool manager rejects before running anything, an unknown name and a tool whose
+    owning capability is inactive, are the ones a capability can't see through any tool hook, so
+    `cause` is how an audit tells them apart from a retry the tool asked for.
     """
     tool_name, args, retry = _RETRY_CAUSE_CASES[cause]
 
@@ -1815,11 +1815,13 @@ async def test_a_retried_tool_return_records_why_it_was_retried(cause: str):
             assert isinstance(part, ToolCallPart)
             yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id='call_1')}
 
-    agent = Agent(FunctionModel(respond, stream_function=stream))
+    owner = Capability[None](id='hidden', description='Hidden tools.', defer_loading=True)
 
-    @agent.tool_plain(defer_loading=True)
+    @owner.tool_plain
     def hidden_tool() -> str:
         return 'secret'  # pragma: no cover
+
+    agent = Agent(FunctionModel(respond, stream_function=stream), capabilities=[owner], deps_type=type(None))
 
     @agent.tool_plain
     def count_things(count: int) -> int:
