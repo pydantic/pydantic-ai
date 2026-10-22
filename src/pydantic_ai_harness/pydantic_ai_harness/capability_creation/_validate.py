@@ -11,13 +11,15 @@ import hashlib
 import sys
 import threading
 import uuid
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from types import ModuleType
 from typing import TYPE_CHECKING, TypeGuard
 
 from pydantic_ai._instructions import normalize_instructions
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import InstructionPart
+from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.toolsets import AbstractToolset
 
 if TYPE_CHECKING:
@@ -42,6 +44,25 @@ def _check_toolset_return(value: object) -> None:
         raise CapabilityValidationError(
             f'get_toolset() returned {type(value).__name__}, expected an AbstractToolset, a callable, or None'
         )
+
+
+def _check_instruction_items(items: Iterable[object]) -> None:
+    """Reject a `get_instructions` item the run cannot render: each must be text, an `InstructionPart`, or a callable."""
+    for item in items:
+        if not isinstance(item, (str, InstructionPart)) and not callable(item):
+            raise CapabilityValidationError(
+                f'get_instructions() returned a {type(item).__name__} item, '
+                f'expected a str, an InstructionPart, or a callable'
+            )
+
+
+def _check_native_tool_items(items: Iterable[object]) -> None:
+    """Reject a `get_native_tools` item the agent cannot use: each must be an `AbstractNativeTool` or a callable."""
+    for item in items:
+        if not isinstance(item, AbstractNativeTool) and not callable(item):
+            raise CapabilityValidationError(
+                f'get_native_tools() returned a {type(item).__name__} item, expected an AbstractNativeTool or a callable'
+            )
 
 
 def _check_model_settings_return(value: object) -> None:
@@ -153,9 +174,9 @@ def _construct(source: Path, file: Path, *, keep: bool) -> AbstractCapability[ob
             exec(compiled, module.__dict__)
             cls = _find_capability_class(module)
             instance = cls()
-            normalize_instructions(instance.get_instructions())
+            _check_instruction_items(normalize_instructions(instance.get_instructions()))
             _check_toolset_return(instance.get_toolset())
-            list(instance.get_native_tools())
+            _check_native_tool_items(instance.get_native_tools())
             _check_model_settings_return(instance.get_model_settings())
             cls.get_serialization_name()
     except CapabilityValidationError:
@@ -169,11 +190,13 @@ def load_capability_instance(path: Path) -> AbstractCapability[object]:
     """Import, construct, and check the authored capability, returning the instance.
 
     Runs the static getters (`get_instructions`, `get_toolset`, `get_native_tools`,
-    `get_model_settings`, `get_serialization_name`) and checks their returns with
-    the same coercions the agent applies, so a wrong return type fails here instead
-    of crashing the next `agent.run`. The async lifecycle hooks need a live
-    `RunContext` and are not invoked. `SystemExit` raised by the authored code is
-    reported as a validation error rather than ending the process.
+    `get_model_settings`, `get_serialization_name`) and checks their returns, down to
+    each instruction and native tool, against the types the agent accepts, so a wrong
+    return type fails here instead of crashing the next `agent.run`. The async
+    lifecycle hooks need a live `RunContext` and are not invoked. `SystemExit` raised
+    by the authored code is reported as a validation error rather than ending the
+    process. Loads of the same source from different threads run one at a
+    time.
 
     Returns an `AbstractCapability[object]`; `AgentDepsT` is contravariant, so the
     instance is accepted by any agent's `capabilities=` parameter.
