@@ -37,6 +37,7 @@ from ..messages import (
 )
 from ..models import (
     ModelRequestParameters,
+    _drop_superseded_request_scoped_prompts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _wrap_non_leading_system_prompts,  # pyright: ignore[reportPrivateUsage]
     download_item,
@@ -74,11 +75,13 @@ def wrap_seeded_system_prompts(messages: Sequence[ModelMessage]) -> list[ModelMe
     """Turn the mid-conversation `SystemPromptPart`s in seeded history into `<system>`-tagged user text.
 
     The standing system prompt is left for the seeders to skip, as `session_instructions` carries it.
-    A later system prompt stays where it was in the conversation: the same degradation
-    `Model.prepare_messages` applies for a model without inline system prompts.
+    A later system prompt stays where it was in the conversation, and a request-scoped one whose request
+    has been answered is left out: what `Model.prepare_messages` does for a model without inline or
+    request-scoped system prompts.
     """
+    messages = _drop_superseded_request_scoped_prompts(list(messages))
     standing_prompt_count = len(_standing_system_prompt(messages))
-    return _wrap_non_leading_system_prompts(list(messages), standing_prompt_count=standing_prompt_count)
+    return _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
 
 def resolve_advertised_tools(

@@ -609,6 +609,7 @@ class RealtimeSession:
         retain_images_max: int | None = 100,
         retain_audio_max_seconds: float | None = 1800,
         message_history: Sequence[ModelMessage] | None = None,
+        system_prompt: Sequence[SystemPromptPart] = (),
         profile: RealtimeModelProfile | None = None,
         owns_media: bool = True,
         provider_session: RealtimeProviderSession | None = None,
@@ -721,6 +722,9 @@ class RealtimeSession:
 
         # The conversation the session was opened with: the core's history starts from it.
         self._seeded: list[ModelMessage] = list(message_history or [])
+        # A fresh conversation records the agent's system prompt first, as a standard run's first request does,
+        # so a handoff keeps it. Seeded history carries its own.
+        self._opening = ModelRequest(parts=list(system_prompt)) if system_prompt and not self._seeded else None
         # When the provider's VAD reported the user's current speech segment starting, in OTel's
         # nanosecond clock, so the `user speech` span can be backdated to it (see
         # `_record_user_speech_span`). `None` while nobody is speaking.
@@ -846,6 +850,7 @@ class RealtimeSession:
             input_sample_rate=self.audio_input_sample_rate,
             output_sample_rate=self.audio_output_sample_rate,
             seeded=self._seeded,
+            opening=self._opening,
             usage=self.usage,
             annotate_response=self._annotate_response,
         )

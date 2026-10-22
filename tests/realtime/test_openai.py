@@ -1698,6 +1698,37 @@ async def test_connect_sends_seeded_system_prompts(monkeypatch: pytest.MonkeyPat
     )
 
 
+async def test_seed_items_drop_answered_request_scoped_system_prompts() -> None:
+    """A request-scoped system prompt whose request was answered isn't seeded; the current request's still is.
+
+    That's what `Model.prepare_messages` does for a model that can't clear request-scoped prompts itself.
+    """
+    history = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Standing prompt.'),
+                SystemPromptPart(content='Answered note.', scope='request'),
+                UserPromptPart(content='hi'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='hello')]),
+        ModelRequest(
+            parts=[SystemPromptPart(content='Current note.', scope='request'), UserPromptPart(content='more')]
+        ),
+    ]
+    items = await seed_items(history, profile=RealtimeModelProfile(), provider_name='openai')
+    assert [(item['role'], [content['text'] for content in item['content']]) for item in items] == (
+        snapshot(
+            [
+                ('user', ['hi']),
+                ('assistant', ['hello']),
+                ('user', ['<system>Current note.</system>']),
+                ('user', ['more']),
+            ]
+        )
+    )
+
+
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'url-image', 'data_type': 'image/png'}

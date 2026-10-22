@@ -8059,6 +8059,119 @@ async def test_agent_realtime_session_seeded_system_prompt_joins_instructions() 
     assert model.last_instructions == 'Seeded system prompt.\n\nAgent instructions.'
 
 
+async def test_agent_realtime_session_records_system_prompt_for_handoff() -> None:
+    """A fresh session records the agent's system prompt first, as a standard run's first request holds it.
+
+    So `new_messages()` includes it, a text run continuing the conversation sends it once (and doesn't add
+    the agent's again), and a session seeded with the history configures it as instructions rather than
+    replaying it.
+    """
+    agent: Agent[None, str] = Agent(system_prompt='Static system prompt.', instructions='Agent instructions.')
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Dynamic system prompt.'
+
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeInputSpeechStartEvent(item_id='u1'),
+            RealtimeInputSpeechEndEvent(item_id='u1'),
+            InputTranscript(text='question', is_final=True, item_id='u1'),
+            OutputTranscript(text='answer', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        _ = [e async for e in session]
+    history = session.all_messages()
+    assert history == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='Static system prompt.', timestamp=IsDatetime()),
+                    SystemPromptPart(
+                        content='Dynamic system prompt.',
+                        timestamp=IsDatetime(),
+                        dynamic_ref=dynamic_prompt.__qualname__,
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[SpeechPart(speaker='user', transcript='question')],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='answer')],
+                model_name='fake-realtime',
+                timestamp=IsDatetime(),
+                provider_name='fake',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert session.new_messages() == history
+    assert session.result is not None and session.result.new_messages() == history
+
+    sent: list[ModelMessage] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.extend(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    await agent.run('next', model=FunctionModel(respond), message_history=history)
+    assert [part.content for m in sent for part in m.parts if isinstance(part, SystemPromptPart)] == [
+        'Static system prompt.',
+        'Dynamic system prompt.',
+    ]
+
+    reseeded = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(reseeded, message_history=history).session() as session:
+        _ = [e async for e in session]
+    assert reseeded.last_instructions == snapshot("""\
+Static system prompt.
+
+Dynamic system prompt.
+
+Agent instructions.\
+""")
+    # The seeded system prompt isn't recorded a second time.
+    assert [type(m) for m in session.all_messages()] == [type(m) for m in history]
+
+
+async def test_agent_realtime_session_reevaluates_seeded_dynamic_system_prompt() -> None:
+    """As in a standard run, a dynamic system prompt in seeded history is re-run before it is sent."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.system_prompt(dynamic=True)
+    def dynamic_prompt() -> str:
+        return 'Current value.'
+
+    seed = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Stale value.', dynamic_ref=dynamic_prompt.__qualname__),
+                UserPromptPart(content='earlier question'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Current value.'
+    first = session.all_messages()[0]
+    assert isinstance(first, ModelRequest) and isinstance(first.parts[0], SystemPromptPart)
+    assert first.parts[0].content == 'Current value.'
+    assert seed[0].parts[0].content == 'Stale value.'  # pyright: ignore[reportAttributeAccessIssue]
+
+
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])

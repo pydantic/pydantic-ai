@@ -22,6 +22,11 @@ The session exposes copy-on-read snapshots:
 | [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] | Seeded history plus messages recorded during this session. |
 | [`new_messages()`][pydantic_ai.realtime.RealtimeSession.new_messages] | Only messages recorded during this session. |
 
+As in a standard run, a session started without `message_history` records the agent's
+[system prompts](../agent.md#system-prompts) first, as a `ModelRequest` of
+[`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s, so they carry over when the history is
+handed off or used to seed another session. The model receives them as part of the session instructions.
+
 ## Seeding a session
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,
