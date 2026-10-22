@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
@@ -160,30 +159,25 @@ def _render_transcript(messages: Sequence[ModelMessage]) -> str:
     return '\n'.join(lines)
 
 
-@contextmanager
-def claimed_request(ctx: RunContext[Any]) -> Generator[None]:
-    """Hold one request on the shared usage while the second model is awaited, or refuse it.
+def claim_request(ctx: RunContext[Any]) -> None:
+    """Claim one request on the shared usage before awaiting the second model, or refuse it.
 
     Sibling tool calls are executed concurrently and a nested run records its spend only once the
     response is in, so without a claim every judgement in a parallel batch passes preflight against
     the same `usage.requests` and the batch bills past the run's `request_limit`. Claiming here is
     atomic against siblings: the hook chain reaches this point without yielding the event loop.
     A claim the budget cannot fit raises the same `UsageLimitExceeded` the nested run's own
-    preflight would have raised. The claim is released when the block exits, once the nested run
-    has recorded its own request. Mirrors `pydantic_ai_harness.trajectory_judge`'s launch claim, in
-    the shape a synchronously awaited judgement needs.
+    preflight would have raised. The caller releases the claim once the nested run returns.
+    Mirrors `pydantic_ai_harness.trajectory_judge`'s launch claim, in the shape a synchronously
+    awaited judgement needs.
     """
     if ctx.usage_limits is not None:
         ctx.usage_limits.check_before_request(ctx.usage)
     ctx.usage.requests += 1
-    try:
-        yield
-    finally:
-        ctx.usage.requests -= 1
 
 
 def claim_offset_limits(limits: UsageLimits | None) -> UsageLimits | None:
-    """The run's limits with `request_limit` raised by the one request `claimed_request` holds.
+    """The run's limits with `request_limit` raised by the one request `claim_request` took.
 
     The claim already occupies a slot in the shared `usage.requests`, so against the unadjusted
     limit the nested run's own preflight would count its in-flight request twice and refuse a call

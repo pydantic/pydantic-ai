@@ -18,7 +18,7 @@ from .._judge import (
     JudgeAnswer as _JudgeAnswer,
     SerializableToolSelector,
     claim_offset_limits,
-    claimed_request,
+    claim_request,
     reported_confidence,
     tool_call_prompt,
 )
@@ -270,8 +270,11 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
         prompt = self._prompt(ctx, call, args)
         with ctx.tracer.start_as_current_span('judge tool call', attributes=attributes) as span:
             try:
-                with claimed_request(ctx):
+                claim_request(ctx)
+                try:
                     answer, confidence = await self._ask(ctx, prompt)
+                finally:
+                    ctx.usage.requests -= 1
             except Exception as error:
                 verdict = self._verdict(ctx, call, answer=None, confidence=None)
                 if span.is_recording():
