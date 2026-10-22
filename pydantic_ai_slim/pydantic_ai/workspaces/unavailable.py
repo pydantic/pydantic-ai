@@ -41,6 +41,11 @@ class UnavailableWorkspace(WorkspaceBackend, SupportsCommands, SupportsComputerU
     async def working_dir(self) -> Never:
         raise WorkspaceUnavailableError(self.reason)
 
+    @property
+    def has_display(self) -> bool:
+        """Always `False`: there is no environment, so no display."""
+        return False
+
     async def display_size(self) -> Never:
         raise WorkspaceUnavailableError(self.reason)
 

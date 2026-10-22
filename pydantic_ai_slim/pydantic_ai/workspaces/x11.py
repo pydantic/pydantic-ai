@@ -13,12 +13,12 @@ from .computer import (
     Click,
     ComputerAction,
     Drag,
-    HoldKey,
-    KeyPress,
+    HoldKeys,
     MouseButton,
     MouseDown,
     MouseUp,
     MoveMouse,
+    PressKeys,
     Scroll,
     TypeText,
 )
@@ -166,6 +166,11 @@ class X11Computer(SupportsComputerUse):
         self._backend = backend
         self._display = display
 
+    @property
+    def has_display(self) -> bool:
+        """Always `True`: an `X11Computer` is created for an environment that runs an X server."""
+        return True
+
     async def _run(self, command: list[str] | str) -> CommandResult:
         result = await self._backend.run(
             command, shell=isinstance(command, str), env={'DISPLAY': self._display}, timeout=_COMMAND_TIMEOUT
@@ -235,9 +240,9 @@ class X11Computer(SupportsComputerUse):
                 await self._holding(modifiers, [*_move(x, y), 'click', '--repeat', str(amount), wheel])
             case TypeText(text=text):
                 await self._xdotool(['type', '--', text])
-            case KeyPress(keys=keys, repeat=repeat):
+            case PressKeys(keys=keys, repeat=repeat):
                 await self._xdotool(['key', '--repeat', str(repeat), '--', '+'.join(_keysym(key) for key in keys)])
-            case HoldKey(keys=keys, seconds=seconds):
+            case HoldKeys(keys=keys, seconds=seconds):
                 await self._holding(keys, ['sleep', str(seconds)])
             case _:
                 raise UnsupportedComputerActionError(f'X11Computer cannot perform {action!r}.')

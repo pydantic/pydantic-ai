@@ -348,8 +348,12 @@ class InMemoryProvider:
     provider's does; a backend with no ref creates an environment on first use and takes its ref.
     """
 
-    def __init__(self, name: str = 'fake', *, in_unit: Callable[[], bool] | None = None) -> None:
+    def __init__(
+        self, name: str = 'fake', *, in_unit: Callable[[], bool] | None = None, has_display: bool = True
+    ) -> None:
         self.name = name
+        # Whether its environments have a display, the way a sandbox started with or without a desktop does.
+        self.has_display = has_display
         # Under a durable engine: whether the caller is inside a durable unit, the only place a remote
         # environment may be reached from.
         self.in_unit = in_unit
@@ -461,6 +465,10 @@ class ProviderBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, Su
         # The environment has no symlinks, so resolving a path only normalizes it.
         await self._files()
         return posixpath.normpath(path)
+
+    @property
+    def has_display(self) -> bool:
+        return self._provider.has_display
 
     async def display_size(self) -> tuple[int, int]:
         await self._files()
