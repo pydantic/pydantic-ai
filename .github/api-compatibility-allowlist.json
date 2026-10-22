@@ -53,6 +53,12 @@
       "fingerprint": "30907d84b32362b61fa212732b1ad3fb8fda3160dcd968b37470a5f39863fd67",
       "reason": "Adds the 'max' key for the new unified thinking effort level (#9993); existing keys are unchanged.",
       "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10920"
+    },
+    {
+      "against": "v2.59.0",
+      "fingerprint": "679024394731649b9cd4c4300679de05df481ee1512142e772055756302b9541",
+      "reason": "Adds the xAI Grok 4.6 and 4.7 Bedrock ids to `LatestBedrockModelNames`; every existing member is unchanged.",
+      "pull_request": "https://github.com/pydantic/pydantic-ai/pull/8639"
     }
   ]
 }

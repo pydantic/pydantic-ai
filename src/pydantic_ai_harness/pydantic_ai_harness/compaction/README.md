@@ -55,10 +55,12 @@ The retained tail is measured per message with `estimate_message_tokens`, so `ke
 tokens as the provider counts them. A response counts at least its reported `output_tokens`, which
 includes thinking that some providers return as an empty part with only a signature. The messages
 between two responses that carry usage share the difference between their `input_tokens`, which is
-exactly what the provider counted for them. A response a provider continued across several requests
-([Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode))
-enters that difference with its first request's input tokens, since its billed `input_tokens`
-re-count the earlier requests' output. Before the first such response, after the last, and
+exactly what the provider counted for them. A response whose billed usage sums several model
+requests enters that difference with the input tokens of the one that measures its context: the
+first request of a [Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode), or the last sampling pass
+of an [Anthropic response that reports its passes](https://pydantic.dev/docs/ai/models/anthropic/#server-side-tool-loops).
+That last pass also read the response's own earlier passes, so the difference credits them to the
+messages before it, and the tail measures high. Before the first such response, after the last, and
 where the history did not grow between two of them (as across an earlier compaction), `tokenizer` or the
 ~4-characters-per-token heuristic applies. Instructions are not part of the tail. A history with no
 provider usage is measured with the heuristic as before.
@@ -171,10 +173,12 @@ agent = Agent(
 ### What counts toward the fraction
 
 With a usage anchor, everything the provider billed for the anchored request counts -- including
-tool definitions and `FilePart` payloads, which no character estimate can see. A response a provider
-continued across several requests ([Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode))
-anchors on its first request's input tokens plus its output, since its billed input re-counts the
-earlier requests' output. For the messages
+tool definitions and `FilePart` payloads, which no character estimate can see. A response whose
+billed usage sums several model requests anchors on the input tokens of the one that measures its
+context, plus its output: the first request of a [Google long decode](https://pydantic.dev/docs/ai/models/google/#long-decode),
+whose billed input re-counts the earlier requests' output, or the last sampling pass of an
+[Anthropic response that reports its passes](https://pydantic.dev/docs/ai/models/anthropic/#server-side-tool-loops),
+whose billed input re-counts the context of each pass. For the messages
 after the anchor (and for whole histories with no reported usage), the estimator counts every part
 that is sent: prompts, system prompts, tool calls and their results, retry prompts,
 extended-thinking blocks, provider-side tool results, and the instructions, once. When the
