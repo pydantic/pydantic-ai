@@ -109,9 +109,9 @@ workspace's `PATH` instead.
 This capability surfaces findings only: it does not edit files, create
 worktrees, or commit. Pair it with `FileSystem` or `Shell` so the agent can
 read code and apply fixes. To keep fixes off your working tree, give the agent
-a separate worktree as its workspace. A large review returns every finding in
-one tool result; add [Tool Output Limits](tool-output-limits.md) to cap its
-size.
+a separate worktree as its workspace. The tool returns a review's findings in
+one result, which can be large; add [Tool Output Limits](tool-output-limits.md)
+to cap its size.
 
 ## Durable execution
 
