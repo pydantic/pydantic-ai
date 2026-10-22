@@ -629,7 +629,7 @@ async def test_a_model_without_a_batch_api_selected_mid_run_raises_at_its_reques
     """Each request is batched with the model serving it, so switching mid-run to one without a batch API raises then."""
     batched = SlowBatchTestModel()
 
-    def select(ctx: ModelSelectionContext[None]) -> Model:
+    def select(ctx: ModelSelectionContext[object]) -> Model:
         return batched if ctx.run_step <= 1 else _NoBatchModel()
 
     agent = Agent(batched, capabilities=[SelectModel(select), BatchModelRequests(**FAST_BATCH_SETTINGS)])
