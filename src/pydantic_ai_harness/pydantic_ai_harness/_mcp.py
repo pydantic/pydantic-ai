@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from os import environ
 
+from pydantic_ai._utils import await_maybe
+from pydantic_ai.capabilities import MCPAuthorizationTokenFunc
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._warn import MCPReadOnlyNoToolsWarning
 
@@ -24,6 +27,32 @@ def credential(auth: str | None, *, env: str | None, service: str) -> str:
             f'Set `{env}` or pass `auth` to connect to {service}.' if env else f'Pass `auth` to connect to {service}.'
         )
     return auth
+
+
+def connect_with_auth(
+    auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None,
+    connect: Callable[[str | None], AbstractToolset[AgentDepsT]],
+    *,
+    id: str | None,
+) -> AbstractToolset[AgentDepsT]:
+    """`connect(auth)` for a fixed `auth`; for a function of the run context, a toolset that connects per run.
+
+    The function, sync or async, is called at the start of each run, and that run connects with the token it
+    returns: each run then has a session of its own, opened as its own user. When it returns `None` or `''`, that run
+    has no tools, rather than `connect` falling back to the environment credential. The toolset is registered once
+    under `id`, as durable execution requires, and filled per run.
+    """
+    if not callable(auth):
+        return connect(auth)
+
+    async def connect_for_run(ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
+        token = await await_maybe(auth(ctx))
+        if token == 'oauth':
+            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
+            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
+        return connect(token) if token else None
+
+    return DynamicToolset(connect_for_run, per_run_step=False, id=id)
 
 
 def is_read_only(tool: ToolDefinition) -> bool:

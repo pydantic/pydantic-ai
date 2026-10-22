@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Literal
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, MCPAuthorizationTokenFunc
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, read_only_toolset
+from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
+from pydantic_ai_harness._mcp import connect_with_auth, credential, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset
@@ -61,7 +61,7 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
     description: str | None = _DEFAULT_DESCRIPTION
     """Describes the capability when the agent loads it on demand."""
 
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
+    auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
     """A Google access token or a function of the run context that returns one.
 
     Unset, it uses `GOOGLE_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no Google
@@ -86,23 +86,12 @@ class GoogleWorkspace(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT]:
         """Return the tools for the selected products, with names prefixed by product."""
-        toolset = (
-            DynamicToolset(self._connect_for_run, per_run_step=False, id=self._derived_id())
-            if callable(self.auth)
-            else self._connect(self.auth)
-        )
+        toolset = connect_with_auth(self.auth, self._connect, id=self._derived_id())
         return read_only_toolset(toolset) if self.read_only else toolset
 
     def _derived_id(self) -> str:
         """This capability's `id`, falling back to the one the products name."""
         return self.id if self.id is not None else f'google-workspace-{"-".join(sorted(self.services))}'
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> AbstractToolset[AgentDepsT]:
         auth = credential(auth, env='GOOGLE_ACCESS_TOKEN', service='Google Workspace')

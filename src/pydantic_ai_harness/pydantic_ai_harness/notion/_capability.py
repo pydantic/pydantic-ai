@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, MCPAuthorizationTokenFunc
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, DynamicToolset
-from pydantic_ai_harness._mcp import credential, one_connection, read_only_toolset
+from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai_harness._mcp import connect_with_auth, credential, one_connection, read_only_toolset
 
 try:
     from pydantic_ai.mcp import MCPToolset, MCPToolsetClient
@@ -31,7 +31,7 @@ class Notion(AbstractCapability[AgentDepsT]):
     one connection stated twice when they agree, and an error when they differ; give each its own `id` to keep both.
     """
     description: str | None = 'Search and change Notion workspace content.'
-    auth: str | Callable[[RunContext[AgentDepsT]], str | None] | None = field(default=None, repr=False)
+    auth: str | MCPAuthorizationTokenFunc[AgentDepsT] | None = field(default=None, repr=False)
     """A Notion OAuth access token, `'oauth'` to sign in through the browser locally, or a function of the run context that returns a token.
 
     Unset, it uses `NOTION_ACCESS_TOKEN`. A function never does: if it returns `None` or `''`, that run has no
@@ -60,21 +60,11 @@ class Notion(AbstractCapability[AgentDepsT]):
             toolset: AbstractToolset[AgentDepsT] = MCPToolset(
                 self.client, id=id, include_instructions=self.include_instructions
             )
-        elif callable(self.auth):
-            # Registered once under a fixed `id`, as durable execution requires; filled per run.
-            toolset = DynamicToolset(self._connect_for_run, per_run_step=False, id=id)
         else:
-            toolset = self._connect(self.auth)
+            toolset = connect_with_auth(self.auth, self._connect, id=id)
         if self.read_only:
             return read_only_toolset(toolset)
         return toolset
-
-    def _connect_for_run(self, ctx: RunContext[AgentDepsT]) -> MCPToolset[AgentDepsT] | None:
-        auth = self.auth(ctx) if callable(self.auth) else self.auth
-        if auth == 'oauth':
-            # FastMCP reads 'oauth' as "log in through a browser", which would hang a server run.
-            raise UserError("The `auth` function must return an API key or token, not 'oauth'.")
-        return self._connect(auth) if auth else None
 
     def _connect(self, auth: str | None) -> MCPToolset[AgentDepsT]:
         return MCPToolset(
