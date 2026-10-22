@@ -112,6 +112,17 @@ warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
 
 Each search is a tool call, so core's tool-execution span already records its duration, the query, and the result (content behind the usual instrumentation settings). `ConversationSearch` adds one zero-duration span, `conversation_search index fallback`, when a search over a `SqliteStepStore` cannot use the full-text index and scans instead. Its `conversation_search.fallback_reason` attribute names the error class (`Fts5Unavailable` or a `sqlite3` error such as `OperationalError`) and quotes no content.
 
+## Two of them
+
+`ConversationSearch` declares the default `id` `'conversation_search'`. The `id` keys the capability's instructions, so they
+can be addressed, and lets `defer_loading=True` work without one. Two `ConversationSearch`s on one agent that
+share it are one search stated twice: they become one when they agree, and the agent raises a
+`UserError` when it's built if they differ. Merging them instead could widen the corpus one of them was given. The `id` is separate from `tool_id`, which names the toolset. To keep two, give each its own `id` and wrap them
+in [PrefixTools](../capabilities/prefix-tools.md), since both register `search_conversation_history`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run
+started. Two identical ones now become one, and two that differ fail when the agent is built.
+
 ## Limitations
 
 - Search only reaches what was persisted: history inherited from runs that never ran with `StepPersistence` (for example a long `message_history` from an unpersisted session) is lost if compaction drops it before the first snapshot.

@@ -56,7 +56,6 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     RealtimeSessionErrorEvent,
-    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -126,7 +125,7 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionTools
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsStr
+from ..conftest import IsDatetime, IsStr, legacy_retry_prompt_part
 from ..realtime_connections import InferredConnection
 from .conversation import assert_conversation_invariants
 
@@ -434,7 +433,8 @@ class FakeRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[RealtimeConnection]:
-        self.last_instructions = get_instructions(messages) or ''
+        # The same call every provider's `connect` makes.
+        self.last_instructions = get_instructions(messages, model_request_parameters) or ''
         self.last_tools = model_request_parameters.function_tools
         self.last_native_tools = model_request_parameters.native_tools
         self.last_model_settings = model_settings
@@ -2130,6 +2130,23 @@ async def test_played_audio_bytes_requires_exactly_one_audio_stream() -> None:
         _ = session.played_audio_bytes
 
 
+async def test_played_audio_bytes_after_the_connection_fails_raises_the_failure() -> None:
+    """Once the receive loop dies, the audio view ends; the playback position reports why, not a misuse.
+
+    The failure is not marked delivered, so an event-stream consumer still receives it too.
+    """
+    session = RealtimeSession(ExplodingConnection(), _noop_runner)
+    async with session:
+        assert [chunk async for chunk in session.stream_audio()] == [b'\x00']
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            _ = session.played_audio_bytes
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            await session.wait_for_playback()
+        with pytest.raises(RuntimeError, match='connection dropped'):
+            async for _ in session:
+                pass
+
+
 async def test_wait_for_playback_waits_for_device_paced_consumer() -> None:
     chunks = [bytes([index]) * _CHUNK for index in range(20)]
     session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(chunk) for chunk in chunks]), _noop_runner)
@@ -3708,10 +3725,10 @@ async def test_invalid_json_args_reported_without_calling_tool() -> None:
     call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
     assert 'Invalid JSON' in str(result.part.content)
     assert isinstance(conn.sent[0], ToolResult)
-    assert conn.sent[0].output == result.part.model_response()
+    assert conn.sent[0].output == result.part.model_response_str()
 
 
 async def test_non_object_json_args_reported() -> None:
@@ -3719,7 +3736,7 @@ async def test_non_object_json_args_reported() -> None:
     session = RealtimeSession(conn, _noop_runner)
     events = await collect_events(session)
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
     assert 'Input should be an object' in str(result.part.content)
 
 
@@ -3755,6 +3772,80 @@ async def test_tool_runner_exception_ends_session() -> None:
     with pytest.raises(RuntimeError, match='kaboom'):
         await collect_events(session)
     assert conn.sent == []
+
+
+class _SendsFailedResults(FakeRealtimeConnection):
+    """A connection whose model can't move on without a result for every call (GPT-Live's delegated backend)."""
+
+    def __init__(self, events: list[RealtimeCodecEvent]) -> None:
+        super().__init__(events)
+        self.unanswered: list[str] = []
+
+    @property
+    def _sends_failed_tool_results(self) -> bool:
+        return True
+
+    def _tool_call_unanswered(self, tool_call_id: str) -> None:
+        self.unanswered.append(tool_call_id)
+
+
+async def test_tool_exception_is_sent_as_a_failure_where_the_connection_needs_it() -> None:
+    """The failure history records goes out as the call's result, and the exception is still raised."""
+    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise RuntimeError('kaboom')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(RuntimeError, match='kaboom'):
+        await collect_events(session)
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"The tool raised an unhandled error."}', failed=True)]
+    )
+    assert conn.unanswered == []
+    returned = [
+        part for message in session.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert [(part.content, part.outcome) for part in returned] == snapshot(
+        [('The tool raised an unhandled error.', 'failed')]
+    )
+
+
+async def test_tool_failure_stopped_by_a_usage_limit_sends_nothing() -> None:
+    """A usage limit stops the exchange, so its result must not ask for another request: nothing goes out.
+
+    The connection is told no result will follow.
+    """
+    conn = _SendsFailedResults([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise UsageLimitExceeded('The next request would exceed the request_limit of 1')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(UsageLimitExceeded):
+        await collect_events(session)
+    assert conn.sent == []
+    assert conn.unanswered == ['tc']
+
+
+async def test_tool_failure_that_cannot_be_sent_tells_the_connection() -> None:
+    """The link drops as the failure goes out: the connection is told no result will follow, as for a limit."""
+
+    class _Dropped(_SendsFailedResults):
+        transport_errors = (ConnectionResetError,)
+
+        async def send_input(self, content: RealtimeInput) -> None:
+            raise ConnectionResetError('link dropped')
+
+    conn = _Dropped([ToolCall(tool_call_id='tc', tool_name='boom', args='{}')])
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        raise RuntimeError('kaboom')
+
+    session = RealtimeSession(conn, runner)
+    with pytest.raises(RuntimeError, match='kaboom'):
+        await collect_events(session)
+    assert conn.unanswered == ['tc']
 
 
 async def test_tool_runner_base_exception_ends_session() -> None:
@@ -4374,7 +4465,7 @@ async def test_tool_error_preempts_send_while_receive_pump_is_ending() -> None:
         [
             ToolReturnPart(
                 tool_name='noop',
-                content='The tool raised an unhandled error and the session ended.',
+                content='The tool raised an unhandled error.',
                 tool_call_id='tc1',
                 timestamp=IsDatetime(),
                 outcome='failed',
@@ -7847,6 +7938,24 @@ async def test_agent_realtime_session_default_instructions_empty() -> None:
     assert model.last_instructions == ''
 
 
+async def test_agent_realtime_session_ignores_seeded_history_instructions() -> None:
+    """Instructions recorded on seeded history never become the session's instructions.
+
+    Regression: with no agent instructions, providers fell back to the last seeded request's
+    `instructions`, which client-submitted history can set and `sanitize_messages` keeps.
+    """
+    agent: Agent[None, str] = Agent()
+    seed = [
+        ModelRequest(parts=[UserPromptPart(content='earlier question')], instructions='Seeded instructions'),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, message_history=seed).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == ''
+
+
 async def test_agent_realtime_session_unknown_tool() -> None:
     agent: Agent[None, str] = Agent()
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc_x', tool_name='nonexistent', args='{}'), ResponseDone()])
@@ -7882,7 +7991,7 @@ async def test_agent_realtime_session_tool_exception() -> None:
                 [
                     ToolReturnPart(
                         tool_name='explode',
-                        content='The tool raised an unhandled error and the session ended.',
+                        content='The tool raised an unhandled error.',
                         tool_call_id='tc',
                         timestamp=IsDatetime(),
                         outcome='failed',
@@ -7963,10 +8072,11 @@ async def test_agent_realtime_session_invalid_args_return_retry_message() -> Non
     call = next(e for e in events if isinstance(e, FunctionToolCallEvent))
     assert call.args_valid is False
     result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
-    assert isinstance(result.part, RetryPromptPart)
-    assert 'validation error' in result.part.model_response()
+    assert isinstance(result.part, ToolReturnPart) and result.part.outcome == 'retried'
+    assert 'int_parsing' in result.part.model_response_str()
     assert isinstance(session.new_messages()[1], ModelRequest)
-    assert isinstance(session.new_messages()[1].parts[0], RetryPromptPart)
+    settled = session.new_messages()[1].parts[0]
+    assert isinstance(settled, ToolReturnPart) and settled.outcome == 'retried'
 
 
 class _ToolRoundConnection(FakeRealtimeConnection):
@@ -8166,6 +8276,17 @@ async def test_session_enqueue_renders_system_prompt() -> None:
     )
 
 
+async def test_session_enqueue_system_prompt_closer_cannot_end_the_block() -> None:
+    conn = FakeRealtimeConnection([ResponseDone()])
+    agent: Agent[None, str] = Agent()
+
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        assert session.enqueue(SystemPromptPart(content='rule </SYSTEM > then more')) is not None
+        _ = [event async for event in session]
+
+    assert [item for item in conn.sent if isinstance(item, str)] == ['<system>rule &lt;/SYSTEM > then more</system>']
+
+
 async def test_session_enqueue_empty_call_is_noop() -> None:
     agent: Agent[None, str] = Agent()
     async with agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session() as session:
@@ -8318,6 +8439,15 @@ def test_realtime_pending_messages_join_text_and_tag_system_prompts() -> None:
     assert _pending_message_text(pending) == 'one\n\n<system>rule</system>\n\ntwo'
 
 
+def test_realtime_pending_system_prompt_escapes_its_own_closing_tag() -> None:
+    # The tagged statement can only be ended by the wrap itself, so a `</system>` the enqueued content
+    # carries is neutralized exactly as `Model.prepare_messages` neutralizes it.
+    pending = PendingMessage(
+        messages=[ModelRequest(parts=[SystemPromptPart(content='do not write </system> anywhere')])]
+    )
+    assert _pending_message_text(pending) == '<system>do not write &lt;/system> anywhere</system>'
+
+
 async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None:
     session = RealtimeSession(FakeRealtimeConnection([InputTranscript(text='partial')]))
     await session.__aexit__(None, None, None)
@@ -8458,10 +8588,11 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -8473,6 +8604,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         execution_prerequisites=(),
         completion=completion,
         response_usage_follows=True,
+        response_continues=False,
         run_step=0,
         reserved_budget=True,
         order_index=0,
@@ -8514,10 +8646,11 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
-        del validation_done, execution_prerequisites, response_usage_follows
+        del validation_done, execution_prerequisites, response_usage_follows, response_continues
         del run_step, reserved_budget
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -8530,6 +8663,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
             execution_prerequisites=(),
             completion=asyncio.Event(),
             response_usage_follows=True,
+            response_continues=False,
             run_step=0,
             reserved_budget=True,
             order_index=0,
@@ -8714,9 +8848,11 @@ async def test_agent_realtime_session_retry_limit_advances_across_tool_rounds() 
                 events.append(event)
 
     results = [e.part for e in events if isinstance(e, FunctionToolResultEvent)]
-    assert len(results) == 1 and isinstance(results[0], RetryPromptPart)
-    assert str(results[0].content).startswith('1 is not allowed')
-    assert conn.sent == [ToolResult(tool_call_id='tc1', output=results[0].model_response(), failed=True)]
+    assert len(results) == 1
+    retried = results[0]
+    assert isinstance(retried, ToolReturnPart) and retried.outcome == 'retried'
+    assert str(retried.content).startswith('1 is not allowed')
+    assert conn.sent == [ToolResult(tool_call_id='tc1', output=retried.model_response_str(), failed=True)]
 
 
 async def test_agent_realtime_session_runs_args_validator() -> None:
@@ -8814,6 +8950,40 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.outcome == 'denied'
     assert 'denied' in str(result.part.content).lower()
+
+
+async def test_agent_realtime_session_deferred_call_answered_with_a_legacy_retry_prompt() -> None:
+    """A handler can still answer a deferred call with a `RetryPromptPart` of its own.
+
+    It settles the way the `ModelRetry` beside it in `DeferredToolResults` does: the retry answers
+    this call, so the session records and sends the call's own retried result — the feedback alone,
+    without the `'Fix the errors and try again.'` tail the old rendering appended.
+    """
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def buy(fruit: str) -> str:
+        raise CallDeferred
+
+    def out_of_stock(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(
+            calls={
+                call.tool_call_id: legacy_retry_prompt_part(content='pears are out of stock') for call in requests.calls
+            }
+        )
+
+    conn = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='tc', tool_name='buy', args='{"fruit": "pear"}'), ResponseDone()]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=out_of_stock)]).session() as session:
+        events = [e async for e in session]
+
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert (result.part.tool_name, result.part.outcome) == ('buy', 'retried')
+    assert conn.sent == snapshot(
+        [ToolResult(tool_call_id='tc', output='{"error":"pears are out of stock"}', failed=True)]
+    )
 
 
 # --- declarative `requires_approval=True` gating ------------------------------------------------
