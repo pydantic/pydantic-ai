@@ -362,7 +362,9 @@ configured retention can delete older snapshots.
   table for externalized blobs (see [Persisting media](#persisting-media)
   below), plus `snapshot_messages` and `snapshot_message_refs` (see
   [Storing each message once](#storing-each-message-once)). WAL mode is
-  enabled; `tool_effects` upserts per
+  enabled, and a write waits up to 30 seconds for another writer, such as
+  another process sharing the file, before raising `database is locked`;
+  `tool_effects` upserts per
   `(run_id, tool_call_id)` so the latest state wins; snapshots use
   `AUTOINCREMENT seq` to mirror `FileStepStore._next_snapshot_seq`.
   Databases created before the snapshot `state` column existed gain it

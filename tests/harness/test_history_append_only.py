@@ -9,16 +9,20 @@ See `tests/append_only.py` for the scenario and the three invariants it checks, 
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ToolSearch, Toolset
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
@@ -64,16 +68,19 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTaskEvent, DelegationTasks, SubAgent, SubAgents
 
 from ..append_only import (
     CLOCK,
     PROVIDERS,
     Allowed,
+    ConversationResult,
     Exempt,
     Fixture,
     Known,
     Provider,
     Scenario,
+    Turn,
     build_capabilities,
     check_conversation,
     discover_capabilities,
@@ -258,7 +265,6 @@ SCENARIOS: dict[str, Scenario] = {
 EXEMPT: dict[str, Exempt] = {
     'AbsurdDurability': Exempt('Durable engine: needs a Postgres-backed Absurd queue.'),
     'AWSLambdaDurability': Exempt('Durable engine: needs the AWS Lambda durable functions runtime.'),
-    'DelegationReports': Exempt('Built by `SubAgents` for each run, never by users; `SubAgents` is its case.'),
     'DynamicWorkflow': Exempt('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
     'GoogleWorkspace': Exempt('Needs Google OAuth credentials to list its tools.'),
     'PGTaskDurability': Exempt('Durable engine: needs Postgres.'),
@@ -378,12 +384,74 @@ ENV: dict[str, dict[str, str]] = {
 CAPABILITIES = discover_capabilities(('pydantic_ai_harness',))
 
 
+_REPORT = 'The logs show one error.'
+
+
+def _delegation_reports(
+    tmp_path: Path,
+) -> tuple[list[AbstractCapability[Any]], Scenario, Callable[[ConversationResult], None]]:
+    """A background delegation that settles between the runs, and its report delivered in the second.
+
+    The parent delegates in the background and answers; the child finishes; the second run, continued from
+    stored history, gets the report when it would otherwise end and makes one more request. The check holds
+    whatever shape the report takes: it only needs the child's output to reach history once.
+    """
+    settled = asyncio.Event()
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.task.status == 'finished':
+            settled.set()
+
+    async def child_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield _REPORT
+
+    owner = DelegationTasks(directory=tmp_path / 'tasks', observer=observe)
+    child = Agent(FunctionModel(stream_function=child_stream), deps_type=object, name='worker')
+
+    @asynccontextmanager
+    async def owning() -> AsyncGenerator[None]:
+        async with owner.opened():
+            with owner.bind():
+                yield
+
+    async def settle() -> None:
+        with anyio.fail_after(10):
+            await settled.wait()
+
+    def delivered_once(result: ConversationResult) -> None:
+        parts = [part for message in result.history for part in getattr(message, 'parts', ()) if _REPORT in str(part)]
+        assert len(parts) == 1, f'expected the report in history once, found {len(parts)}'
+
+    scenario = Scenario(
+        turns=(
+            Turn(calls=(('delegate_task', {'agent_name': 'worker', 'task': 'Check the logs.', 'background': True}),)),
+            Turn(text='I started a check of the logs.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+            Turn(text='The check found one error.'),
+        ),
+        serialize_history=True,
+        run_kwargs={'conversation_id': 'parent'},
+        around=owning,
+        between_runs=settle,
+    )
+    capabilities: list[AbstractCapability[Any]] = [
+        SubAgents(agents=[SubAgent(child)], agent_folders=None),
+        DelegationReports(owner, conversation_id='parent'),
+    ]
+    return capabilities, scenario, delivered_once
+
+
+CONVERSATIONS = {'DelegationReports': _delegation_reports}
+"""Capabilities whose behavior needs a conversation of its own, with the check it must also pass."""
+
+
 def test_every_capability_has_a_case():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
     tables = (
         FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
     ) | OPTIONAL_DEPENDENCIES.keys()
-    stale = tables - CAPABILITIES.keys() - VARIANTS.keys()
+    stale = (tables | CONVERSATIONS.keys()) - CAPABILITIES.keys() - VARIANTS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
@@ -395,7 +463,10 @@ async def test_conversation_only_appends(
     skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
     for key, value in ENV.get(name, {}).items():
         monkeypatch.setenv(key, value)
-    if name in VARIANTS:
+    check: Callable[[ConversationResult], None] | None = None
+    if name in CONVERSATIONS:
+        capabilities, scenario, check = CONVERSATIONS[name](tmp_path)
+    elif name in VARIANTS:
         fixture, scenario = VARIANTS[name]
         capabilities = build_capabilities(name, lambda: AbstractCapability, fixture, tmp_path)
     else:
@@ -403,4 +474,6 @@ async def test_conversation_only_appends(
         scenario = SCENARIOS.get(name, Scenario())
     clock = inject_clock(monkeypatch)
     result = await run_conversation(provider, capabilities, scenario, clock)
+    if check is not None:
+        check(result)
     check_conversation(name, result, known=KNOWN.get(name, ()), allowed=ALLOWED.get(name))

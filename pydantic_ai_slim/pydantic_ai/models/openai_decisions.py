@@ -44,6 +44,7 @@ from ..messages import (
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles.decision import decision_model_profile
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
@@ -108,7 +109,7 @@ try:
     from openai.types.responses.response_input_param import FunctionCallOutput
     from openai.types.responses.response_input_text_content_param import ResponseInputTextContentParam
 
-    from ..providers.openai_decisions import OpenAIDecisionsProvider
+    from ..providers.openai import OpenAIProvider
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the OpenAI Decisions model, '
@@ -199,7 +200,7 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
         self,
         model_name: OpenAIDecisionsModelName,
         *,
-        provider: Literal['openai-decisions'] | OpenAIDecisionsProvider = 'openai-decisions',
+        provider: Literal['openai', 'openai-decisions'] | OpenAIProvider = 'openai-decisions',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -207,13 +208,15 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
         Args:
             model_name: The name of the OpenAI model to use, such as `gpt-6-luna`.
-            provider: The provider to use for the API's URL and key.
-            profile: The model profile to use. Defaults to one selected by the provider.
+            provider: The provider to use for the API's URL and key: an
+                [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], as for the other OpenAI models, or
+                `'openai'` or `'openai-decisions'` (the default), which both create one.
+            profile: The model profile to use. Defaults to a decision model's profile for the model name.
             settings: Model-specific settings used as defaults for this model.
         """
         self._model_name = model_name
         if isinstance(provider, str):
-            provider = OpenAIDecisionsProvider()
+            provider = OpenAIProvider()
         self._provider = provider
         super().__init__(settings=settings, profile=profile)
 
@@ -232,8 +235,19 @@ class OpenAIDecisionsModel(DecisionModel[AsyncOpenAI]):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
-        return self._provider.name
+        """The system / model provider: `'openai-decisions'`, whatever the provider is called.
+
+        The Decisions API shares OpenAI's URL with the Responses API, so this name is what tells its responses apart:
+        genai-prices prices the endpoint as its own provider, and an
+        [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] continuing the conversation must not
+        take a decision response, which has no Responses ID to continue from, for one of its own.
+        """
+        return 'openai-decisions'
+
+    def _provider_model_profile(self) -> ModelProfile:
+        # The provider profiles a model name such as `gpt-6-luna` as a Responses API model, whose structured output,
+        # thinking and caching this endpoint has none of.
+        return decision_model_profile(self.model_name)
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/decisions` endpoint."""
