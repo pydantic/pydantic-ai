@@ -202,7 +202,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     - move the "available functions" catalog (TypedDict definitions + signatures) into
       agent instructions as a dynamic
       [`InstructionPart`][pydantic_ai.messages.InstructionPart] with the id
-      `toolset:code_mode:catalog` and `on_change='append'`, so a discovery appends the
+      `toolset:<code_mode>:catalog` and `on_change='append'`, so a discovery appends the
       updated catalog to the message history instead of rewriting the instructions;
     - keep deferred tools that `run_code` will take over off the wire until they're found
       through the local `search_tools` tool or by loading their capability, and callable only

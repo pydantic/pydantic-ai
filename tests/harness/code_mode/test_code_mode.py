@@ -3714,9 +3714,9 @@ class TestDynamicCatalog:
         assert await toolset.get_instructions(ctx) is None
 
     def test_toolset_id_is_set_only_for_the_catalog(self) -> None:
-        """The toolset takes the id `code_mode` only to key its catalog block, so without one it has none."""
+        """The toolset takes the framework-reserved id `<code_mode>` only to key its catalog block, so without one it has none."""
         assert CodeModeToolset(wrapped=_build_function_toolset(add)).id is None
-        assert CodeModeToolset(wrapped=_build_function_toolset(add), dynamic_catalog=True).id == 'code_mode'
+        assert CodeModeToolset(wrapped=_build_function_toolset(add), dynamic_catalog=True).id == '<code_mode>'
 
     async def test_empty_catalog_is_an_empty_append_block(self) -> None:
         """No sandboxed tools yet: the catalog block is still returned, empty, so its first content can be appended."""
@@ -4502,7 +4502,7 @@ class TestDynamicCatalog:
         assert 'async def forecast' not in (requests[0][2] or '')
 
         deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
-        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
+        assert [str(delta.id) for delta in deltas] == ['toolset:<code_mode>:catalog']
         assert deltas[0].content is not None and 'async def forecast(*, city: str) -> str:' in deltas[0].content
         run_code_returns = [
             p.content
@@ -4551,7 +4551,7 @@ class TestDynamicCatalog:
         assert len(set(requests)) == 1
         assert 'code_mode' not in (requests[0] or '')
         deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
-        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
+        assert [str(delta.id) for delta in deltas] == ['toolset:<code_mode>:catalog']
         assert deltas[0].content is not None and 'async def forecast' in deltas[0].content
 
     async def test_loaded_capability_tools_are_appended_to_the_catalog_not_declared(self) -> None:
@@ -4587,7 +4587,7 @@ class TestDynamicCatalog:
         assert {tuple(tools) for tools, _ in requests} == {('load_capability', 'run_code')}
         assert len({instructions for _, instructions in requests}) == 1
         deltas = [p for m in result.all_messages() for p in m.parts if isinstance(p, InstructionDeltaPart)]
-        assert [str(delta.id) for delta in deltas] == ['toolset:code_mode:catalog']
+        assert [str(delta.id) for delta in deltas] == ['toolset:<code_mode>:catalog']
         assert deltas[0].content is not None and 'async def forecast' in deltas[0].content
         run_code_returns = [
             p.content
@@ -4650,7 +4650,7 @@ class TestDynamicCatalog:
         assert [(str(p.id) if p.id else None, p.on_change) for p in instruction_parts] == [
             (None, 'rewrite'),
             ('toolset:weather', 'rewrite'),
-            ('toolset:code_mode:catalog', 'append'),
+            ('toolset:<code_mode>:catalog', 'append'),
         ]
         assert [p.content for p in instruction_parts[:2]] == ['Add carefully.', 'Be sunny.']
 
