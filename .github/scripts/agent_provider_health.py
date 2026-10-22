@@ -29,8 +29,9 @@ REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
 # Minimum age before a healthy scheduled check closes a quota or rate-limit incident with no recorded reset time.
 _NULL_RESET_COOL_DOWN = dt.timedelta(hours=1)
-# During GitHub's 2026-10-22 Issues degradation, 34% of gate reads came back HTTP 200 without any open incident,
-# and a read within 5 s of such a miss still missed 41% of the time.
+# During GitHub's 2026-10-22 Issues degradation, 34% of gate reads returned HTTP 200 with no readable incident,
+# of any age or scope, and a read within 5 s of such a miss still missed 41% of the time. Five reads cut the miss
+# rate to an estimated 1%. Only a read with no readable incident is repeated.
 _INCIDENT_READS = 5
 _INCIDENT_READ_DELAY_SECONDS = 2
 _RETIRED_PROVIDER_REASON = (
@@ -685,18 +686,19 @@ def _same_scope_incident(marker: IncidentMarker, issues: list[Issue]) -> Issue |
 
 
 def _open_incidents_until(client: GitHubClient, found: Callable[[list[Issue]], bool]) -> list[Issue]:
-    """Return the union of open-incident reads, re-reading until `found` holds or the reads run out.
+    """Return the union of open-incident reads, re-reading until `found` holds or a read returns any incident.
 
-    A degraded GitHub read can return HTTP 200 without any open incident, so one empty read does not show
-    that no incident is open.
+    A degraded GitHub read returns HTTP 200 with no readable incident, so one read with no matching incident
+    shows that none is open only when it returned some other incident.
     """
     issues: dict[int, Issue] = {}
     for read in range(_INCIDENT_READS):
         if read:
             time.sleep(_INCIDENT_READ_DELAY_SECONDS)
-        for issue in client.open_incidents():
+        batch = client.open_incidents()
+        for issue in batch:
             issues.setdefault(issue.number, issue)
-        if found(list(issues.values())):
+        if found(list(issues.values())) or any(_marker_from_body(issue.body) is not None for issue in batch):
             break
     return list(issues.values())
 

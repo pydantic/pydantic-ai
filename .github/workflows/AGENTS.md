@@ -241,11 +241,10 @@ in place: `pydanty:meta` keeps the automatic `@claude` issue/comment workflow fr
 starting on controller metadata. Do not create a second issue for the same open
 provider, workflow, or task incident.
 
-Never treat one open-incident read that finds no matching incident as proof that none
-is open. During a GitHub Issues degradation the labeled list can return HTTP 200 without
-any open incident. The gate and incident reuse re-read the list before they pass or create.
-Each read writes its pages' HTTP status, issue and unreadable counts, request IDs, and the
-incident numbers it saw to the job log and step summary.
+Before the gate passes or incident reuse creates an issue, re-read a list that returned no
+readable incident. During a GitHub Issues degradation the labeled list returned HTTP 200 with
+no readable incident of any age or scope. Each read writes its pages' HTTP status, issue and
+unreadable counts, request IDs, and the incident numbers it saw to the job log and step summary.
 
 The trusted health check calls `GET https://api.z.ai/api/monitor/usage/quota/limit`
 with the raw `ZAI_API_KEY` value in the `Authorization` header. Recognize

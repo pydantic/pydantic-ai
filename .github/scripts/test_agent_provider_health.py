@@ -49,6 +49,12 @@ def _no_incident_reread_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(health, '_INCIDENT_READ_DELAY_SECONDS', 0)
 
 
+@pytest.fixture(autouse=True)
+def _no_ci_step_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep controller output out of the summary of the CI job running these tests."""
+    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
+
+
 def _quota_response(
     *,
     limit_type: str = 'TOKENS_LIMIT',
@@ -2562,7 +2568,6 @@ def test_open_incidents_records_each_page_and_the_incidents_it_returned(
 
 def test_empty_open_incident_read_says_none(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """An empty read is logged as such instead of looking like a skipped read."""
-    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
     monkeypatch.setattr(
         health.urllib.request.OpenerDirector,
         'open',
@@ -2598,7 +2603,6 @@ def _run_gate(client: FakeGitHub, tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'github-token')
-    monkeypatch.delenv('GITHUB_STEP_SUMMARY', raising=False)
     github_output = tmp_path / 'output'
     monkeypatch.setenv('GITHUB_OUTPUT', str(github_output))
 
@@ -2626,6 +2630,17 @@ def test_gate_passes_only_after_every_read_finds_no_incident(tmp_path: Path, mon
 
     assert _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\n'
     assert client.reads == health._INCIDENT_READS  # pyright: ignore[reportPrivateUsage]
+
+
+def test_gate_trusts_a_read_that_returns_another_scopes_incident(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A degraded read returns no incident at all, so a read with an unrelated incident passes without re-reading."""
+    other_task = _issue(8, health.IncidentMarker('task', 'CI Review:other-task', 'execution', '1', None))
+    client = DegradedGitHub([other_task], misses=0)
+
+    assert _run_gate(client, tmp_path, monkeypatch) == 'ready=true\nreason=Provider health check passed\n'
+    assert client.reads == 1
 
 
 @pytest.mark.parametrize('override', [False, True])
