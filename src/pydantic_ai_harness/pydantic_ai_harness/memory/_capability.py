@@ -15,7 +15,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
-    RetryPromptPart,
+    RetryFeedbackPart,
     TextContent,
     ToolReturnPart,
     UserPromptPart,
@@ -489,7 +489,7 @@ def _is_tool_continuation(message: ModelMessage) -> bool:
     return (
         isinstance(message, ModelRequest)
         and not _has_user_prompt(message)
-        and any(isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts)
+        and any(isinstance(part, ToolReturnPart | RetryFeedbackPart) for part in message.parts)
     )
 
 
