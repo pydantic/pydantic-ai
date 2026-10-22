@@ -204,7 +204,20 @@ Nested model streaming from the child run is not an event concern; pass an `even
 
 See [capability events](../capabilities/overview.md#capability-events) for how `@on_event` works.
 
-`SubAgents` emits no OpenTelemetry spans of its own: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result. Task control adds no spans either. Its decisions are capability events: a vetoed message, an answer a listener gave, a task moved to the background and why, a remote task that failed or was retried. Refusals such as `max_running_tasks` reach the model as tool retries, which core's spans show. While a top-level run waits for its background tasks, their own runs' spans and events show what it waits on. A listener can turn any of these events into spans of its own.
+`SubAgents` emits no OpenTelemetry spans for plain delegation: the child run is a core agent run with its own spans nested under the parent's tool-call span, and the events above carry the outcome a trace would only show as an exception or a tool result.
+
+Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` and, for a task, `sub_agents.task_id`:
+
+| Span | When | Attributes |
+| --- | --- | --- |
+| `sub_agents vetoed` | a listener vetoed a task, message, answer, cancellation, or created agent | `sub_agents.event` (the vetoed event's kind), `sub_agents.veto_reason` |
+| `sub_agents task backgrounded` | a task moved to the background | `sub_agents.reason`: `requested`, `auto`, or `question` |
+| `sub_agents question answered` | a listener answered a task's question, not the model | `sub_agents.answered_by`, `sub_agents.question`, `sub_agents.answer` |
+| `sub_agents task refused` | `max_running_tasks` refused a delegation | `sub_agents.running_tasks`, `sub_agents.max_running_tasks` |
+| `sub_agents task not accepted` | no worker picked a remote task up within `accept_timeout` | `sub_agents.accept_timeout` |
+| `sub_agents remote task stopped` | a remote task ended without its worker's report, and its worker was told to stop it | |
+
+A veto reason, question, or answer is attached only when the run's instrumentation includes content. While a top-level run waits for its background tasks, a `sub_agents wait for tasks` span covers the wait, with `sub_agents.running_tasks`.
 
 ## Task control
 
@@ -282,7 +295,7 @@ A `SubAgentWorker` serves agents to delegating agents in other processes. The de
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import RemoteSubAgent, SubAgent, SubAgents, SubAgentWorker
+from pydantic_ai_harness.subagents import RemoteSubAgent, SubAgents, SubAgentWorker
 
 transport = ...  # a SubAgentTransport both processes reach
 
@@ -290,7 +303,7 @@ transport = ...  # a SubAgentTransport both processes reach
 # In the process that hosts the agent:
 async def serve():
     researcher = Agent('{{ anthropic:large }}', name='researcher')
-    await SubAgentWorker(agents=[SubAgent(researcher)], transport=transport, deps=None).serve()
+    await SubAgentWorker(agents={'researcher': researcher}, transport=transport, deps=None).serve()
 
 
 # In the delegating process:
@@ -309,7 +322,7 @@ orchestrator = Agent(
 - **A transport is a set of mailboxes.** Implement `send`, `receive`, and optionally `release` over a WebSocket, a Redis list, or anything else that moves bytes, using `serialize_message` and `deserialize_message` at the boundary. Every message is one of the `SubAgentMessage` events above. `InMemoryTransport` serves a worker in the same process.
 - **The transport is the trust boundary.** Anyone who can send to it can run the served agents, with their tools and `deps`, and read what they return. Put authentication, authorization, and network binding in your transport. A worker's output and errors reach the delegating model like a local delegate's: in the foreground as tool results, in the background as framed reports.
 - **A transport reports a lost worker.** A worker that stops sends `TaskFailedEvent` for the tasks it was running. One that dies without doing so can't: the delegating run then waits for its report until the run is cancelled, unless `receive` raises when the worker is gone. Heartbeats are not part of the protocol.
-- **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. Of each `SubAgent` it serves, it uses only the agent and name: the `SubAgent`'s own run controls, such as its `usage_limits`, `timeout_seconds`, or `on_failure`, don't apply there. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
+- **The worker runs the agent** with its own model, tools, and `deps`, which never cross the transport. It takes the agents it serves by name, without per-delegate run controls: those belong to the delegating side's `SubAgents`. It applies the delegating run's usage limits to the task's own usage, and continues the delegating run's trace. The usage it reports with the settled event is added to the delegating run's usage, unless `forward_usage=False`.
 - **A task nobody picks up fails.** The worker sends `TaskStartedEvent` when it starts a task. A remote task that no worker picks up within `accept_timeout` seconds (default `30`) fails, and a remote task that stops without its worker's report, for example because its delegating run ended, is force-cancelled on the worker.
 - `SubAgentWorker(retries=...)` runs a failed task again from its prompt, with a `TaskRetryEvent`. The worker keeps up to `max_conversations` task conversations (default `1000`) so they can be resumed.
 - A remote agent runs on its worker's model, so `delegate_task` refuses a `model` for it, and its delegations emit no `DelegationStartEvent` or `DelegationEndEvent`.

@@ -49,10 +49,12 @@ from pydantic_ai_harness.subagents._control import (
     DynamicAgentSpec,
     LocalTaskLink,
     RemoteSubAgent,
+    TaskTelemetry,
     default_factory,
     run_owned,
     run_remote,
     started,
+    task_group,
     validate_agent_name,
 )
 from pydantic_ai_harness.subagents._events import (
@@ -60,6 +62,7 @@ from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,
     DelegationStartEvent,
+    ParentMessage,
     TaskAnswerEvent,
     TaskAssignedEvent,
     TaskBackgroundedEvent,
@@ -662,6 +665,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             resumable, can_ask = sub_agent.resumable, sub_agent.can_ask_questions
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
+            TaskTelemetry.of(ctx).decision(
+                'task refused', agent_name=agent_name, attributes={'running_tasks': running, 'max_running_tasks': limit}
+            )
             raise ModelRetry(
                 f'{running} tasks are already running, the most allowed at once. Wait for a report, or cancel a '
                 'task, before starting another.'
@@ -701,33 +707,31 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     transport=self._transport,
                     accept_timeout=self._accept_timeout,
                     usage=ctx.usage if self._forward_usage else None,
+                    telemetry=TaskTelemetry.of(ctx),
                 )
             assert sub_agent is not None
             return await self._run_controlled(ctx, owner, record, sub_agent, key=key, start=start)
 
         after = self._auto_background_after
-        auto = (
-            asyncio.create_task(self._background_after(ctx, owner, task_id, after), name=f'auto-background-{task_id}')
-            if after is not None and not background and backgroundable
-            else None
-        )
-        try:
-            output = await owner.delegate(
-                agent_name=agent_name,
-                prompt=start.prompt,
-                conversation_id=conversation_id,
-                model=key,
-                background=background,
-                resume=resume,
-                run=run,
-                backgroundable=backgroundable,
-                task_id=task_id,
-                resumable=resumable,
-            )
-        finally:
-            if auto is not None:
-                auto.cancel()
-                await asyncio.gather(auto, return_exceptions=True)
+        async with task_group() as group:
+            if after is not None and not background and backgroundable:
+                group.start_soon(self._background_after, ctx, owner, task_id, after)
+            try:
+                output = await owner.delegate(
+                    agent_name=agent_name,
+                    prompt=start.prompt,
+                    conversation_id=conversation_id,
+                    model=key,
+                    background=background,
+                    resume=resume,
+                    run=run,
+                    backgroundable=backgroundable,
+                    task_id=task_id,
+                    resumable=resumable,
+                )
+            finally:
+                # The timer only counts while this call waits for the task.
+                group.cancel_scope.cancel()
         record = owner.records[task_id]
         if background and record.status == 'running':
             await self._announce(
@@ -738,7 +742,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     async def _background_after(
         self, ctx: RunContext[AgentDepsT], owner: DelegationTasks, task_id: str, delay: float
     ) -> None:
-        await asyncio.sleep(delay)
+        await anyio.sleep(delay)
         record = owner.records[task_id]
         # The delegation tool call stops waiting, and this with it, once the task settles or moves to the background.
         if record.status == 'running' and not record.background:  # pragma: no branch
@@ -757,7 +761,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         start: TaskRequestEvent,
     ) -> str:
         """Run a local task and report how it settled as task events."""
-        link = LocalTaskLink(owner=owner, record=record, can_ask=start.can_ask_questions)
+        link = LocalTaskLink(
+            owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=TaskTelemetry.of(ctx)
+        )
         await owner.publish(record, started(record))
         task_id, agent_name = record.id, record.agent_name
         try:
@@ -785,6 +791,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         """Emit a task event from one of this toolset's tool calls, then send it to the observer."""
         if _emits_events(ctx):
             await ctx.emit(event)
+        if isinstance(event, ParentMessage) and event.vetoed:
+            TaskTelemetry.of(ctx).vetoed(event)
+        elif isinstance(event, TaskBackgroundedEvent):
+            TaskTelemetry.of(ctx).backgrounded(event)
         if record is not None:
             await owner.notify(record, event)
         return event
@@ -955,6 +965,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if _emits_events(ctx):
                 await ctx.emit(event)
             if event.vetoed:
+                TaskTelemetry.of(ctx).vetoed(event)
                 return f'The sub-agent was not created: {event.veto_reason or "a policy refused it"}.'
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model

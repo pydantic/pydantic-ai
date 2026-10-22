@@ -191,7 +191,7 @@ orchestrator = Agent(
   `TaskCompletedEvent`, ...) plus `TaskBackgroundedEvent`; `@on_event` listeners can rewrite or
   `veto()` the ones sent to a task, and answer a `TaskQuestionEvent` by setting `answer`.
 - Remote agents: `remote_agents=[RemoteSubAgent(name=...)]` with a `transport` (`SubAgentTransport`;
-  `InMemoryTransport` in process), served by `SubAgentWorker(agents=[...], transport=..., deps=...)`
+  `InMemoryTransport` in process), served by `SubAgentWorker(agents={name: agent}, transport=..., deps=...)`
   in the other process. `accept_timeout=30.0` fails a task no worker picks up.
 - `dynamic_agents=DynamicAgents(models=['fast'])` adds `create_agent`, with a vetoable
   `AgentCreatedEvent`; works with or without task control.
