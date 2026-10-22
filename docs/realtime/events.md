@@ -76,6 +76,10 @@ cut their reply off for it (see [Gemini](gemini.md#provider-specific-quirks)).
 A response the user cuts off by speaking ends the exchange, as does a response the provider started on its own
 (server-side voice activity detection). The user's transcript can still finish after it.
 
+An exchange that fails also ends with the event, once: when a [tool raises](tools.md#function-tools), or its result
+would pass a usage limit, the model never gets what it needs to reply. The event follows the exception in the event
+stream, or comes as the response still under way ends.
+
 ## Reading raw audio events
 
 The audio stream *is* these events under the hood:
