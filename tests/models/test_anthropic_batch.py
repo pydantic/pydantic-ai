@@ -35,6 +35,7 @@ from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
+from ..batch_utils import UNRUN_MESSAGES
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -118,7 +119,7 @@ async def test_anthropic_batch_rejects_per_request_headers() -> None:
 def test_anthropic_batch_request_that_never_ran_is_a_model_error(status: str) -> None:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key'))
 
-    with pytest.raises(ModelAPIError, match=f'The batch request was {status} before the model ran it.'):
+    with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
         model.batch_decode(
             BatchResult(custom_id='item1', status=status),  # pyright: ignore[reportArgumentType]
             _request('item1'),
@@ -408,7 +409,7 @@ async def test_anthropic_batch_results_read_every_result_type(allow_model_reques
     with pytest.raises(ModelOverloadedError):
         model.batch_decode(results['overloaded'], requests['overloaded'])
     for status in ('canceled', 'expired'):
-        with pytest.raises(ModelAPIError, match=f'The batch request was {status} before the model ran it'):
+        with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
             model.batch_decode(results[status], requests[status])
 
 

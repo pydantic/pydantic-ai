@@ -101,7 +101,7 @@ async def test_anthropic_batch_cancellation(allow_model_requests: None, anthropi
     assert batch.status == 'canceling'
     [result] = await model.batch_results(await wait_for_batch(model, batch, vcr))
     assert result.status == 'canceled'
-    with pytest.raises(ModelAPIError, match='canceled before the model ran it'):
+    with pytest.raises(ModelAPIError, match='canceled before the model ran the request'):
         model.batch_decode(result, request)
 
 

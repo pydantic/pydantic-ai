@@ -105,4 +105,6 @@ def batch_priced(response: ModelResponse) -> ModelResponse:
 
 def unrun_error(model_name: str, result: BatchResult) -> ModelAPIError:
     """The error for a request the provider ended without running."""
+    if result.status == 'canceled':
+        return ModelAPIError(model_name, 'The batch was canceled before the model ran the request.')
     return ModelAPIError(model_name, f'The batch request was {result.status} before the model ran it.')

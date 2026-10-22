@@ -34,6 +34,7 @@ from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
 
+from ..batch_utils import UNRUN_MESSAGES
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -236,7 +237,15 @@ async def test_gemini_batch_handles_check_their_group_and_status(allow_model_req
                 "status_code: 499, model_name: gemini-2.5-flash-lite, body: {'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}}",
             ),
         ),
-        ({'state': 'JOB_STATE_EXPIRED'}, None),
+        (
+            {'state': 'JOB_STATE_EXPIRED'},
+            (
+                ModelHTTPError,
+                "status_code: 504, model_name: gemini-2.5-flash-lite, body: {'error': {'code': 4, 'message': 'The batch job expired before the model ran the request.'}}",
+            ),
+        ),
+        # A job that says it succeeded without writing results leaves its requests without one.
+        ({'state': 'JOB_STATE_SUCCEEDED'}, None),
     ],
 )
 async def test_gemini_batch_job_without_results_reports_why(
@@ -275,7 +284,7 @@ async def test_gemini_batch_job_without_results_reports_why(
 def test_gemini_batch_request_that_never_ran_is_a_model_error(status: str) -> None:
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
     result = BatchResult(custom_id='item', status=status)  # pyright: ignore[reportArgumentType]
-    with pytest.raises(ModelAPIError, match=f'The batch request was {status} before the model ran it.'):
+    with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
         model.batch_decode(result, _request())
 
 

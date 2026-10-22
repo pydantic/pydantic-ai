@@ -44,9 +44,9 @@ class BatchModelRequests(AbstractCapability[Any]):
     end the run instead of waiting, add [`PendingModelResponse`][pydantic_ai.output.PendingModelResponse] to the
     agent's `output_type`. See [Batch processing](../batch.md) for a guide.
 
-    A request the batch ended without running, for example because it expired, or that failed with a rate limit or
-    server error, is submitted again in a new batch, up to `max_resubmissions` times, as a provider SDK retries a live
-    request. Other errors, like an invalid request, reach the run as usual.
+    A request that expired before the provider ran it, is missing from its batch's results, or failed with a rate
+    limit or server error, is submitted again in a new batch, up to `max_resubmissions` times, as a provider SDK
+    retries a live request. Other errors, like an invalid request or a canceled batch, reach the run as usual.
 
     The capability wraps whichever model serves each request, which must have a batch API. Requests can't be
     streamed, and batching needs an `asyncio` event loop. Submissions and checks run as tasks shared by the requests
@@ -67,8 +67,8 @@ class BatchModelRequests(AbstractCapability[Any]):
     """
 
     max_resubmissions: int = DEFAULT_MAX_RESUBMISSIONS
-    """How many times a request is submitted again in a new batch after it expired, was canceled by someone other than
-    this capability, or failed with a rate limit, timeout or server error. `0` raises the error instead.
+    """How many times a request is submitted again in a new batch after it expired or failed with a rate limit,
+    timeout or server error. `0` raises the error instead. A canceled request is never submitted again.
     """
 
     poll_interval: timedelta = DEFAULT_POLL_INTERVAL

@@ -97,7 +97,7 @@ from its message history picks up the same batch. Batching is non-streaming, and
 exits, add `PendingModelResponse` to `output_type`: the run ends with it once the request is submitted, and
 running the agent again with `result.all_messages()` checks the batch once and continues or ends pending
 again. The same works for OpenAI background mode. Don't write resubmission logic either: requests a batch didn't
-run (expired, canceled elsewhere, missing) or that failed with a rate limit or server error are submitted again
+run (expired or missing, not canceled) or that failed with a rate limit or server error are submitted again
 automatically, up to `max_resubmissions` (default 2), and a history whose batch the provider no longer has raises
 `SuspendedResponseExpired`.
 

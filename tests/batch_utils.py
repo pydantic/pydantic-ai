@@ -106,3 +106,10 @@ class SlowBatchTestModel(TestModel):
     def _record(self, method: str) -> None:
         if self.on_batch_call is not None:
             self.on_batch_call(method)
+
+
+UNRUN_MESSAGES = {
+    'expired': r'The batch request was expired before the model ran it\.',
+    'canceled': r'The batch was canceled before the model ran the request\.',
+}
+"""The error message of a request a batch ended without running, by its result status."""

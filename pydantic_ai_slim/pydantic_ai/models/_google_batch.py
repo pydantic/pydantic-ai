@@ -203,7 +203,7 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
             await client.aio.files.delete(name=input_file)
     if job.dest is None or job.dest.file_name is None:
         # A job that expired, or was canceled or failed before it ran a request, writes no results. The job doesn't
-        # say which requests it held, so a failed or canceled one fails all of them with its own reason.
+        # say which requests it held, so its outcome fails all of them with its own reason.
         if job.state == JobState.JOB_STATE_FAILED:
             error = job.error
             code = error.code if error is not None else None
@@ -217,6 +217,13 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
                 status_code=_RPC_STATUSES[1][1],
                 model_name=model.model_name,
                 body={'error': {'code': 1, 'message': 'The batch job was canceled before the model ran the request.'}},
+            )
+        if job.state == JobState.JOB_STATE_EXPIRED:
+            # Ended by the provider rather than anyone's intent, like a live request's deadline.
+            raise BatchJobError(
+                status_code=_RPC_STATUSES[4][1],
+                model_name=model.model_name,
+                body={'error': {'code': 4, 'message': 'The batch job expired before the model ran the request.'}},
             )
         return []
     content = await client.aio.files.download(file=job.dest.file_name)

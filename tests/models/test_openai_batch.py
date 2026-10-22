@@ -36,6 +36,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
+from tests.batch_utils import UNRUN_MESSAGES
 from tests.conftest import try_import
 
 with try_import() as imports_successful:
@@ -542,7 +543,7 @@ async def test_batch_results_read_every_kind_of_line(allow_model_requests: None)
     )
 
     for custom_id, status in (('expired', 'expired'), ('cancelled', 'canceled'), ('unrun', 'expired')):
-        with pytest.raises(ModelAPIError, match=f'The batch request was {status} before the model ran it'):
+        with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
             model.batch_decode(results[custom_id], by_id[custom_id])
 
 

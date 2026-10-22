@@ -51,7 +51,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import UsageLimits
 
-from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, SlowBatchTestModel
+from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, UNRUN_MESSAGES, SlowBatchTestModel
 
 Outcome = Literal['ran', 'expired', 'canceled', 'missing'] | int | ModelAPIError
 """How a scripted batch ends each of its requests: as they ran, unrun, missing, with an HTTP status, with an error, or
@@ -116,7 +116,6 @@ def _job_error(status_code: int) -> BatchJobError:
     'outcome',
     [
         pytest.param('expired', id='expired'),
-        pytest.param('canceled', id='canceled-elsewhere'),
         pytest.param('missing', id='missing'),
         pytest.param(408, id='timeout'),
         pytest.param(409, id='conflict'),
@@ -129,7 +128,6 @@ def _job_error(status_code: int) -> BatchJobError:
         pytest.param(_categorized(ModelUnavailableError, 503), id='unavailable-category'),
         pytest.param(_categorized(ModelServerError, 500), id='server-error-category'),
         pytest.param(ModelRateLimitError('test', 'Slow down'), id='rate-limit-without-status'),
-        pytest.param(_job_error(499), id='canceled-job'),
     ],
 )
 async def test_a_transient_failure_is_submitted_again(outcome: Outcome) -> None:
@@ -156,6 +154,8 @@ async def test_a_transient_failure_is_submitted_again(outcome: Outcome) -> None:
         ),
         pytest.param(ModelAPIError('test', 'Unknown'), ModelAPIError, id='uncategorized-without-status'),
         pytest.param(_job_error(400), BatchJobError, id='failed-job'),
+        pytest.param('canceled', ModelAPIError, id='canceled'),
+        pytest.param(_job_error(499), BatchJobError, id='canceled-job'),
     ],
 )
 async def test_a_request_that_would_fail_again_is_not_submitted_again(
@@ -186,8 +186,8 @@ def test_max_resubmissions_is_validated() -> None:
         BatchModelRequests(max_resubmissions=-1)
 
 
-async def test_a_batch_this_pool_cancelled_is_not_submitted_again() -> None:
-    """Canceled requests are resubmitted when someone else cancelled the batch, not when the pool did."""
+async def test_a_canceled_request_is_not_submitted_again() -> None:
+    """A canceled request raises, saying its batch was canceled, rather than being submitted again."""
     wrapped = ScriptedBatchModel('canceled')
     model = BatchedModel(wrapped, pool=BatchPool(**FAST_BATCH_SETTINGS))
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
@@ -195,7 +195,7 @@ async def test_a_batch_this_pool_cancelled_is_not_submitted_again() -> None:
     await model.cancel_suspended_response(pending)
     assert wrapped.canceled == [wrapped.created[0].id]
 
-    with pytest.raises(ModelAPIError, match='was canceled before the model ran it'):
+    with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES['canceled']):
         await model.request([*messages, pending], None, ModelRequestParameters())
     assert len(wrapped.created) == 1
 
@@ -254,6 +254,12 @@ async def test_model_request_batch_returns_errors_that_resubmitting_would_not_fi
     (failed,) = await model_request_batch(wrapped, requests, max_resubmissions=2, **FAST_POLLING)
     assert isinstance(failed, BatchJobError) and failed.status_code == 503
     assert len(wrapped.created) == 4
+
+    wrapped = ScriptedBatchModel('canceled')
+    (canceled,) = await model_request_batch(wrapped, requests, **FAST_POLLING)
+    assert isinstance(canceled, ModelAPIError)
+    assert str(canceled) == 'The batch was canceled before the model ran the request.'
+    assert len(wrapped.created) == 1
 
     wrapped = ScriptedBatchModel('missing')
     (missing,) = await model_request_batch(wrapped, requests, max_resubmissions=0, **FAST_POLLING)
@@ -538,7 +544,7 @@ async def _gather(agent: Agent[None, str], runs: int) -> list[str]:
     return [result.output for result in await asyncio.gather(*(agent.run(f'Hello {i}') for i in range(runs)))]
 
 
-async def test_the_pool_remembers_a_bounded_number_of_statuses_and_cancellations(
+async def test_the_pool_remembers_a_bounded_number_of_statuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     wrapped = SlowBatchTestModel(pending_checks=1000)
@@ -556,11 +562,6 @@ async def test_the_pool_remembers_a_bounded_number_of_statuses_and_cancellations
     # The first batch's status was forgotten, so checking it again asks the provider.
     await model.request([*messages, first], None, ModelRequestParameters())
     assert wrapped.status_checks == 3
-
-    await model.cancel_suspended_response(first)
-    await model.cancel_suspended_response(second)
-    assert wrapped.canceled == [wrapped.created[0].id, wrapped.created[1].id]
-    assert len(pool._canceled) == 1  # pyright: ignore[reportPrivateUsage]
 
 
 class SizedBatchModel(SlowBatchTestModel):

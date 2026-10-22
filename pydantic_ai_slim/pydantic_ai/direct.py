@@ -171,9 +171,9 @@ async def model_request_batch(
     haven't ended. A request's `request_timeout` setting raises a [`UserError`][pydantic_ai.exceptions.UserError],
     since one request in a batch can't be timed out separately.
 
-    Requests a batch ended without running, for example because they expired, and requests that failed with a rate
-    limit, timeout or server error are submitted again in new batches, up to `max_resubmissions` times, as a
-    provider SDK retries a live request.
+    Requests that expired before the provider ran them, that a batch ended without a result for, or that failed with
+    a rate limit, timeout or server error are submitted again in new batches, up to `max_resubmissions` times, as a
+    provider SDK retries a live request. A canceled request isn't.
 
     ```py title="model_request_batch_example.py"
     from pydantic_ai import ModelRequest
@@ -206,8 +206,8 @@ async def model_request_batch(
         model: The model to send the requests to. We allow `str` here since the actual list of allowed models changes frequently.
         requests: The requests to send, each with its own messages, settings and parameters. Their `custom_id`s must be unique.
         max_requests: The most requests per batch. Defaults to the provider's limit, which also caps it.
-        max_resubmissions: How many times a request that the batch didn't run, or that failed with a transient error,
-            is submitted again in a new batch. `0` returns the error instead.
+        max_resubmissions: How many times a request that expired, or that failed with a transient error, is submitted
+            again in a new batch. `0` returns the error instead.
         poll_interval: How long to wait before first checking a batch. The interval grows by half after every check,
             up to `max_poll_interval`.
         max_poll_interval: The longest wait between checks of a batch.

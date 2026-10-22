@@ -277,8 +277,6 @@ class BatchPool:
         # other requests share its batch. The oldest are forgotten first, which leaves their batches running.
         self._submitted: OrderedDict[_BatchKey, frozenset[str]] = OrderedDict()
         self._abandoned: dict[_BatchKey, set[str]] = {}
-        # The batches this pool cancelled, whose canceled requests aren't submitted again.
-        self._canceled: OrderedDict[_BatchKey, None] = OrderedDict()
         # The batches each request span is already linked to, so a span waiting on several checks links to one once.
         self._linked: weakref.WeakKeyDictionary[Span, set[_BatchKey]] = weakref.WeakKeyDictionary()
 
@@ -445,24 +443,11 @@ class BatchPool:
     async def _cancel(self, model: Model, batch: Batch) -> None:
         # Best effort, like cancelling an abandoned request's batch: nobody is left to report a failure to.
         with suppress(Exception):
-            await self.cancel(model, batch)
-
-    async def cancel(self, model: Model, batch: Batch) -> None:
-        """Cancel a batch every request this pool submitted in has abandoned, remembering that it did."""
-        self._canceled[_batch_key(batch)] = None
-        while len(self._canceled) > _SUBMITTED_BATCHES_SIZE:
-            self._canceled.popitem(last=False)
-        await model.batch_cancel(batch)
+            await model.batch_cancel(batch)
 
     def may_resubmit(self, ticket: _Ticket) -> bool:
-        """Whether a request that failed in its batch in a way a new batch may not repeat is submitted again.
-
-        Not when it already was `max_resubmissions` times, or when this pool cancelled its batch.
-        """
-        return (
-            ticket.get('resubmissions', 0) < self.max_resubmissions
-            and _batch_key(ticket['batch']) not in self._canceled
-        )
+        """Whether a request that failed in a way a new batch may not repeat has resubmissions left."""
+        return ticket.get('resubmissions', 0) < self.max_resubmissions
 
     def abandon(self, batch: Batch, custom_id: str) -> bool:
         """Record that a request no longer waits on its batch, and return whether to cancel the batch.
@@ -635,7 +620,7 @@ class BatchedModel(WrapperModel):
         if (ticket := _pending_ticket(response)) is None:
             return await self.wrapped.cancel_suspended_response(response)
         if self.pool.abandon(ticket['batch'], ticket['custom_id']):
-            await self.pool.cancel(self.wrapped, ticket['batch'])
+            await self.wrapped.batch_cancel(ticket['batch'])
 
     async def _check(
         self,

@@ -25,8 +25,8 @@ DEFAULT_MAX_RESUBMISSIONS = 2
 DEFAULT_POLL_INTERVAL = timedelta(seconds=30)
 DEFAULT_MAX_POLL_INTERVAL = timedelta(minutes=10)
 
-_TRANSIENT_STATUS_CODES = frozenset({408, 409, 429, 499})
-"""The 4xx statuses a provider SDK retries a live request on, and 499, a request canceled on the provider's side."""
+_TRANSIENT_STATUS_CODES = frozenset({408, 409, 429})
+"""The 4xx statuses a provider SDK retries a live request on."""
 
 
 def check_batch_intervals(
@@ -70,8 +70,8 @@ def transient(error: ModelAPIError) -> bool:
     """Whether a batch request that failed with `error` may succeed if it's submitted again.
 
     These are the errors a provider SDK retries a live request on: a rate limit, an unavailable or overloaded model,
-    a server error, a timeout or a conflict, plus a request canceled on the provider's side. A request rejected for
-    its content, its size, its credentials or the account's quota fails the same way again.
+    a server error, a timeout or a conflict. A request rejected for its content, its size, its credentials or the
+    account's quota fails the same way again, and a canceled one was meant to stop.
     """
     if isinstance(error, ModelRateLimitError | ModelUnavailableError | ModelServerError):
         return True
@@ -84,8 +84,11 @@ def transient(error: ModelAPIError) -> bool:
 
 
 def resubmittable(result: BatchResult, error: ModelAPIError) -> bool:
-    """Whether a request whose `result` raised `error` may succeed in a new batch: one the batch didn't run, or a transient error."""
-    return result.status in ('expired', 'canceled') or transient(error)
+    """Whether a request whose `result` raised `error` may succeed in a new batch: one that expired, or a transient error.
+
+    Not one that was canceled: providers don't cancel requests of their own accord, so someone meant to stop it.
+    """
+    return result.status == 'expired' or transient(error)
 
 
 def missing_result_error(model_name: str, batch_id: str) -> ModelAPIError:
