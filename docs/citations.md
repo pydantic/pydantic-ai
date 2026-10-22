@@ -152,19 +152,10 @@ Other providers' APIs can't receive citations, so their answers are sent as plai
 different provider. Citations always stay on the stored messages, and Pydantic AI never adds a list of sources to the
 text.
 
-Before sending a citation back, Pydantic AI checks it against the request. A citation that no longer fits is left out,
-and its text is still sent:
-
-- Anthropic and Bedrock refer to a document by its position among the documents in the request, including documents in
-  tool results and, for Anthropic, pages fetched by Web Fetch. Leaving out earlier messages, as a
-  [history processor](message-history.md#processing-message-history) or [compaction](capabilities/compaction.md) can,
-  moves the documents after them. So a document citation keeps its position if the document there still holds the
-  cited text at the cited characters, and otherwise moves to the one document that does. If none does, or more than
-  one does, it's left out.
-- An OpenAI URL citation covers the link the model wrote into its answer. It's left out if that range no longer
-  contains the link, for example because the text was edited.
-- Bedrock requires a title on each citation. A citation without one, as in history edited after Bedrock sent it, is
-  sent with the name of the document it cites.
+A citation is only sent back while it still matches the request; otherwise it's left out, and its text is still
+sent. Leaving out earlier messages, as a [history processor](message-history.md#processing-message-history) or
+[compaction](capabilities/compaction.md) can, keeps Anthropic and Bedrock document citations working as long as the
+cited document is still in the history. An OpenAI URL citation is left out if the text around its link was edited.
 
 The same history is sent the same way on every turn, so this doesn't affect prompt caching.
 
