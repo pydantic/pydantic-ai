@@ -54,7 +54,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini', 'xai', 'openai_live', 'elevenlabs_agents']
+ProviderName = Literal['openai', 'gemini', 'xai', 'elevenlabs', 'openai_live', 'elevenlabs_agents']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -104,7 +104,7 @@ def _is_audio_send(frame: dict[str, Any]) -> bool:
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
 _SECRET_RE = re.compile(
-    r'(sk-[A-Za-z0-9_\-]{8,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
+    r'(sk-[A-Za-z0-9_\-]{8,}|(?<![A-Za-z0-9])sk_[A-Za-z0-9]{20,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
 )
 _SECRET_PLACEHOLDER = '<scrubbed>'
 
@@ -395,6 +395,15 @@ class ReplayWebSocket:
     def __init__(self, cassette: RealtimeCassette, *, hold_open: bool = False) -> None:
         # A copy: a session-ending send reorders it (see `_SESSION_END_TYPES`), and the cassette is the recording.
         self._interactions = list(cassette.interactions)
+        # Recorded before ElevenLabs Agents typed turns went out under an id naming their input (see
+        # `_CascadeLifecycle.text_sent`): the server made ids up for them, which the replies' `in_response_to_ids` name.
+        self._unnamed_user_messages = any(
+            isinstance(interaction, CassetteMessage)
+            and interaction.direction == 'sent'
+            and interaction.data.get('type') == 'user_message'
+            and 'id' not in interaction.data
+            for interaction in self._interactions
+        )
         self._hold_open = hold_open
         self._position = 0
         cassette._replay = self  # pyright: ignore[reportPrivateUsage]
@@ -458,6 +467,14 @@ class ReplayWebSocket:
             item: dict[str, Any] = actual.get('item') or {}
             if str(item.get('id', '')).startswith('pydantic_ai_item_'):
                 del item['id']
+        if (
+            actual.get('type') == 'user_message'
+            and 'id' not in expected
+            and str(actual.get('id', '')).startswith('pydantic_ai_input_')
+        ):
+            # Recorded before a typed turn went out under an id naming its input (see `_unnamed_user_messages`);
+            # only that id is let through, and the rest of the frame is still pinned.
+            del actual['id']
         if actual.get('type') == 'response.create' and 'response' not in expected:
             # Recorded before a `response.create` carried the `metadata` naming the inputs it answers (see
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
@@ -539,7 +556,12 @@ class ReplayWebSocket:
             if interaction.direction == 'received':
                 self._advance()
                 self._delivered.append(interaction.at)
-                return interaction.data
+                data = interaction.data
+                if self._unnamed_user_messages and data.get('type') == 'agent_response':
+                    # The ids the server made up name nothing the connection sent: replayed without them, revising nothing.
+                    data = {**data, 'agent_response_event': dict(data['agent_response_event'])}
+                    data['agent_response_event'].pop('in_response_to_ids', None)
+                return data
             await self._condition.wait()
 
     async def __aiter__(self):
@@ -688,11 +710,16 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import xai as rt_xai
 
         return rt_xai.websockets, 'connect'
-    if provider == 'elevenlabs_agents':
-        # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
-        from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs
+    if provider == 'elevenlabs':
+        # Same raw-frame engine as xAI: an OpenAI-protocol clone dialed with the `websockets` library.
+        from pydantic_ai.realtime import elevenlabs as rt_elevenlabs
 
         return rt_elevenlabs.websockets, 'connect'
+    if provider == 'elevenlabs_agents':
+        # ElevenLabs speaks its own agent protocol over the `websockets` library directly.
+        from pydantic_ai.realtime import elevenlabs_agents as rt_elevenlabs_agents
+
+        return rt_elevenlabs_agents.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'

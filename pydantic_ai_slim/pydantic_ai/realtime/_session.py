@@ -22,12 +22,14 @@ from typing_extensions import TypeAliasType
 
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from .._framing import SYSTEM_TAG, wrap
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._run_context import context_window_fraction
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
     cancelled_sub_agent_return,
+    tool_bound_retry_part,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
 from ..conversation import Conversation
@@ -41,6 +43,7 @@ from ..exceptions import (
     UserError,
 )
 from ..messages import (
+    ERROR_OUTCOMES,
     INTERRUPTED_TOOL_RETURN_CONTENT,
     BinaryAudio,
     BinaryContent,
@@ -66,7 +69,6 @@ from ..messages import (
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
-    RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
     SystemPromptPart,
@@ -74,6 +76,9 @@ from ..messages import (
     ToolReturnPart,
     UserContent,
     UserPromptPart,
+)
+from ..models import (
+    ModelRequestParameters,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
@@ -141,7 +146,6 @@ from .settings import AudioRetention, RealtimeModelSettings
 
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
-    from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
     from .model import RealtimeModel, RealtimeProviderSession
@@ -412,12 +416,12 @@ _TranslatableEvent: TypeAlias = (
     | PartEndEvent
     | RealtimeSessionErrorEvent
 )
-_SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
+_SettledToolResult: TypeAlias = tuple[ToolReturnPart, str | Sequence[UserContent] | None]
 
 
 def _build_session_tool_return(
     tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
-) -> tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]:
+) -> tuple[ToolReturnPart, str | Sequence[UserContent] | None]:
     """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
     result_part, user_content, tools_added = build_tool_return_part(
@@ -472,7 +476,7 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         reason = 'requires approval' if isinstance(error, ApprovalRequired) else 'runs externally'
         content = f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.'
     else:
-        content = 'The tool raised an unhandled error and the session ended.'
+        content = 'The tool raised an unhandled error.'
     return ToolReturnPart(
         tool_name=call.tool_name,
         content=content,
@@ -502,7 +506,7 @@ def _pending_message_text(pending: PendingMessage) -> str:
             if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                 texts.append(part.content)
             elif isinstance(part, SystemPromptPart):
-                texts.append(f'<system>{part.content}</system>')
+                texts.append(wrap(SYSTEM_TAG, part.content))
             else:
                 raise error
     if not texts:
@@ -550,8 +554,7 @@ class RealtimeSession:
     - a tool call becomes a [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] (start/end) plus a
       [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] when execution starts and a
       [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] carrying a normalized
-      [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
-      [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] when it settles.
+      [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] when it settles.
 
     Tools always run concurrently with the session. The session keeps streaming events while a tool
     runs, so the model can keep speaking and user speech keeps being processed, then sends the result
@@ -559,8 +562,8 @@ class RealtimeSession:
     happens.
 
     Tool outcomes use the same normalized history shapes as a classic agent run: retries become
-    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]s, denials retain their `outcome`, and
-    structured returns preserve `content`, `metadata`, and typed `tool_kind` identity. Realtime
+    `outcome='retried'` returns, denials retain their `outcome`, and structured returns preserve
+    `content`, `metadata`, and typed `tool_kind` identity. Realtime
     tool-output channels are string-only, so the structured part is rendered only when it is sent.
     OpenAI-protocol connections send additional user content as a follow-up conversation item; Gemini
     includes a text fallback in its tool response. If the provider cancels an in-flight call, the
@@ -893,8 +896,9 @@ class RealtimeSession:
         detaches, and the browser's call stays up: use
         [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] to end it.
 
-        Raises whatever ended the session — a provider hangup, an exceeded `usage_limits`, or a failed
-        tool — unless it was already raised by event iteration or an outbound session method.
+        Raises a failure that hasn't been delivered yet: whatever ended the session (a provider hangup,
+        an exceeded `usage_limits`), or a failed tool that nothing was iterating to receive. A failure
+        already raised by event iteration or an outbound session method is not raised again.
         """
         if not self._entered:
             return
@@ -1310,7 +1314,8 @@ class RealtimeSession:
         rather than played: discarded by a barge-in or by the view's buffer overflowing, or emitted before
         the view subscribed. The wait also ends if the view is closed or abandoned, or the session closes.
         Requires exactly one active
-        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator.
+        [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] iterator; once the
+        connection has failed and ended that iterator, this raises the failure instead.
         """
         tap = self._single_audio_tap('`wait_for_playback()`', 'wait for playback from')
         while not self._closed and not tap.ended:
@@ -1329,10 +1334,13 @@ class RealtimeSession:
         Returns once the exchange in progress reaches the boundary
         [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] marks — after a
         tool-calling turn, that is the answer that follows the tool results, not the response that
-        called them. Returns immediately when the model owes nothing, so a reply that finished between
+        called them. A reply is the response that answers what was sent, not one that was already under
+        way when it reached the provider (see [The turn boundary](../realtime/events.md#the-turn-boundary)).
+        Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
-        over; it also returns if the session closes, fails (a tool raised, or a usage limit tripped) so
-        the reply can no longer come, or the provider refuses the request for the reply (reported as a
+        over; it also returns if the session closes or ends (a response passed a usage limit), if the
+        exchange fails (a tool raised, or its result would pass a usage limit) so the reply can no longer
+        come, or if the provider refuses the request for the reply (reported as a
         [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
@@ -1378,6 +1386,10 @@ class RealtimeSession:
             await self._exchange_progress.wait()
 
     def _single_audio_tap(self, method: str, purpose: str) -> _AudioTap:
+        if not self._audio_taps and self._pump_error is not None:
+            # The failure that ended receiving also ended the caller's view: report that, not a missing view.
+            # Not recorded as delivered, so the event stream (or close) still raises it.
+            raise self._pump_error
         if len(self._audio_taps) != 1:
             raise UserError(
                 f'{method} needs exactly one active `stream_audio()` iterator to {purpose}, '
@@ -1398,7 +1410,8 @@ class RealtimeSession:
         chunk less than was really heard, never more. A consumer that instead buffers ahead reads
         too far; count actual device consumption yourself in that case. Made to be passed to
         [`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] on
-        barge-in. Requires exactly one active `stream_audio()` iterator, like that call.
+        barge-in. Requires exactly one active `stream_audio()` iterator, like that call; once the
+        connection has failed and ended that iterator, reading this raises the failure instead.
         """
         return self._single_audio_tap('`played_audio_bytes`', 'report the playback position of').played_bytes
 
@@ -1816,10 +1829,16 @@ class RealtimeSession:
             frames.append(TruncateOutput(audio_end_ms=played_ms))
         if not self._server_cancelled_the_response_on_speech:
             frames.append(CancelResponse())
-        if frames:
-            await self._send_frame(*frames)
         # (Only a response still being generated records the position: a finished one keeps what history
         # recorded, and the position must not land on the next one instead.)
+        if frames:
+            try:
+                await self._send_frame(*frames)
+            except RealtimeError:
+                # The link failed mid-send, so the provider may have applied the truncation already: either way the
+                # listener heard only this much, so history records the cut too.
+                self._apply_core(Interrupted(played_ms=played_ms))
+                raise
         self._apply_core(Interrupted(played_ms=played_ms))
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
@@ -1879,7 +1898,18 @@ class RealtimeSession:
         played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
         truncations = self._truncations_at(playhead)
-        await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        try:
+            await self._send_frame(*truncations, *([CancelResponse()] if cancel else []))
+        except RealtimeError:
+            # As in `interrupt(played_ms=...)`: the truncations may have reached the provider before the link failed.
+            self._apply_core(self._playback_interruption(played_ms, truncations))
+            raise
+        self._apply_core(self._playback_interruption(played_ms, truncations))
+        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
+        return True
+
+    def _playback_interruption(self, played_ms: int, truncations: list[TruncateOutput]) -> Interrupted:
+        """What a barge-in at a playback position cut off, for the core to record."""
         # (Only a response still being generated takes the position as a whole: a finished one is cut off by its
         # item's truncation instead, and the position must not land on the next response.)
         on_this_connection = {
@@ -1890,9 +1920,7 @@ class RealtimeSession:
             for cut in truncations
             if cut.item_id is not None and cut.item_id in on_this_connection
         )
-        self._apply_core(Interrupted(played_ms=played_ms, cuts=cuts))
-        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
-        return True
+        return Interrupted(played_ms=played_ms, cuts=cuts)
 
     def _bytes_to_ms(self, audio_bytes: int) -> int:
         """Milliseconds of output audio in `audio_bytes`; a negative span (a position before it) is 0."""
@@ -2153,7 +2181,7 @@ class RealtimeSession:
     def _complete_tool_call(
         self,
         call_part: ToolCallPart,
-        result_part: ToolReturnPart | RetryPromptPart,
+        result_part: ToolReturnPart,
         content: str | Sequence[UserContent] | None = None,
     ) -> list[RealtimeEvent]:
         request_parts: list[ModelRequestPart] = [result_part]
@@ -2323,6 +2351,7 @@ class RealtimeSession:
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> _SettledToolResult:
@@ -2374,7 +2403,7 @@ class RealtimeSession:
                 on_inline_deferred=on_inline_deferred,
             )
         except ToolRetryError as e:
-            result_part = e.tool_retry
+            result_part = tool_bound_retry_part(e)
             user_content = None
         except ToolFailedError as e:
             # A tool that raised `ToolFailed` yields a `failed` result rather than a retry. Send it
@@ -2397,11 +2426,7 @@ class RealtimeSession:
             # every concurrent call.
             self._tool_calls_in_flight -= int(reserved_budget)
 
-        if isinstance(result_part, RetryPromptPart):
-            output = result_part.model_response()
-            wire_content: list[UserContent] = []
-        else:
-            output, wire_content = result_part.model_response_str_and_user_content()
+        output, wire_content = result_part.model_response_str_and_user_content()
         if isinstance(user_content, str):
             wire_content.append(user_content)
         elif user_content:
@@ -2412,8 +2437,10 @@ class RealtimeSession:
             # provider left to send to, so the result goes nowhere (`_run_tool` drops it too).
             return result_part, user_content
         if not response_usage_follows:
-            await self._drain_pending_messages('asap')
-        failed = isinstance(result_part, RetryPromptPart) or result_part.outcome == 'failed'
+            # A message the tool enqueued goes out ahead of its result. A response that went on past the call isn't
+            # waited for: the result ends it.
+            await self._drain_pending_messages('asap', ending=call_part.tool_call_id if response_continues else None)
+        failed = result_part.outcome in ERROR_OUTCOMES
         await self._send_tool_result(call_part, output, wire_content, failed=failed)
         return result_part, user_content
 
@@ -2424,6 +2451,25 @@ class RealtimeSession:
             tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None, failed=failed
         )
         await self._send_frame(result)
+
+    async def _send_failed_result(
+        self, call_part: ToolCallPart, result_part: ToolReturnPart, error: BaseException
+    ) -> bool:
+        """Send the failure history records for a call that couldn't settle, if the connection needs it; whether it did.
+
+        Only for a connection whose model can't move on without it (see `_sends_failed_tool_results`). A usage limit
+        stops the exchange instead: its result must not ask for another request.
+        """
+        if not self._connection._sends_failed_tool_results or isinstance(error, UsageLimitExceeded):  # pyright: ignore[reportPrivateUsage]
+            return False
+        output, _ = result_part.model_response_str_and_user_content()
+        try:
+            await self._send_tool_result(call_part, output, [], failed=True)
+        except (RealtimeError, UsageLimitExceeded, UserError):
+            # (The link dropped, the result's request would pass a limit, or the session closed meanwhile: the round
+            # is given up instead.)
+            return False
+        return True
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -2449,10 +2495,13 @@ class RealtimeSession:
             self._park_error(error)
         self._queue_put(self._queue_changed)
 
-    async def _drain_pending_messages(self, priority: PendingMessagePriority) -> None:
-        """Deliver queued text prompts of `priority` and record them as normal user turns."""
+    async def _drain_pending_messages(self, priority: PendingMessagePriority, *, ending: str | None = None) -> None:
+        """Deliver queued text prompts of `priority` and record them as normal user turns.
+
+        `ending` is a tool call whose result is about to end the response that made it, which isn't waited for.
+        """
         async with self._pending_messages_lock:
-            if self._core.response_under_way():
+            if self._core.response_under_way(besides_caller_of=ending):
                 if priority == 'asap':
                     self._asap_drain_deferred = True
                 return
@@ -2535,6 +2584,7 @@ class RealtimeSession:
         execution_prerequisites: tuple[asyncio.Event, ...],
         completion: asyncio.Event,
         response_usage_follows: bool,
+        response_continues: bool,
         run_step: int,
         reserved_budget: bool,
         order_index: int,
@@ -2547,6 +2597,7 @@ class RealtimeSession:
                 validation_done=validation_done,
                 execution_prerequisites=execution_prerequisites,
                 response_usage_follows=response_usage_follows,
+                response_continues=response_continues,
                 run_step=run_step,
                 reserved_budget=reserved_budget,
             )
@@ -2554,7 +2605,12 @@ class RealtimeSession:
             # Whatever cancelled it settled the call (see `_stop_tool_calls`).
             raise
         except BaseException as e:
-            self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
+            result_part = _unsettled_call_return(call_part, e)
+            # Sent before the call is recorded as settled, so the core takes it as a result that went out.
+            sent = await self._send_failed_result(call_part, result_part, e)
+            self._complete_tool_call(call_part, result_part)
+            if not sent:
+                self._connection._tool_call_unanswered(call_part.tool_call_id)  # pyright: ignore[reportPrivateUsage]
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
@@ -2688,6 +2744,7 @@ class RealtimeSession:
                 execution_prerequisites=execution_prerequisites,
                 completion=completion,
                 response_usage_follows=event.response_usage_follows,
+                response_continues=event.response_continues,
                 run_step=tool_run_step,
                 reserved_budget=reserves_budget,
                 order_index=order_index,
