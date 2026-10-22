@@ -25,7 +25,7 @@ never discarded.
 | [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] | Incremental speech audio/transcript or text content. |
 | [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] | A finalized part; retained speech audio appears here, not at part start. |
 | [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] | A local function tool began executing. |
-| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool completed or returned a retry prompt. |
+| [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] | A local function tool produced a result — a return, a failure, or a retry. |
 | [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] | A tool call was deferred (e.g. needs approval); emitted before any inline capability handler runs. |
 | [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] | An inline capability handler resolved the deferred requests; the results go through normal tool processing. |
 | [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] | Enqueued content was delivered into session history. |
