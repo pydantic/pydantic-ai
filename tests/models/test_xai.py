@@ -48,7 +48,8 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -78,7 +79,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -763,14 +764,18 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
         # Intentionally shuffled, but these are tool-results too (tool_name is set).
         ModelRequest(
             parts=[
-                RetryPromptPart(content='retry tool_b', tool_name='tool_b', tool_call_id='tool_b'),
-                RetryPromptPart(content='retry tool_a', tool_name='tool_a', tool_call_id='tool_a'),
-                RetryPromptPart(content='retry tool_c', tool_name='tool_c', tool_call_id='tool_c'),
+                legacy_retry_prompt_part(content='retry tool_b', tool_name='tool_b', tool_call_id='tool_b'),
+                legacy_retry_prompt_part(content='retry tool_a', tool_name='tool_a', tool_call_id='tool_a'),
+                legacy_retry_prompt_part(content='retry tool_c', tool_name='tool_c', tool_call_id='tool_c'),
             ]
         ),
     ]
 
-    await m.request(messages, model_settings=None, model_request_parameters=ModelRequestParameters())
+    await m.request(
+        m.prepare_messages(messages, ModelRequestParameters()),
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
 
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
@@ -803,17 +808,17 @@ async def test_xai_reorders_retry_prompt_tool_results_by_tool_call_id(allow_mode
                         ],
                     },
                     {
-                        'content': [{'text': 'retry tool_a\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_a"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_a',
                     },
                     {
-                        'content': [{'text': 'retry tool_c\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_c"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_c',
                     },
                     {
-                        'content': [{'text': 'retry tool_b\n\nFix the errors and try again.'}],
+                        'content': [{'text': '{"error":"retry tool_b"}'}],
                         'role': 'ROLE_TOOL',
                         'tool_call_id': 'tool_b',
                     },
@@ -949,11 +954,13 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
+                        retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -4447,8 +4454,9 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
     )
 
 
-async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
-    """Test that RetryPromptPart with tool_name=None is sent as a user message."""
+async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: None):
+    """A tool-less retry is sent in the harness's voice: xAI takes no mid-conversation system
+    message, so the rendered system prompt degrades to `<system>`-tagged user text."""
     # First response triggers a ModelRetry
     response1 = create_response(content='Invalid')
     # Second response succeeds
@@ -4467,7 +4475,7 @@ async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
     result = await agent.run('Hello')
     assert result.output == 'Valid response'
 
-    # Verify the kwargs sent to xAI - second call should have RetryPrompt mapped as user message
+    # Verify the kwargs sent to xAI - second call carries the feedback as `<system>`-tagged user text
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
@@ -4488,10 +4496,10 @@ async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
                         'content': [
                             {
                                 'text': """\
-Validation feedback:
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<retry_feedback>
 Please provide a valid response
-
-Fix the errors and try again.\
+</retry_feedback>\
 """
                             }
                         ],
@@ -4507,11 +4515,11 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify the retry prompt was sent as a user message
+    # The history keeps the model-neutral part; only the wire shows the rendering above.
     messages = result.all_messages()
-    assert len(messages) == 4  # UserPrompt, ModelResponse, RetryPrompt, ModelResponse
-    part = message_part(messages, RetryPromptPart, message_index=2)
-    assert part.tool_name is None
+    assert len(messages) == 4  # UserPrompt, ModelResponse, RetryFeedback, ModelResponse
+    part = message_part(messages, RetryFeedbackPart, message_index=2)
+    assert part.retry.cause == 'model_retry'
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):

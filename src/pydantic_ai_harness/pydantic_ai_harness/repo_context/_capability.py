@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import SystemPromptPart, ToolCallPart
@@ -57,8 +58,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     1. Walk-up instruction autoload (`autoload_instructions`, on by default):
        load `CLAUDE.md`/`AGENTS.md` from the working directory and every ancestor
        up to `home_dir`, deduped, ancestor-first. These are read once at run start
-       and injected as **static system instructions** via `get_instructions`, so
-       they stay in the cached prefix and never re-read per turn.
+       and injected as system instructions via `get_instructions`, so they stay in
+       the cached prefix, stable within a run; a change between runs of a
+       conversation is appended rather than rewritten.
 
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
        reports where the repo's CE assets live (`.claude`/`.agents`/`.codex`/
@@ -73,8 +75,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        enqueues a one-line pointer; `'contents'` inlines the file body.
 
     Cache note: injecting file contents into the system prompt costs prompt-cache
-    stability. Strategy 1 is safe because its files are static; the volatile
-    Strategy 3 content rides in the message tail instead.
+    stability. Strategy 1 is safe because its files are stable within a run, and a
+    change between runs is appended rather than rewritten; the volatile Strategy 3
+    content rides in the message tail instead.
 
     ```python
     from pathlib import Path
@@ -187,6 +190,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return self._render_instructions()
 
         return instructions
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        # The context files are read each run, so an edit to one between runs is appended as a change (a
+        # diff, when that's shorter) rather than rewriting the cached prompt.
+        return append_on_change_by_default(super()._collect_instructions(), key='repo_context')
 
     def _render_instructions(self) -> str | None:
         parts: list[str] = []

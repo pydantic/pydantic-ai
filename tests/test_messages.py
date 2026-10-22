@@ -47,7 +47,6 @@ from pydantic_ai import (
     NativeToolReturnPart,
     PartDeltaEvent,
     RequestUsage,
-    RetryPromptPart,
     RunUsage,
     SpeechPart,
     SpeechPartDelta,
@@ -91,7 +90,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
+from .conftest import IsDatetime, IsNow, IsStr, legacy_retry_prompt_part, message, message_part, try_import
 
 with try_import() as openai_import_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -2901,7 +2900,7 @@ class TestInstructionParts:
 
 def test_retry_prompt_strips_input_from_top_level_errors():
     """Top-level validation errors should not include `input` in model_response() since it duplicates the entire generated output."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('required_field',), 'msg': 'Field required', 'input': {'wrong_field': 'value'}},
         ],
@@ -2913,7 +2912,7 @@ def test_retry_prompt_strips_input_from_top_level_errors():
 
 def test_retry_prompt_keeps_input_for_nested_errors():
     """Nested validation errors should keep `input` in model_response() to help the model locate the invalid part."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('items', 0, 'sub_field'), 'msg': 'Field required', 'input': {'other': 'val'}},
         ],
@@ -2925,7 +2924,7 @@ def test_retry_prompt_keeps_input_for_nested_errors():
 
 def test_retry_prompt_mixed_top_level_and_nested_errors():
     """When both top-level and nested errors exist, only top-level input should be stripped."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {'type': 'missing', 'loc': ('root_field',), 'msg': 'Field required', 'input': {'root_key': 'root_val'}},
             {
@@ -2945,7 +2944,7 @@ def test_retry_prompt_mixed_top_level_and_nested_errors():
 
 def test_retry_prompt_strips_input_from_top_level_type_errors():
     """Top-level type/value errors also have input stripped, even though it's a small scalar value."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'int_parsing',
@@ -2962,7 +2961,7 @@ def test_retry_prompt_strips_input_from_top_level_type_errors():
 
 def test_retry_prompt_tool_call_keeps_input_at_top_level():
     """Tool-call retries (`tool_name` set) must preserve `input` so the model sees what args it sent."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {'type': 'missing', 'loc': ('content',), 'msg': 'Field required', 'input': {}},
@@ -2975,7 +2974,7 @@ def test_retry_prompt_tool_call_keeps_input_at_top_level():
 
 def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     """Tool-call retries preserve `input` for nested errors too, matching the existing NativeOutput nested behavior."""
-    part = RetryPromptPart(
+    part = legacy_retry_prompt_part(
         tool_name='evaluate_content',
         content=[
             {
@@ -2994,7 +2993,7 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
 def test_retry_prompt_otel_message_parts_include_content():
     """Retry prompt parts honor `include_content` like every other message part, in both the
     tool-call and non-tool branches."""
-    non_tool = RetryPromptPart(
+    non_tool = legacy_retry_prompt_part(
         content=[
             {
                 'type': 'string_type',
@@ -3004,7 +3003,7 @@ def test_retry_prompt_otel_message_parts_include_content():
             },
         ],
     )
-    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+    tool = legacy_retry_prompt_part(tool_name='my_tool', tool_call_id='call_1', content='Try again')
 
     with_content = InstrumentationSettings(include_content=True)
     assert non_tool.otel_message_parts(with_content) == snapshot(

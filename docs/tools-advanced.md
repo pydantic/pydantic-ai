@@ -66,15 +66,15 @@ print(result.output)
 
 _(This example is complete, it can be run "as is")_
 
-Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
+Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON. A value whose JSON form is a string, such as a `datetime`, `UUID` or `Decimal`, is sent as that string without JSON quotes, which is also what it reloads as after you [store and load the message history](message-history.md#storing-and-loading-messages-to-json), so the model sees the same text either way.
 
 ### Where a returned file is sent {#tool-return-file-provenance}
 
 Whether a file can travel inside the tool result depends on the model **and** the file's media type:
 
 - **Inside the tool result**, where the API and the media type both allow it: Anthropic and OpenAI Responses for images and documents, Gemini 3 for the types listed in its [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile]'s `google_supported_mime_types_in_tool_returns`, and Bedrock for the media kinds a model family supports.
-- **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set). Anthropic and OpenAI Responses have no fallback: a tool returning audio or video raises `NotImplementedError` rather than sending it.
-- **Nowhere**: Cohere drops a file returned from a tool without an error — see [#7646](https://github.com/pydantic/pydantic-ai/issues/7646).
+- **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set).
+- **As a note in its place**, where the model can't read that kind of file at all, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on Bedrock, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
 
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
@@ -89,6 +89,14 @@ The tool result itself carries `See file d9a13f.` in place of the file, and each
 The framing is applied while the request is built and is never stored: the file stays on the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in your message history, so the same history replayed against a model that takes files natively puts them in the tool result with no framing at all.
 
 Because it is ordinary prompt text, the framing tells the model where content came from rather than proving it — see [the trust boundary](message-history.md#trust-boundary-for-client-supplied-history).
+
+A file the model can't read would fail the request if it were sent, which is out of proportion for something the model asked a tool for, so it is replaced in the tool result by a note naming it, and the run goes on:
+
+```text
+File d9a13f (audio/mpeg, 48,213 bytes) was not sent: this model cannot read audio files.
+```
+
+The model can then tell the user, or try another tool. Like the framing, the note is only in the request: the file stays on the `ToolReturnPart` in your message history, and each model a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] tries decides for itself, so one that can read the file is sent it. A file in a user prompt, or in [`ToolReturn.content`](#advanced-tool-returns), is sent as it is, and a model that can't take it still fails the request: you or your user chose to send it.
 
 ### Advanced Tool Returns
 
@@ -574,7 +582,7 @@ If preserving cache hits matters, prefer providers/cases marked "Never", or use 
 
 ## Tool Execution, Retries, and Failures {#tool-retries}
 
-When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
+When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic (with optional [validation context](output.md#validation-context)). If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically answers the call with a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying the validation details and `outcome='retried'`. That result is sent back to the LLM on the provider's error channel, informing it of the error and allowing it to correct the parameters and retry the tool call.
 
 If a tool's own logic cannot produce a normal result, choose the exception based on what you want the model to do next:
 
@@ -585,7 +593,7 @@ Any other exception propagates out of the agent run and is not sent back to the 
 
 ### Requesting a Tool Retry
 
-Raising `ModelRetry` generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the exception message. That prompt is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
+Raising `ModelRetry` answers the call with a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] carrying the exception message and `outcome='retried'`. That result is sent back to the LLM so it can correct the tool call, choose another tool, or try a different approach.
 
 ```python
 from pydantic_ai import ModelRetry
@@ -648,7 +656,7 @@ You can also raise `ModelRetry` or `ToolFailed` from tool validation and executi
 
 ### Tool Timeout
 
-You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and a retry prompt is sent to the model (counting towards the retry limit).
+You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and the call is answered with a retried tool result (counting towards the retry limit).
 
 ```python
 import asyncio
@@ -676,7 +684,7 @@ async def fast_tool() -> str:
 - **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to the tools registered on it.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
-When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+When a timeout occurs, the tool is treated as a retryable failure and the model receives a retried tool result with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
 Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], which is what backs the agent's own tools. Tools served by an [MCP server](mcp/client.md), an [external toolset](deferred-tools.md), or a custom [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] do not read them — bind those deadlines at the server or transport level instead. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for how tool timeouts relate to the other deadlines in a run.
 
@@ -721,7 +729,7 @@ print(result.output.approvals[0].args)
 
 _(This example is complete, it can be run "as is")_
 
-When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retry prompt (with instructions to try again) and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
+When schema validation fails, or an `args_validator` raises `ModelRetry`, the error message is sent back to the LLM as a retried tool result and respects the tool's `retries` setting. When an `args_validator` raises `ToolFailed`, the model instead receives a failed tool result it should adapt to rather than retry, and the retry budget is left untouched. For [deferred tools](deferred-tools.md), validation runs at deferral time — only tool calls with valid arguments are deferred.
 
 A validator can defer the call itself, just like the tool function can — and it's the better place to make that decision, since bad arguments are rejected before a human is asked to approve them. A validator that raises `ApprovalRequired` or `CallDeferred` doesn't consume the retry budget either: the arguments were valid, so the deferral is a deliberate decision rather than a failure. The tool function is not executed, and the call joins the run's other [deferred tool calls](deferred-tools.md): it's resolved inline by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler if you have one, or surfaced in the run's `DeferredToolRequests` output. Once the call is [approved](deferred-tools.md#human-in-the-loop-tool-approval), the validator runs again — this time with [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] set to `True` — and the tool executes.
 
@@ -969,7 +977,7 @@ Available strategy values:
 
 | `strategy` | Algorithm | Behavior |
 |---|---|---|
-| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+, OpenAI server-executed `tool_search` on GPT-5.4+ except GPT-5.4 nano, local keyword matching elsewhere. |
+| `None` (default) | Provider's native algorithm where available, else local keyword matching | Anthropic native BM25 on Sonnet 4.5+/Opus 4.5+/Haiku 4.5+ (native regex on the [legacy Bedrock client](models/anthropic.md#aws-bedrock)), OpenAI server-executed `tool_search` on GPT-5.4+ except GPT-5.4 nano, local keyword matching elsewhere. |
 | `'keywords'` | Local keyword-overlap | The keyword algorithm runs on our side, but the wire shape adapts: client-executed native (Anthropic, OpenAI) where supported so the prompt cache stays warm, regular `search_tools` function tool elsewhere. |
 | `'bm25'` / `'regex'` | Anthropic native | Server-executed by Anthropic. The request fails on other providers (OpenAI, Google, etc.) rather than silently substituting a different algorithm. |
 | Callable `(ctx, queries, tools) -> names` | User-defined | Same execution-mode handling as `'keywords'`: client-executed native on supporting providers, local `search_tools` function tool elsewhere. |
@@ -982,7 +990,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
 
     * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
-    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape.
+    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape. The exception is the legacy [`AsyncAnthropicBedrock` client](models/anthropic.md#aws-bedrock), where recorded `bm25` calls replay as `regex` unless the run uses `ToolSearch(strategy='bm25')`.
 
 #### Tool-availability history portability
 
@@ -1116,6 +1124,70 @@ Any part whose kind has a typed part is promoted as soon as its [`ModelResponse`
 A tool declares its kind with the `tool_kind` argument of [`Tool`][pydantic_ai.tools.Tool] and the tool decorators, or by setting [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind], for example in a toolset's `get_tools` or a [`prepare`](#tool-prepare) function. Either takes the `ToolKind` or its id. When a run collects its tools, it raises [`UserError`][pydantic_ai.exceptions.UserError] for a kind that isn't defined, so the module defining it must be imported; a stored `ToolDefinition` with such a kind (for example in durable execution history) still loads. It also raises `UserError` when the tool's parameters don't fit the kind's `args`, or its return type doesn't fit the kind's `content`: every field the shape requires must be a required field of the tool's, and where both give a field a JSON type, those types must overlap. A return type that can't be compared field by field, such as a union, is accepted. This is a sanity check rather than full JSON Schema comparison.
 
 A typed subclass may only add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't define (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is defined.
+
+### Superseding a tool by kind {#unless-tool-kind}
+
+A capability sometimes offers its own tool for something a more general tool on the agent can also do, such as a tool that reads the notes it keeps in the workspace when the agent can read files anyway. Setting [`ToolDefinition.unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] to a kind makes the tool step aside whenever another tool in the run step has that kind, whatever that tool is called. It's the counterpart of [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native], which does the same for a native tool the model supports.
+
+Instructions and tool results that mention such a tool shouldn't hard-code its name either. [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] returns the name of the tool with a kind in the current step, including any prefix, or `None` when there is none:
+
+```python {title="unless_tool_kind.py"}
+from dataclasses import replace
+
+from pydantic_ai import Agent, AgentRunResult, ModelRequest, RunContext, Tool, ToolKind
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
+
+file_read = ToolKind('workspace', 'file_read')
+
+
+def read_file(path: str) -> str:
+    """Read a file in the workspace."""
+    return f'contents of {path}'
+
+
+def read_notes() -> str:
+    """Read the notes kept in `notes.md`."""
+    return 'notes'
+
+
+def unless_file_reader(ctx: RunContext, tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, unless_tool_kind=file_read)
+
+
+agent = Agent('test', tools=[Tool(read_notes, prepare=unless_file_reader)])
+
+
+@agent.instructions
+def notes_instructions(ctx: RunContext) -> str:
+    if reader := ctx.tool_name_for_kind(file_read):
+        return f'Your notes are in `notes.md`. Read them with `{reader}`.'
+    return 'Read your notes with `read_notes`.'
+
+
+def sent_instructions(result: AgentRunResult[str]) -> str | None:
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    return request.instructions
+
+
+result = agent.run_sync('What do my notes say?')
+print(sent_instructions(result))
+#> Read your notes with `read_notes`.
+print(result.output)
+#> {"read_notes":"notes"}
+
+file_tools = FunctionToolset([Tool(read_file, tool_kind=file_read)])
+result = agent.run_sync('What do my notes say?', toolsets=[file_tools])
+print(sent_instructions(result))
+#> Your notes are in `notes.md`. Read them with `read_file`.
+print(result.output)
+#> {"read_file":"contents of a"}
+```
+
+The decision is made when the run step's tools are collected, after any [`prepare_tools`](#prepare-tools) function, so a tool left out is neither sent to the model nor callable, and `tool_name_for_kind` doesn't return it. A tool hidden by [deferred loading](#tool-search) counts as present: the answer, and instructions built from it, stay the same when that tool is revealed, which keeps the prompt cacheable. A tool is only left out in favor of a tool that stays, so if a third tool supersedes the general one, the capability's tool comes back. When tools would each be left out in favor of the other, the one of them listed first in the step's tools stays and every tool whose kind it names steps aside. Some cycles can't meet every rule at once (A unless B, B unless C, C unless A). A tool is still never left out unless a tool it names stays, so in such a cycle a tool can stay beside one whose kind it names; the result is the same for the same tools in the same order. Unlike `tool_kind`, `unless_tool_kind` doesn't need the kind to be defined: only ids are compared, so a capability can step aside for another package's tool by its kind id without importing that package, and a kind no tool has means there is nothing to step aside for.
+
+When several tools have the kind, `tool_name_for_kind` returns the first in the order of [`RunContext.tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list them in, and which you can iterate to see them all. Instruction functions, model request hooks and tools see the current step's tools, including a tool running in a Temporal activity, which answers from a snapshot of the step's tools taken when the activity was dispatched. A toolset's `get_tools` and `prepare_tools` functions run while those are still being collected, so there it answers from the previous step.
 
 ## See Also
 
