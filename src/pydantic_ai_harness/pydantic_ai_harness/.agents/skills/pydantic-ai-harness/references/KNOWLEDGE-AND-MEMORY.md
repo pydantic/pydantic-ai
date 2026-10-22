@@ -17,7 +17,10 @@ demand). Only `Skills` needs an extra.
 
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
-protected), and `search_memory(query)`. By default a bounded excerpt of `MEMORY.md` plus the list
+protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
+relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
+(`unless_tool_kind=READ_FILE_KIND`) and the injected memory block gives the scope's directory, e.g.
+`.agent-memory/main/`. The guidance names no reader, so it stays static. By default a bounded excerpt of `MEMORY.md` plus the list
 of other files is injected into each request as a delimited user-role part, attached to the request
 that holds the latest user prompt (not after tool results), or to the last request when there is none.
 
@@ -133,7 +136,7 @@ with the model's writes.
 
 - `max_tokens=2_000` (approx, 4 chars/token) bounds guidance + notebook + file list together;
   `max_lines=200` additionally limits `MEMORY.md`; `max_memory_size=65_536` bounds per-file read,
-  search, and write. Overflow is omitted with a pointer to `read_memory` / `search_memory`.
+  search, and write. Overflow is omitted with a pointer to `read_memory` (or `read_file` when it replaces it) / `search_memory`.
 - `inject_memory=False` keeps the prompt cache-stable; the tools remain. Also use it when
   less-trusted actors can write to the store (memory is untrusted, model-written content).
 - `injection_errors='ignore'` (default) skips injection on a store failure; `'raise'` fails the run.
