@@ -48,7 +48,6 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
     RunContext,
     RunTimedOut,
     TextPart,
@@ -70,6 +69,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     ProcessEventStream,
     ResolveModelId,
+    SelectModel,
     Toolset,
     durable_operation,
 )
@@ -103,7 +103,13 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, ModelResolutionContext
+from pydantic_ai.models import (
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    ModelSelectionContext,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -174,7 +180,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsSameStr, IsStr
+from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..realtime_connections import InferredConnection
@@ -687,7 +693,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -766,7 +772,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -786,7 +792,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -946,7 +952,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -1161,7 +1167,7 @@ async def test_capability_contributed_toolset_id_from_capability():
         toolset.apply(leaves.append)
     # The contributed MCP leaf carries the URL-derived id, so its durable Prefect wrapper is built
     # under a stable id; the `billing` function toolset carries the capability id.
-    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
+    assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
 
 
@@ -2118,7 +2124,7 @@ def test_cache_policy_normalizes_only_framework_tool_call_ids():
     mock_task_ctx = MagicMock()
 
     def key_for(tool_call_id: str) -> str | None:
-        part = RetryPromptPart(content='retry', tool_name='tool', tool_call_id=tool_call_id)
+        part = legacy_retry_prompt_part(content='retry', tool_name='tool', tool_call_id=tool_call_id)
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
 
     assert key_for('pyd_ai_first') == key_for('pyd_ai_second')
@@ -2718,6 +2724,45 @@ async def test_flow_retry_keeps_run_deadline() -> None:
     first, retried = deadlines
     assert first is not None
     assert retried == first
+
+
+async def test_flow_retry_selector_sees_run_ids_and_deadline() -> None:
+    """A model selector sees the run's flow-derived IDs and deadline on every step, and again on a flow retry."""
+    selections: list[tuple[int, str | None, str | None, datetime | None]] = []
+
+    def select(ctx: ModelSelectionContext[object]) -> Model:
+        selections.append((ctx.run_step, ctx.run_id, ctx.conversation_id, ctx.deadline))
+        assert ctx.model is not None
+        return ctx.model
+
+    agent = Agent(
+        TestModel(),
+        name='retry_selector_agent',
+        capabilities=[SelectModel(select), PrefectDurability[object]()],
+    )
+
+    @agent.tool_plain
+    def advance() -> str:
+        return 'advanced'
+
+    attempts: list[tuple[str, str, str]] = []
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        context = FlowRunContext.get()
+        assert context is not None and context.flow_run is not None
+        result = await agent.run('go', timeout=3600)
+        attempts.append((str(context.flow_run.id), result.run_id, result.conversation_id))
+        if len(attempts) == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    await flaky()
+    [(flow_run_id, run_id, conversation_id)] = set(attempts)
+    assert run_id == f'{flow_run_id}:0'
+    deadline = selections[0][3]
+    assert deadline is not None
+    assert selections == [(step, run_id, conversation_id, deadline) for _ in attempts for step in (1, 2)]
 
 
 async def test_flow_retry_keeps_each_concurrent_run_deadline() -> None:

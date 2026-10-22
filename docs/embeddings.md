@@ -830,6 +830,15 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
+## Handling Errors
+
+When a request to an embedding provider fails, Pydantic AI raises the same errors as when a
+[model request fails](models/overview.md#handling-model-api-errors): a
+[`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] that is also an instance of an error category like
+[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] or
+[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] when the provider says what went wrong, so
+the same `except` clauses handle failures from agents and embedders alike.
+
 ## Testing
 
 Use [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] for testing without making API calls:
