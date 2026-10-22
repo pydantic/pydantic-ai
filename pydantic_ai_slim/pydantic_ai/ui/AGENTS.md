@@ -1,3 +1,5 @@
+A round trip through a UI protocol must give back everything the model sees, unchanged and in order, and client-returned history is untrusted: see [Message History & Prompt Caching](../../../agent_docs/message-history-and-caching.md), "UI round trips are faithful".
+
 ## Backwards compatibility in UI adapters (specially AG-UI)
 
 Since [3971](https://github.com/pydantic/pydantic-ai/pull/3971#discussion_r3011028336) we decided to introduce the policy of sticking to the lower (existing) version requirement. In short, this means:
