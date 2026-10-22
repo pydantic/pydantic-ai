@@ -196,8 +196,8 @@ For an idle rather than absolute timeout, reset the watchdog on
 [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent], which providers
 whose profile declares
 [`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
-send. Where that flag is unset, as on Gemini, GPT-Live, and ElevenLabs Agents, reset the watchdog from your own input path as
-well — whenever you send audio that is not silence — plus assistant
+send. Where that flag is unset, as on Gemini, GPT-Live, and ElevenLabs Agents, reset the watchdog
+from your own input path as well — whenever you send audio that is not silence — plus assistant
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] activity and
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent]; resetting on output
 alone would hang up on a person mid-sentence. With input transcription enabled, user parts from
