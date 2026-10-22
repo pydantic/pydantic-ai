@@ -17,9 +17,9 @@ from pydantic_ai.messages import (
     CapabilityEvent,
     ModelMessage,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -316,7 +316,10 @@ class TestOutcomes:
         assert end.outcome == 'failed'
         assert end.output == "Sub-agent 'worker' failed: kaboom"
         retries = [
-            part for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
         ]
         assert [retry.content for retry in retries] == [end.output]
 
