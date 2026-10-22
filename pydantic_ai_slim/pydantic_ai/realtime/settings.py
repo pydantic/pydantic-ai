@@ -63,12 +63,11 @@ class TurnDetection(TypedDict, total=False):
 class RealtimeModelSettings(TypedDict, total=False):
     """Settings to configure a realtime model session.
 
-    Defines the common settings vocabulary used across realtime model providers. A setting a provider has
-    no way to apply is silently ignored, while one whose intent the provider would visibly violate (a
-    forced `tool_choice`, or a `turn_detection` it cannot honor) raises
-    [`UserError`][pydantic_ai.exceptions.UserError] before connecting; the
-    [provider pages](../realtime/overview.md#provider-support) cover each provider's own cases. Providers
-    with additional generation parameters extend it, e.g.
+    Defines the common settings vocabulary used across realtime model providers. Whether a provider
+    silently ignores a setting it can't apply or raises [`UserError`][pydantic_ai.exceptions.UserError]
+    before connecting depends on the provider and the setting (a forced `tool_choice` raises on most of
+    them): see each field's docs and the [provider pages](../realtime/overview.md#provider-support).
+    Providers with additional generation parameters extend it, e.g.
     [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
 
