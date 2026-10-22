@@ -21,7 +21,7 @@ The model gets four tools:
 | Tool | Purpose |
 | --- | --- |
 | `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
-| `read_memory` | Read a bounded prefix of one memory file. |
+| `read_memory` | Read a bounded prefix of one memory file. Left out when `FileSystem` can read the files ([Reading memory with `FileSystem`](#reading-memory-with-filesystem)). |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
 
@@ -42,9 +42,19 @@ agent = Agent(
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 
+### Reading memory with `FileSystem`
+
+When the store is a `FileStore` that keeps its files in the run's workspace (no `workspace=` of its own, and a relative `directory` inside the working directory) and `FileSystem` is on the agent, `read_memory` steps aside for `FileSystem`'s `read_file`. The tool is marked with [`unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] set to `READ_FILE_KIND`, so it is left out of every run step that has a tool of that kind. Keep `FileSystem` under its own names for now: a renamed `FileSystem` tool can't be called yet ([#10927](https://github.com/pydantic/pydantic-ai/issues/10927)). With a `store_resolver`, the store it returns for the run decides. The guidance in the instructions doesn't name a reader, so it is the same in every run and stays in the cached prefix. The injected `<memory>` block says where this scope's files are, for example "These files are in `.agent-memory/main/` in the workspace.", and the notices that pointed at `read_memory` (lines left out of the injected notebook, an `old_text` that was not found) name a `read_file` call on the file's path instead.
+
+`InMemoryStore`, `SqliteMemoryStore`, `PostgresMemoryStore` and a `FileStore` with a `workspace=` of its own keep their files where `FileSystem` cannot see them, so with those `read_memory` stays. With `inject_memory=False`, or when the guidance alone fills `max_tokens` so no snapshot fits, `read_memory` stays too: the injected `<memory>` block is where the model learns the files' directory.
+
+The decision is made from the store, not from `FileSystem`'s access rules. A `FileSystem` whose `denied_patterns` cover the memory directory, or whose `allowed_patterns` leave it out, still replaces `read_memory` but cannot open the files. Give the store a `workspace=` of its own to keep `read_memory` in that setup.
+
+The directory includes the namespace. With file tools over the run's workspace, the model can read every namespace's files under `directory`, whether or not `read_memory` is offered, so give the store a `workspace=` of its own when namespaces separate users who must not see each other's memory.
+
 ## Injection modes and limits
 
-Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part beside the latest user prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
+Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part beside the latest user prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` (or `read_file`, where it replaces `read_memory`) or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
