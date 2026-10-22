@@ -202,6 +202,12 @@ class DecisionRequest:
     Only image media types are supported. Backends that do not support images must reject a nonempty tuple,
     including when `decide` is called directly.
     """
+    messages: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The conversation `state` was built from, for a backend that takes a conversation natively.
+
+    Empty when `decide` is called directly with only a `state`. Its images are the ones in `images`, resolved and in
+    the same order: the order they appear in, message by message and part by part.
+    """
 
 
 @dataclass(kw_only=True)
@@ -569,7 +575,8 @@ class DecisionModel(Model[InterfaceClient]):
         question in `request.questions` needs an answer of the matching kind under the same name.
         Image-capable backends serialize `request.images` as evidence alongside `request.state`; other
         backends must reject a nonempty tuple, including when this method is called directly. Backend request
-        limits also apply to direct calls.
+        limits also apply to direct calls. A backend that takes a conversation natively sends `request.messages`
+        when there are any, in place of `request.state`.
 
         Raise [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
         [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] when the backend fails, so a
@@ -712,7 +719,7 @@ class DecisionModel(Model[InterfaceClient]):
                 raise UnfillableRoute(self.model_name, next(iter(routes)), 1.0)
             ask = _Ask.about(output_tool, instructions, limits, label=None)
             state, image_inputs = self._map_decision_input(messages, turn=done)
-            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings)
+            request = await self._prepare_decision_request(state, image_inputs, ask.questions, settings, messages)
             async with self._decide(request, settings, fields=True) as (
                 response,
                 span,
@@ -727,7 +734,7 @@ class DecisionModel(Model[InterfaceClient]):
         speculation = _Speculation.about(routes, output_tools, state, instructions, limits)
         questions = speculation.questions()
         questions.update(route_questions)
-        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings)
+        request_template = await self._prepare_decision_request(state, image_inputs, questions, settings, messages)
 
         # A picked route whose fields are asked in a second request, past the size cutoff: the route, its label and
         # its questions.
@@ -821,6 +828,7 @@ class DecisionModel(Model[InterfaceClient]):
         image_inputs: list[BinaryContent | ImageUrl],
         questions: dict[str, DecisionQuestion],
         model_settings: DecisionModelSettings,
+        messages: list[ModelMessage],
     ) -> DecisionRequest:
         """Validate a complete request before resolving its image URLs."""
         self._check_request_limits(image_count=len(image_inputs), question_count=len(questions))
@@ -836,7 +844,7 @@ class DecisionModel(Model[InterfaceClient]):
                 if not image.is_image:
                     raise UserError(f'Image URL {item.url!r} returned content that is not an image.')
                 images.append(image)
-        return DecisionRequest(state=state, questions=questions, images=tuple(images))
+        return DecisionRequest(state=state, questions=questions, images=tuple(images), messages=messages)
 
     async def _fill(
         self,
@@ -892,7 +900,7 @@ class DecisionModel(Model[InterfaceClient]):
         if fill is None:
             raise UnfillableRoute(self.model_name, label, 1.0)
         state, image_inputs = self._map_decision_input(messages, turn=turn)
-        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings)
+        request_template = await self._prepare_decision_request(state, image_inputs, fill.questions, settings, messages)
         response, args, details = await self._fill(label, fill, request_template, settings, boolean_threshold)
         details['route'] = _forced_route(label)
         return self._response(tool, args, response.usage, response.model_name, details)
