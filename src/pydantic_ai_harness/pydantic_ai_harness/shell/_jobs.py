@@ -51,9 +51,13 @@ publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
 }}
 watch_logs() {{
-  while sleep "$2" 2> /dev/null || sleep 1; do
+  trap __harness_watch_stopped=1 TERM
+  while [ -z "$__harness_watch_stopped" ] && kill -0 "$$" 2> /dev/null; do
+    {{ sleep "$2" 2> /dev/null || sleep 1; }} &
+    wait $!
     for log in "$out" "$err"; do
-      if [ $(( $(wc -c < "$log" 2> /dev/null) + 0 )) -gt "$1" ]; then
+      if [ -z "$__harness_watch_stopped" ] && [ $(( $(wc -c < "$log" 2> /dev/null) + 0 )) -gt "$1" ]; then
+        printf x >> "$dir/log_clears"
         : > "$log"
         printf '[Log exceeded max_log_bytes=%s; earlier output was cleared.]\\n' "$1" >> "$log"
         printf x >> "$dir/log_clears"
@@ -69,26 +73,31 @@ while [ -z "$__harness_stopped" ] && [ ! -e "$dir/launch.ready" ]; do
   sleep 0.1 2> /dev/null || [ -n "$__harness_stopped" ] || sleep 1
 done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
-if [ -n "$4" ]; then
-  __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
-fi
 watcher=
 if [ -n "$6" ]; then watch_logs "$6" "$7" & watcher=$!; fi
+if [ -n "$4" ]; then
+  __harness_limit_files "$4" || {{
+    [ -z "$watcher" ] || kill "$watcher" 2> /dev/null
+    echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1
+  }}
+fi
 (
   [ -z "$__harness_stopped" ] && [ ! -e "$dir/stop" ] || exit 143
   exec sh -c "$3"
 ) < /dev/null >> "$out" 2>> "$err"
 code=$?
-[ -z "$watcher" ] || kill "$watcher" 2> /dev/null
+[ -z "$watcher" ] || {{ kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
 publish $code
 """
 """The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID,
 the log limit, and the seconds between log checks.
 
 With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds and empties one that has grown past it,
-leaving a notice, then appends a byte to `log_clears`, so a reader can tell the log was emptied even once it has grown
-back. The command keeps running, and a command that reads its own log (a glob over job logs) reaches the end of it and
-stops, instead of copying the log into itself until the disk is full.
+leaving a notice. It appends a byte to `log_clears` before and after each clear, so a reader can tell a clear is under
+way (an odd size) or done, even once the log has grown back. The command keeps running, and a command that reads its own
+log (a glob over job logs) reaches the end of it and stops, instead of copying the log into itself until the disk is
+full. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps growing, finishes a clear it has
+started when the wrapper stops it, and exits once the wrapper is gone, e.g. killed on its own.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
@@ -250,7 +259,7 @@ class Job:
 
     @property
     def clears_path(self) -> str:
-        """A file one byte longer each time `max_log_bytes` empties one of the job's logs."""
+        """A file one byte longer before and again after each time `max_log_bytes` empties one of the job's logs."""
         return posixpath.join(self.directory, 'log_clears')
 
     @property

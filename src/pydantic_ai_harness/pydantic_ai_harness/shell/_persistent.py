@@ -75,7 +75,7 @@ class _CommandOutput(Generic[AgentDepsT]):
         """Position in the log, which goes back to 0 when `max_log_bytes` empties it."""
         self.emitted = 0
         self.clears = 0
-        """Times the log had been emptied when it was last read."""
+        """The `log_clears` count the last emitted chunk was read under: two per clear."""
         self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
 
     async def _clears(self) -> int:
@@ -91,12 +91,13 @@ class _CommandOutput(Generic[AgentDepsT]):
         if self.ctx is None or self.emitted >= _OUTPUT_TAIL_BYTES:
             return False
         chunk = await self._read()
-        # Checked after the read: a chunk read from a log emptied since the last read may come from
-        # the output that followed, at the wrong position, so it is dropped and the log read again from
-        # its start, in this call so that every chunk emitted counts against `_OUTPUT_TAIL_BYTES`.
-        # The count goes up only after the log is emptied, so a read between the two can repeat a few bytes
-        # once; counting first instead could restart before the clear and then miss it.
+        # Checked after the read: a chunk read since a clear began may come from the emptied log, at the
+        # wrong position, so it is dropped. The watcher counts each clear before and after it, so an odd count
+        # means it is under way: the log is read again at the next poll. Once it is done, the log is read again
+        # from its start, in this call so that every chunk emitted counts against `_OUTPUT_TAIL_BYTES`.
         if (clears := await self._clears()) != self.clears:
+            if clears % 2:
+                return False
             self.clears = clears
             self.offset = 0
             self.decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
@@ -117,8 +118,11 @@ class _CommandOutput(Generic[AgentDepsT]):
         tail = self.decoder.decode(b'', final=True)
         if tail:
             await self.ctx.emit(CommandOutputEvent(text=tail))
+        clears = await self._clears()
         size = await self.job.size(self.job.output_path)
-        cleared = await self._clears() > 0
+        total_lines = None if clears else await _count_lines(self.job)
+        # Counted again afterwards: a clear that began meanwhile leaves a size and count from two different logs.
+        cleared = clears > 0 or await self._clears() != clears
         await self.ctx.emit(
             CommandFinishedEvent(
                 pid=self.job.pid,
@@ -127,7 +131,7 @@ class _CommandOutput(Generic[AgentDepsT]):
                 exit_code=(await self.job.status())[1],
                 truncated=cleared or size > self.offset,
                 # An emptied log no longer holds the earlier lines, so their count is unknown.
-                total_lines=None if cleared else await _count_lines(self.job),
+                total_lines=None if cleared else total_lines,
             )
         )
 

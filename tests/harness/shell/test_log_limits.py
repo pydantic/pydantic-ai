@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
 import signal
 import sys
@@ -87,8 +89,68 @@ class _ClearedOnEveryRead(LocalWorkspaceBackend):
         if 'tail -c +' in command:
             for job in self.jobs.iterdir():
                 with (job / 'log_clears').open('ab') as clears:
-                    clears.write(b'x')
+                    clears.write(b'xx')
         return result
+
+
+class _ClearsAroundReads(LocalWorkspaceBackend):
+    """Plays the watcher by hand: the first read past the log's start lands while a clear is under way.
+
+    That read only starts the clear (the first `log_clears` byte); the next one empties the log, leaves the notice,
+    finishes the clear, and creates `cleared`, which the command waits for.
+    """
+
+    def __init__(self, working_dir: Path) -> None:
+        super().__init__(working_dir)
+        self.markers = working_dir
+        self.steps = 0
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert isinstance(command, str)
+        if 'tail -c +' in command and 'tail -c +1 ' not in command and self.steps < 2:
+            [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
+            if self.steps:
+                (job / 'output.log').write_text(f'{NOTICE}\n')
+            with (job / 'log_clears').open('ab') as clears:
+                clears.write(b'x')
+            if self.steps:
+                (self.markers / 'cleared').touch()
+            self.steps += 1
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+class _ClearedWhileCounted(LocalWorkspaceBackend):
+    """Clears the log, as the watcher would, at the first read from its start once the command has exited."""
+
+    def __init__(self, working_dir: Path) -> None:
+        super().__init__(working_dir)
+        self.markers = working_dir
+        self.cleared = False
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert isinstance(command, str)
+        if 'tail -c +1 ' in command and not self.cleared:
+            [job] = (self.markers / '.pydantic-ai-harness' / 'shell').iterdir()
+            status = job / 'status.json'
+            if status.exists() and json.loads(status.read_text())['exit_code'] is not None:
+                (job / 'output.log').write_text(f'{NOTICE}\n')
+                (job / 'log_clears').write_bytes(b'xx')
+                self.cleared = True
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
 class TestShellLogLimits:
@@ -126,7 +188,7 @@ class TestShellLogLimits:
         # regrown log, and the events must start again from the notice.
         command = (
             "printf '%01500d\\n' 0; until [ -e read ]; do sleep 0.01; done; printf '%01500d\\n' 0; "
-            'until [ -s .pydantic-ai-harness/shell/*/log_clears ]; do sleep 0.01; done; '
+            'until [ "$(cat .pydantic-ai-harness/shell/*/log_clears 2> /dev/null | wc -c)" -ge 2 ]; do sleep 0.01; done; '
             "printf '%01800d\\n' 0; echo after; : > written"
         )
         recorder = Recorder()
@@ -140,6 +202,68 @@ class TestShellLogLimits:
         assert recorder.output.endswith(f'{NOTICE}\n{"0" * 1800}\nafter\n')
         assert recorder.finished.truncated
         assert recorder.finished.total_lines is None
+
+    async def test_events_skip_a_read_while_a_clear_is_under_way(self, tmp_path: Path) -> None:
+        # A chunk read while a clear is under way is dropped, and the log is read again from its notice once it's done.
+        recorder = Recorder()
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000), recorder],
+            'shell',
+            {'command': 'echo first; until [ -e cleared ]; do sleep 0.01; done; echo after', 'timeout': 30},
+            workspace=_ClearsAroundReads(tmp_path),
+        )
+        assert '"exit_code": 0' in output
+        assert recorder.output == f'first\n{NOTICE}\nafter\n'
+
+    async def test_finished_event_reports_a_clear_while_the_log_is_measured(self, tmp_path: Path) -> None:
+        recorder = Recorder()
+        output = await call_tool(
+            [Shell[None](denied_commands=[], tools=['shell'], max_log_bytes=2000), recorder],
+            'shell',
+            {'command': 'echo first; sleep 0.3', 'timeout': 30},
+            workspace=_ClearedWhileCounted(tmp_path),
+        )
+        assert '"exit_code": 0' in output
+        assert recorder.finished.truncated
+        assert recorder.finished.total_lines is None
+
+    async def test_logs_are_still_cleared_under_a_file_limit(self, tmp_path: Path) -> None:
+        # The command fills `log_clears` up to the file limit (one `ulimit -f` block) before its output passes the
+        # log limit, so the watcher's next write to it is past that limit, which applies to the command alone.
+        command = (
+            "for job in .pydantic-ai-harness/shell/*/; do ( trap '' XFSZ; printf '%01100d' 0 >> \"${job}log_clears\" ) "
+            "2> /dev/null; done; : > seeded; printf '%015d' 0; sleep 30"
+        )
+        toolset = Shell(max_file_bytes=20, max_log_bytes=10).get_toolset()
+        async with toolset:
+            started = await toolset.start_command(run_context(tmp_path), command)
+            command_id = started.rsplit('ID: ', 1)[1]
+            clears = tmp_path / '.pydantic-ai-harness' / 'shell' / command_id / 'log_clears'
+            try:
+                with anyio.fail_after(10):
+                    while not (tmp_path / 'seeded').exists():
+                        await anyio.sleep(0.01)
+                    seeded = clears.stat().st_size
+                    while clears.stat().st_size < seeded + 2:
+                        await anyio.sleep(0.01)
+            finally:
+                await toolset.stop_command(run_context(tmp_path), command_id)
+
+    async def test_watcher_exits_once_the_wrapper_is_killed(self, tmp_path: Path) -> None:
+        output = await shell(tmp_path, {'command': 'sleep 0.5', 'mode': 'background'}, max_log_bytes=2000)
+        group = int(output.split('kill -- -', 1)[1].split('`', 1)[0])
+        try:
+            os.kill(int(output.split('PID: ', 1)[1].split(' ', 1)[0]), signal.SIGKILL)
+            with anyio.fail_after(10):
+                while True:
+                    try:
+                        os.killpg(group, 0)
+                    except ProcessLookupError:
+                        break
+                    await anyio.sleep(0.05)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(group, signal.SIGKILL)
 
     async def test_events_end_while_clears_keep_coming(self, tmp_path: Path) -> None:
         # Each restart after a clear reads the log again, so the events' byte budget still bounds the reads.
