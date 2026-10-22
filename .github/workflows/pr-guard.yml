@@ -262,14 +262,17 @@ jobs:
 
           ISSUE_NUMBERS=$(fetch_linked_issues)
 
-          if [ -z "$ISSUE_NUMBERS" ]; then
-            # GitHub resolves closing references asynchronously, so a query right
-            # after a PR is opened or edited can transiently come back empty.
-            # Closing is destructive — wait and confirm before acting on it.
-            echo "No linked issues found; re-checking in 30s in case GitHub hasn't resolved references yet."
-            sleep 30
+          # GitHub resolves closing references asynchronously, so a query right
+          # after a PR is opened, edited or marked ready can come back empty. A
+          # single 30s re-check was not enough: #9449, #9450, #9451, #9453 and
+          # #9899 all had `Closes #N` in the body and were closed anyway.
+          # Closing is destructive, so keep polling for a minute before acting on it.
+          for ATTEMPT in 1 2 3 4 5 6; do
+            [ -n "$ISSUE_NUMBERS" ] && break
+            echo "No linked issues found; re-checking in 10s (attempt ${ATTEMPT}/6) in case GitHub hasn't resolved references yet."
+            sleep 10
             ISSUE_NUMBERS=$(fetch_linked_issues)
-          fi
+          done
 
           if [ -z "$ISSUE_NUMBERS" ]; then
             echo "No linked issues found in PR body."
