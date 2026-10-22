@@ -841,7 +841,10 @@ for each) so the worker registers the nested agent's activities as well as the c
 definition.
 
 When `id` is omitted, the child workflow ID is the parent's workflow ID followed by a UUID generated
-deterministically by the workflow. The other options are passed through to Temporal. The tool body
+deterministically by the workflow. The `id`, `task_queue`, `execution_timeout`, `run_timeout`,
+`task_timeout`, `id_reuse_policy`, `retry_policy`, `cron_schedule`, `cancellation_type`,
+`parent_close_policy`, `memo`, `search_attributes`, `versioning_intent`, `static_summary`,
+`static_details`, and `priority` options are passed through to Temporal. The tool body
 runs as deterministic workflow code, so it must delegate I/O to durable operations, such as a nested
 agent's activities. Child workflows are not supported for sync, dynamic, or MCP tools.
 
