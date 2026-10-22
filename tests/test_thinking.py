@@ -1038,7 +1038,10 @@ class TestBedrockThinkingTranslation:
         ],
     )
     def test_xai_variant_thinking_levels(self, thinking: ThinkingLevel, expected_effort: str):
-        """Grok on Converse takes effort nested as `reasoning.effort`, not the flat gpt-oss `reasoning_effort`."""
+        """Grok on Converse takes effort nested as `reasoning.effort`, not the flat gpt-oss `reasoning_effort`.
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
         model = _bedrock_model(
             BedrockModelProfile(
                 bedrock_thinking_variant='xai',
@@ -1052,7 +1055,10 @@ class TestBedrockThinkingTranslation:
         assert result == {'reasoning': {'effort': expected_effort}}
 
     def test_xai_variant_thinking_false(self):
-        """thinking=False on the xAI Bedrock variant is a no-op (Grok always reasons)."""
+        """thinking=False on the xAI Bedrock variant is a no-op (Grok always reasons).
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
         model = _bedrock_model(
             BedrockModelProfile(
                 bedrock_thinking_variant='xai',
@@ -1080,7 +1086,10 @@ class TestBedrockThinkingTranslation:
         assert result is None
 
     def test_xai_variant_user_reasoning_wins(self):
-        """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched."""
+        """A user-supplied `reasoning` in `bedrock_additional_model_requests_fields` is left untouched.
+
+        Not a VCR test: the recording account has no Grok access on Converse.
+        """
         model = _bedrock_model(
             BedrockModelProfile(
                 bedrock_thinking_variant='xai',

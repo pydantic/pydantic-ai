@@ -571,7 +571,10 @@ def test_bedrock_explicit_tool_forcing_non_anthropic_thinking_errors():
     ],
 )
 def test_bedrock_xai_grok_forces_tools_with_thinking(tool_choice_value: Any, expected_tool_choice: dict[str, Any]):
-    """Grok always reasons on Converse and accepts `toolChoice` `any`/`tool`, so thinking does not block forcing."""
+    """Grok always reasons on Converse and accepts `toolChoice` `any`/`tool`, so thinking does not block forcing.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
     provider = BedrockProvider(bedrock_client=MagicMock())
     model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
     params = ModelRequestParameters(function_tools=[make_tool('tool_a'), make_tool('tool_b')], thinking='high')
@@ -585,6 +588,10 @@ def test_bedrock_xai_grok_forces_tools_with_thinking(tool_choice_value: Any, exp
 @skip_if_no_bedrock
 @pytest.mark.parametrize('output_mode', ['auto', 'tool'])
 def test_bedrock_xai_grok_keeps_tool_output_with_thinking(output_mode: Literal['auto', 'tool']):
+    """Grok keeps tool output while it thinks, since Converse accepts the forced `toolChoice` Tool Output relies on.
+
+    Not a VCR test: the recording account has no Grok access on Converse.
+    """
     provider = BedrockProvider(bedrock_client=MagicMock())
     model = BedrockConverseModel('us.xai.grok-4.6', provider=provider)
     params = ModelRequestParameters(

@@ -1214,6 +1214,7 @@ def test_bedrock_xai_grok(region: str):
                 'supported_native_tools': frozenset(),
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
             },
             '4.7': {
                 'supports_thinking': True,
@@ -1224,6 +1225,7 @@ def test_bedrock_xai_grok(region: str):
                 'grok_default_effort_omitted': True,
                 'bedrock_supports_tool_choice': True,
                 'bedrock_thinking_variant': 'xai',
+                'bedrock_disallows_sampling_settings': True,
             },
         }
     )
