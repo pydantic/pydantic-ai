@@ -289,7 +289,8 @@ class TestShellLogLimits:
         # Linux stops a write that starts at the limit; macOS lets it through, so only Linux catches a limited watcher.
         command = (
             "for job in .pydantic-ai-harness/shell/*/; do ( trap '' XFSZ; printf '%01100d' 0 >> \"${job}log_clears\" ) "
-            "2> /dev/null; done; : > seeded; printf '%0100d' 0; sleep 30"
+            '2> /dev/null; wc -c < "${job}log_clears" > seeded.tmp; done; mv seeded.tmp seeded; '
+            "printf '%0100d' 0; sleep 30"
         )
         toolset = Shell(max_file_bytes=20, max_log_bytes=10).get_toolset()
         async with toolset:
@@ -300,7 +301,7 @@ class TestShellLogLimits:
                 with anyio.fail_after(10):
                     while not (tmp_path / 'seeded').exists():
                         await anyio.sleep(0.01)
-                    seeded = clears.stat().st_size
+                    seeded = int((tmp_path / 'seeded').read_text())
                     while clears.stat().st_size < seeded + 2:
                         await anyio.sleep(0.01)
             finally:

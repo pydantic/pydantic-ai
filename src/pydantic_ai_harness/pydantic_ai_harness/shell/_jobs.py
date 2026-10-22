@@ -84,7 +84,7 @@ watcher=
 if [ -n "$6" ]; then watch_logs "$6" "$7" & watcher=$!; fi
 if [ -n "$4" ]; then
   __harness_limit_files "$4" || {{
-    [ -z "$watcher" ] || kill "$watcher" 2> /dev/null
+    [ -z "$watcher" ] || {{ kill "$watcher" 2> /dev/null; wait "$watcher" 2> /dev/null; }}
     echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1
   }}
 fi
