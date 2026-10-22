@@ -123,6 +123,17 @@ def _normalize_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     return normalized
 
 
+_MODIFIERS = frozenset({'ctrl', 'shift', 'alt', 'super'})
+
+
+def _normalize_modifiers(modifiers: tuple[str, ...]) -> tuple[str, ...]:
+    # Checked here, before anything runs: a display that skipped an unknown one would still act without it.
+    normalized = _normalize_keys(modifiers)
+    if not _MODIFIERS.issuperset(normalized):
+        raise ValueError('modifiers must be ctrl, shift, alt or super')
+    return normalized
+
+
 def _check_position(x: int | None, y: int | None) -> None:
     if (x is None) != (y is None):
         raise ValueError('give both `x` and `y`, or neither to act at the pointer')
@@ -149,11 +160,11 @@ class Click:
     count: Annotated[int, Field(ge=1, le=3)] = 1
     """1 for a click, 2 for a double click, 3 for a triple click."""
     modifiers: _Keys = ()
-    """Keys held during the click, such as `["shift"]` or `["ctrl"]`."""
+    """Modifier keys held during the click: `ctrl`, `shift`, `alt` or `super`."""
 
     def __post_init__(self) -> None:
         _check_position(self.x, self.y)
-        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
+        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -166,10 +177,10 @@ class MoveMouse:
     y: _Coordinate
     """From the top edge of the screenshot."""
     modifiers: _Keys = ()
-    """Keys held while moving."""
+    """Modifier keys held while moving: `ctrl`, `shift`, `alt` or `super`."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
+        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -180,10 +191,10 @@ class Drag:
     path: Annotated[tuple[Point, ...], Field(min_length=2, max_length=50)]
     """The points to drag through: at least a start and an end."""
     modifiers: _Keys = ()
-    """Keys held during the drag."""
+    """Modifier keys held during the drag: `ctrl`, `shift`, `alt` or `super`."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
+        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)
@@ -216,11 +227,11 @@ class Scroll:
     y: _Coordinate | None = None
     """From the top edge of the screenshot."""
     modifiers: _Keys = ()
-    """Keys held while scrolling, such as `["shift"]` to scroll sideways in some applications."""
+    """Modifier keys held while scrolling: `ctrl`, `shift`, `alt` or `super`; `shift` scrolls sideways in some applications."""
 
     def __post_init__(self) -> None:
         _check_position(self.x, self.y)
-        object.__setattr__(self, 'modifiers', _normalize_keys(self.modifiers))
+        object.__setattr__(self, 'modifiers', _normalize_modifiers(self.modifiers))
 
 
 @dataclass(frozen=True, kw_only=True, config=_CONFIG)

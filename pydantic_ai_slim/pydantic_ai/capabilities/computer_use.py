@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import Model
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import Click, Drag, MoveMouse, Point, Scroll, WorkspaceError, WorkspaceUnavailableError
@@ -61,9 +62,16 @@ _OBSERVING_ACTIONS = frozenset({'wait', 'screenshot'})
 """Action types that change nothing on the screen, so `require_approval` lets them through."""
 
 
+def _profile(model: Any) -> ModelProfile:
+    """The model's profile, or an empty one for a model without its own, such as `FallbackModel`."""
+    try:
+        return model.profile if isinstance(model, Model) else {}
+    except NotImplementedError:
+        return {}
+
+
 def _coordinate_grid(ctx: RunContext[Any]) -> int | None:
-    model = ctx.model
-    return model.profile.get('computer_use_coordinate_grid') if isinstance(model, Model) else None
+    return _profile(ctx.model).get('computer_use_coordinate_grid')
 
 
 def _to_pixels(action: ComputerToolAction, width: int, height: int, grid: int) -> ComputerToolAction:
@@ -251,7 +259,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         every screenshot.
         """
         model = request_context.model
-        if not model.profile.get('supports_image_input', True):
+        if not _profile(model).get('supports_image_input', True):
             raise UserError(
                 f'`ComputerUse` needs a model that accepts images, and {model.model_name!r} does not: '
                 'every `computer` call returns a screenshot.'

@@ -250,6 +250,23 @@ async def test_the_native_tool_is_sent_and_its_call_answered_with_a_screenshot(a
     assert second['input'][-1] is output
 
 
+async def test_a_screenshot_left_out_of_the_request_is_explained(allow_model_requests: None) -> None:
+    look = {'type': 'screenshot'}
+    client = MockOpenAIResponses.create_mock([_computer_call(look), _computer_call(look), _done()])
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))
+    capabilities = [InMemoryProvider().capability(), ComputerUse(keep_screenshots=1)]
+    await Agent(model, capabilities=capabilities).run('Look twice.')
+
+    *_, last = get_mock_responses_kwargs(client)
+    older, newest = [index for index, item in enumerate(last['input']) if item.get('type') == 'computer_call_output']
+    # The older output's image is blank, so a note says why; the newest carries the real screenshot.
+    assert last['input'][older + 1]['content'].endswith(
+        '[Older screenshot removed to save context; the latest screenshot shows the current screen.]'
+    )
+    assert last['input'][newest]['output']['image_url'].startswith('data:image/png;base64,iVBOR')
+    assert newest == len(last['input']) - 1
+
+
 async def test_a_refused_action_is_explained_after_its_screenshot(allow_model_requests: None) -> None:
     client = MockOpenAIResponses.create_mock(
         [_computer_call({'type': 'click', 'x': 5, 'y': 6, 'button': 'left'}), _done()]
