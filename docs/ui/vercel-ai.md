@@ -247,12 +247,16 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 ## Citations
 
-[Citations](../citations.md) on a text part reach the frontend in two forms:
+[Citations](../citations.md) reach the frontend in two ways:
 
 - Each cited web page is sent once per message as a [`source-url`](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#source-url-part) part, so `useChat` can list the sources. Document sources aren't listed.
-- The full citations, including excerpts and the provider's citation data, are stored in the text part's `providerMetadata`, which the AI SDK sends back unchanged. When the frontend sends the messages back, the citations are restored, so they survive the round trip and are [sent back to the provider that produced them](../citations.md#citations-in-message-history). Citations that are invalid or don't fit the text are dropped, and the text is kept.
+- The full citations are stored in the text part's `providerMetadata`. The AI SDK sends it back unchanged, so the citations are still there when the frontend sends the messages back.
 
-Consecutive text parts in a response, such as Anthropic's separate cited blocks, are shown as one text part and come back as one, with all their citations. Read them from `citations` in the metadata, whose anchors fit the combined text, rather than from the provider's own citation data.
+A few things to know:
+
+- Consecutive text parts, such as Anthropic's separately cited blocks, are shown as one text part. Read citations from `citations` in the metadata, which match the combined text.
+- Anchor positions count characters the way Python does. JavaScript counts some characters, such as emoji, as two, so slice `Array.from(text)` rather than the string itself.
+- Google and OpenAI Chat send citations at the end of the response. When a tool call follows the text, those citations don't reach the frontend, so they're also missing from the history it sends back.
 
 ## Enqueued messages
 

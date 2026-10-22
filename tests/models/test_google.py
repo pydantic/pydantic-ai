@@ -5318,6 +5318,42 @@ def test_google_grounding_skips_unrenderable_source(case: str) -> None:
     assert _map_citations([Part(text='answer')], metadata) == {}
 
 
+async def test_google_stream_keeps_text_across_a_signature_only_part():
+    """Text streamed around a part that makes no part of its own stays one part, as before citations.
+
+    Unit test: no recorded stream has a signature-only part between two text chunks.
+    """
+    chunks = [
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='first ')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(thought_signature=b'signature')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='second')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-test',
+        ),
+    ]
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
+        _provider_name='google',
+        _model_id_namespace='google',
+        _provider_url='',
+    )
+
+    _ = [event async for event in streamed_response]
+
+    assert streamed_response.get().parts == [TextPart('first second')]
+
+
 async def test_google_stream_grounding_cites_text_after_non_text_part():
     """Grounding of a text run streamed after a non-text part cites that run, not the one before it.
 
