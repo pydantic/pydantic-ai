@@ -5,8 +5,8 @@ import hashlib
 import hmac
 import sys
 from collections import deque
-from collections.abc import Iterator, Mapping
-from contextlib import AsyncExitStack
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping
+from contextlib import AsyncExitStack, asynccontextmanager
 from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,6 +68,7 @@ with try_import() as imports_successful:
     from openai._base_client import platform_headers
     from openai.types.websocket_connection_options import WebSocketConnectionOptions
     from websockets.asyncio.client import connect as websocket_connect
+    from websockets.asyncio.server import ServerConnection, serve
     from websockets.datastructures import Headers
     from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK, InvalidStatus
     from websockets.http11 import Response as HandshakeResponse
@@ -1586,6 +1587,86 @@ async def test_connected_model_is_rejected_before_durable_request(
     assert sockets.opened[0].close_count == 1
 
 
+@asynccontextmanager
+async def local_server(handler: Callable[[ServerConnection], Awaitable[None]]) -> AsyncGenerator[OpenAIResponsesModel]:
+    """Serve `handler` from a real `websockets` server on localhost and yield a model pointed at it.
+
+    The scripted socket replaces `websockets`, so it cannot pin the library's message size limit or flow control,
+    and no recorded provider response exercises either: these tests run the real library on both ends instead.
+    """
+    async with serve(handler, '127.0.0.1', 0) as server:
+        port: int = next(iter(server.sockets)).getsockname()[1]
+        source = OpenAIResponsesModel(
+            'gpt-4o', provider=OpenAIProvider(base_url=f'http://127.0.0.1:{port}/v1', api_key='test')
+        )
+        async with source:
+            yield source
+
+
+async def send_events(ws: ServerConnection, request: Frame, events: list[Frame]) -> None:
+    stream_id = request.get('stream_id')
+    for event in on_lane(events, stream_id) if isinstance(stream_id, str) else events:
+        await ws.send(FRAME_ADAPTER.dump_json(event).decode())
+
+
+async def test_event_over_one_mebibyte_keeps_the_socket_open(allow_model_requests: None):
+    """An event larger than the `websockets` default message limit, like an image generation result, is received."""
+    large = 'x' * (2**20 + 1)
+    requests: list[Frame] = []
+
+    async def handler(ws: ServerConnection) -> None:
+        async for raw in ws:
+            requests.append(FRAME_ADAPTER.validate_json(raw))
+            text = large if len(requests) == 1 else 'ready'
+            await send_events(ws, requests[-1], text_events(text, f'resp_{len(requests)}'))
+
+    async with local_server(handler) as source, source.connect() as connected:
+        assert (await Agent(connected).run('large')).output == large
+        assert (await Agent(connected).run('next')).output == 'ready'
+    assert len(requests) == 2
+
+
+async def test_abandoned_stream_keeps_answering_keepalive_pings(allow_model_requests: None):
+    """An abandoned response's unread events don't stop the idle socket from answering the server's pings.
+
+    Once the client has abandoned the response, the server sends one keepalive ping, as a short `ping_interval`
+    would, and records whether the pong arrives; without it, the server's `ping_timeout` would close the connection.
+    Waiting on that pong rather than a timer keeps the test free of real waits when the socket answers.
+    """
+    requests: list[Frame] = []
+    abandoned = anyio.Event()
+    keepalive_answered: list[bool] = []
+    keepalive_done = anyio.Event()
+
+    async def handler(ws: ServerConnection) -> None:
+        async for raw in ws:
+            requests.append(FRAME_ADAPTER.validate_json(raw))
+            if len(requests) > 1:
+                await send_events(ws, requests[-1], text_events(response_id='resp_next'))
+                continue
+            events = text_events('word ', 'resp_abandoned')
+            # More unread frames than the `websockets` default high-water mark of 16.
+            await send_events(ws, requests[-1], [*events[:2], *[events[2]] * 50, events[3]])
+            await abandoned.wait()
+            pong = await ws.ping()
+            with anyio.move_on_after(READINESS_WAIT_TIMEOUT / 2) as keepalive:
+                await pong
+            keepalive_answered.append(not keepalive.cancelled_caught)
+            keepalive_done.set()
+
+    async with local_server(handler) as source, source.connect() as connected:
+        async with connected.request_stream(
+            [ModelRequest.user_text_prompt('long answer')], None, ModelRequestParameters()
+        ) as streamed:
+            async for _ in streamed:  # pragma: no branch
+                break
+        abandoned.set()
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await keepalive_done.wait()
+        assert keepalive_answered == [True]
+        assert (await Agent(connected).run('next')).output == 'ready'
+
+
 @pytest.mark.parametrize('interrupt', ['early_exit', 'explicit_close', 'cancel'])
 async def test_interruption(allow_model_requests: None, sockets: SocketHarness, interrupt: str):
     socket = sockets.pending[0]
@@ -1898,6 +1979,21 @@ async def test_handshake_timeout_override(sockets: SocketHarness, timeout_source
         assert sockets.options[0]['open_timeout'] is None
     assert sockets.connect_count == 1
     assert sockets.opened[0].close_count == 1
+
+
+@pytest.mark.parametrize(
+    'options', [pytest.param({}, id='defaults'), pytest.param({'max_size': 1024, 'max_queue': 4}, id='caller')]
+)
+async def test_message_limits_default_to_unlimited(sockets: SocketHarness, options: WebSocketConnectionOptions):
+    """The `websockets` message size and unread-frame limits are lifted unless the caller sets them."""
+    source = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test'))
+    async with source, source.connect(websocket_connection_options=options):
+        pass
+    assert {key: sockets.options[0][key] for key in ('max_size', 'max_queue')} == {
+        'max_size': None,
+        'max_queue': None,
+        **options,
+    }
 
 
 @pytest.mark.parametrize('timeout_source', ['model', 'client'])

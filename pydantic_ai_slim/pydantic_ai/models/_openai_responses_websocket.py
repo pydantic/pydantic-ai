@@ -98,8 +98,13 @@ class ResponsesWebSocket:
         timeout: Timeout,
         options: WebSocketConnectionOptions,
     ) -> Self:
+        # Unless the caller sets them, lift the `websockets` limits on message size and on unread frames:
+        # - OpenAI events can exceed the 1 MiB default message size; an image generation result does.
+        # - Past 16 unread frames, `websockets` stops reading the socket. An abandoned response's frames wait unread
+        #   until the next request, so the socket would miss the server's keepalive pings and close. Each lane's
+        #   buffer is unbounded already, so lifting this adds no new kind of growth.
         # The enclosing scope owns the deadline, including an unlimited connect timeout.
-        connection_options: ConnectionOptions = {**options, 'open_timeout': None}
+        connection_options: ConnectionOptions = {'max_size': None, 'max_queue': None, **options, 'open_timeout': None}
         try:
             with anyio.fail_after(timeout.connect):
                 connection = await client.responses.connect(
