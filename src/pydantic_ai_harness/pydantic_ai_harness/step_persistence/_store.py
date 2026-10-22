@@ -40,6 +40,13 @@ from pydantic_ai_harness.step_persistence._types import (
 
 _logger = logging.getLogger(__name__)
 
+_BUSY_TIMEOUT_SECONDS = 30.0
+"""How long a connection `SqliteStepStore` opens waits for another writer before `database is locked`.
+
+SQLite allows one writer at a time, and on a database shared by several processes a snapshot
+write can hold the lock for seconds, longer than the 5 second `sqlite3.connect` default.
+"""
+
 
 def _atomic_write_text(path: Path, text: str) -> None:
     """Write `text` to `path` so a concurrent reader sees either the old file or the new one.
@@ -1062,7 +1069,9 @@ class SqliteStepStore:
     Concurrency: WAL mode is enabled on connections opened from a `database=`
     path (a caller-owned `connection=` keeps whatever journal mode the caller
     set). Concurrent readers + a single writer are safe; this matches the
-    access pattern of one capability per `Agent.run`.
+    access pattern of one capability per `Agent.run`. Those connections wait up
+    to 30 seconds for another writer, such as another process sharing the file,
+    before raising `sqlite3.OperationalError: database is locked`.
 
     Schema:
 
@@ -1137,7 +1146,7 @@ class SqliteStepStore:
             return self._connection
         assert self._database is not None
         self._database.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._database, isolation_level=None)
+        conn = sqlite3.connect(self._database, isolation_level=None, timeout=_BUSY_TIMEOUT_SECONDS)
         conn.execute('PRAGMA journal_mode=WAL')
         return conn
 
