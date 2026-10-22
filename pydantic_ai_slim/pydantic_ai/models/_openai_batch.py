@@ -26,6 +26,7 @@ from . import check_allow_model_requests, get_user_agent
 from ._batch_codec import (
     batch_priced,
     credential_hash,
+    group_matches,
     prepare_decode,
     refuse_http_client_auth,
     require_ended,
@@ -147,7 +148,7 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
 
 async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     openai_batch = await _batch_client(model).batches.retrieve(batch.id)
     return _to_batch(model, openai_batch, batch.group, batch.request_count)
 
@@ -155,7 +156,7 @@ async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
 async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[BatchResult]:
     check_allow_model_requests()
     require_ended(batch)
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     client = _batch_client(model)
     # The handle of an ended batch already names its final files, so they aren't looked up again.
     details = _DETAILS_ADAPTER.validate_python(batch.provider_details)
@@ -175,7 +176,7 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
 
 async def batch_cancel(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     openai_batch = await _batch_client(model).batches.cancel(batch.id)
     return _to_batch(model, openai_batch, batch.group, batch.request_count)
 
@@ -250,8 +251,8 @@ def _batch_group(model: OpenAIResponsesModel) -> str:
     return json.dumps(group, sort_keys=True)
 
 
-def _validate_batch_group(model: OpenAIResponsesModel, group: str) -> None:
-    if group != _batch_group(model):
+def _validate_batch_group(model: OpenAIResponsesModel, group: str, *, collecting: bool = False) -> None:
+    if not group_matches(group, _batch_group(model), collecting=collecting):
         raise UserError(
             'The OpenAI client or model does not match the batch request group. '
             'Use the model and client configuration that encoded the requests.'

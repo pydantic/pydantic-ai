@@ -215,12 +215,14 @@ async def test_batch_create_refuses_a_different_client_or_model(allow_model_requ
     for other in (_model(api_key='second-key'), _model(api_key='first-key', model_name='gpt-5-mini')):
         with pytest.raises(UserError, match='does not match the batch request group'):
             await other.batch_create([request])
-        with pytest.raises(UserError, match='does not match the batch request group'):
-            await other.batch_status(batch)
-        with pytest.raises(UserError, match='does not match the batch request group'):
-            await other.batch_results(batch)
-        with pytest.raises(UserError, match='does not match the batch request group'):
-            await other.batch_cancel(batch)
+    # Only submitting needs the same credential: the provider decides who may check on an existing batch.
+    other = _model(api_key='first-key', model_name='gpt-5-mini')
+    with pytest.raises(UserError, match='does not match the batch request group'):
+        await other.batch_status(batch)
+    with pytest.raises(UserError, match='does not match the batch request group'):
+        await other.batch_results(batch)
+    with pytest.raises(UserError, match='does not match the batch request group'):
+        await other.batch_cancel(batch)
 
     mixed = await _model(model_name='gpt-5-mini').batch_encode(_request('other'))
     with pytest.raises(UserError, match='must share a `group`'):

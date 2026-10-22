@@ -45,6 +45,7 @@ from . import check_allow_model_requests
 from ._batch_codec import (
     BatchJobError,
     batch_priced,
+    group_matches,
     prepare_decode,
     refuse_http_client_auth,
     require_ended,
@@ -164,7 +165,7 @@ async def batch_create(model: GoogleModel, requests: Sequence[EncodedBatchReques
 
 async def batch_status(model: GoogleModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     job = await _batch_client(model).aio.batches.get(name=batch.id)
     return _to_batch(model, job, batch.group, batch.request_count, batch.provider_details)
 
@@ -172,7 +173,7 @@ async def batch_status(model: GoogleModel, batch: Batch) -> Batch:
 async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
     check_allow_model_requests()
     require_ended(batch)
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     client = _batch_client(model)
     job = await client.aio.batches.get(name=batch.id)
     if job.dest is None or job.dest.file_name is None:
@@ -210,7 +211,7 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
 
 async def batch_cancel(model: GoogleModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     client = _batch_client(model)
     await client.aio.batches.cancel(name=batch.id)
     job = await client.aio.batches.get(name=batch.id)
@@ -278,8 +279,8 @@ def _batch_group(model: GoogleModel) -> str:
     return json.dumps(group, sort_keys=True)
 
 
-def _validate_batch_group(model: GoogleModel, group: str) -> None:
-    if group != _batch_group(model):
+def _validate_batch_group(model: GoogleModel, group: str, *, collecting: bool = False) -> None:
+    if not group_matches(group, _batch_group(model), collecting=collecting):
         raise UserError(
             'The Gemini client or model does not match the batch request group. Use the configuration that encoded the requests.'
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import warnings
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
@@ -36,6 +37,18 @@ def shared_group(requests: Sequence[EncodedBatchRequest], provider: str, causes:
     if any(request.group != group for request in requests):
         raise UserError(f'Requests in one {provider} batch must share a `group`; these came from different {causes}.')
     return group
+
+
+def group_matches(group: str, expected: str, *, collecting: bool) -> bool:
+    """Whether a client whose requests would get the `expected` group can use a batch or request of `group`.
+
+    Submitting requires the same group, so requests of different credentials never share a batch. Checking on,
+    collecting and cancelling an existing batch doesn't require the same credential, as the provider decides whether
+    the client may access the batch: a rotated API key of the same project or workspace can still collect it.
+    """
+    if not collecting:
+        return group == expected
+    return {**json.loads(group), 'credential': None} == {**json.loads(expected), 'credential': None}
 
 
 def require_ended(batch: Batch) -> None:

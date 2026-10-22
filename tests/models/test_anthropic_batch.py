@@ -107,12 +107,16 @@ async def test_anthropic_batch_refuses_a_different_registered_client(allow_model
     request = await first.batch_encode(_request())
     with pytest.raises(UserError, match='does not match the batch request group'):
         await second.batch_create([request])
+    # Only submitting needs the same credential: the provider decides who may check on an existing batch.
+    elsewhere = AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(api_key='first-key', base_url='https://proxy.example')
+    )
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.batch_status(_batch(request.group))
+        await elsewhere.batch_status(_batch(request.group))
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.batch_results(_batch(request.group))
+        await elsewhere.batch_results(_batch(request.group))
     with pytest.raises(UserError, match='does not match the batch request group'):
-        await second.batch_cancel(_batch(request.group))
+        await elsewhere.batch_cancel(_batch(request.group))
     other = await second.batch_encode(_request('other'))
     with pytest.raises(UserError, match='must share a `group`'):
         await first.batch_create([request, other])

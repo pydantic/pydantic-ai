@@ -31,6 +31,7 @@ from . import check_allow_model_requests, get_user_agent
 from ._batch_codec import (
     batch_priced,
     credential_hash,
+    group_matches,
     prepare_decode,
     refuse_http_client_auth,
     require_ended,
@@ -129,7 +130,7 @@ async def batch_create(model: AnthropicModel, requests: Sequence[EncodedBatchReq
 
 async def batch_status(model: AnthropicModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     message_batch = await _batch_client(model).beta.messages.batches.retrieve(batch.id)
     return _to_batch(model, message_batch, batch.group)
 
@@ -137,7 +138,7 @@ async def batch_status(model: AnthropicModel, batch: Batch) -> Batch:
 async def batch_results(model: AnthropicModel, batch: Batch) -> list[BatchResult]:
     check_allow_model_requests()
     require_ended(batch)
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     results: list[BatchResult] = []
     async for item in await _batch_client(model).beta.messages.batches.results(batch.id):
         result = item.result
@@ -148,7 +149,7 @@ async def batch_results(model: AnthropicModel, batch: Batch) -> list[BatchResult
 
 async def batch_cancel(model: AnthropicModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    _validate_batch_group(model, batch.group)
+    _validate_batch_group(model, batch.group, collecting=True)
     message_batch = await _batch_client(model).beta.messages.batches.cancel(batch.id)
     return _to_batch(model, message_batch, batch.group)
 
@@ -195,10 +196,10 @@ def _batch_group(model: AnthropicModel, betas: Iterable[str]) -> str:
     return json.dumps(group, sort_keys=True)
 
 
-def _validate_batch_group(model: AnthropicModel, group: str) -> None:
+def _validate_batch_group(model: AnthropicModel, group: str, *, collecting: bool = False) -> None:
     _batch_client(model)
     expected = _GROUP_ADAPTER.validate_json(group)
-    if group != _batch_group(model, expected['betas']):
+    if not group_matches(group, _batch_group(model, expected['betas']), collecting=collecting):
         raise UserError(
             'The Anthropic client does not match the batch request group. Use the client configuration that encoded the requests.'
         )
