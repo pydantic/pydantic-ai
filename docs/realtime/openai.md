@@ -501,7 +501,7 @@ the provider-agnostic workflows.
 Live refuses a stated requirement it cannot meet rather than accepting and ignoring it. These raise
 [`UserError`][pydantic_ai.exceptions.UserError]:
 
-- Before the session connects: `turn_detection`, `max_tokens`, an `input_transcription_model` other than `'auto'`,
+- Before the session connects: `turn_detection`, `max_tokens`, a pinned `input_transcription_model`,
   `output_modality='text'` (the profile reports `supports_text_output=False`; see
   [Shared settings](overview.md#shared-settings)), and a `tool_choice` of `'required'` or a list of
   tool names.
