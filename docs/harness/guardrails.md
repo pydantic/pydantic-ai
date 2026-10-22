@@ -266,7 +266,7 @@ OutputGuardrail(guard=must_cite_sources)
 
 ## Accessing run context
 
-A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required. When it has a default, the first parameter's annotation decides: `RunContext` (also inside `Optional` or `Annotated`) means the run context, and any other type means the guarded value. An unannotated first parameter still gets `RunContext`, as in earlier releases, with a `HarnessDeprecationWarning`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
+A guard may take a `RunContext` as its first parameter when it needs run state -- `deps` for tenant- or role-aware policy, message history for conversation-aware checks. The parameter is detected from the signature. A guard with a second positional parameter takes `RunContext` first when that parameter is required. A `*args` parameter also takes it. When the second parameter has a default, the first parameter's annotation decides: `RunContext` (also in a union or `Annotated`) means the run context, and any other type means the guarded value. A first parameter with no annotation, or one whose type cannot be resolved, still gets `RunContext`, as in earlier releases, with a `HarnessDeprecationWarning`. Keyword-only parameters are left to the guard, so prompt-only guards need not declare anything:
 
 ```python
 from pydantic_ai import RunContext

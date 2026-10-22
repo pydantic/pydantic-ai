@@ -8,6 +8,7 @@ record the non-`allow` outcomes as spans.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import re
 import warnings
@@ -156,63 +157,63 @@ def takes_ctx(func: Callable[..., object]) -> bool:
 
     Detected from the positional parameters: a guard always takes the guarded
     value, so a second required positional parameter means it also wants the
-    run context, whether or not it is annotated. Keyword-only parameters are
-    the guard's own options and never count. A second positional parameter
-    with a default is read from the first parameter's annotation: `RunContext`
-    (also inside `Optional` or `Annotated`) means the run context, and any other
-    type means the guarded value. A first parameter with no annotation, or one
-    naming a type that cannot be resolved, still gets the run context, as it
-    always has, with a `HarnessDeprecationWarning`. A callable whose signature
-    cannot be introspected is treated as taking the value only.
+    run context, whether or not it is annotated, as does a `*args` parameter.
+    Keyword-only parameters are the guard's own options and never count. A
+    second positional parameter with a default is read from the first
+    parameter's annotation: `RunContext` (also in a union or `Annotated`)
+    means the run context, and any other type means the guarded value. A first
+    parameter with no annotation, or one naming a type that cannot be resolved,
+    still gets the run context, as it always has, with a
+    `HarnessDeprecationWarning`. A callable whose signature cannot be
+    introspected is treated as taking the value only.
     """
-    positional = _positional_parameters(func)
-    if len(positional) < 2:
+    try:
+        parameters = inspect.signature(func).parameters.values()
+    except ValueError:  # pragma: no cover - callable without an introspectable signature
         return False
+    positional = [
+        parameter
+        for parameter in parameters
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(positional) < 2:
+        return any(parameter.kind is inspect.Parameter.VAR_POSITIONAL for parameter in parameters)
     if positional[1].default is inspect.Parameter.empty:
         return True
-    annotation = positional[0].annotation
+    annotation = _resolve(func, positional[0].annotation)
     if annotation is inspect.Parameter.empty or (isinstance(annotation, str) and not _names_run_context(annotation)):
         warnings.warn(
             f'Guard {_guard_name(func)} has a second positional parameter with a default and a first parameter '
-            'whose type is not known, so it is passed the RunContext first, as before. Annotate the first '
-            "parameter, with `RunContext[...]` or with the guarded value's type: a future release will pass "
-            'the guarded value to an unannotated first parameter.',
+            'with no annotation or one that cannot be resolved, so it is passed the RunContext first, as before. '
+            "Annotate the first parameter, with `RunContext[...]` or with the guarded value's type: a future "
+            'release will pass the guarded value to it.',
             HarnessDeprecationWarning,
             stacklevel=2,
         )
         return True
-    return _annotated_as_run_context(positional[0])
+    return _is_run_context(annotation)
 
 
-def _positional_parameters(func: Callable[..., object]) -> list[inspect.Parameter]:
-    """`func`'s positional parameters, with string annotations resolved where they can be.
+def _resolve(func: Callable[..., object], annotation: object) -> object:
+    """A string annotation (under `from __future__ import annotations`) evaluated in `func`'s module.
 
-    A string annotation (under `from __future__ import annotations`) whose names are all importable
-    is resolved, so a type alias reads as what it stands for. When resolving fails, as for a type
-    imported only for type checking, the strings are kept rather than turning a working guard into
-    an error.
+    Only this one annotation is evaluated, so a type elsewhere in the signature that is imported only
+    for type checking does not stop it resolving. When it cannot be evaluated itself, the string is
+    kept rather than turning a working guard into an error.
     """
+    if not isinstance(annotation, str):
+        return annotation
+    target = inspect.unwrap(func.func if isinstance(func, functools.partial) else func)
+    # A callable instance's annotations come from its class's `__call__`.
+    namespace = getattr(target, '__globals__', None) or getattr(type(target).__call__, '__globals__', {})
     try:
-        try:
-            signature = inspect.signature(func, eval_str=True)
-        except Exception:
-            signature = inspect.signature(func)
-    except ValueError:  # pragma: no cover - callable without an introspectable signature
-        return []
-    return [
-        parameter
-        for parameter in signature.parameters.values()
-        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-
-
-def _annotated_as_run_context(parameter: inspect.Parameter) -> bool:
-    """Whether `parameter` is annotated `RunContext`, directly or inside `Optional` or `Annotated`."""
-    return _is_run_context(parameter.annotation)
+        return eval(annotation, namespace)  # same as `typing.get_type_hints`
+    except Exception:
+        return annotation
 
 
 def _is_run_context(annotation: object) -> bool:
-    """Whether a type annotation is `RunContext`, a subscripted `RunContext`, or one wrapped in `Optional`/`Annotated`.
+    """Whether a type annotation is `RunContext`, a subscripted `RunContext`, or one in a union or `Annotated`.
 
     A string annotation that could not be resolved is matched by name.
     """

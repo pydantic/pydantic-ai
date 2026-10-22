@@ -50,7 +50,7 @@ from pydantic_ai_harness.guardrails._capability import (
     _prompt_text,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.guardrails._shared import (
-    _annotated_as_run_context,  # pyright: ignore[reportPrivateUsage]
+    _is_run_context,  # pyright: ignore[reportPrivateUsage]
     takes_ctx,
 )
 from pydantic_ai_harness.guardrails.detectors import redact_secrets
@@ -1405,8 +1405,8 @@ class TestFindPromptPart:
         assert _prompt_text(['multimodal', 'content']) == str(['multimodal', 'content'])
 
 
-class TestAnnotatedAsRunContext:
-    """`_annotated_as_run_context` reads an annotation, matching an unresolved string by name."""
+class TestIsRunContext:
+    """`_is_run_context` reads an annotation, matching an unresolved string by name."""
 
     @pytest.mark.parametrize(
         ('annotation', 'expected'),
@@ -1431,8 +1431,7 @@ class TestAnnotatedAsRunContext:
         ],
     )
     def test_annotation(self, annotation: object, expected: bool):
-        parameter = inspect.Parameter('ctx', inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation)
-        assert _annotated_as_run_context(parameter) is expected
+        assert _is_run_context(annotation) is expected
 
 
 class TestTakesCtx:
@@ -1454,6 +1453,36 @@ class TestTakesCtx:
         del guard.__annotations__['ctx']
         with pytest.warns(HarnessDeprecationWarning, match='passed the RunContext first, as before'):
             assert takes_ctx(guard) is True
+
+    def test_a_guard_taking_args_receives_the_context(self):
+        """A wrapper written without `functools.wraps` passes `(ctx, value)` on, as it always has."""
+
+        def wrapper(*args: object, **kwargs: object) -> bool: ...  # pragma: no cover
+
+        def with_rest(ctx: object, *rest: object) -> bool: ...  # pragma: no cover
+
+        assert takes_ctx(wrapper) is True
+        assert takes_ctx(with_rest) is True
+
+    def test_only_the_first_annotation_is_resolved(self):
+        """A later annotation that cannot be resolved does not stop the first one reading as the value."""
+
+        def guard(prompt: str, policy: object = None) -> bool: ...  # pragma: no cover
+
+        guard.__annotations__.update(prompt='str', policy='UndefinedPolicy | None')
+        assert takes_ctx(guard) is False
+
+    def test_a_partial_and_a_callable_instance_resolve_in_their_module(self):
+        def check(ctx: object, prompt: str = '', *, key: str) -> bool: ...  # pragma: no cover
+
+        check.__annotations__['ctx'] = 'RunContext[None]'
+
+        class Guard:
+            def __call__(self, prompt: object, threshold: float = 0.5) -> bool: ...  # pragma: no cover
+
+        Guard.__call__.__annotations__['prompt'] = 'str'
+        assert takes_ctx(functools.partial(check, key='k')) is True
+        assert takes_ctx(Guard()) is False
 
     def test_an_unresolvable_annotation_naming_run_context_is_the_context(self):
         def guard(ctx: object, prompt: str = '') -> bool: ...  # pragma: no cover
