@@ -17,7 +17,10 @@ import pydantic_ai_harness.compaction as compaction
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     CompactionPart,
+    InstructionDeltaPart,
+    InstructionId,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -790,6 +793,20 @@ class TestTriggerBoundary:
         )
 
         assert len(request_context.messages) < 6
+
+
+def test_an_instruction_change_before_a_summary_in_its_request_is_not_estimated():
+    """A merged request can hold an earlier window's instruction change ahead of the summary that opened the
+    current one; core doesn't render it, so it isn't counted, while the change after the summary is."""
+    state = InstructionId(AgentInstructionSource(), name='state')
+    old = InstructionDeltaPart(id=state, content='superseded ' * 500)
+    new = InstructionDeltaPart(id=state, content='current')
+    summary = CompactionPart(content='Summary.')
+
+    with_old = estimate_token_count([ModelRequest(parts=[old, summary, new])])
+
+    assert with_old == estimate_token_count([ModelRequest(parts=[summary, new])])
+    assert with_old > estimate_token_count([ModelRequest(parts=[summary])])
 
 
 def test_tool_availability_delta_adds_nothing_to_the_estimate():

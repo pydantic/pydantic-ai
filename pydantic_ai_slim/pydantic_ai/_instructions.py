@@ -338,6 +338,15 @@ def is_window_boundary(part: ModelRequestPart | ModelResponsePart) -> bool:
     return isinstance(part, (InstructionBaselinePart, CompactionPart))
 
 
+def window_boundary_index(message: ModelMessage) -> int:
+    """The index of the last part of `message` that ends the instruction window before it, or `-1` for none.
+
+    In the request a window opens at, only the changes after this part belong to it: a merged request can
+    hold an earlier window's changes ahead of a summary or a baseline.
+    """
+    return max((index for index, part in enumerate(message.parts) if is_window_boundary(part)), default=-1)
+
+
 def advance_instruction_window(
     window: InstructionBaselinePart | None, message: ModelMessage
 ) -> InstructionBaselinePart | None:
