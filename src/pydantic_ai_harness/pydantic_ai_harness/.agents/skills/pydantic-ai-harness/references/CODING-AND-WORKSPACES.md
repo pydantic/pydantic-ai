@@ -394,12 +394,19 @@ Python up to 3.14.
 
 ## Cloud storage
 
-`S3Filesystem(url, *, credentials=None, endpoint=None, region=None)`, `GCSFilesystem(url, ...)` and
-`AzureFilesystem(url, *, account=None, ...)` (`pydantic_ai_harness.cloud_storage`, extra `cloud-storage`) are
-workspace backends with files and no shell. Pass one as `agent.run(..., workspace=s3)` to make the bucket the whole
-workspace. `Mount(path, filesystem, *, read_only=False, description=None, shell=False)` (`pydantic_ai.workspaces`)
-shows one as a folder; `LocalWorkspace` and every sandbox capability take `mounts=[...]`, or a function of the run
-context that returns them (one folder per customer from `deps`).
+`pydantic_ai_harness.cloud_storage` (extra `cloud-storage`) has one workspace backend per cloud. Each stores files
+and has no shell. All take `credentials=` (keys, or a function returning them) and `endpoint=`.
+
+| Filesystem | URL |
+|---|---|
+| `S3Filesystem(url, *, region=None, ...)` | `s3://bucket/folder/`; R2 and MinIO with `endpoint=` |
+| `GCSFilesystem(url, ...)` | `gs://bucket/folder/` |
+| `AzureFilesystem(url, *, account=None, ...)` | `https://account.blob.core.windows.net/container/folder/` |
+
+Pass one as `agent.run(..., workspace=s3)` to make the bucket the whole workspace.
+`Mount(path, filesystem, *, read_only=False, description=None, shell=False)` (`pydantic_ai.workspaces`) shows one as
+a folder; `LocalWorkspace` and every sandbox capability take `mounts=[...]`, or a function of the run context that
+returns them (one folder per customer from `deps`).
 
 - File tools always reach a mount; `FileSystem` tells the model which folders are mounts and whether commands see them.
 - `shell=True` makes the sandbox mount it so commands see it too: S3 and Azure, on E2B, Sprites, Modal

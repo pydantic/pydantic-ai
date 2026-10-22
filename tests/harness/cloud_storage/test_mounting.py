@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip('obstore')
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Mount, Workspace
 from pydantic_ai_harness.cloud_storage import AzureFilesystem, GCSFilesystem, S3Filesystem

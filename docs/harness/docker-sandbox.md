@@ -112,7 +112,7 @@ def reports_keys():
 
 reports = S3Filesystem('s3://acme-reports/', credentials=reports_keys)
 agent = Agent(
-    'anthropic:claude-opus-5-5',
+    '{{ anthropic:large }}',
     capabilities=[
         DockerSandbox(
             image='my-image-with-fuse3',

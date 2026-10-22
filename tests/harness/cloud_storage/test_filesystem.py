@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+pytest.importorskip('obstore')
+
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import Mount, ReadOnlyWorkspace, Workspace, WorkspaceReadOnlyError, WorkspaceRef
