@@ -258,9 +258,9 @@ whatever the history size. A strategy that defines its own stop condition still 
 `TieredCompaction` escalates only until the history fits its target, so a history already under
 target comes back unchanged. Pass the tier directly if you need it to run regardless.
 
-`focus` steers strategies that write prose -- `SummarizingCompaction`, via the exported
-`SupportsFocus` protocol's `with_focus` -- and is passed over by the ones that drop or blank content
-by rule, since they have nothing to steer. `TieredCompaction` is focusable when any of its tiers is, so a focus reaches the
+`focus` steers strategies that write prose or judge relevance -- `SummarizingCompaction` and
+`RelevanceCompaction`, via the exported `SupportsFocus` protocol's `with_focus` -- and is passed over
+by the ones that drop or blank content by rule, since they have nothing to steer. `TieredCompaction` is focusable when any of its tiers is, so a focus reaches the
 summarizing tier rather than stopping at the wrapper.
 
 A compaction that changes the history emits the same `compact_messages` span the in-run path emits,
@@ -394,17 +394,17 @@ Each remaining step is judged in one request with two questions:
 - `needed_verbatim`: "Will the agent need the exact content of this earlier step, such as code, file contents, identifiers, numbers, commands or error text, to finish the current task?"
 - `still_matters`: "Does this earlier step record a fact, decision, change, result or user instruction that still matters for the current task?"
 
-The judge is shown the current task (the latest user prompt), the most recent part of the conversation, and the step itself, including its tool results. A step longer than `judge_step_tokens` (default 2,000) is shown by its start and end, and the task and the recent conversation are each clamped to `judge_context_tokens` (default 500). The defaults keep a request within the 8,192-token input of small local decision models, since code and JSON take about twice as many tokens as the ~4-characters-per-token estimate suggests. The judge is told that all of it is untrusted data, and text that looks like the prompt's own tags is escaped.
+The judge is shown the current task (the first and the latest user prompts, plus any `focus` passed to `compact_now`), the most recent part of the conversation, and the step itself, including its tool results. A step longer than `judge_step_tokens` (default 2,000) is shown by its start and end, and the task and the recent conversation are each clamped to `judge_context_tokens` (default 500). The defaults keep a request within the 8,192-token input of small local decision models, since code and JSON take about twice as many tokens as the ~4-characters-per-token estimate suggests. The judge is told that all of it is untrusted data, and text that looks like the prompt's own tags is escaped.
 
 Steps are chosen by rank against a token budget, never by comparing a probability to a fixed threshold: a judge's probabilities shift as a whole with the shape of the request, while the order it puts steps in holds. The history is compacted to `target_tokens` (or `target_fraction`), which defaults to half the trigger:
 
 1. Steps are kept verbatim in order of `needed_verbatim` while they fit the target.
 2. The rest are reduced in order of `still_matters`. With a `summarizer`, they are written into one summary placed after the head of the history, up to `summary_input_tokens` (default 30,000) of steps per compaction. Without one, each of their tool results is cut to its first `truncated_result_chars` (default 300) characters plus a note that the tool can be called again, while that still fits the target.
-3. Whatever is left is dropped, except that a step holding a user prompt is reduced at worst, never dropped.
+3. Whatever is left is dropped, except a step holding a user prompt: without a summarizer it is cut, and with one it is summarized while it fits `summary_input_tokens` and kept verbatim otherwise.
 
-The `summarizer` is a `SummarizingCompaction` used for its model, prompts and settings; its trigger and `keep_*` fields are never consulted, so any trigger such as `max_messages=1` works. An earlier summary is updated as the summarizer's `incremental` setting says. `receipts=True` adds a [receipt](#compaction-receipts) when steps were summarized or dropped.
+The `summarizer` is a `SummarizingCompaction` used for its model, prompts and settings; its trigger and `keep_*` fields are never consulted, so any trigger such as `max_messages=1` works. With the summarizer's `incremental=True` (the default) the earlier summary is updated; with `incremental=False` it is summarized again along with the steps. `receipts=True` adds a [receipt](#compaction-receipts) when steps were summarized or dropped.
 
-Judge requests run concurrently, up to `judge_concurrency` (default 8) at once. Every judgement is remembered on the instance under the task and the step's content, so a later compaction with the same task judges only the new steps. All the judge requests of one compaction count as one request against a `UsageLimits` request limit, checked before any of them is sent, and their tokens are added to the run's usage, like the summary request. On a laptop running Ollama, one judge request for a step of a few thousand tokens took 5 to 10 seconds, so the first compaction of a long history can take minutes there; later ones judge only the new steps.
+Judge requests run concurrently, up to `judge_concurrency` (default 8) at once. Every judgement is remembered on the instance under the task and the step's content, so a later compaction with the same task judges only the new steps. All the judge requests of one compaction count as one request against a `UsageLimits` request limit, checked before any of them is sent. Their tokens are added to the run's usage and checked against its token and cost limits once they return, like the summary request's. On a laptop running Ollama, one judge request for a step of a few thousand tokens took 5 to 10 seconds, so the first compaction of a long history can take minutes there; later ones judge only the new steps.
 
 A judge error propagates, as a summary error does. Wrap the strategy in `FallbackCompaction` to fall back to one that makes no model requests:
 

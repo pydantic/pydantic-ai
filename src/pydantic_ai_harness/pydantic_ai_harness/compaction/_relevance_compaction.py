@@ -40,7 +40,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
-from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
+from pydantic_ai_harness.compaction._pinning import collect_pinned, is_pinned
 from pydantic_ai_harness.compaction._receipts import (
     ReceiptInfo,
     discover_transcript_handle,
@@ -148,13 +148,14 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     system prompt and first user message, pinned content, and the most recent `keep_tokens` of history
     are never judged.
 
-    For every other step, the `judge` model is asked two questions in one request: will the agent need
-    the step's exact content, and does it record anything that still matters. On a decision model, such
+    For every other step, the `judge` model is shown the task (the first and latest user prompts), the
+    recent conversation and the step, and asked two questions in one request: will the agent need the
+    step's exact content, and does it record anything that still matters. On a decision model, such
     as `system-one:<model>` or TypeSafe's `typesafe:jev-latest`, each answer is the model's probability of
     yes; any other model fills the same two fields as structured output. Steps are kept verbatim in order
     of the first answer until the history fits the target, the rest are ranked by the second answer and
-    reduced while they fit, and whatever is left is dropped. A step holding a user prompt is reduced at
-    worst, never dropped.
+    reduced while they fit, and whatever is left is dropped. A step holding a user prompt is never
+    dropped: it is reduced, or kept when it does not fit the summarizer's input.
 
     Reducing writes the reduced steps into one summary at the front of the history when a `summarizer`
     is configured; without one, each tool result in a reduced step is cut to its first
@@ -244,6 +245,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
     id: str | None = 'relevance_compaction'
     """Stable identity for durable operations; two on one agent merge into one."""
 
+    _focus: str | None = field(default=None, repr=False)
+    """Set by `with_focus` for `compact_now(..., focus=...)`; shown to the judge with the task."""
+
     _judge_agent: Agent[None, _StepRelevance] = field(init=False, repr=False, compare=False)
     _judgements: OrderedDict[str, tuple[float, float]] = field(
         init=False, repr=False, compare=False, default_factory=OrderedDict[str, tuple[float, float]]
@@ -284,10 +288,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         self._judge_agent.instrument = False
 
     def with_focus(self, focus: str) -> RelevanceCompaction[AgentDepsT]:
-        """Return a copy whose summarizer prioritizes `focus`; without a summarizer there is nothing to steer."""
-        if self.summarizer is None:
-            return self
-        return replace(self, summarizer=self.summarizer.with_focus(focus))
+        """Return a copy whose judge, and summarizer if any, give particular weight to `focus`."""
+        summarizer = None if self.summarizer is None else self.summarizer.with_focus(focus)
+        return replace(self, summarizer=summarizer, _focus=focus)
 
     async def before_model_request(
         self,
@@ -341,7 +344,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         with ctx.tracer.start_as_current_span('select compaction steps') as span:
             judgements = await self._judge_steps(
                 ctx,
-                _clamp_middle(_latest_user_prompt(messages), self.judge_context_tokens),
+                _clamp_middle(self._task(messages), self.judge_context_tokens),
                 _clamp_end(format_transcript(messages[tail_start:]), self.judge_context_tokens * _CHARS_PER_TOKEN),
                 [self._render(messages[step.start : step.end]) for step in steps],
             )
@@ -354,6 +357,15 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
                 _record_selection(span, steps, judgements, kept, reduced)
 
         return await self._rebuild(messages, ctx, steps, kept, reduced, head_end, tail_start)
+
+    def _task(self, messages: Sequence[ModelMessage]) -> str:
+        """What the judge is told the agent is doing: the first and latest user prompts, and any focus."""
+        prompts = [_user_text(message) for message in messages]
+        written = [text for text in prompts if text]
+        task = list(dict.fromkeys(written[:1] + written[-1:]))
+        if self._focus is not None:
+            task.append(f'Give particular weight to: {self._focus}')
+        return '\n\n'.join(task)
 
     def _target(self, model: AbstractModel | str) -> int | None:
         """The size to compact to: the configured target, else half the trigger. `None` on a realtime model."""
@@ -393,9 +405,12 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         rest = [i for i in range(len(steps)) if i not in kept]
         for index in sorted(rest, key=lambda i: (-judgements[i].matters, steps[i].tokens, i)):
             cost = self._reduced_tokens(messages, steps[index])
-            if cost <= reduce_budget or steps[index].has_user_prompt:
+            if cost <= reduce_budget:
                 reduced.add(index)
                 reduce_budget -= cost
+            elif steps[index].has_user_prompt:
+                # Never dropped: cut when there is no summarizer, else kept rather than overfilling its input.
+                (kept if self.summarizer is not None else reduced).add(index)
         return kept, reduced
 
     def _reduced_tokens(self, messages: Sequence[ModelMessage], step: _Step) -> int:
@@ -454,6 +469,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         added: list[ModelMessage] = []
         if self.summarizer is not None and summarized:
             previous = extract_previous_summary(messages) if self.summarizer.incremental else None
+            if previous is None and (earlier := _summary_parts(head)):
+                # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
+                summarized = [ModelRequest(parts=earlier), *summarized]
             summary = await self._summarize(ctx, summarized, previous)
             # The summarizer is reused as configured, including its cross-model bridge note.
             summary = self.summarizer._maybe_bridge_prefix(summary, messages, ctx)  # pyright: ignore[reportPrivateUsage]
@@ -463,9 +481,8 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             head = [message for message in head if not _is_receipt_message(message)]
             added.append(self._receipt(ctx, removed, has_summary=bool(summarized)))
 
-        tail = messages[tail_start:]
-        result = [*head, *added, *middle, *tail]
-        return reinject_pinned(messages, result, protected_tail=len(tail))
+        # Pins a removed step held go back after the head, which stays as it was.
+        return _reinject_pins([*head, *added], [*middle, *messages[tail_start:]], original=messages)
 
     def _receipt(
         self, ctx: RunContext[AgentDepsT], removed: Sequence[ModelMessage], *, has_summary: bool
@@ -537,6 +554,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             ctx.usage.incr(usage)
         if error is not None:
             raise error
+        if pending and ctx.usage_limits is not None:
+            ctx.usage_limits.check_tokens(ctx.usage)
+            ctx.usage_limits.check_cost(ctx.usage)
         return [judgement for judgement in judgements if judgement is not None]
 
     def _remember(self, key: str, judgement: tuple[float, float]) -> None:
@@ -605,17 +625,39 @@ def _is_user_part(part: ModelRequestPart) -> bool:
     return isinstance(part, UserPromptPart) and not (is_pinned(part) or is_receipt_part(part) or is_harness_data(part))
 
 
-def _latest_user_prompt(messages: Sequence[ModelMessage]) -> str:
-    for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            texts = [
-                user_prompt_text(part)
-                for part in message.parts
-                if isinstance(part, UserPromptPart) and _is_user_part(part)
-            ]
-            if texts:
-                return '\n'.join(texts)
-    return ''
+def _user_text(message: ModelMessage) -> str:
+    """The text of the user prompts the user wrote in *message*, or `''`."""
+    if not isinstance(message, ModelRequest):
+        return ''
+    return '\n'.join(
+        user_prompt_text(part) for part in message.parts if isinstance(part, UserPromptPart) and _is_user_part(part)
+    )
+
+
+def _summary_parts(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
+    """The earlier compaction summaries in *messages*."""
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart) and part.content.startswith(SUMMARY_PREFIX)
+    ]
+
+
+def _reinject_pins(
+    head: list[ModelMessage], rest: list[ModelMessage], *, original: Sequence[ModelMessage]
+) -> list[ModelMessage]:
+    """`[*head, *rest]`, with the pinned parts of *original* it lost put back in one request after *head*."""
+    survivors = collect_pinned([*head, *rest])
+    missing: list[ModelRequestPart] = []
+    for part in collect_pinned(original):
+        if part in survivors:
+            survivors.remove(part)
+        else:
+            missing.append(part)
+    pins: list[ModelMessage] = [ModelRequest(parts=missing)] if missing else []
+    return [*head, *pins, *rest]
 
 
 def _without_summaries(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
