@@ -111,6 +111,7 @@ def render(monkeypatch: pytest.MonkeyPatch) -> Callable[..., str]:
             'output_type': str,
             'tools': 2,
             'capabilities': 0,
+            'logfire_cli_available': True,
             'color': False,
         }
         kwargs.update(overrides)
@@ -261,20 +262,41 @@ def test_render_banner_leaves_out_a_tool_count_the_caller_could_not_take(render:
     assert 'tools' not in banner
 
 
-def test_the_observability_links_and_command_each_survive_on_one_line(render: Callable[..., str]):
+@pytest.mark.parametrize(
+    ('logfire_cli_available', 'logfire_destination'),
+    [(True, 'uvx logfire-cli wizard --task pydantic-ai'), (False, 'https://pydantic.dev/ai-setup.md')],
+)
+def test_the_observability_links_and_command_each_survive_on_one_line(
+    render: Callable[..., str], logfire_cli_available: bool, logfire_destination: str
+):
     """The command must stay pasteable and the URL clickable at every supported width."""
-    lines = _display._observability_lines(_MIN_TEXT_WIDTH)  # pyright: ignore[reportPrivateUsage]
+    lines = _display._observability_lines(  # pyright: ignore[reportPrivateUsage]
+        _MIN_TEXT_WIDTH, logfire_cli_available=logfire_cli_available
+    )
     urls = [word for line in lines for word in line.split() if word.startswith('http')]
-    command = 'uvx logfire-cli wizard --task pydantic-ai'
 
-    assert urls == snapshot(['https://pydantic.dev/docs/ai/logfire/#otel'])
     assert max(map(len, lines)) <= _MIN_TEXT_WIDTH
     # Whole, on one line, at every width the banner lays itself out for — which is the whole job of
     # a floor under the text column measured from the copy rather than written down beside it.
     for width in range(_MIN_TEXT_WIDTH, 121):
-        rendered = render(width=width).splitlines()
-        for copyable in [command, *urls]:
+        rendered = render(width=width, logfire_cli_available=logfire_cli_available).splitlines()
+        for copyable in [logfire_destination, *urls]:
             assert sum(copyable in line for line in rendered) == 1, f'{copyable} was broken at {width} columns'
+
+
+@pytest.mark.parametrize(
+    ('uvx_path', 'expected'),
+    [('/usr/bin/uvx', 'uvx logfire-cli wizard --task pydantic-ai'), (None, 'https://pydantic.dev/ai-setup.md')],
+)
+def test_display_banner_detects_uvx(
+    monkeypatch: pytest.MonkeyPatch, stderr: TTYStream, uvx_path: str | None, expected: str
+):
+    monkeypatch.setattr(sys, 'stderr', stderr)
+    monkeypatch.setattr(_display.shutil, 'which', lambda _: uvx_path)
+
+    display_banner()
+
+    assert expected in stderr.getvalue()
 
 
 def test_the_narrowest_widths_the_banner_lays_itself_out_in():

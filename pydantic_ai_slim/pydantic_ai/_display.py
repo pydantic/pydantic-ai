@@ -6,6 +6,7 @@ import importlib.util
 import os
 import platform
 import re
+import shutil
 import sys
 from collections.abc import Sequence
 from importlib import metadata
@@ -68,20 +69,24 @@ _INFO_INDENT = '  '
 # time, so rewriting one doesn't mean re-flowing anything by hand.
 _OBSERVABILITY_HEADING = 'observability: off — see every model and tool call live, with cost'
 _LOGFIRE_COMMAND = 'uvx logfire-cli wizard --task pydantic-ai'
-_LOGFIRE_LINE = f'set it up free with Logfire and a GitHub login: {_LOGFIRE_COMMAND}'
+_LOGFIRE_URL = 'https://pydantic.dev/ai-setup.md'
+_LOGFIRE_LINES = tuple(
+    f'set it up free with Logfire and a GitHub login: {destination}' for destination in (_LOGFIRE_COMMAND, _LOGFIRE_URL)
+)
 _OTEL_LINE = 'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel'
-"""The two paths, one copyable command or link each.
+"""The two paths, one copyable command or link each, including the Logfire fallback.
 
-Neither is ever broken across lines: a split command cannot be pasted and a split URL stops being
-clickable in most terminals. `_MIN_TEXT_WIDTH` is measured off these so that no width can wrap them,
-and `test_display` holds that at every width the banner is laid out for, so a reworded line or a
-wider logo can't quietly cost either one.
+The command is offered only when `uvx` is installed, since otherwise pasting it fails. The setup URL
+is kept as the fallback. Neither is ever broken across lines: a split command cannot be pasted and a
+split URL stops being clickable in most terminals. `_MIN_TEXT_WIDTH` is measured off every variant
+so that no width can wrap them, and `test_display` holds that at every width the banner is laid out
+for, so a reworded line or a wider logo can't quietly cost either one.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
 
 _MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
     len(_LOGFIRE_COMMAND),
-    *(len(word) for line in (_OBSERVABILITY_HEADING, _LOGFIRE_LINE, _OTEL_LINE, _HIDE_LINE) for word in line.split()),
+    *(len(word) for line in (_OBSERVABILITY_HEADING, *_LOGFIRE_LINES, _OTEL_LINE, _HIDE_LINE) for word in line.split()),
 )
 """Narrowest the text column can be and still hold the banner's own words whole.
 
@@ -241,6 +246,7 @@ def render_banner(
     tools: int | None,
     capabilities: int,
     observability: bool = True,
+    logfire_cli_available: bool = False,
     color: bool = True,
     width: int | None = None,
 ) -> str:
@@ -254,6 +260,7 @@ def render_banner(
             without connecting to something, which leaves the count out rather than understating it.
         capabilities: Number of capabilities registered on the agent.
         observability: Whether to include the pointer to setting up observability.
+        logfire_cli_available: Whether to suggest the `uvx` setup command instead of the setup URL.
         color: Whether to emit the ANSI colour codes that highlight the logo and the agent's identity.
         width: Columns the banner has to lay itself out in, or `None` when the caller is writing
             somewhere that has no width to report, such as a pipe.
@@ -275,7 +282,7 @@ def render_banner(
     if observability:
         # Both halves of this are advice for someone who hasn't set observability up, so a session
         # that has stays out of it entirely rather than being told to do what it has already done.
-        lines += ['', *_observability_lines(text_width)]
+        lines += ['', *_observability_lines(text_width, logfire_cli_available=logfire_cli_available)]
         # Only what the block above doesn't already say: it opens by telling them to set it up.
         lines += ['', *_wrapped(_HIDE_LINE, text_width)]
 
@@ -331,6 +338,7 @@ def display_agent_banner(
             output_type=output_type,
             tools=tools,
             capabilities=capabilities,
+            logfire_cli_available=shutil.which('uvx') is not None,
             # Nothing renders this one for us, so the conventions have to be honored here: colour
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,
@@ -482,12 +490,14 @@ def _wrapped(text: str, text_width: int, *, indented: bool = False, unbreakable:
     return [line.replace('\0', ' ') for line in lines]
 
 
-def _observability_lines(text_width: int) -> list[str]:
-    """How to see what the agent actually did, for someone who hasn't set that up yet."""
+def _observability_lines(text_width: int, *, logfire_cli_available: bool = False) -> list[str]:
+    """How to see what the agent did, falling back to a link when the `uvx` command would fail."""
+    logfire_destination = _LOGFIRE_COMMAND if logfire_cli_available else _LOGFIRE_URL
+    logfire_line = f'set it up free with Logfire and a GitHub login: {logfire_destination}'
     return [
         *_wrapped(_OBSERVABILITY_HEADING, text_width),
         # One copyable command or link each, so either path is a single thing to follow.
-        *_wrapped(_LOGFIRE_LINE, text_width, indented=True, unbreakable=_LOGFIRE_COMMAND),
+        *_wrapped(logfire_line, text_width, indented=True, unbreakable=logfire_destination),
         *_wrapped(_OTEL_LINE, text_width, indented=True),
     ]
 
