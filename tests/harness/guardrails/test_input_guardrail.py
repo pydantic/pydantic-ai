@@ -690,6 +690,29 @@ class TestInputGuardrailRedaction:
         ]
         assert replacements == ['my key is [redacted:anthropic_key]\nctx', 'my key is [redacted:anthropic_key]']
 
+    async def test_a_second_evaluation_that_does_not_replace_leaves_the_history_alone(self):
+        """Only a `replace` from screening the original is written; a `block` there does not end the run."""
+        calls: list[str] = []
+
+        def guard(prompt: str) -> GuardrailResult:
+            calls.append(prompt)
+            return redact_secrets(prompt) if len(calls) == 1 else GuardrailResult.block()
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        seen, model = _request_prompts_model()
+        agent = Agent(model, capabilities=[_CopyPrompt(suffix='\nctx'), InputGuardrail(guard=guard)])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider)
+
+        result = await agent.run(f'my key is {_SECRET}')
+
+        assert seen == [['my key is [redacted:anthropic_key]\nctx']]
+        part = result.all_messages()[0].parts[0]
+        assert isinstance(part, UserPromptPart)
+        assert part.content == f'my key is {_SECRET}'
+        assert [span.name for span in exporter.get_finished_spans()].count('guardrail redacted input') == 1
+
     async def test_a_redacted_copy_is_not_replayed_unredacted_after_a_tool_call(self):
         """Later steps send the history, which the guard does not screen again, so it must already be clean."""
         requests: list[str] = []
